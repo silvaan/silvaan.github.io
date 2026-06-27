@@ -80,6 +80,14 @@ export const AREAS: Area[] = [
         href: '/simulations/deep-learning/optimizers',
         status: 'live',
       },
+      {
+        slug: 'optimizers-3d',
+        title: 'Optimizers in a 3D Field',
+        description:
+          'Same optimizer race, but the loss is a volumetric density cloud and the balls move freely through 3D space toward the densest cores.',
+        href: '/simulations/deep-learning/optimizers-3d',
+        status: 'live',
+      },
     ],
   },
   {

@@ -1,0 +1,504 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Optimizers in a 3D Field"
+  description="Instead of a 2D surface, the loss here is a volumetric density cloud, like coloured smoke. Five optimizers move freely through 3D space, each descending toward the densest cores. Orbit, zoom, and watch their paths through the haze."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="cloud" class="probe-canvas" width="660" height="620"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="newfield">New field</button>
+        <button class="btn ghost" id="newstart">Random start</button>
+      </div>
+
+      <div class="control">
+        <label>Speed (steps / sec) <b id="spval">10</b></label>
+        <input type="range" id="sp" min="2" max="80" value="10" />
+      </div>
+
+      <div class="control">
+        <label>Point density <b id="ptval">3500</b></label>
+        <input type="range" id="pts" min="600" max="6000" step="200" value="3500" />
+      </div>
+
+      <div class="control">
+        <label>Arrows</label>
+        <div class="seg" id="arrows">
+          <button data-a="grad">Gradient</button>
+          <button data-a="mom">Momentum</button>
+        </div>
+      </div>
+
+      <div class="block-label">Optimizers</div>
+      <div id="sections"></div>
+
+      <div class="readout">
+        <div class="row"><span>Iteration</span><b id="iter">0</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit, scroll to zoom. Colour runs blue (sparse) to red (dense);
+        the loss is minus the density, so the balls climb into the bright cores.
+        Toggle an optimizer with its coloured checkbox.
+      </p>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const canvas = document.getElementById('cloud') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const CX = W / 2;
+  const CY = H / 2;
+  const CAM = 3.3;
+  const FOCAL = 2.8;
+  const SCALE = 260;
+  const NMAX = 6000;
+  const LIM = 1.3;
+
+  type Blob = { x: number; y: number; z: number; s: number; a: number };
+  let blobs: Blob[] = [];
+
+  const px = new Float32Array(NMAX);
+  const py = new Float32Array(NMAX);
+  const pz = new Float32Array(NMAX);
+  const pt = new Float32Array(NMAX);
+  let nPoints = 0;
+  let dMin = 0, dMax = 1, dSpan = 1;
+
+  function density(x: number, y: number, z: number) {
+    let f = 0;
+    for (const b of blobs) {
+      const dx = x - b.x, dy = y - b.y, dz = z - b.z;
+      f += b.a * Math.exp(-(dx * dx + dy * dy + dz * dz) / (2 * b.s * b.s));
+    }
+    return f;
+  }
+  // loss = -density; optimizers minimise loss => climb to dense cores
+  const loss = (x: number, y: number, z: number) => -density(x, y, z);
+
+  function grad(p: number[]): number[] {
+    const h = 0.02;
+    return [
+      (loss(p[0] + h, p[1], p[2]) - loss(p[0] - h, p[1], p[2])) / (2 * h),
+      (loss(p[0], p[1] + h, p[2]) - loss(p[0], p[1] - h, p[2])) / (2 * h),
+      (loss(p[0], p[1], p[2] + h) - loss(p[0], p[1], p[2] - h)) / (2 * h),
+    ];
+  }
+
+  function turbo(t: number) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [[26, 44, 130], [22, 150, 210], [40, 200, 120], [245, 205, 60], [240, 70, 55]];
+    const seg = t * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(seg));
+    const f = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    return [(a[0] + (b[0] - a[0]) * f) | 0, (a[1] + (b[1] - a[1]) * f) | 0, (a[2] + (b[2] - a[2]) * f) | 0];
+  }
+
+  // ---- optimizers (3D, vector form) ----
+  type Cfg = { on: boolean; lr: number; momentum: number; rho: number; beta1: number; beta2: number };
+  type RT = { p: number[]; m: number[]; v: number[]; t: number };
+  const EPS = 1e-7;
+
+  const DEFS: { name: string; color: string; uses: string[]; step: (o: RT, c: Cfg) => void }[] = [
+    {
+      name: 'SGD', color: '#f87171', uses: ['lr'],
+      step: (o, c) => { const g = grad(o.p); for (let k = 0; k < 3; k++) o.p[k] -= c.lr * g[k]; },
+    },
+    {
+      name: 'Momentum', color: '#fbbf24', uses: ['lr', 'momentum'],
+      step: (o, c) => { const g = grad(o.p); for (let k = 0; k < 3; k++) { o.v[k] = c.momentum * o.v[k] - c.lr * g[k]; o.p[k] += o.v[k]; } },
+    },
+    {
+      name: 'Nesterov', color: '#34d399', uses: ['lr', 'momentum'],
+      step: (o, c) => {
+        const look = [o.p[0] + c.momentum * o.v[0], o.p[1] + c.momentum * o.v[1], o.p[2] + c.momentum * o.v[2]];
+        const g = grad(look);
+        for (let k = 0; k < 3; k++) { o.v[k] = c.momentum * o.v[k] - c.lr * g[k]; o.p[k] += o.v[k]; }
+      },
+    },
+    {
+      name: 'RMSProp', color: '#60a5fa', uses: ['lr', 'rho'],
+      step: (o, c) => { const g = grad(o.p); for (let k = 0; k < 3; k++) { o.v[k] = c.rho * o.v[k] + (1 - c.rho) * g[k] * g[k]; o.p[k] -= (c.lr * g[k]) / (Math.sqrt(o.v[k]) + EPS); } },
+    },
+    {
+      name: 'Adam', color: '#c084fc', uses: ['lr', 'beta1', 'beta2'],
+      step: (o, c) => {
+        const g = grad(o.p); o.t++;
+        for (let k = 0; k < 3; k++) {
+          o.m[k] = c.beta1 * o.m[k] + (1 - c.beta1) * g[k];
+          o.v[k] = c.beta2 * o.v[k] + (1 - c.beta2) * g[k] * g[k];
+          const mh = o.m[k] / (1 - c.beta1 ** o.t), vh = o.v[k] / (1 - c.beta2 ** o.t);
+          o.p[k] -= (c.lr * mh) / (Math.sqrt(vh) + EPS);
+        }
+      },
+    },
+  ];
+
+  function momentumOf(i: number): number[] | null {
+    const n = DEFS[i].name;
+    if (n === 'Momentum' || n === 'Nesterov') return rt[i].v;
+    if (n === 'Adam') return rt[i].m;
+    return null;
+  }
+
+  const PMETA: Record<string, { label: string; min: number; max: number; scale: number; fmt: number }> = {
+    lr: { label: 'Learning rate', min: 2, max: 300, scale: 1000, fmt: 3 },
+    momentum: { label: 'Momentum β', min: 0, max: 99, scale: 100, fmt: 2 },
+    rho: { label: 'Decay ρ', min: 500, max: 999, scale: 1000, fmt: 3 },
+    beta1: { label: 'β₁', min: 0, max: 99, scale: 100, fmt: 2 },
+    beta2: { label: 'β₂', min: 9000, max: 9999, scale: 10000, fmt: 4 },
+  };
+
+  const cfg: Cfg[] = DEFS.map(() => ({ on: true, lr: 0.05, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
+  let rt: RT[] = [];
+  const trails: number[][][] = [];
+
+  const state = {
+    yaw: 0.6, pitch: -0.4, speed: 10, running: true, iter: 0, zoom: 1,
+    count: 3500, showGrad: false, showMom: false, start: [0.8, 0.6, 0.5],
+  };
+
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp;
+    const z2 = y * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const s = FOCAL / Math.max(0.05, zc);
+    const k = s * SCALE * state.zoom;
+    return { sx: CX + x1 * k, sy: CY - y2 * k, s: s * state.zoom, zc };
+  }
+
+  function newField() {
+    const n = 3 + Math.floor(Math.random() * 3);
+    blobs = [];
+    for (let i = 0; i < n; i++) {
+      blobs.push({
+        x: Math.random() * 1.4 - 0.7, y: Math.random() * 1.4 - 0.7, z: Math.random() * 1.4 - 0.7,
+        s: 0.2 + Math.random() * 0.22, a: 0.6 + Math.random() * 0.9,
+      });
+    }
+    dMin = Infinity; dMax = -Infinity;
+    for (let i = 0; i < 6000; i++) {
+      const d = density(Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2);
+      if (d < dMin) dMin = d;
+      if (d > dMax) dMax = d;
+    }
+    dSpan = dMax - dMin || 1;
+
+    nPoints = 0;
+    let tries = 0;
+    while (nPoints < NMAX && tries < NMAX * 60) {
+      tries++;
+      const x = Math.random() * 2.2 - 1.1, y = Math.random() * 2.2 - 1.1, z = Math.random() * 2.2 - 1.1;
+      const t = (density(x, y, z) - dMin) / dSpan;
+      if (Math.random() < Math.pow(Math.max(0, t), 1.6) * 0.9 + 0.02) {
+        px[nPoints] = x; py[nPoints] = y; pz[nPoints] = z; pt[nPoints] = t;
+        nPoints++;
+      }
+    }
+    resetOpts();
+  }
+
+  function resetOpts() {
+    rt = DEFS.map(() => ({ p: [...state.start], m: [0, 0, 0], v: [0, 0, 0], t: 0 }));
+    state.iter = 0;
+    trails.length = 0;
+    for (let i = 0; i < DEFS.length; i++) trails.push([[...state.start]]);
+  }
+
+  function stepAll() {
+    DEFS.forEach((def, i) => {
+      if (!cfg[i].on) return;
+      const o = rt[i];
+      if (!isFinite(o.p[0])) return;
+      def.step(o, cfg[i]);
+      for (let k = 0; k < 3; k++) o.p[k] = Math.max(-LIM, Math.min(LIM, o.p[k]));
+      const tr = trails[i];
+      tr.push([...o.p]);
+      if (tr.length > 500) tr.shift();
+    });
+    state.iter++;
+  }
+
+  function arrow(p: number[], dir: number[], L: number, color: string, dashed: boolean) {
+    const a = project(p[0], p[1], p[2]);
+    const b = project(p[0] + dir[0] * L, p[1] + dir[1] * L, p[2] + dir[2] * L);
+    if (a.zc <= 0.1 || b.zc <= 0.1) return;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+    if (dashed) ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+    ctx.setLineDash([]);
+    const ang = Math.atan2(b.sy - a.sy, b.sx - a.sx);
+    const hs = 7;
+    ctx.beginPath();
+    ctx.moveTo(b.sx, b.sy);
+    ctx.lineTo(b.sx - hs * Math.cos(ang - 0.45), b.sy - hs * Math.sin(ang - 0.45));
+    ctx.lineTo(b.sx - hs * Math.cos(ang + 0.45), b.sy - hs * Math.sin(ang + 0.45));
+    ctx.closePath(); ctx.fill();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // density cloud (additive)
+    ctx.globalCompositeOperation = 'lighter';
+    const count = Math.min(state.count, nPoints);
+    for (let i = 0; i < count; i++) {
+      const p = project(px[i], py[i], pz[i]);
+      if (p.zc <= 0.1) continue;
+      const c = turbo(pt[i]);
+      const alpha = 0.07 + 0.36 * pt[i];
+      const r = Math.max(0.7, 1.5 * p.s);
+      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // trails + balls + arrows
+    DEFS.forEach((def, i) => {
+      if (!cfg[i].on) return;
+      const tr = trails[i];
+      ctx.strokeStyle = def.color;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      let started = false;
+      for (const pt2 of tr) {
+        const p = project(pt2[0], pt2[1], pt2[2]);
+        if (p.zc <= 0.1) { started = false; continue; }
+        if (!started) { ctx.moveTo(p.sx, p.sy); started = true; } else ctx.lineTo(p.sx, p.sy);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      const o = rt[i];
+      if (state.showGrad) {
+        const g = grad(o.p);
+        const m = Math.hypot(g[0], g[1], g[2]);
+        if (m > 1e-5) arrow(o.p, [-g[0] / m, -g[1] / m, -g[2] / m], 0.3, 'rgba(255,255,255,0.92)', true);
+      }
+      if (state.showMom) {
+        const v = momentumOf(i);
+        if (v) {
+          const m = Math.hypot(v[0], v[1], v[2]);
+          if (m > 1e-5) arrow(o.p, [v[0] / m, v[1] / m, v[2] / m], Math.min(0.5, m * 6) + 0.05, def.color, false);
+        }
+      }
+
+      const p = project(o.p[0], o.p[1], o.p[2]);
+      if (p.zc > 0.1) {
+        ctx.fillStyle = def.color;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, Math.max(3.5, 4.5 * p.s), 0, 6.2832);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    });
+
+    (document.getElementById('iter') as HTMLElement).textContent = String(state.iter);
+    drawGizmo();
+  }
+
+  function drawGizmo() {
+    const ox = 50, oy = H - 50, len = 28;
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const axes = [
+      { v: [1, 0, 0], c: '#f87171', l: 'x' },
+      { v: [0, 1, 0], c: '#4ade80', l: 'y' },
+      { v: [0, 0, 1], c: '#60a5fa', l: 'z' },
+    ];
+    const proj = axes.map((a) => {
+      const [x, y, z] = a.v;
+      const x1 = x * cy + z * sy;
+      const z1 = -x * sy + z * cy;
+      const y2 = y * cp - z1 * sp;
+      const z2 = y * sp + z1 * cp;
+      return { ex: ox + x1 * len, ey: oy - y2 * len, depth: z2, c: a.c, l: a.l };
+    });
+    proj.sort((a, b) => a.depth - b.depth);
+    ctx.lineWidth = 2;
+    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    for (const a of proj) {
+      ctx.strokeStyle = a.c; ctx.fillStyle = a.c;
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(a.ex, a.ey); ctx.stroke();
+      ctx.beginPath(); ctx.arc(a.ex, a.ey, 2.3, 0, 6.2832); ctx.fill();
+      ctx.fillText(a.l, a.ex + 3, a.ey - 3);
+    }
+  }
+
+  // ---- per-optimizer cards (coloured checkbox + collapsible params) ----
+  const sections = document.getElementById('sections')!;
+  sections.innerHTML = DEFS
+    .map((d, i) => {
+      const rows = d.uses
+        .map((p) => {
+          const m = PMETA[p];
+          const val = (cfg[i] as any)[p] as number;
+          return `<div class="control"><label>${m.label} <b id="v-${i}-${p}">${val.toFixed(m.fmt)}</b></label><input type="range" id="s-${i}-${p}" min="${m.min}" max="${m.max}" value="${Math.round(val * m.scale)}"></div>`;
+        })
+        .join('');
+      return `<div class="opt-card" data-i="${i}"><div class="opt-head"><input type="checkbox" class="opt-check" data-i="${i}" checked style="accent-color:${d.color}"><span class="opt-name">${d.name}</span><span class="opt-toggle"></span></div><div class="opt-body">${rows}</div></div>`;
+    })
+    .join('');
+  sections.addEventListener('change', (e) => {
+    const cb = (e.target as HTMLElement).closest('.opt-check') as HTMLInputElement | null;
+    if (!cb) return;
+    const i = +cb.dataset.i!;
+    cfg[i].on = cb.checked;
+    (cb.closest('.opt-card') as HTMLElement).classList.toggle('off', !cb.checked);
+  });
+  sections.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('.opt-check')) return;
+    const head = (e.target as HTMLElement).closest('.opt-head');
+    if (!head) return;
+    (head.closest('.opt-card') as HTMLElement).classList.toggle('open');
+  });
+  sections.querySelectorAll('input[type=range]').forEach((el) => {
+    el.addEventListener('input', () => {
+      const [, iStr, p] = (el as HTMLInputElement).id.split('-');
+      const i = +iStr;
+      const m = PMETA[p];
+      const v = +(el as HTMLInputElement).value / m.scale;
+      (cfg[i] as any)[p] = v;
+      (document.getElementById(`v-${i}-${p}`) as HTMLElement).textContent = v.toFixed(m.fmt);
+    });
+  });
+
+  // ---- interaction ----
+  let dragging = false, lastX = 0, lastY = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lastX) * 0.01;
+    state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch + (e.clientY - lastY) * 0.01));
+    lastX = e.clientX; lastY = e.clientY;
+    if (!state.running) draw();
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    state.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    state.zoom = Math.max(0.5, Math.min(4, state.zoom));
+    if (!state.running) draw();
+  }, { passive: false });
+
+  // ---- controls ----
+  document.getElementById('arrows')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    btn.classList.toggle('active');
+    const on = btn.classList.contains('active');
+    if (btn.dataset.a === 'grad') state.showGrad = on; else state.showMom = on;
+    if (!state.running) draw();
+  });
+  const spEl = document.getElementById('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value;
+    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
+  });
+  const ptsEl = document.getElementById('pts') as HTMLInputElement;
+  ptsEl.addEventListener('input', () => {
+    state.count = +ptsEl.value;
+    (document.getElementById('ptval') as HTMLElement).textContent = ptsEl.value;
+    if (!state.running) draw();
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => { stepAll(); draw(); });
+  document.getElementById('reset')!.addEventListener('click', () => { resetOpts(); });
+  document.getElementById('newfield')!.addEventListener('click', newField);
+  document.getElementById('newstart')!.addEventListener('click', () => {
+    state.start = [
+      +(Math.random() * 2 - 1).toFixed(2),
+      +(Math.random() * 2 - 1).toFixed(2),
+      +(Math.random() * 2 - 1).toFixed(2),
+    ];
+    resetOpts();
+  });
+
+  // ---- loop ----
+  let last = 0, acc = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.1, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      acc += dt * state.speed;
+      let n = 0;
+      while (acc >= 1 && n < 300) { stepAll(); acc -= 1; n++; }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  newField();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .probe-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .probe-canvas:active { cursor: grabbing; }
+  .block-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+  .opt-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev);
+    margin-bottom: 6px;
+  }
+  .opt-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .opt-check { width: 15px; height: 15px; flex: none; cursor: pointer; }
+  .opt-name { flex: 1; font-size: 0.86rem; color: var(--text); }
+  .opt-card.off .opt-name { opacity: 0.5; }
+  .opt-toggle::after { content: '+'; color: var(--text-faint); }
+  .opt-card.open .opt-toggle::after { content: '−'; }
+  .opt-body { display: none; padding: 2px 12px 10px; }
+  .opt-card.open .opt-body { display: block; }
+  .opt-body .control { margin-bottom: 12px; }
+  .opt-body .control:last-child { margin-bottom: 2px; }
+</style>
