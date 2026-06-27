@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Optimizer Showdown"
-  description="The same starting point, the same learning rate, five different optimizers. Watch SGD, Momentum, Nesterov, RMSProp and Adam descend a 3D loss surface and see how their paths diverge: who stalls at saddles, who overshoots, who adapts."
+  description="The same starting point, the same learning rate, five different optimizers descending a 3D loss surface. Toggle each one, tune its hyperparameters, step frame by frame, and see exactly how SGD, Momentum, Nesterov, RMSProp and Adam differ."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -19,26 +19,45 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           <button data-s="saddle" class="active">Saddle</button>
           <button data-s="wells">Two wells</button>
           <button data-s="ripples">Ripples</button>
+          <button data-s="ravine">Ravine</button>
         </div>
-      </div>
-
-      <div class="control">
-        <label>Learning rate <b id="lrval">0.030</b></label>
-        <input type="range" id="lr" min="5" max="140" value="30" />
       </div>
 
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="step">Step</button>
         <button class="btn ghost" id="reset">Reset</button>
         <button class="btn ghost" id="newstart">New start</button>
       </div>
 
-      <div class="legend-list" id="legend"></div>
+      <div class="control">
+        <label>Learning rate <b id="lrval">0.030</b></label>
+        <input type="range" id="lr" min="2" max="200" value="30" />
+      </div>
+
+      <div class="control">
+        <label>Speed (steps / frame) <b id="spval">1</b></label>
+        <input type="range" id="sp" min="1" max="30" value="1" />
+      </div>
+
+      <details class="params">
+        <summary>Hyperparameters</summary>
+        <div class="control"><label>Momentum β <span class="hint">Momentum, Nesterov</span> <b id="momval">0.90</b></label><input type="range" id="mom" min="0" max="99" value="90" /></div>
+        <div class="control"><label>Decay ρ <span class="hint">RMSProp</span> <b id="rhoval">0.90</b></label><input type="range" id="rho" min="50" max="999" value="900" /></div>
+        <div class="control"><label>β₁ <span class="hint">Adam</span> <b id="b1val">0.90</b></label><input type="range" id="b1" min="0" max="99" value="90" /></div>
+        <div class="control"><label>β₂ <span class="hint">Adam</span> <b id="b2val">0.999</b></label><input type="range" id="b2" min="900" max="9999" value="999" /></div>
+      </details>
+
+      <div class="opt-legend" id="legend"></div>
+
+      <div class="readout">
+        <div class="row"><span>Iteration</span><b id="iter">0</b></div>
+      </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag to orbit. Each coloured ball is one optimizer leaving a trail. Try
-        the saddle to see who escapes the flat point, or crank the learning rate
-        until they overshoot.
+        Drag to orbit. Click a row to toggle that optimizer. The number beside
+        each is its current loss. Try the saddle to see who escapes the flat
+        point, or the ravine to watch SGD zig-zag while Adam cuts through.
       </p>
     </div>
   </div>
@@ -54,7 +73,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const CAM = 3.2;
   const FOCAL = 2.7;
   const SCALE = 250;
-  const D = 2; // domain half-width
+  const D = 2;
+  const EPS = 1e-7;
 
   type Surf = {
     f: (x: number, y: number) => number;
@@ -73,37 +93,41 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       f: (x, y) => 0.18 * (x * x + y * y) - 0.5 * Math.cos(2.2 * x) - 0.5 * Math.cos(2.2 * y),
       g: (x, y) => ({ x: 0.36 * x + 1.1 * Math.sin(2.2 * x), y: 0.36 * y + 1.1 * Math.sin(2.2 * y) }),
     },
+    ravine: {
+      f: (x, y) => 0.035 * x * x + 1.4 * y * y,
+      g: (x, y) => ({ x: 0.07 * x, y: 2.8 * y }),
+    },
   };
+
+  type Hyper = { momentum: number; rho: number; beta1: number; beta2: number };
 
   const state = {
     yaw: 0.7,
     pitch: -0.62,
     surf: 'saddle',
     lr: 0.03,
+    speed: 1,
     running: true,
+    iter: 0,
     start: { x: 0.9, y: 0.0009 },
+    params: { momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 } as Hyper,
   };
   let fmin = 0, fspan = 1;
 
-  function curF(x: number, y: number) {
-    return SURFACES[state.surf].f(x, y);
-  }
+  const curF = (x: number, y: number) => SURFACES[state.surf].f(x, y);
 
   function computeRange() {
     fmin = Infinity;
     let fmax = -Infinity;
     for (let i = 0; i <= 40; i++)
       for (let j = 0; j <= 40; j++) {
-        const x = -D + (2 * D * i) / 40;
-        const y = -D + (2 * D * j) / 40;
-        const f = curF(x, y);
+        const f = curF(-D + (2 * D * i) / 40, -D + (2 * D * j) / 40);
         if (f < fmin) fmin = f;
         if (f > fmax) fmax = f;
       }
     fspan = fmax - fmin || 1;
   }
 
-  // domain (x,y,height) -> world coords for the 3D camera
   function worldOf(x: number, y: number) {
     const wy = ((curF(x, y) - fmin) / fspan) * 1.3 - 0.65;
     return project(x / D, wy, y / D);
@@ -133,52 +157,52 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // ---- optimizers ----
   type Opt = {
-    name: string; color: string; x: number; y: number;
-    mx: number; my: number; vx: number; vy: number; t: number;
-    step: (o: Opt, lr: number, g: Surf['g']) => void;
+    name: string; color: string; on: boolean;
+    x: number; y: number; mx: number; my: number; vx: number; vy: number; t: number;
+    step: (o: Opt, lr: number, g: Surf['g'], hp: Hyper) => void;
   };
-  const B1 = 0.9, B2 = 0.999, EPS = 1e-7, RHO = 0.9, MOM = 0.9;
 
   function makeOpts(): Opt[] {
+    const base = { on: true, x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0 };
     return [
       {
-        name: 'SGD', color: '#f87171', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
+        ...base, name: 'SGD', color: '#f87171',
         step: (o, lr, g) => { const d = g(o.x, o.y); o.x -= lr * d.x; o.y -= lr * d.y; },
       },
       {
-        name: 'Momentum', color: '#fbbf24', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
-        step: (o, lr, g) => {
+        ...base, name: 'Momentum', color: '#fbbf24',
+        step: (o, lr, g, hp) => {
           const d = g(o.x, o.y);
-          o.vx = MOM * o.vx - lr * d.x; o.vy = MOM * o.vy - lr * d.y;
+          o.vx = hp.momentum * o.vx - lr * d.x; o.vy = hp.momentum * o.vy - lr * d.y;
           o.x += o.vx; o.y += o.vy;
         },
       },
       {
-        name: 'Nesterov', color: '#34d399', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
-        step: (o, lr, g) => {
-          const d = g(o.x + MOM * o.vx, o.y + MOM * o.vy);
-          o.vx = MOM * o.vx - lr * d.x; o.vy = MOM * o.vy - lr * d.y;
+        ...base, name: 'Nesterov', color: '#34d399',
+        step: (o, lr, g, hp) => {
+          const d = g(o.x + hp.momentum * o.vx, o.y + hp.momentum * o.vy);
+          o.vx = hp.momentum * o.vx - lr * d.x; o.vy = hp.momentum * o.vy - lr * d.y;
           o.x += o.vx; o.y += o.vy;
         },
       },
       {
-        name: 'RMSProp', color: '#60a5fa', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
-        step: (o, lr, g) => {
+        ...base, name: 'RMSProp', color: '#60a5fa',
+        step: (o, lr, g, hp) => {
           const d = g(o.x, o.y);
-          o.vx = RHO * o.vx + (1 - RHO) * d.x * d.x;
-          o.vy = RHO * o.vy + (1 - RHO) * d.y * d.y;
+          o.vx = hp.rho * o.vx + (1 - hp.rho) * d.x * d.x;
+          o.vy = hp.rho * o.vy + (1 - hp.rho) * d.y * d.y;
           o.x -= (lr * d.x) / (Math.sqrt(o.vx) + EPS);
           o.y -= (lr * d.y) / (Math.sqrt(o.vy) + EPS);
         },
       },
       {
-        name: 'Adam', color: '#c084fc', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
-        step: (o, lr, g) => {
+        ...base, name: 'Adam', color: '#c084fc',
+        step: (o, lr, g, hp) => {
           const d = g(o.x, o.y); o.t++;
-          o.mx = B1 * o.mx + (1 - B1) * d.x; o.my = B1 * o.my + (1 - B1) * d.y;
-          o.vx = B2 * o.vx + (1 - B2) * d.x * d.x; o.vy = B2 * o.vy + (1 - B2) * d.y * d.y;
-          const mhx = o.mx / (1 - B1 ** o.t), mhy = o.my / (1 - B1 ** o.t);
-          const vhx = o.vx / (1 - B2 ** o.t), vhy = o.vy / (1 - B2 ** o.t);
+          o.mx = hp.beta1 * o.mx + (1 - hp.beta1) * d.x; o.my = hp.beta1 * o.my + (1 - hp.beta1) * d.y;
+          o.vx = hp.beta2 * o.vx + (1 - hp.beta2) * d.x * d.x; o.vy = hp.beta2 * o.vy + (1 - hp.beta2) * d.y * d.y;
+          const mhx = o.mx / (1 - hp.beta1 ** o.t), mhy = o.my / (1 - hp.beta1 ** o.t);
+          const vhx = o.vx / (1 - hp.beta2 ** o.t), vhy = o.vy / (1 - hp.beta2 ** o.t);
           o.x -= (lr * mhx) / (Math.sqrt(vhx) + EPS);
           o.y -= (lr * mhy) / (Math.sqrt(vhy) + EPS);
         },
@@ -187,11 +211,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   let opts = makeOpts();
+  const enabled = opts.map(() => true);
   const trails: { x: number; y: number }[][] = [];
 
   function resetOpts() {
-    opts = makeOpts();
-    for (const o of opts) { o.x = state.start.x; o.y = state.start.y; }
+    const fresh = makeOpts();
+    fresh.forEach((o, i) => { o.x = state.start.x; o.y = state.start.y; o.on = enabled[i]; });
+    opts = fresh;
+    state.iter = 0;
     trails.length = 0;
     for (let i = 0; i < opts.length; i++) trails.push([{ ...state.start }]);
   }
@@ -199,24 +226,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function stepAll() {
     const g = SURFACES[state.surf].g;
     opts.forEach((o, i) => {
-      if (!isFinite(o.x) || !isFinite(o.y)) return;
-      o.step(o, state.lr, g);
+      if (!enabled[i] || !isFinite(o.x) || !isFinite(o.y)) return;
+      o.step(o, state.lr, g, state.params);
       o.x = Math.max(-D, Math.min(D, o.x));
       o.y = Math.max(-D, Math.min(D, o.y));
       const tr = trails[i];
       tr.push({ x: o.x, y: o.y });
-      if (tr.length > 500) tr.shift();
+      if (tr.length > 600) tr.shift();
     });
+    state.iter++;
   }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
     const M = 30;
 
-    // wireframe surface coloured by height
-    ctx.lineWidth = 1;
     for (let i = 0; i <= M; i++) {
-      // line of constant y (varying x) and constant x (varying y)
       for (const axis of [0, 1]) {
         ctx.beginPath();
         let started = false;
@@ -232,13 +257,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         const a = -D + (2 * D * i) / M;
         const tH = (curF(axis === 0 ? 0 : a, axis === 0 ? a : 0) - fmin) / fspan;
         ctx.strokeStyle = turbo(tH);
-        ctx.globalAlpha = 0.4;
+        ctx.globalAlpha = 0.38;
+        ctx.lineWidth = 1;
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
     }
 
-    // start marker
     const sp = worldOf(state.start.x, state.start.y);
     if (sp.zc > 0.1) {
       ctx.strokeStyle = 'rgba(255,255,255,0.5)';
@@ -248,8 +273,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.stroke();
     }
 
-    // trails + balls
     opts.forEach((o, i) => {
+      const lossEl = document.getElementById('loss-' + i);
+      if (lossEl) lossEl.textContent = enabled[i] ? curF(o.x, o.y).toFixed(3) : 'off';
+      if (!enabled[i]) return;
       const tr = trails[i];
       ctx.strokeStyle = o.color;
       ctx.lineWidth = 2;
@@ -276,6 +303,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
     });
 
+    (document.getElementById('iter') as HTMLElement).textContent = String(state.iter);
     drawGizmo();
   }
 
@@ -307,11 +335,18 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
-  // legend
+  // legend with per-optimizer toggles + live loss
   const legend = document.getElementById('legend')!;
-  legend.innerHTML = makeOpts()
-    .map((o) => `<span class="leg"><i style="background:${o.color}"></i>${o.name}</span>`)
+  legend.innerHTML = opts
+    .map((o, i) => `<button class="opt-row active" data-i="${i}"><i class="sw" style="background:${o.color}"></i><span class="nm">${o.name}</span><span class="loss" id="loss-${i}">—</span></button>`)
     .join('');
+  legend.addEventListener('click', (e) => {
+    const row = (e.target as HTMLElement).closest('.opt-row') as HTMLElement | null;
+    if (!row) return;
+    const i = +row.dataset.i!;
+    enabled[i] = !enabled[i];
+    row.classList.toggle('active', enabled[i]);
+  });
 
   // ---- interaction ----
   let dragging = false, lastX = 0, lastY = 0;
@@ -340,16 +375,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     resetOpts();
   });
 
-  const lrEl = document.getElementById('lr') as HTMLInputElement;
-  lrEl.addEventListener('input', () => {
-    state.lr = +lrEl.value / 1000;
-    (document.getElementById('lrval') as HTMLElement).textContent = state.lr.toFixed(3);
+  function slider(id: string, valId: string, scale: number, set: (v: number) => void, fmt = 2) {
+    const el = document.getElementById(id) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      const v = +el.value / scale;
+      set(v);
+      (document.getElementById(valId) as HTMLElement).textContent = v.toFixed(fmt);
+    });
+  }
+  slider('lr', 'lrval', 1000, (v) => (state.lr = v), 3);
+  slider('mom', 'momval', 100, (v) => (state.params.momentum = v));
+  slider('rho', 'rhoval', 1000, (v) => (state.params.rho = v));
+  slider('b1', 'b1val', 100, (v) => (state.params.beta1 = v));
+  slider('b2', 'b2val', 10000, (v) => (state.params.beta2 = v), 3);
+
+  const spEl = document.getElementById('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value;
+    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
   });
 
   const runBtn = document.getElementById('run') as HTMLButtonElement;
   runBtn.addEventListener('click', () => {
     state.running = !state.running;
     runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    stepAll();
+    draw();
   });
   document.getElementById('reset')!.addEventListener('click', resetOpts);
   document.getElementById('newstart')!.addEventListener('click', () => {
@@ -358,7 +411,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   });
 
   function loop() {
-    if (state.running) stepAll();
+    if (state.running) for (let k = 0; k < state.speed; k++) stepAll();
     draw();
     requestAnimationFrame(loop);
   }
@@ -376,22 +429,68 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .probe-canvas:active {
     cursor: grabbing;
   }
-  .legend-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 14px;
+  .params {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px 12px;
+    background: var(--bg-elev);
   }
-  .legend-list .leg {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.82rem;
+  .params summary {
+    cursor: pointer;
+    font-size: 0.85rem;
     color: var(--text-muted);
+    padding: 6px 0;
+    user-select: none;
   }
-  .legend-list .leg i {
-    width: 11px;
-    height: 11px;
+  .params .control {
+    margin-bottom: 12px;
+  }
+  .params .hint {
+    color: var(--text-faint);
+    font-weight: 400;
+    font-size: 0.72rem;
+  }
+  .opt-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .opt-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 11px;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.86rem;
+    cursor: pointer;
+    opacity: 0.45;
+    transition: opacity 0.15s ease, border-color 0.15s ease;
+  }
+  .opt-row.active {
+    opacity: 1;
+    color: var(--text);
+  }
+  .opt-row:hover {
+    border-color: var(--border-strong);
+  }
+  .opt-row .sw {
+    width: 12px;
+    height: 12px;
     border-radius: 3px;
-    display: inline-block;
+    flex: none;
+  }
+  .opt-row .nm {
+    flex: 1;
+    text-align: left;
+  }
+  .opt-row .loss {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--accent-2);
   }
 </style>
