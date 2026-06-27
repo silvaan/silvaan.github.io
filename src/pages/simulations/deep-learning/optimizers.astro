@@ -20,6 +20,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           <button data-s="wells">Two wells</button>
           <button data-s="ripples">Ripples</button>
           <button data-s="ravine">Ravine</button>
+          <button data-s="monkey">Monkey</button>
+          <button data-s="basin">Basin</button>
+          <button data-s="eggcarton">Egg carton</button>
+          <button data-s="banana">Banana</button>
         </div>
       </div>
 
@@ -43,10 +47,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         </div>
       </div>
 
-      <div class="block-label">Legend</div>
-      <div class="opt-legend" id="legend"></div>
-
-      <div class="block-label">Hyperparameters</div>
+      <div class="block-label">Optimizers</div>
       <div id="sections"></div>
 
       <div class="readout">
@@ -54,9 +55,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag to orbit, click the surface to drop the start point there. The
-        dashed white arrow is the downhill gradient; the coloured arrow is each
-        optimizer's momentum.
+        Drag to orbit, scroll to zoom, click the surface to drop the start point
+        there. Click an optimizer's coloured dot to toggle it on or off. The
+        dashed white arrow is the downhill gradient; the coloured arrow is its
+        momentum.
       </p>
     </div>
   </div>
@@ -93,9 +95,31 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       f: (x, y) => 0.035 * x * x + 1.4 * y * y,
       g: (x, y) => ({ x: 0.07 * x, y: 2.8 * y }),
     },
+    monkey: {
+      f: (x, y) => 0.4 * (x * x * x - 3 * x * y * y),
+      g: (x, y) => ({ x: 1.2 * (x * x - y * y), y: -2.4 * x * y }),
+    },
+    basin: {
+      f: (x, y) => 1 - Math.exp(-(x * x + y * y)),
+      g: (x, y) => { const e = Math.exp(-(x * x + y * y)); return { x: 2 * x * e, y: 2 * y * e }; },
+    },
+    eggcarton: {
+      f: (x, y) => 0.2 * (x * x + y * y) + 0.5 * Math.sin(2.5 * x) * Math.sin(2.5 * y),
+      g: (x, y) => ({
+        x: 0.4 * x + 1.25 * Math.cos(2.5 * x) * Math.sin(2.5 * y),
+        y: 0.4 * y + 1.25 * Math.sin(2.5 * x) * Math.cos(2.5 * y),
+      }),
+    },
+    banana: {
+      f: (x, y) => 0.02 * (1 - x) ** 2 + 0.2 * (y - x * x) ** 2,
+      g: (x, y) => ({
+        x: -0.04 * (1 - x) - 0.8 * x * (y - x * x),
+        y: 0.4 * (y - x * x),
+      }),
+    },
   };
 
-  type Cfg = { lr: number; momentum: number; rho: number; beta1: number; beta2: number };
+  type Cfg = { on: boolean; lr: number; momentum: number; rho: number; beta1: number; beta2: number };
   type RT = { x: number; y: number; mx: number; my: number; vx: number; vy: number; t: number };
 
   const DEFS: { name: string; color: string; uses: string[]; step: (o: RT, c: Cfg, g: Surf['g']) => void }[] = [
@@ -160,13 +184,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     beta2: { label: 'β₂', min: 9000, max: 9999, scale: 10000, fmt: 4 },
   };
 
-  const cfg: Cfg[] = DEFS.map(() => ({ lr: 0.03, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
+  const cfg: Cfg[] = DEFS.map(() => ({ on: true, lr: 0.03, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
   let rt: RT[] = [];
   const trails: { x: number; y: number }[][] = [];
 
   const state = {
     yaw: 0.7, pitch: -0.62, surf: 'saddle', speed: 10, running: true,
-    iter: 0, start: { x: 1.0, y: 0.7 }, showGrad: false, showMom: false,
+    iter: 0, start: { x: 1.0, y: 0.7 }, showGrad: false, showMom: false, zoom: 1,
   };
   let fmin = 0, fspan = 1;
 
@@ -197,7 +221,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const z2 = y * sp + z1 * cp;
     const zc = z2 + CAM;
     const s = FOCAL / Math.max(0.05, zc);
-    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
+    const k = s * SCALE * state.zoom;
+    return { sx: CX + x1 * k, sy: CY - y2 * k, s: s * state.zoom, zc };
   }
 
   function turbo(t: number) {
@@ -220,6 +245,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function stepAll() {
     const g = SURFACES[state.surf].g;
     DEFS.forEach((def, i) => {
+      if (!cfg[i].on) return;
       const o = rt[i];
       if (!isFinite(o.x) || !isFinite(o.y)) return;
       def.step(o, cfg[i], g);
@@ -285,6 +311,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
 
     DEFS.forEach((def, i) => {
+      if (!cfg[i].on) return;
       const tr = trails[i];
       ctx.strokeStyle = def.color;
       ctx.lineWidth = 2;
@@ -358,13 +385,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
-  // legend: just the colour key
-  const legend = document.getElementById('legend')!;
-  legend.innerHTML = DEFS
-    .map((d) => `<span class="leg"><i class="sw" style="background:${d.color}"></i>${d.name}</span>`)
-    .join('');
-
-  // per-optimizer hyperparameter sections
+  // per-optimizer sections: coloured dot (toggle on/off) + collapsible params
   const sections = document.getElementById('sections')!;
   sections.innerHTML = DEFS
     .map((d, i) => {
@@ -375,9 +396,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           return `<div class="control"><label>${m.label} <b id="v-${i}-${p}">${val.toFixed(m.fmt)}</b></label><input type="range" id="s-${i}-${p}" min="${m.min}" max="${m.max}" value="${Math.round(val * m.scale)}"></div>`;
         })
         .join('');
-      return `<details class="opt-params"><summary><i class="sw" style="background:${d.color}"></i>${d.name}</summary><div class="opt-params-body">${rows}</div></details>`;
+      return `<details class="opt-params"><summary><button class="dot" data-i="${i}" title="toggle" style="background:${d.color}"></button><span class="onm">${d.name}</span></summary><div class="opt-params-body">${rows}</div></details>`;
     })
     .join('');
+
+  // dot click toggles the optimizer (without opening/closing the section)
+  sections.addEventListener('click', (e) => {
+    const dot = (e.target as HTMLElement).closest('.dot') as HTMLElement | null;
+    if (!dot) return;
+    e.preventDefault();
+    const i = +dot.dataset.i!;
+    cfg[i].on = !cfg[i].on;
+    (dot.closest('.opt-params') as HTMLElement).classList.toggle('off', !cfg[i].on);
+  });
+
   sections.querySelectorAll('input').forEach((el) => {
     el.addEventListener('input', () => {
       const [, iStr, p] = el.id.split('-');
@@ -431,6 +463,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     if (!moved) pickStart(e.clientX, e.clientY);
   });
   canvas.addEventListener('pointercancel', () => (dragging = false));
+
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      state.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      state.zoom = Math.max(0.5, Math.min(4, state.zoom));
+      if (!state.running) draw();
+    },
+    { passive: false }
+  );
 
   // ---- controls ----
   document.getElementById('surf')!.addEventListener('click', (e) => {
@@ -502,20 +545,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     color: var(--text-faint);
     margin-top: 4px;
   }
-  .opt-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 14px;
-  }
-  .opt-legend .leg {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 0.84rem;
-    color: var(--text-muted);
-  }
-  .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; display: inline-block; }
-
   .opt-params {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -536,7 +565,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .opt-params summary::-webkit-details-marker { display: none; }
   .opt-params summary::after { content: '+'; margin-left: auto; color: var(--text-faint); }
   .opt-params[open] summary::after { content: '−'; }
+  .opt-params.off summary { opacity: 0.45; }
+  .opt-params.off .dot { box-shadow: inset 0 0 0 99px rgba(11, 12, 14, 0.78); }
   .opt-params-body { padding: 2px 12px 10px; }
   .opt-params-body .control { margin-bottom: 12px; }
   .opt-params-body .control:last-child { margin-bottom: 2px; }
+
+  .dot {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    flex: none;
+    cursor: pointer;
+    transition: box-shadow 0.15s ease;
+  }
 </style>
