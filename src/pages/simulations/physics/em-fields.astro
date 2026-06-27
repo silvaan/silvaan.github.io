@@ -1,0 +1,364 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Electric & Magnetic Fields"
+  description="Two of the classic field pictures in 3D. In Electric mode, field lines stream from positive to negative charges. In Magnetic mode, the field wraps in circles around a current-carrying wire. Orbit to look around."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="em" class="probe-canvas" width="640" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Field</label>
+        <div class="seg" id="mode">
+          <button data-mode="electric" class="active">Electric</button>
+          <button data-mode="magnetic">Magnetic</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Field lines <b id="denval">14</b></label>
+        <input type="range" id="den" min="6" max="26" value="14" />
+      </div>
+
+      <button class="btn ghost" id="action">New charges</button>
+
+      <div class="readout">
+        <div class="row"><span id="rk">Charges</span><b id="rv">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit. Electric field lines (blue) leave + charges and enter −
+        charges. The magnetic field (teal) circles a wire by the right-hand
+        rule. The little axes show orientation.
+      </p>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const canvas = document.getElementById('em') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const CX = W / 2;
+  const CY = H / 2;
+  const CAM = 3.4;
+  const FOCAL = 2.8;
+  const SCALE = 250;
+
+  type V = { x: number; y: number; z: number };
+  type Charge = { x: number; y: number; z: number; q: number };
+
+  const state = {
+    yaw: 0.7,
+    pitch: -0.45,
+    mode: 'electric' as 'electric' | 'magnetic',
+    density: 14,
+    current: 1,
+  };
+
+  let charges: Charge[] = [];
+  let lines: { pts: V[]; col: string }[] = [];
+
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp;
+    const z2 = y * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const s = FOCAL / Math.max(0.05, zc);
+    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
+  }
+
+  function eField(p: V): V {
+    let ex = 0, ey = 0, ez = 0;
+    for (const c of charges) {
+      const dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
+      const r2 = dx * dx + dy * dy + dz * dz;
+      const r = Math.sqrt(r2) + 1e-4;
+      const k = c.q / (r2 * r);
+      ex += k * dx; ey += k * dy; ez += k * dz;
+    }
+    return { x: ex, y: ey, z: ez };
+  }
+
+  function fib(n: number): V[] {
+    const out: V[] = [];
+    const ga = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < n; i++) {
+      const y = 1 - (i / (n - 1)) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const th = ga * i;
+      out.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
+    }
+    return out;
+  }
+
+  function buildElectric() {
+    lines = [];
+    const perCharge = state.density;
+    for (const c of charges) {
+      if (c.q <= 0) continue;
+      const dirs = fib(perCharge);
+      for (const d of dirs) {
+        const pts: V[] = [];
+        let p: V = { x: c.x + d.x * 0.09, y: c.y + d.y * 0.09, z: c.z + d.z * 0.09 };
+        for (let step = 0; step < 360; step++) {
+          pts.push({ ...p });
+          const e = eField(p);
+          const m = Math.hypot(e.x, e.y, e.z);
+          if (m < 1e-5) break;
+          const ds = 0.035;
+          p = { x: p.x + (e.x / m) * ds, y: p.y + (e.y / m) * ds, z: p.z + (e.z / m) * ds };
+          if (Math.hypot(p.x, p.y, p.z) > 2.4) break;
+          let hit = false;
+          for (const o of charges)
+            if (o.q < 0 && Math.hypot(p.x - o.x, p.y - o.y, p.z - o.z) < 0.07) { hit = true; break; }
+          if (hit) break;
+        }
+        if (pts.length > 2) lines.push({ pts, col: 'rgba(150,180,255,0.7)' });
+      }
+    }
+  }
+
+  function buildMagnetic() {
+    lines = [];
+    const radii = [0.3, 0.62, 0.98];
+    const nz = Math.max(2, Math.round(state.density / 3));
+    const K = 56;
+    for (const r of radii) {
+      for (let zi = 0; zi < nz; zi++) {
+        const z = -0.85 + (1.7 * zi) / (nz - 1 || 1);
+        const pts: V[] = [];
+        for (let i = 0; i <= K; i++) {
+          const a = state.current * (i / K) * Math.PI * 2;
+          pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, z });
+        }
+        lines.push({ pts, col: 'rgba(94,234,212,0.7)' });
+      }
+    }
+  }
+
+  function rebuild() {
+    if (state.mode === 'electric') buildElectric();
+    else buildMagnetic();
+    updateReadout();
+    draw();
+  }
+
+  function randomCharges() {
+    const n = 2 + Math.floor(Math.random() * 3);
+    charges = [];
+    let hasPos = false, hasNeg = false;
+    for (let i = 0; i < n; i++) {
+      const q = (Math.random() < 0.5 ? 1 : -1) * (0.6 + Math.random() * 0.8);
+      if (q > 0) hasPos = true; else hasNeg = true;
+      charges.push({
+        x: Math.random() * 1.2 - 0.6,
+        y: Math.random() * 1.2 - 0.6,
+        z: Math.random() * 1.2 - 0.6,
+        q,
+      });
+    }
+    if (!hasPos) charges[0].q = Math.abs(charges[0].q);
+    if (!hasNeg) charges[charges.length - 1].q = -Math.abs(charges[charges.length - 1].q);
+  }
+
+  function updateReadout() {
+    const rk = document.getElementById('rk') as HTMLElement;
+    const rv = document.getElementById('rv') as HTMLElement;
+    if (state.mode === 'electric') {
+      rk.textContent = 'Charges';
+      const pos = charges.filter((c) => c.q > 0).length;
+      rv.textContent = `${pos}+  ${charges.length - pos}−`;
+    } else {
+      rk.textContent = 'Current';
+      rv.textContent = state.current > 0 ? '+z (up)' : '−z (down)';
+    }
+  }
+
+  function arrowHead(ax: number, ay: number, bx: number, by: number, col: string) {
+    const ang = Math.atan2(by - ay, bx - ax);
+    const s = 7;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - s * Math.cos(ang - 0.45), by - s * Math.sin(ang - 0.45));
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - s * Math.cos(ang + 0.45), by - s * Math.sin(ang + 0.45));
+    ctx.stroke();
+  }
+
+  function drawWire() {
+    const a = project(0, 0, -1.15);
+    const b = project(0, 0, 1.15);
+    ctx.strokeStyle = '#f0a35a';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.stroke();
+    // current direction arrows along the wire
+    for (let t = -0.6; t <= 0.8; t += 0.7) {
+      const p0 = project(0, 0, t * state.current);
+      const p1 = project(0, 0, (t + 0.25) * state.current);
+      arrowHead(p0.sx, p0.sy, p1.sx, p1.sy, '#ffce9e');
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (state.mode === 'magnetic') drawWire();
+
+    // field lines
+    for (const ln of lines) {
+      ctx.strokeStyle = ln.col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let started = false;
+      for (const p of ln.pts) {
+        const pr = project(p.x, p.y, p.z);
+        if (pr.zc <= 0.1) { started = false; continue; }
+        if (!started) { ctx.moveTo(pr.sx, pr.sy); started = true; }
+        else ctx.lineTo(pr.sx, pr.sy);
+      }
+      ctx.stroke();
+      // direction arrow around the middle of the line
+      const mi = Math.floor(ln.pts.length * 0.55);
+      if (mi > 0 && mi < ln.pts.length) {
+        const a = project(ln.pts[mi - 1].x, ln.pts[mi - 1].y, ln.pts[mi - 1].z);
+        const b = project(ln.pts[mi].x, ln.pts[mi].y, ln.pts[mi].z);
+        if (a.zc > 0.1 && b.zc > 0.1) arrowHead(a.sx, a.sy, b.sx, b.sy, ln.col);
+      }
+    }
+
+    // charges
+    if (state.mode === 'electric') {
+      const sorted = [...charges].sort((p, q) => project(q.x, q.y, q.z).zc - project(p.x, p.y, p.z).zc);
+      for (const c of sorted) {
+        const pr = project(c.x, c.y, c.z);
+        if (pr.zc <= 0.1) continue;
+        const r = Math.max(6, 11 * pr.s);
+        ctx.fillStyle = c.q > 0 ? '#f87171' : '#60a5fa';
+        ctx.beginPath();
+        ctx.arc(pr.sx, pr.sy, r, 0, 6.2832);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(pr.sx - r * 0.5, pr.sy);
+        ctx.lineTo(pr.sx + r * 0.5, pr.sy);
+        if (c.q > 0) {
+          ctx.moveTo(pr.sx, pr.sy - r * 0.5);
+          ctx.lineTo(pr.sx, pr.sy + r * 0.5);
+        }
+        ctx.stroke();
+      }
+    }
+
+    drawGizmo();
+  }
+
+  function drawGizmo() {
+    const ox = 52, oy = H - 52, len = 30;
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const axes = [
+      { v: [1, 0, 0], c: '#f87171', l: 'x' },
+      { v: [0, 1, 0], c: '#4ade80', l: 'y' },
+      { v: [0, 0, 1], c: '#60a5fa', l: 'z' },
+    ];
+    const proj = axes.map((a) => {
+      const [x, y, z] = a.v;
+      const x1 = x * cy + z * sy;
+      const z1 = -x * sy + z * cy;
+      const y2 = y * cp - z1 * sp;
+      const z2 = y * sp + z1 * cp;
+      return { ex: ox + x1 * len, ey: oy - y2 * len, depth: z2, c: a.c, l: a.l };
+    });
+    proj.sort((a, b) => a.depth - b.depth);
+    ctx.lineWidth = 2;
+    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    for (const a of proj) {
+      ctx.strokeStyle = a.c;
+      ctx.fillStyle = a.c;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(a.ex, a.ey);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(a.ex, a.ey, 2.4, 0, 6.2832);
+      ctx.fill();
+      ctx.fillText(a.l, a.ex + 3, a.ey - 3);
+    }
+  }
+
+  // ---- interaction ----
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lastX) * 0.01;
+    state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch + (e.clientY - lastY) * 0.01));
+    lastX = e.clientX; lastY = e.clientY;
+    draw();
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  // ---- controls ----
+  document.getElementById('mode')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#mode button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.mode = btn.dataset.mode as 'electric' | 'magnetic';
+    (document.getElementById('action') as HTMLElement).textContent =
+      state.mode === 'electric' ? 'New charges' : 'Flip current';
+    rebuild();
+  });
+
+  const denEl = document.getElementById('den') as HTMLInputElement;
+  denEl.addEventListener('input', () => {
+    state.density = +denEl.value;
+    (document.getElementById('denval') as HTMLElement).textContent = denEl.value;
+    rebuild();
+  });
+
+  document.getElementById('action')!.addEventListener('click', () => {
+    if (state.mode === 'electric') randomCharges();
+    else state.current *= -1;
+    rebuild();
+  });
+
+  // dipole to start
+  charges = [
+    { x: -0.45, y: 0, z: 0, q: 1 },
+    { x: 0.45, y: 0, z: 0, q: -1 },
+  ];
+  rebuild();
+</script>
+
+<style>
+  .probe-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .probe-canvas:active {
+    cursor: grabbing;
+  }
+</style>

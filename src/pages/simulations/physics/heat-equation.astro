@@ -1,0 +1,234 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Heat Equation"
+  description="The heat equation describes how temperature spreads out over time. Here it plays out in a room: a radiator warms one corner, a cold window chills another, and heat diffuses between them. Drag inside to add your own heat."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="heat" class="heat-canvas" width="560" height="560"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="play">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Diffusivity <b id="diffval">0.18</b></label>
+        <input type="range" id="diff" min="2" max="24" value="18" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Temp at cursor</span><b id="temp">—</b></div>
+      </div>
+
+      <div class="legend">
+        <span>cold</span>
+        <span class="bar"></span>
+        <span>hot</span>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Orange = radiator (hot), blue strip on the right = window (cold), walls
+        sit at room temperature. Drag anywhere inside to paint in heat and watch
+        it diffuse. Lower the diffusivity to make heat spread more slowly.
+      </p>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const canvas = document.getElementById('heat') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const G = 120; // grid resolution
+
+  const off = document.createElement('canvas');
+  off.width = G;
+  off.height = G;
+  const octx = off.getContext('2d')!;
+  const img = octx.createImageData(G, G);
+
+  let u = new Float32Array(G * G);
+  let v = new Float32Array(G * G);
+  const idx = (x: number, y: number) => y * G + x;
+
+  const AMBIENT = 0.3;
+  const state = { playing: true, diff: 0.18, cursor: -1 };
+
+  function inRadiator(x: number, y: number) {
+    return x >= 3 && x <= 7 && y >= G * 0.4 && y <= G * 0.6;
+  }
+  function inWindow(x: number, y: number) {
+    return x >= G - 2 && y >= G * 0.28 && y <= G * 0.72;
+  }
+
+  function applyFixed(a: Float32Array) {
+    for (let x = 0; x < G; x++) {
+      a[idx(x, 0)] = AMBIENT;
+      a[idx(x, G - 1)] = AMBIENT;
+    }
+    for (let y = 0; y < G; y++) {
+      a[idx(0, y)] = AMBIENT;
+      a[idx(G - 1, y)] = AMBIENT;
+    }
+    for (let y = 0; y < G; y++)
+      for (let x = 0; x < G; x++) {
+        if (inRadiator(x, y)) a[idx(x, y)] = 1.0;
+        else if (inWindow(x, y)) a[idx(x, y)] = 0.0;
+      }
+  }
+
+  function reset() {
+    u = new Float32Array(G * G).fill(AMBIENT);
+    v = new Float32Array(G * G);
+    applyFixed(u);
+  }
+
+  function step() {
+    const r = state.diff;
+    for (let y = 1; y < G - 1; y++) {
+      for (let x = 1; x < G - 1; x++) {
+        const i = idx(x, y);
+        const lap = u[i - 1] + u[i + 1] + u[i - G] + u[i + G] - 4 * u[i];
+        v[i] = u[i] + r * lap;
+      }
+    }
+    const t = u; u = v; v = t;
+    applyFixed(u);
+  }
+
+  function thermal(t: number) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [
+      [28, 56, 150],
+      [38, 160, 205],
+      [70, 200, 120],
+      [242, 200, 70],
+      [240, 78, 58],
+    ];
+    const seg = t * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(seg));
+    const f = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    return [
+      (a[0] + (b[0] - a[0]) * f) | 0,
+      (a[1] + (b[1] - a[1]) * f) | 0,
+      (a[2] + (b[2] - a[2]) * f) | 0,
+    ];
+  }
+
+  function render() {
+    for (let i = 0; i < G * G; i++) {
+      const c = thermal(u[i]);
+      const j = i * 4;
+      img.data[j] = c[0];
+      img.data[j + 1] = c[1];
+      img.data[j + 2] = c[2];
+      img.data[j + 3] = 255;
+    }
+    octx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, W, H);
+
+    // radiator + window markers
+    const cell = W / G;
+    ctx.fillStyle = 'rgba(255,180,120,0.9)';
+    ctx.fillRect(3 * cell, G * 0.4 * cell, 4 * cell, G * 0.2 * cell);
+    ctx.fillStyle = 'rgba(150,200,255,0.9)';
+    ctx.fillRect((G - 2) * cell, G * 0.28 * cell, 2 * cell, G * 0.44 * cell);
+
+    // cursor temp
+    const tEl = document.getElementById('temp') as HTMLElement;
+    if (state.cursor >= 0) {
+      const celsius = 10 + u[state.cursor] * 20;
+      tEl.textContent = `${celsius.toFixed(1)}°C`;
+    } else tEl.textContent = '—';
+  }
+
+  function loop() {
+    if (state.playing) {
+      for (let k = 0; k < 4; k++) step();
+    }
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ---- interaction: paint heat ----
+  let painting = false;
+  function paint(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const gx = Math.round(((e.clientX - rect.left) / rect.width) * G);
+    const gy = Math.round(((e.clientY - rect.top) / rect.height) * G);
+    state.cursor = gy >= 0 && gy < G && gx >= 0 && gx < G ? idx(gx, gy) : -1;
+    if (!painting) return;
+    const R = 5;
+    for (let dy = -R; dy <= R; dy++)
+      for (let dx = -R; dx <= R; dx++) {
+        const x = gx + dx, y = gy + dy;
+        if (x < 1 || y < 1 || x >= G - 1 || y >= G - 1) continue;
+        if (dx * dx + dy * dy > R * R) continue;
+        u[idx(x, y)] = Math.min(1, u[idx(x, y)] + 0.5);
+      }
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    painting = true;
+    canvas.setPointerCapture(e.pointerId);
+    paint(e);
+  });
+  canvas.addEventListener('pointermove', paint);
+  canvas.addEventListener('pointerup', () => (painting = false));
+  canvas.addEventListener('pointerleave', () => (state.cursor = -1));
+
+  // ---- controls ----
+  const playBtn = document.getElementById('play') as HTMLButtonElement;
+  playBtn.addEventListener('click', () => {
+    state.playing = !state.playing;
+    playBtn.textContent = state.playing ? 'Pause' : 'Play';
+  });
+  document.getElementById('reset')!.addEventListener('click', reset);
+
+  const diffEl = document.getElementById('diff') as HTMLInputElement;
+  diffEl.addEventListener('input', () => {
+    state.diff = +diffEl.value / 100;
+    (document.getElementById('diffval') as HTMLElement).textContent = state.diff.toFixed(2);
+  });
+
+  reset();
+  loop();
+</script>
+
+<style>
+  .heat-canvas {
+    cursor: crosshair;
+    touch-action: none;
+    width: 100%;
+    border-radius: var(--radius-sm);
+  }
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text-faint);
+  }
+  .legend .bar {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(
+      to right,
+      rgb(28, 56, 150),
+      rgb(38, 160, 205),
+      rgb(70, 200, 120),
+      rgb(242, 200, 70),
+      rgb(240, 78, 58)
+    );
+  }
+</style>

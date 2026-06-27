@@ -18,6 +18,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <input type="range" id="size" min="4" max="45" value="18" />
       </div>
 
+      <div class="control">
+        <label>Point density <b id="ptval">3000</b></label>
+        <input type="range" id="pts" min="600" max="4500" step="150" value="3000" />
+      </div>
+
       <button class="btn ghost" id="regen">New field</button>
 
       <div class="readout">
@@ -45,7 +50,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const CAM = 3.1;
   const FOCAL = 2.7;
   const SCALE = 270;
-  const N = 3200;
+  const N = 4500;
 
   type Blob = { x: number; y: number; z: number; s: number; a: number };
   let blobs: Blob[] = [];
@@ -62,6 +67,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     yaw: 0.7,
     pitch: -0.5,
     size: 0.18,
+    count: 3000,
     probe: { x: 0, y: 0, z: 0 },
   };
 
@@ -277,7 +283,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.clearRect(0, 0, W, H);
 
     ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < nPoints; i++) {
+    const count = Math.min(state.count, nPoints);
+    for (let i = 0; i < count; i++) {
       const p = project(px[i], py[i], pz[i]);
       if (p.zc <= 0.1) continue;
       const c = turbo(pt[i]);
@@ -291,6 +298,46 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.globalCompositeOperation = 'source-over';
 
     drawProbe();
+    drawGizmo();
+  }
+
+  function drawGizmo() {
+    const ox = 52, oy = H - 52, len = 30;
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const axes = [
+      { v: [1, 0, 0], c: '#f87171', l: 'x' },
+      { v: [0, 1, 0], c: '#4ade80', l: 'y' },
+      { v: [0, 0, 1], c: '#60a5fa', l: 'z' },
+    ];
+    const proj = axes.map((a) => {
+      const [x, y, z] = a.v;
+      const x1 = x * cy + z * sy;
+      const z1 = -x * sy + z * cy;
+      const y2 = y * cp - z1 * sp;
+      const z2 = y * sp + z1 * cp;
+      return { ex: ox + x1 * len, ey: oy - y2 * len, depth: z2, c: a.c, l: a.l };
+    });
+    proj.sort((a, b) => a.depth - b.depth);
+    ctx.lineWidth = 2;
+    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    ctx.strokeStyle = 'rgba(120,128,144,0.6)';
+    ctx.beginPath();
+    ctx.arc(ox, oy, 2, 0, 6.2832);
+    ctx.fillStyle = 'rgba(120,128,144,0.7)';
+    ctx.fill();
+    for (const a of proj) {
+      ctx.strokeStyle = a.c;
+      ctx.fillStyle = a.c;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(a.ex, a.ey);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(a.ex, a.ey, 2.4, 0, 6.2832);
+      ctx.fill();
+      ctx.fillText(a.l, a.ex + 3, a.ey - 3);
+    }
   }
 
   // ---- interaction ----
@@ -356,6 +403,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   sizeEl.addEventListener('input', () => {
     state.size = +sizeEl.value / 100;
     (document.getElementById('sizeval') as HTMLElement).textContent = state.size.toFixed(2);
+    draw();
+  });
+
+  const ptsEl = document.getElementById('pts') as HTMLInputElement;
+  ptsEl.addEventListener('input', () => {
+    state.count = +ptsEl.value;
+    (document.getElementById('ptval') as HTMLElement).textContent = ptsEl.value;
     draw();
   });
 

@@ -74,6 +74,30 @@ export const AREAS: Area[] = [
       },
     ],
   },
+  {
+    slug: 'physics',
+    title: 'Physics',
+    description: 'Fields and the equations that move energy through space.',
+    icon: 'M13 2 L4 14 h6 l-1 8 9-12 h-6 z',
+    simulators: [
+      {
+        slug: 'em-fields',
+        title: 'Electric & Magnetic Fields',
+        description:
+          'Orbit a 3D scene of charges and currents, switching between electric field lines and the magnetic field around a wire.',
+        href: '/simulations/physics/em-fields',
+        status: 'live',
+      },
+      {
+        slug: 'heat-equation',
+        title: 'Heat Equation',
+        description:
+          'Watch temperature diffuse across a room from a radiator and a cold window, and paint in your own heat.',
+        href: '/simulations/physics/heat-equation',
+        status: 'live',
+      },
+    ],
+  },
 ];
 
 export function getArea(slug: string): Area | undefined {
