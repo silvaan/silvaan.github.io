@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Optimizer Showdown"
-  description="Five optimizers descending the same 3D loss surface. Pick where each run starts, give every optimizer its own learning rate and hyperparameters, step frame by frame, and watch how SGD, Momentum, Nesterov, RMSProp and Adam differ."
+  description="Five optimizers descending the same 3D loss surface. Click the surface to set where they start, give each its own learning rate and hyperparameters, show the gradient and momentum arrows, and step frame by frame to compare SGD, Momentum, Nesterov, RMSProp and Adam."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -27,6 +27,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <button class="btn" id="run">Pause</button>
         <button class="btn ghost" id="step">Step</button>
         <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="newstart">Random start</button>
       </div>
 
       <div class="control">
@@ -35,12 +36,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <div class="control">
-        <label>Start position</label>
-        <div style="display:grid;gap:10px;margin-top:6px">
-          <div class="control"><label>x <b id="sxval">1.00</b></label><input type="range" id="sx" min="-190" max="190" value="100" /></div>
-          <div class="control"><label>y <b id="syval">0.70</b></label><input type="range" id="sy" min="-190" max="190" value="70" /></div>
+        <label>Arrows</label>
+        <div class="seg" id="arrows">
+          <button data-a="grad">Gradient</button>
+          <button data-a="mom">Momentum</button>
         </div>
-        <button class="btn ghost" id="newstart" style="margin-top:8px">Random start</button>
       </div>
 
       <div class="block-label">Legend</div>
@@ -54,9 +54,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag to orbit. Click a legend row to toggle that optimizer; the number is
-        its live loss. Open an optimizer's section to tune its own learning rate
-        and hyperparameters.
+        Drag to orbit, click the surface to drop the start point there. The
+        dashed white arrow is the downhill gradient; the coloured arrow is each
+        optimizer's momentum.
       </p>
     </div>
   </div>
@@ -95,7 +95,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     },
   };
 
-  type Cfg = { on: boolean; lr: number; momentum: number; rho: number; beta1: number; beta2: number };
+  type Cfg = { lr: number; momentum: number; rho: number; beta1: number; beta2: number };
   type RT = { x: number; y: number; mx: number; my: number; vx: number; vy: number; t: number };
 
   const DEFS: { name: string; color: string; uses: string[]; step: (o: RT, c: Cfg, g: Surf['g']) => void }[] = [
@@ -143,6 +143,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     },
   ];
 
+  // velocity vector to show as the "momentum" arrow (null where not meaningful)
+  function momentumOf(i: number): { x: number; y: number } | null {
+    const o = rt[i];
+    const n = DEFS[i].name;
+    if (n === 'Momentum' || n === 'Nesterov') return { x: o.vx, y: o.vy };
+    if (n === 'Adam') return { x: o.mx, y: o.my };
+    return null;
+  }
+
   const PMETA: Record<string, { label: string; min: number; max: number; scale: number; fmt: number }> = {
     lr: { label: 'Learning rate', min: 2, max: 200, scale: 1000, fmt: 3 },
     momentum: { label: 'Momentum β', min: 0, max: 99, scale: 100, fmt: 2 },
@@ -151,13 +160,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     beta2: { label: 'β₂', min: 9000, max: 9999, scale: 10000, fmt: 4 },
   };
 
-  const cfg: Cfg[] = DEFS.map(() => ({ on: true, lr: 0.03, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
+  const cfg: Cfg[] = DEFS.map(() => ({ lr: 0.03, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
   let rt: RT[] = [];
   const trails: { x: number; y: number }[][] = [];
 
   const state = {
     yaw: 0.7, pitch: -0.62, surf: 'saddle', speed: 10, running: true,
-    iter: 0, start: { x: 1.0, y: 0.7 },
+    iter: 0, start: { x: 1.0, y: 0.7 }, showGrad: false, showMom: false,
   };
   let fmin = 0, fspan = 1;
 
@@ -211,7 +220,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function stepAll() {
     const g = SURFACES[state.surf].g;
     DEFS.forEach((def, i) => {
-      if (!cfg[i].on) return;
       const o = rt[i];
       if (!isFinite(o.x) || !isFinite(o.y)) return;
       def.step(o, cfg[i], g);
@@ -222,6 +230,23 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       if (tr.length > 600) tr.shift();
     });
     state.iter++;
+  }
+
+  function arrow(x: number, y: number, dx: number, dy: number, L: number, color: string, dashed: boolean) {
+    const a = worldOf(x, y);
+    const b = worldOf(x + dx * L, y + dy * L);
+    if (a.zc <= 0.1 || b.zc <= 0.1) return;
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+    if (dashed) ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+    ctx.setLineDash([]);
+    const ang = Math.atan2(b.sy - a.sy, b.sx - a.sx);
+    const hs = 7;
+    ctx.beginPath();
+    ctx.moveTo(b.sx, b.sy);
+    ctx.lineTo(b.sx - hs * Math.cos(ang - 0.45), b.sy - hs * Math.sin(ang - 0.45));
+    ctx.lineTo(b.sx - hs * Math.cos(ang + 0.45), b.sy - hs * Math.sin(ang + 0.45));
+    ctx.closePath(); ctx.fill();
   }
 
   function draw() {
@@ -260,9 +285,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
 
     DEFS.forEach((def, i) => {
-      const lossEl = document.getElementById('loss-' + i);
-      if (lossEl) lossEl.textContent = cfg[i].on ? curF(rt[i].x, rt[i].y).toFixed(3) : 'off';
-      if (!cfg[i].on) return;
       const tr = trails[i];
       ctx.strokeStyle = def.color;
       ctx.lineWidth = 2;
@@ -277,7 +299,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.stroke();
       ctx.globalAlpha = 1;
 
-      const p = worldOf(rt[i].x, rt[i].y);
+      const o = rt[i];
+      // arrows
+      if (state.showGrad) {
+        const g = SURFACES[state.surf].g(o.x, o.y);
+        const m = Math.hypot(g.x, g.y);
+        if (m > 1e-5) arrow(o.x, o.y, -g.x / m, -g.y / m, 0.34, 'rgba(255,255,255,0.92)', true);
+      }
+      if (state.showMom) {
+        const v = momentumOf(i);
+        if (v) {
+          const m = Math.hypot(v.x, v.y);
+          if (m > 1e-5) arrow(o.x, o.y, v.x / m, v.y / m, Math.min(0.55, m * 5) + 0.05, def.color, false);
+        }
+      }
+
+      const p = worldOf(o.x, o.y);
       if (p.zc > 0.1) {
         ctx.fillStyle = def.color;
         ctx.beginPath();
@@ -321,20 +358,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
-  // ---- legend (colour + name + toggle + loss) ----
+  // legend: just the colour key
   const legend = document.getElementById('legend')!;
   legend.innerHTML = DEFS
-    .map((d, i) => `<button class="opt-row active" data-i="${i}"><i class="sw" style="background:${d.color}"></i><span class="nm">${d.name}</span><span class="loss" id="loss-${i}">—</span></button>`)
+    .map((d) => `<span class="leg"><i class="sw" style="background:${d.color}"></i>${d.name}</span>`)
     .join('');
-  legend.addEventListener('click', (e) => {
-    const row = (e.target as HTMLElement).closest('.opt-row') as HTMLElement | null;
-    if (!row) return;
-    const i = +row.dataset.i!;
-    cfg[i].on = !cfg[i].on;
-    row.classList.toggle('active', cfg[i].on);
-  });
 
-  // ---- per-optimizer hyperparameter sections ----
+  // per-optimizer hyperparameter sections
   const sections = document.getElementById('sections')!;
   sections.innerHTML = DEFS
     .map((d, i) => {
@@ -359,21 +389,48 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     });
   });
 
-  // ---- interaction ----
-  let dragging = false, lastX = 0, lastY = 0;
+  // ---- click on surface to set start ----
+  function pickStart(clientX: number, clientY: number) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((clientX - rect.left) / rect.width) * W;
+    const my = ((clientY - rect.top) / rect.height) * H;
+    let bestD = Infinity, bx = 0, by = 0, found = false;
+    const G = 80;
+    for (let i = 0; i <= G; i++)
+      for (let j = 0; j <= G; j++) {
+        const x = -D + (2 * D * i) / G;
+        const y = -D + (2 * D * j) / G;
+        const p = worldOf(x, y);
+        if (p.zc <= 0.1) continue;
+        const d = (p.sx - mx) ** 2 + (p.sy - my) ** 2;
+        if (d < bestD) { bestD = d; bx = x; by = y; found = true; }
+      }
+    if (found && bestD < 44 * 44) {
+      state.start = { x: bx, y: by };
+      resetOpts();
+    }
+  }
+
+  // ---- interaction (orbit vs click) ----
+  let dragging = false, moved = false, lastX = 0, lastY = 0, downX = 0, downY = 0;
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId);
+    dragging = true; moved = false;
+    lastX = e.clientX; lastY = e.clientY; downX = e.clientX; downY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!dragging) return;
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) moved = true;
     state.yaw += (e.clientX - lastX) * 0.01;
     state.pitch = Math.max(-1.45, Math.min(-0.05, state.pitch + (e.clientY - lastY) * 0.01));
     lastX = e.clientX; lastY = e.clientY;
     if (!state.running) draw();
   });
-  const stop = () => (dragging = false);
-  canvas.addEventListener('pointerup', stop);
-  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('pointerup', (e) => {
+    dragging = false;
+    if (!moved) pickStart(e.clientX, e.clientY);
+  });
+  canvas.addEventListener('pointercancel', () => (dragging = false));
 
   // ---- controls ----
   document.getElementById('surf')!.addEventListener('click', (e) => {
@@ -386,20 +443,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     resetOpts();
   });
 
+  document.getElementById('arrows')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    btn.classList.toggle('active');
+    const on = btn.classList.contains('active');
+    if (btn.dataset.a === 'grad') state.showGrad = on; else state.showMom = on;
+    if (!state.running) draw();
+  });
+
   const spEl = document.getElementById('sp') as HTMLInputElement;
   spEl.addEventListener('input', () => {
     state.speed = +spEl.value;
     (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
   });
-
-  const sxEl = document.getElementById('sx') as HTMLInputElement;
-  const syEl = document.getElementById('sy') as HTMLInputElement;
-  function syncStartLabels() {
-    (document.getElementById('sxval') as HTMLElement).textContent = state.start.x.toFixed(2);
-    (document.getElementById('syval') as HTMLElement).textContent = state.start.y.toFixed(2);
-  }
-  sxEl.addEventListener('input', () => { state.start.x = +sxEl.value / 100; syncStartLabels(); resetOpts(); });
-  syEl.addEventListener('input', () => { state.start.y = +syEl.value / 100; syncStartLabels(); resetOpts(); });
 
   const runBtn = document.getElementById('run') as HTMLButtonElement;
   runBtn.addEventListener('click', () => {
@@ -410,13 +467,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   document.getElementById('reset')!.addEventListener('click', resetOpts);
   document.getElementById('newstart')!.addEventListener('click', () => {
     state.start = { x: +(Math.random() * 3 - 1.5).toFixed(2), y: +(Math.random() * 3 - 1.5).toFixed(2) };
-    sxEl.value = String(Math.round(state.start.x * 100));
-    syEl.value = String(Math.round(state.start.y * 100));
-    syncStartLabels();
     resetOpts();
   });
 
-  // ---- loop with time-based stepping (so it can run slowly) ----
+  // ---- loop with time-based stepping ----
   let last = 0, acc = 0;
   function loop(ts: number) {
     if (!last) last = ts;
@@ -438,11 +492,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <style>
   .probe-canvas {
-    cursor: grab;
+    cursor: crosshair;
     touch-action: none;
-  }
-  .probe-canvas:active {
-    cursor: grabbing;
   }
   .block-label {
     font-size: 0.72rem;
@@ -453,29 +504,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
   .opt-legend {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-wrap: wrap;
+    gap: 6px 14px;
   }
-  .opt-row {
-    display: flex;
+  .opt-legend .leg {
+    display: inline-flex;
     align-items: center;
-    gap: 9px;
-    width: 100%;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 7px 11px;
+    gap: 7px;
+    font-size: 0.84rem;
     color: var(--text-muted);
-    font: inherit;
-    font-size: 0.86rem;
-    cursor: pointer;
-    opacity: 0.45;
-    transition: opacity 0.15s ease, border-color 0.15s ease;
   }
-  .opt-row.active { opacity: 1; color: var(--text); }
-  .opt-row:hover { border-color: var(--border-strong); }
-  .opt-row .nm { flex: 1; text-align: left; }
-  .opt-row .loss { font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent-2); }
   .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; display: inline-block; }
 
   .opt-params {
@@ -496,11 +534,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     color: var(--text);
   }
   .opt-params summary::-webkit-details-marker { display: none; }
-  .opt-params summary::after {
-    content: '+';
-    margin-left: auto;
-    color: var(--text-faint);
-  }
+  .opt-params summary::after { content: '+'; margin-left: auto; color: var(--text-faint); }
   .opt-params[open] summary::after { content: '−'; }
   .opt-params-body { padding: 2px 12px 10px; }
   .opt-params-body .control { margin-bottom: 12px; }
