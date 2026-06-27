@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Scalar Fields & Gradients"
-  description="A scalar field assigns a number to every point in space, shown here as a 3D density cloud. Drag the small probe through it to feel how the field behaves around a point: which way it grows, whether it looks flat, or like a peak or a valley."
+  description="A scalar field assigns a number to every point in space, shown here as a 3D density cloud. Drag the small probe through it: an arrow points the way the field grows fastest, and its gradient magnitude is shown alongside."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -13,14 +13,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>View</label>
-        <div class="seg" id="mode">
-          <button data-mode="gradient" class="active">Gradient</button>
-          <button data-mode="laplacian">Laplacian</button>
-        </div>
-      </div>
-
       <div class="control">
         <label>Probe size <b id="sizeval">0.18</b></label>
         <input type="range" id="size" min="4" max="45" value="18" />
@@ -30,13 +22,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
       <div class="readout">
         <div class="row"><span>Density here</span><b id="dens">—</b></div>
-        <div class="row"><span id="mlabel">Steepness</span><b id="mval">—</b></div>
+        <div class="row"><span>Gradient |∇f|</span><b id="grad">—</b></div>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
         Drag the cube to move the probe; drag the background to orbit; scroll to
-        move it in depth. Corners are coloured by density, so you can see which
-        way the field grows. Shrink the cube to zoom into the local derivative.
+        move it in depth. The arrow points toward the steepest increase, longer
+        where the field changes faster. Shrink the cube to zoom into the local
+        derivative.
       </p>
     </div>
   </div>
@@ -63,12 +56,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const pt = new Float32Array(N);
   let nPoints = 0;
 
-  let fMin = 0, fMax = 1, span = 1, gradRef = 1, lapRef = 1;
+  let fMin = 0, fMax = 1, span = 1, gradRef = 1;
 
   const state = {
     yaw: 0.7,
     pitch: -0.5,
-    mode: 'gradient' as 'gradient' | 'laplacian',
     size: 0.18,
     probe: { x: 0, y: 0, z: 0 },
   };
@@ -105,6 +97,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const tAt = (x: number, y: number, z: number) =>
     Math.max(0, Math.min(1, (field(x, y, z) - fMin) / span));
 
+  function gradient(x: number, y: number, z: number, h: number) {
+    return {
+      x: (field(x + h, y, z) - field(x - h, y, z)) / (2 * h),
+      y: (field(x, y + h, z) - field(x, y - h, z)) / (2 * h),
+      z: (field(x, y, z + h) - field(x, y, z - h)) / (2 * h),
+    };
+  }
+
   function generate() {
     const n = 4 + Math.floor(Math.random() * 3);
     blobs = [];
@@ -126,21 +126,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     span = fMax - fMin || 1;
 
-    // gradient & laplacian reference scales
-    const h = 0.03;
-    gradRef = 1e-6; lapRef = 1e-6;
+    // reference gradient magnitude for arrow scaling
+    gradRef = 1e-6;
     for (let i = 0; i < 3000; i++) {
-      const x = Math.random() * 1.8 - 0.9, y = Math.random() * 1.8 - 0.9, z = Math.random() * 1.8 - 0.9;
-      const fc = field(x, y, z);
-      const gm = Math.hypot(
-        field(x + h, y, z) - field(x - h, y, z),
-        field(x, y + h, z) - field(x, y - h, z),
-        field(x, y, z + h) - field(x, y, z - h)
-      ) / (2 * h);
-      const lap = (field(x + h, y, z) + field(x - h, y, z) + field(x, y + h, z) +
-        field(x, y - h, z) + field(x, y, z + h) + field(x, y, z - h) - 6 * fc) / (h * h);
+      const g = gradient(Math.random() * 1.8 - 0.9, Math.random() * 1.8 - 0.9, Math.random() * 1.8 - 0.9, 0.03);
+      const gm = Math.hypot(g.x, g.y, g.z);
       if (gm > gradRef) gradRef = gm;
-      if (Math.abs(lap) > lapRef) lapRef = Math.abs(lap);
     }
 
     // density-weighted point cloud
@@ -157,10 +148,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
     }
 
-    // start the probe at the densest sampled cloud point
+    // start the probe partway up a slope, not dead centre
     let best = 0;
     for (let i = 1; i < nPoints; i++) if (pt[i] > pt[best]) best = i;
-    state.probe = { x: px[best], y: py[best], z: pz[best] };
+    state.probe = { x: px[best] * 0.6, y: py[best] * 0.6, z: pz[best] * 0.6 };
     draw();
   }
 
@@ -177,7 +168,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
   }
 
-  // camera-space unit vector -> world (inverse rotation)
   function invRotate(xc: number, yc: number, zc: number) {
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
     const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
@@ -196,20 +186,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const hs = state.size;
     const c = state.probe;
 
-    // local readings sampled at the probe scale
-    const fc = field(c.x, c.y, c.z);
-    const gm = Math.hypot(
-      field(c.x + hs, c.y, c.z) - field(c.x - hs, c.y, c.z),
-      field(c.x, c.y + hs, c.z) - field(c.x, c.y - hs, c.z),
-      field(c.x, c.y, c.z + hs) - field(c.x, c.y, c.z - hs)
-    ) / (2 * hs);
-    const lap = (field(c.x + hs, c.y, c.z) + field(c.x - hs, c.y, c.z) +
-      field(c.x, c.y + hs, c.z) + field(c.x, c.y - hs, c.z) +
-      field(c.x, c.y, c.z + hs) + field(c.x, c.y, c.z - hs) - 6 * fc) / (hs * hs);
-    const relG = gm / gradRef;
-    const nl = lap / lapRef;
+    const g = gradient(c.x, c.y, c.z, hs);
+    const gm = Math.hypot(g.x, g.y, g.z);
 
-    // corners
+    // probe cube corners coloured by density
     const cor: { p: ReturnType<typeof project>; t: number }[] = [];
     for (let i = 0; i < 8; i++) {
       const x = c.x + (i & 1 ? hs : -hs);
@@ -218,16 +198,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       cor.push({ p: project(x, y, z), t: tAt(x, y, z) });
     }
 
-    // edge colour: white in gradient view, curvature-tinted in laplacian view
-    let edge = 'rgba(255,255,255,0.85)';
-    if (state.mode === 'laplacian') {
-      if (nl < -0.12) edge = 'rgba(245,150,90,0.95)';      // peak
-      else if (nl > 0.12) edge = 'rgba(90,200,214,0.95)';  // valley
-      else edge = 'rgba(230,233,236,0.7)';                 // ~ flat
-    }
-
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
     for (const [a, b] of CUBE_EDGES) {
       if (cor[a].p.zc <= 0.1 || cor[b].p.zc <= 0.1) continue;
       ctx.beginPath();
@@ -235,17 +207,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.lineTo(cor[b].p.sx, cor[b].p.sy);
       ctx.stroke();
     }
-
-    // corner dots coloured by density
     for (const k of cor) {
       if (k.p.zc <= 0.1) continue;
       const col = turbo(k.t);
       ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
       ctx.beginPath();
-      ctx.arc(k.p.sx, k.p.sy, Math.max(2.4, 2.7 * k.p.s), 0, 6.2832);
+      ctx.arc(k.p.sx, k.p.sy, Math.max(2.3, 2.6 * k.p.s), 0, 6.2832);
       ctx.fill();
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
       ctx.stroke();
     }
 
@@ -254,26 +224,53 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const cc = turbo(tAt(c.x, c.y, c.z));
     ctx.fillStyle = `rgb(${cc[0]},${cc[1]},${cc[2]})`;
     ctx.beginPath();
-    ctx.arc(cp.sx, cp.sy, Math.max(3.4, 3.6 * cp.s), 0, 6.2832);
+    ctx.arc(cp.sx, cp.sy, Math.max(3.2, 3.4 * cp.s), 0, 6.2832);
     ctx.fill();
     ctx.lineWidth = 1.6;
     ctx.strokeStyle = '#fff';
     ctx.stroke();
 
+    // gradient arrow: direction of steepest increase
+    if (gm > 1e-5) {
+      const L = 0.14 + 0.55 * Math.min(1, gm / gradRef);
+      const tip = project(
+        c.x + (g.x / gm) * L,
+        c.y + (g.y / gm) * L,
+        c.z + (g.z / gm) * L
+      );
+      if (tip.zc > 0.1 && cp.zc > 0.1) {
+        const ang = Math.atan2(tip.sy - cp.sy, tip.sx - cp.sx);
+        const hsz = 9;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#aab6ff';
+        ctx.fillStyle = '#aab6ff';
+        ctx.beginPath();
+        ctx.moveTo(cp.sx, cp.sy);
+        ctx.lineTo(tip.sx, tip.sy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(tip.sx, tip.sy);
+        ctx.lineTo(tip.sx - hsz * Math.cos(ang - 0.42), tip.sy - hsz * Math.sin(ang - 0.42));
+        ctx.lineTo(tip.sx - hsz * Math.cos(ang + 0.42), tip.sy - hsz * Math.sin(ang + 0.42));
+        ctx.closePath();
+        ctx.fill();
+
+        // gradient value beside the arrow tip
+        const label = gm.toFixed(2);
+        ctx.font = "600 13px 'JetBrains Mono', monospace";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(8,9,12,0.85)';
+        ctx.strokeText(label, tip.sx + 8, tip.sy - 6);
+        ctx.fillStyle = '#dfe4ff';
+        ctx.fillText(label, tip.sx + 8, tip.sy - 6);
+      }
+    }
+
     // readouts
     const ct = tAt(c.x, c.y, c.z);
     (document.getElementById('dens') as HTMLElement).textContent =
       ct < 0.34 ? 'low' : ct < 0.67 ? 'medium' : 'high';
-    const mlabel = document.getElementById('mlabel') as HTMLElement;
-    const mval = document.getElementById('mval') as HTMLElement;
-    if (state.mode === 'gradient') {
-      mlabel.textContent = 'Steepness';
-      mval.textContent = relG < 0.12 ? 'almost flat' : relG < 0.45 ? 'gentle' : 'steep';
-    } else {
-      mlabel.textContent = 'Local shape';
-      mval.textContent =
-        Math.abs(nl) < 0.12 ? '≈ flat / linear' : nl < 0 ? 'peak' : 'valley';
-    }
+    (document.getElementById('grad') as HTMLElement).textContent = gm.toFixed(3);
   }
 
   function draw() {
@@ -329,14 +326,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       const up = invRotate(0, 1, 0);
       const wx = dx / perWorld;
       const wy = -dy / perWorld;
-      const np = {
-        x: state.probe.x + right.x * wx + up.x * wy,
-        y: state.probe.y + right.y * wx + up.y * wy,
-        z: state.probe.z + right.z * wx + up.z * wy,
-      };
-      state.probe.x = Math.max(-1.15, Math.min(1.15, np.x));
-      state.probe.y = Math.max(-1.15, Math.min(1.15, np.y));
-      state.probe.z = Math.max(-1.15, Math.min(1.15, np.z));
+      state.probe.x = Math.max(-1.15, Math.min(1.15, state.probe.x + right.x * wx + up.x * wy));
+      state.probe.y = Math.max(-1.15, Math.min(1.15, state.probe.y + right.y * wx + up.y * wy));
+      state.probe.z = Math.max(-1.15, Math.min(1.15, state.probe.z + right.z * wx + up.z * wy));
     }
     draw();
   });
@@ -364,15 +356,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   sizeEl.addEventListener('input', () => {
     state.size = +sizeEl.value / 100;
     (document.getElementById('sizeval') as HTMLElement).textContent = state.size.toFixed(2);
-    draw();
-  });
-
-  document.getElementById('mode')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#mode button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.mode = btn.dataset.mode as 'gradient' | 'laplacian';
     draw();
   });
 
