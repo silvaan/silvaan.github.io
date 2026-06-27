@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Scalar Fields & Gradients"
-  description="A scalar field assigns a number to every point in space. Here it is a 3D density cloud, coloured low to high. Turn on the gradient field to see the direction of steepest increase at points throughout the volume."
+  description="A scalar field assigns a number to every point in space, shown here as a 3D density cloud. Drag the small probe through it to feel how the field behaves around a point: which way it grows, whether it looks flat, or like a peak or a valley."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -14,27 +14,29 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     <div class="sim-panel">
       <div class="control">
-        <label>Points <b id="ptval">3000</b></label>
-        <input type="range" id="pts" min="600" max="6000" step="200" value="3000" />
-      </div>
-
-      <div class="control">
-        <label>Gradient field</label>
-        <div class="seg" id="grad">
-          <button data-on="0">Off</button>
-          <button data-on="1" class="active">On</button>
+        <label>View</label>
+        <div class="seg" id="mode">
+          <button data-mode="gradient" class="active">Gradient</button>
+          <button data-mode="laplacian">Laplacian</button>
         </div>
       </div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="spin">Pause spin</button>
-        <button class="btn ghost" id="regen">New field</button>
+      <div class="control">
+        <label>Probe size <b id="sizeval">0.18</b></label>
+        <input type="range" id="size" min="4" max="45" value="18" />
+      </div>
+
+      <button class="btn ghost" id="regen">New field</button>
+
+      <div class="readout">
+        <div class="row"><span>Density here</span><b id="dens">—</b></div>
+        <div class="row"><span id="mlabel">Steepness</span><b id="mval">—</b></div>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag to orbit the cloud. Colour runs from low density (blue) to high
-        (red). The white arrows are the gradient: each one points toward denser
-        regions, longer where the field changes faster.
+        Drag the cube to move the probe; drag the background to orbit; scroll to
+        move it in depth. Corners are coloured by density, so you can see which
+        way the field grows. Shrink the cube to zoom into the local derivative.
       </p>
     </div>
   </div>
@@ -47,25 +49,29 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const H = canvas.height;
   const CX = W / 2;
   const CY = H / 2;
-  const CAM = 3.1; // camera distance
+  const CAM = 3.1;
   const FOCAL = 2.7;
   const SCALE = 270;
-  const MAX = 6000;
+  const N = 3200;
 
   type Blob = { x: number; y: number; z: number; s: number; a: number };
   let blobs: Blob[] = [];
 
-  // cloud points
-  const px = new Float32Array(MAX);
-  const py = new Float32Array(MAX);
-  const pz = new Float32Array(MAX);
-  const pt = new Float32Array(MAX); // normalised density [0,1] for colour
+  const px = new Float32Array(N);
+  const py = new Float32Array(N);
+  const pz = new Float32Array(N);
+  const pt = new Float32Array(N);
   let nPoints = 0;
 
-  // gradient arrows: base + tip in world space
-  let arrows: { bx: number; by: number; bz: number; tx: number; ty: number; tz: number }[] = [];
+  let fMin = 0, fMax = 1, span = 1, gradRef = 1, lapRef = 1;
 
-  const state = { count: 3000, showGrad: true, spin: true, yaw: 0.6, pitch: -0.5 };
+  const state = {
+    yaw: 0.7,
+    pitch: -0.5,
+    mode: 'gradient' as 'gradient' | 'laplacian',
+    size: 0.18,
+    probe: { x: 0, y: 0, z: 0 },
+  };
 
   function field(x: number, y: number, z: number) {
     let f = 0;
@@ -96,6 +102,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ];
   }
 
+  const tAt = (x: number, y: number, z: number) =>
+    Math.max(0, Math.min(1, (field(x, y, z) - fMin) / span));
+
   function generate() {
     const n = 4 + Math.floor(Math.random() * 3);
     blobs = [];
@@ -109,69 +118,58 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       });
     }
 
-    // estimate min/max density
-    let fMin = Infinity, fMax = -Infinity;
+    fMin = Infinity; fMax = -Infinity;
     for (let i = 0; i < 6000; i++) {
       const f = field(Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2);
       if (f < fMin) fMin = f;
       if (f > fMax) fMax = f;
     }
-    const span = fMax - fMin || 1;
+    span = fMax - fMin || 1;
 
-    // rejection-sample a density-weighted point cloud
+    // gradient & laplacian reference scales
+    const h = 0.03;
+    gradRef = 1e-6; lapRef = 1e-6;
+    for (let i = 0; i < 3000; i++) {
+      const x = Math.random() * 1.8 - 0.9, y = Math.random() * 1.8 - 0.9, z = Math.random() * 1.8 - 0.9;
+      const fc = field(x, y, z);
+      const gm = Math.hypot(
+        field(x + h, y, z) - field(x - h, y, z),
+        field(x, y + h, z) - field(x, y - h, z),
+        field(x, y, z + h) - field(x, y, z - h)
+      ) / (2 * h);
+      const lap = (field(x + h, y, z) + field(x - h, y, z) + field(x, y + h, z) +
+        field(x, y - h, z) + field(x, y, z + h) + field(x, y, z - h) - 6 * fc) / (h * h);
+      if (gm > gradRef) gradRef = gm;
+      if (Math.abs(lap) > lapRef) lapRef = Math.abs(lap);
+    }
+
+    // density-weighted point cloud
     nPoints = 0;
     let tries = 0;
-    while (nPoints < MAX && tries < MAX * 60) {
+    while (nPoints < N && tries < N * 60) {
       tries++;
-      const x = Math.random() * 2.2 - 1.1;
-      const y = Math.random() * 2.2 - 1.1;
-      const z = Math.random() * 2.2 - 1.1;
+      const x = Math.random() * 2.2 - 1.1, y = Math.random() * 2.2 - 1.1, z = Math.random() * 2.2 - 1.1;
       const t = (field(x, y, z) - fMin) / span;
-      const p = Math.pow(Math.max(0, t), 1.6); // cluster in dense regions, keep faint halo
+      const p = Math.pow(Math.max(0, t), 1.6);
       if (Math.random() < p * 0.9 + 0.02) {
-        px[nPoints] = x;
-        py[nPoints] = y;
-        pz[nPoints] = z;
-        pt[nPoints] = t;
+        px[nPoints] = x; py[nPoints] = y; pz[nPoints] = z; pt[nPoints] = t;
         nPoints++;
       }
     }
 
-    // gradient arrows on a coarse grid
-    arrows = [];
-    const G = 4;
-    const h = 0.02;
-    for (let ix = 0; ix <= G; ix++)
-      for (let iy = 0; iy <= G; iy++)
-        for (let iz = 0; iz <= G; iz++) {
-          const x = -0.85 + (1.7 * ix) / G;
-          const y = -0.85 + (1.7 * iy) / G;
-          const z = -0.85 + (1.7 * iz) / G;
-          const t = (field(x, y, z) - fMin) / span;
-          if (t < 0.18) continue; // skip near-empty voids
-          const gx = (field(x + h, y, z) - field(x - h, y, z)) / (2 * h);
-          const gy = (field(x, y + h, z) - field(x, y - h, z)) / (2 * h);
-          const gz = (field(x, y, z + h) - field(x, y, z - h)) / (2 * h);
-          const gm = Math.hypot(gx, gy, gz);
-          if (gm < 1e-4) continue;
-          const L = Math.min(0.26, 0.06 + gm * 0.12);
-          arrows.push({
-            bx: x, by: y, bz: z,
-            tx: x + (gx / gm) * L,
-            ty: y + (gy / gm) * L,
-            tz: z + (gz / gm) * L,
-          });
-        }
+    // start the probe at the densest sampled cloud point
+    let best = 0;
+    for (let i = 1; i < nPoints; i++) if (pt[i] > pt[best]) best = i;
+    state.probe = { x: px[best], y: py[best], z: pz[best] };
+    draw();
   }
 
   function project(x: number, y: number, z: number) {
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
     const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-    // yaw around Y
     const x1 = x * cy + z * sy;
     const z1 = -x * sy + z * cy;
     const y1 = y;
-    // pitch around X
     const y2 = y1 * cp - z1 * sp;
     const z2 = y1 * sp + z1 * cp;
     const zc = z2 + CAM;
@@ -179,18 +177,115 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
   }
 
+  // camera-space unit vector -> world (inverse rotation)
+  function invRotate(xc: number, yc: number, zc: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const y1 = yc * cp + zc * sp;
+    const z1 = -yc * sp + zc * cp;
+    const x1 = xc;
+    return { x: x1 * cy - z1 * sy, y: y1, z: x1 * sy + z1 * cy };
+  }
+
+  const CUBE_EDGES = [
+    [0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3],
+    [2, 6], [3, 7], [4, 5], [4, 6], [5, 7], [6, 7],
+  ];
+
+  function drawProbe() {
+    const hs = state.size;
+    const c = state.probe;
+
+    // local readings sampled at the probe scale
+    const fc = field(c.x, c.y, c.z);
+    const gm = Math.hypot(
+      field(c.x + hs, c.y, c.z) - field(c.x - hs, c.y, c.z),
+      field(c.x, c.y + hs, c.z) - field(c.x, c.y - hs, c.z),
+      field(c.x, c.y, c.z + hs) - field(c.x, c.y, c.z - hs)
+    ) / (2 * hs);
+    const lap = (field(c.x + hs, c.y, c.z) + field(c.x - hs, c.y, c.z) +
+      field(c.x, c.y + hs, c.z) + field(c.x, c.y - hs, c.z) +
+      field(c.x, c.y, c.z + hs) + field(c.x, c.y, c.z - hs) - 6 * fc) / (hs * hs);
+    const relG = gm / gradRef;
+    const nl = lap / lapRef;
+
+    // corners
+    const cor: { p: ReturnType<typeof project>; t: number }[] = [];
+    for (let i = 0; i < 8; i++) {
+      const x = c.x + (i & 1 ? hs : -hs);
+      const y = c.y + (i & 2 ? hs : -hs);
+      const z = c.z + (i & 4 ? hs : -hs);
+      cor.push({ p: project(x, y, z), t: tAt(x, y, z) });
+    }
+
+    // edge colour: white in gradient view, curvature-tinted in laplacian view
+    let edge = 'rgba(255,255,255,0.85)';
+    if (state.mode === 'laplacian') {
+      if (nl < -0.12) edge = 'rgba(245,150,90,0.95)';      // peak
+      else if (nl > 0.12) edge = 'rgba(90,200,214,0.95)';  // valley
+      else edge = 'rgba(230,233,236,0.7)';                 // ~ flat
+    }
+
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = edge;
+    for (const [a, b] of CUBE_EDGES) {
+      if (cor[a].p.zc <= 0.1 || cor[b].p.zc <= 0.1) continue;
+      ctx.beginPath();
+      ctx.moveTo(cor[a].p.sx, cor[a].p.sy);
+      ctx.lineTo(cor[b].p.sx, cor[b].p.sy);
+      ctx.stroke();
+    }
+
+    // corner dots coloured by density
+    for (const k of cor) {
+      if (k.p.zc <= 0.1) continue;
+      const col = turbo(k.t);
+      ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+      ctx.beginPath();
+      ctx.arc(k.p.sx, k.p.sy, Math.max(2.4, 2.7 * k.p.s), 0, 6.2832);
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.stroke();
+    }
+
+    // centre point
+    const cp = project(c.x, c.y, c.z);
+    const cc = turbo(tAt(c.x, c.y, c.z));
+    ctx.fillStyle = `rgb(${cc[0]},${cc[1]},${cc[2]})`;
+    ctx.beginPath();
+    ctx.arc(cp.sx, cp.sy, Math.max(3.4, 3.6 * cp.s), 0, 6.2832);
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+
+    // readouts
+    const ct = tAt(c.x, c.y, c.z);
+    (document.getElementById('dens') as HTMLElement).textContent =
+      ct < 0.34 ? 'low' : ct < 0.67 ? 'medium' : 'high';
+    const mlabel = document.getElementById('mlabel') as HTMLElement;
+    const mval = document.getElementById('mval') as HTMLElement;
+    if (state.mode === 'gradient') {
+      mlabel.textContent = 'Steepness';
+      mval.textContent = relG < 0.12 ? 'almost flat' : relG < 0.45 ? 'gentle' : 'steep';
+    } else {
+      mlabel.textContent = 'Local shape';
+      mval.textContent =
+        Math.abs(nl) < 0.12 ? '≈ flat / linear' : nl < 0 ? 'peak' : 'valley';
+    }
+  }
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
 
-    // point cloud (additive glow)
     ctx.globalCompositeOperation = 'lighter';
-    const count = Math.min(state.count, nPoints);
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < nPoints; i++) {
       const p = project(px[i], py[i], pz[i]);
       if (p.zc <= 0.1) continue;
       const c = turbo(pt[i]);
-      const alpha = 0.1 + 0.55 * pt[i];
-      const r = Math.max(0.7, 1.7 * p.s);
+      const alpha = 0.08 + 0.42 * pt[i];
+      const r = Math.max(0.7, 1.6 * p.s);
       ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, r, 0, 6.2832);
@@ -198,85 +293,92 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     ctx.globalCompositeOperation = 'source-over';
 
-    // gradient arrows
-    if (state.showGrad) {
-      ctx.lineWidth = 1.4;
-      for (const a of arrows) {
-        const b = project(a.bx, a.by, a.bz);
-        const t = project(a.tx, a.ty, a.tz);
-        if (b.zc <= 0.1 || t.zc <= 0.1) continue;
-        const depth = Math.max(0.25, Math.min(1, 1.6 - (b.zc - CAM + 1)));
-        ctx.strokeStyle = `rgba(235,238,245,${0.35 + 0.45 * depth})`;
-        ctx.beginPath();
-        ctx.moveTo(b.sx, b.sy);
-        ctx.lineTo(t.sx, t.sy);
-        ctx.stroke();
-        // arrowhead
-        const ang = Math.atan2(t.sy - b.sy, t.sx - b.sx);
-        const hs = 5;
-        ctx.beginPath();
-        ctx.moveTo(t.sx, t.sy);
-        ctx.lineTo(t.sx - hs * Math.cos(ang - 0.5), t.sy - hs * Math.sin(ang - 0.5));
-        ctx.moveTo(t.sx, t.sy);
-        ctx.lineTo(t.sx - hs * Math.cos(ang + 0.5), t.sy - hs * Math.sin(ang + 0.5));
-        ctx.stroke();
-      }
-    }
+    drawProbe();
   }
 
   // ---- interaction ----
-  let dragging = false;
+  let mode: 'idle' | 'orbit' | 'probe' = 'idle';
   let lastX = 0, lastY = 0;
+
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = true;
+    const pp = project(state.probe.x, state.probe.y, state.probe.z);
+    const grab = Math.max(30, state.size * pp.s * SCALE * 1.5);
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    mode = Math.hypot(mx - pp.sx, my - pp.sy) < grab ? 'probe' : 'orbit';
     lastX = e.clientX;
     lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
+
   canvas.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    state.yaw += (e.clientX - lastX) * 0.01;
-    state.pitch += (e.clientY - lastY) * 0.01;
-    state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch));
+    if (mode === 'idle') return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
     lastX = e.clientX;
     lastY = e.clientY;
+
+    if (mode === 'orbit') {
+      state.yaw += dx * 0.01;
+      state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch + dy * 0.01));
+    } else {
+      const pp = project(state.probe.x, state.probe.y, state.probe.z);
+      const perWorld = pp.s * SCALE;
+      const right = invRotate(1, 0, 0);
+      const up = invRotate(0, 1, 0);
+      const wx = dx / perWorld;
+      const wy = -dy / perWorld;
+      const np = {
+        x: state.probe.x + right.x * wx + up.x * wy,
+        y: state.probe.y + right.y * wx + up.y * wy,
+        z: state.probe.z + right.z * wx + up.z * wy,
+      };
+      state.probe.x = Math.max(-1.15, Math.min(1.15, np.x));
+      state.probe.y = Math.max(-1.15, Math.min(1.15, np.y));
+      state.probe.z = Math.max(-1.15, Math.min(1.15, np.z));
+    }
+    draw();
   });
-  const stop = () => (dragging = false);
+
+  const stop = () => (mode = 'idle');
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      const fwd = invRotate(0, 0, 1);
+      const step = (e.deltaY > 0 ? 1 : -1) * 0.06;
+      state.probe.x = Math.max(-1.15, Math.min(1.15, state.probe.x + fwd.x * step));
+      state.probe.y = Math.max(-1.15, Math.min(1.15, state.probe.y + fwd.y * step));
+      state.probe.z = Math.max(-1.15, Math.min(1.15, state.probe.z + fwd.z * step));
+      draw();
+    },
+    { passive: false }
+  );
+
   // ---- controls ----
-  const ptsEl = document.getElementById('pts') as HTMLInputElement;
-  ptsEl.addEventListener('input', () => {
-    state.count = +ptsEl.value;
-    (document.getElementById('ptval') as HTMLElement).textContent = ptsEl.value;
+  const sizeEl = document.getElementById('size') as HTMLInputElement;
+  sizeEl.addEventListener('input', () => {
+    state.size = +sizeEl.value / 100;
+    (document.getElementById('sizeval') as HTMLElement).textContent = state.size.toFixed(2);
+    draw();
   });
 
-  document.getElementById('grad')!.addEventListener('click', (e) => {
+  document.getElementById('mode')!.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('button');
     if (!btn) return;
-    document.querySelectorAll('#grad button').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('#mode button').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    state.showGrad = btn.dataset.on === '1';
-  });
-
-  const spinBtn = document.getElementById('spin') as HTMLButtonElement;
-  spinBtn.addEventListener('click', () => {
-    state.spin = !state.spin;
-    spinBtn.textContent = state.spin ? 'Pause spin' : 'Resume spin';
+    state.mode = btn.dataset.mode as 'gradient' | 'laplacian';
+    draw();
   });
 
   document.getElementById('regen')!.addEventListener('click', generate);
 
-  // ---- loop ----
-  function loop() {
-    if (state.spin && !dragging) state.yaw += 0.0035;
-    draw();
-    requestAnimationFrame(loop);
-  }
-
   generate();
-  loop();
 </script>
 
 <style>
