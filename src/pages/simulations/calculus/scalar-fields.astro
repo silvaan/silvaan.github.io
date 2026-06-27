@@ -5,196 +5,286 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Scalar Fields & Gradients"
-  description="Move a small square probe across a density cloud. Feel where the field grows fastest and how steep the slope is around any point."
+  description="A scalar field assigns a number to every point in space. Here it is a 3D density cloud, coloured low to high. Turn on the gradient field to see the direction of steepest increase at points throughout the volume."
 >
   <div class="sim">
     <div class="sim-stage">
-      <canvas id="field" class="probe-canvas" width="600" height="600"></canvas>
+      <canvas id="cloud" class="probe-canvas" width="640" height="640"></canvas>
     </div>
 
     <div class="sim-panel">
       <div class="control">
-        <label>Probe size <b id="sizeval">22</b></label>
-        <input type="range" id="size" min="6" max="70" value="22" />
+        <label>Points <b id="ptval">3000</b></label>
+        <input type="range" id="pts" min="600" max="6000" step="200" value="3000" />
       </div>
 
-      <button class="btn ghost" id="regen">New field</button>
+      <div class="control">
+        <label>Gradient field</label>
+        <div class="seg" id="grad">
+          <button data-on="0">Off</button>
+          <button data-on="1" class="active">On</button>
+        </div>
+      </div>
 
-      <div class="readout">
-        <div class="row"><span>Slope</span><b id="r1v">—</b></div>
-        <div class="row"><span>Uphill</span><b id="r2v">—</b></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="spin">Pause spin</button>
+        <button class="btn ghost" id="regen">New field</button>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Hover the cloud to move the probe. The arrow points toward denser
-        regions; its length grows where the field changes fastest. Shrink the
-        probe to read a single point, enlarge it to feel the neighbourhood.
+        Drag to orbit the cloud. Colour runs from low density (blue) to high
+        (red). The white arrows are the gradient: each one points toward denser
+        regions, longer where the field changes faster.
       </p>
     </div>
   </div>
 </SimLayout>
 
 <script>
-  const N = 600;
-  const canvas = document.getElementById('field') as HTMLCanvasElement;
+  const canvas = document.getElementById('cloud') as HTMLCanvasElement;
   const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const CX = W / 2;
+  const CY = H / 2;
+  const CAM = 3.1; // camera distance
+  const FOCAL = 2.7;
+  const SCALE = 270;
+  const MAX = 6000;
 
-  const state = { size: 22, px: N / 2, py: N / 2 };
+  type Blob = { x: number; y: number; z: number; s: number; a: number };
+  let blobs: Blob[] = [];
 
-  const fGrid = new Float32Array(N * N);
-  let densImg!: ImageData;
-  let fMin = 0,
-    fMax = 1,
-    gradRef = 1;
+  // cloud points
+  const px = new Float32Array(MAX);
+  const py = new Float32Array(MAX);
+  const pz = new Float32Array(MAX);
+  const pt = new Float32Array(MAX); // normalised density [0,1] for colour
+  let nPoints = 0;
 
-  const at = (x: number, y: number) =>
-    fGrid[Math.max(0, Math.min(N - 1, y)) * N + Math.max(0, Math.min(N - 1, x))];
+  // gradient arrows: base + tip in world space
+  let arrows: { bx: number; by: number; bz: number; tx: number; ty: number; tz: number }[] = [];
 
-  function lerp(a: number, b: number, t: number) {
-    return a + (b - a) * t;
+  const state = { count: 3000, showGrad: true, spin: true, yaw: 0.6, pitch: -0.5 };
+
+  function field(x: number, y: number, z: number) {
+    let f = 0;
+    for (const b of blobs) {
+      const dx = x - b.x, dy = y - b.y, dz = z - b.z;
+      f += b.a * Math.exp(-(dx * dx + dy * dy + dz * dz) / (2 * b.s * b.s));
+    }
+    return f;
   }
-  function mix(c1: number[], c2: number[], t: number) {
-    return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
+
+  function turbo(t: number) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [
+      [26, 44, 130],
+      [22, 150, 210],
+      [40, 200, 120],
+      [245, 205, 60],
+      [240, 70, 55],
+    ];
+    const seg = t * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(seg));
+    const f = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    return [
+      (a[0] + (b[0] - a[0]) * f) | 0,
+      (a[1] + (b[1] - a[1]) * f) | 0,
+      (a[2] + (b[2] - a[2]) * f) | 0,
+    ];
   }
 
   function generate() {
-    const blobs: { x: number; y: number; s: number; a: number }[] = [];
-    const n = 5 + Math.floor(Math.random() * 3);
+    const n = 4 + Math.floor(Math.random() * 3);
+    blobs = [];
     for (let i = 0; i < n; i++) {
       blobs.push({
-        x: Math.random() * 1.7 - 0.85,
-        y: Math.random() * 1.7 - 0.85,
-        s: 0.16 + Math.random() * 0.26,
-        a: (Math.random() < 0.7 ? 1 : -1) * (0.5 + Math.random() * 1.1),
+        x: Math.random() * 1.4 - 0.7,
+        y: Math.random() * 1.4 - 0.7,
+        z: Math.random() * 1.4 - 0.7,
+        s: 0.18 + Math.random() * 0.2,
+        a: (Math.random() < 0.72 ? 1 : -1) * (0.5 + Math.random() * 1.0),
       });
     }
 
-    fMin = Infinity;
-    fMax = -Infinity;
-    for (let py = 0; py < N; py++) {
-      const wy = (py / N) * 2.4 - 1.2;
-      for (let px = 0; px < N; px++) {
-        const wx = (px / N) * 2.4 - 1.2;
-        let f = 0;
-        for (const b of blobs) {
-          const dx = wx - b.x;
-          const dy = wy - b.y;
-          f += b.a * Math.exp(-(dx * dx + dy * dy) / (2 * b.s * b.s));
-        }
-        fGrid[py * N + px] = f;
-        if (f < fMin) fMin = f;
-        if (f > fMax) fMax = f;
+    // estimate min/max density
+    let fMin = Infinity, fMax = -Infinity;
+    for (let i = 0; i < 6000; i++) {
+      const f = field(Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2);
+      if (f < fMin) fMin = f;
+      if (f > fMax) fMax = f;
+    }
+    const span = fMax - fMin || 1;
+
+    // rejection-sample a density-weighted point cloud
+    nPoints = 0;
+    let tries = 0;
+    while (nPoints < MAX && tries < MAX * 60) {
+      tries++;
+      const x = Math.random() * 2.2 - 1.1;
+      const y = Math.random() * 2.2 - 1.1;
+      const z = Math.random() * 2.2 - 1.1;
+      const t = (field(x, y, z) - fMin) / span;
+      const p = Math.pow(Math.max(0, t), 1.6); // cluster in dense regions, keep faint halo
+      if (Math.random() < p * 0.9 + 0.02) {
+        px[nPoints] = x;
+        py[nPoints] = y;
+        pz[nPoints] = z;
+        pt[nPoints] = t;
+        nPoints++;
       }
     }
 
-    buildImage();
-    draw();
+    // gradient arrows on a coarse grid
+    arrows = [];
+    const G = 4;
+    const h = 0.02;
+    for (let ix = 0; ix <= G; ix++)
+      for (let iy = 0; iy <= G; iy++)
+        for (let iz = 0; iz <= G; iz++) {
+          const x = -0.85 + (1.7 * ix) / G;
+          const y = -0.85 + (1.7 * iy) / G;
+          const z = -0.85 + (1.7 * iz) / G;
+          const t = (field(x, y, z) - fMin) / span;
+          if (t < 0.18) continue; // skip near-empty voids
+          const gx = (field(x + h, y, z) - field(x - h, y, z)) / (2 * h);
+          const gy = (field(x, y + h, z) - field(x, y - h, z)) / (2 * h);
+          const gz = (field(x, y, z + h) - field(x, y, z - h)) / (2 * h);
+          const gm = Math.hypot(gx, gy, gz);
+          if (gm < 1e-4) continue;
+          const L = Math.min(0.26, 0.06 + gm * 0.12);
+          arrows.push({
+            bx: x, by: y, bz: z,
+            tx: x + (gx / gm) * L,
+            ty: y + (gy / gm) * L,
+            tz: z + (gz / gm) * L,
+          });
+        }
   }
 
-  function buildImage() {
-    densImg = ctx.createImageData(N, N);
-    const low = [12, 14, 20];
-    const mid = [58, 70, 150];
-    const high = [206, 214, 255];
-
-    let maxG = 1e-6;
-    for (let py = 0; py < N; py++) {
-      for (let px = 0; px < N; px++) {
-        const i = py * N + px;
-        const f = fGrid[i];
-
-        const t = (f - fMin) / (fMax - fMin || 1);
-        const c = t < 0.5 ? mix(low, mid, t * 2) : mix(mid, high, (t - 0.5) * 2);
-        const j = i * 4;
-        densImg.data[j] = c[0];
-        densImg.data[j + 1] = c[1];
-        densImg.data[j + 2] = c[2];
-        densImg.data[j + 3] = 255;
-
-        const gx = (at(px + 1, py) - at(px - 1, py)) * 0.5;
-        const gy = (at(px, py + 1) - at(px, py - 1)) * 0.5;
-        const gm = Math.hypot(gx, gy);
-        if (gm > maxG) maxG = gm;
-      }
-    }
-    gradRef = maxG;
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    // yaw around Y
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y1 = y;
+    // pitch around X
+    const y2 = y1 * cp - z1 * sp;
+    const z2 = y1 * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const s = FOCAL / Math.max(0.05, zc);
+    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
   }
 
   function draw() {
-    ctx.putImageData(densImg, 0, 0);
+    ctx.clearRect(0, 0, W, H);
 
-    const half = state.size;
-    const cx = state.px;
-    const cy = state.py;
+    // point cloud (additive glow)
+    ctx.globalCompositeOperation = 'lighter';
+    const count = Math.min(state.count, nPoints);
+    for (let i = 0; i < count; i++) {
+      const p = project(px[i], py[i], pz[i]);
+      if (p.zc <= 0.1) continue;
+      const c = turbo(pt[i]);
+      const alpha = 0.1 + 0.55 * pt[i];
+      const r = Math.max(0.7, 1.7 * p.s);
+      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
 
-    const gx = (at(cx + half, cy) - at(cx - half, cy)) * 0.5;
-    const gy = (at(cx, cy + half) - at(cx, cy - half)) * 0.5;
-    const gm = Math.hypot(gx, gy);
-
-    // probe square
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-    ctx.strokeRect(cx - half, cy - half, half * 2, half * 2);
-
-    // center dot
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // gradient arrow toward steeper density
-    const ang = Math.atan2(gy, gx);
-    const len = Math.min(half + 90, 18 + (gm / (gradRef || 1)) * (half + 70));
-    const ex = cx + Math.cos(ang) * len;
-    const ey = cy + Math.sin(ang) * len;
-    ctx.strokeStyle = '#7c8cff';
-    ctx.fillStyle = '#7c8cff';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(ex, ey);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - 11 * Math.cos(ang - 0.4), ey - 11 * Math.sin(ang - 0.4));
-    ctx.lineTo(ex - 11 * Math.cos(ang + 0.4), ey - 11 * Math.sin(ang + 0.4));
-    ctx.closePath();
-    ctx.fill();
-
-    // readout
-    const rel = gm / (gradRef || 1);
-    (document.getElementById('r1v') as HTMLElement).textContent =
-      rel < 0.08 ? 'almost flat' : rel < 0.4 ? 'gentle' : 'steep';
-    const deg = ((-Math.atan2(gy, gx) * 180) / Math.PI + 360) % 360;
-    (document.getElementById('r2v') as HTMLElement).textContent = `${deg.toFixed(0)}°`;
+    // gradient arrows
+    if (state.showGrad) {
+      ctx.lineWidth = 1.4;
+      for (const a of arrows) {
+        const b = project(a.bx, a.by, a.bz);
+        const t = project(a.tx, a.ty, a.tz);
+        if (b.zc <= 0.1 || t.zc <= 0.1) continue;
+        const depth = Math.max(0.25, Math.min(1, 1.6 - (b.zc - CAM + 1)));
+        ctx.strokeStyle = `rgba(235,238,245,${0.35 + 0.45 * depth})`;
+        ctx.beginPath();
+        ctx.moveTo(b.sx, b.sy);
+        ctx.lineTo(t.sx, t.sy);
+        ctx.stroke();
+        // arrowhead
+        const ang = Math.atan2(t.sy - b.sy, t.sx - b.sx);
+        const hs = 5;
+        ctx.beginPath();
+        ctx.moveTo(t.sx, t.sy);
+        ctx.lineTo(t.sx - hs * Math.cos(ang - 0.5), t.sy - hs * Math.sin(ang - 0.5));
+        ctx.moveTo(t.sx, t.sy);
+        ctx.lineTo(t.sx - hs * Math.cos(ang + 0.5), t.sy - hs * Math.sin(ang + 0.5));
+        ctx.stroke();
+      }
+    }
   }
 
-  function moveTo(clientX: number, clientY: number) {
-    const rect = canvas.getBoundingClientRect();
-    state.px = Math.max(0, Math.min(N - 1, Math.round(((clientX - rect.left) / rect.width) * N)));
-    state.py = Math.max(0, Math.min(N - 1, Math.round(((clientY - rect.top) / rect.height) * N)));
-    draw();
-  }
+  // ---- interaction ----
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
   canvas.addEventListener('pointermove', (e) => {
-    e.preventDefault();
-    moveTo(e.clientX, e.clientY);
+    if (!dragging) return;
+    state.yaw += (e.clientX - lastX) * 0.01;
+    state.pitch += (e.clientY - lastY) * 0.01;
+    state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch));
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  // ---- controls ----
+  const ptsEl = document.getElementById('pts') as HTMLInputElement;
+  ptsEl.addEventListener('input', () => {
+    state.count = +ptsEl.value;
+    (document.getElementById('ptval') as HTMLElement).textContent = ptsEl.value;
   });
 
-  const sizeEl = document.getElementById('size') as HTMLInputElement;
-  sizeEl.addEventListener('input', () => {
-    state.size = +sizeEl.value;
-    (document.getElementById('sizeval') as HTMLElement).textContent = sizeEl.value;
-    draw();
+  document.getElementById('grad')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#grad button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.showGrad = btn.dataset.on === '1';
+  });
+
+  const spinBtn = document.getElementById('spin') as HTMLButtonElement;
+  spinBtn.addEventListener('click', () => {
+    state.spin = !state.spin;
+    spinBtn.textContent = state.spin ? 'Pause spin' : 'Resume spin';
   });
 
   document.getElementById('regen')!.addEventListener('click', generate);
 
+  // ---- loop ----
+  function loop() {
+    if (state.spin && !dragging) state.yaw += 0.0035;
+    draw();
+    requestAnimationFrame(loop);
+  }
+
   generate();
+  loop();
 </script>
 
 <style>
   .probe-canvas {
-    cursor: crosshair;
+    cursor: grab;
     touch-action: none;
+  }
+  .probe-canvas:active {
+    cursor: grabbing;
   }
 </style>

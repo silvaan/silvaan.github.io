@@ -36,7 +36,7 @@ export const AREAS: Area[] = [
         slug: 'scalar-fields',
         title: 'Scalar Fields & Gradients',
         description:
-          'Probe a 2D density cloud with a local square and feel the gradient: where the field grows fastest and how steep the slope is.',
+          'Orbit a 3D density cloud coloured by value, and switch on the gradient field to see which way it points uphill everywhere at once.',
         href: '/simulations/calculus/scalar-fields',
         status: 'live',
       },
