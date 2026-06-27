@@ -1,0 +1,225 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Gradient Descent"
+  description="The workhorse of training neural nets. Set a learning rate and a starting point, then watch the parameter roll downhill — converge, oscillate, or diverge."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="gd" width="900" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Loss surface</label>
+        <div class="seg" id="fn">
+          <button data-fn="bowl" class="active">Convex</button>
+          <button data-fn="double">Double well</button>
+          <button data-fn="wavy">Wavy</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Learning rate <b id="lrval">0.10</b></label>
+        <input type="range" id="lr" min="0.01" max="1.2" step="0.01" value="0.1" />
+      </div>
+
+      <div class="control">
+        <label>Start x <b id="x0val">2.40</b></label>
+        <input type="range" id="x0" min="-3" max="3" step="0.05" value="2.4" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Iteration</span><b id="iter">0</b></div>
+        <div class="row"><span>x</span><b id="x">—</b></div>
+        <div class="row"><span>loss f(x)</span><b id="loss">—</b></div>
+        <div class="row"><span>gradient</span><b id="grad">—</b></div>
+      </div>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  type Fn = { f: (x: number) => number; g: (x: number) => number };
+  const FNS: Record<string, Fn> = {
+    bowl: { f: (x) => 0.5 * x * x, g: (x) => x },
+    double: { f: (x) => 0.12 * x ** 4 - x * x + 0.4 * x + 1.2, g: (x) => 0.48 * x ** 3 - 2 * x + 0.4 },
+    wavy: { f: (x) => 0.25 * x * x + Math.sin(3 * x), g: (x) => 0.5 * x + 3 * Math.cos(3 * x) },
+  };
+
+  const state = { fn: 'bowl', lr: 0.1, x0: 2.4, x: 2.4, iter: 0, path: [] as number[] };
+  let raf = 0;
+
+  const canvas = document.getElementById('gd') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const PAD = { l: 48, r: 24, t: 24, b: 40 };
+  const X = { min: -3.2, max: 3.2 };
+  const css = (v: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  function yRange(fn: Fn) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= 200; i++) {
+      const x = X.min + ((X.max - X.min) * i) / 200;
+      const y = fn.f(x);
+      lo = Math.min(lo, y);
+      hi = Math.max(hi, y);
+    }
+    return { lo: lo - 0.3, hi: hi + 0.4 };
+  }
+
+  function draw() {
+    const fn = FNS[state.fn];
+    const { lo, hi } = yRange(fn);
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+
+    const sx = (x: number) => PAD.l + ((x - X.min) / (X.max - X.min)) * (W - PAD.l - PAD.r);
+    const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let i = 0; i <= 8; i++) {
+      const xv = X.min + ((X.max - X.min) * i) / 8;
+      const px = sx(xv);
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(px, PAD.t);
+      ctx.lineTo(px, H - PAD.b);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+    }
+
+    // curve
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 400; i++) {
+      const x = X.min + ((X.max - X.min) * i) / 400;
+      const px = sx(x);
+      const py = sy(fn.f(x));
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // path of iterates
+    ctx.fillStyle = accent;
+    state.path.forEach((xv, idx) => {
+      const px = sx(xv);
+      const py = sy(fn.f(xv));
+      ctx.globalAlpha = 0.25 + (0.75 * idx) / Math.max(1, state.path.length - 1);
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    // current point
+    const cx = sx(state.x);
+    const cy = sy(fn.f(state.x));
+    ctx.fillStyle = accent;
+    ctx.strokeStyle = '#0b0c0e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // tangent (gradient direction)
+    const gr = fn.g(state.x);
+    ctx.strokeStyle = 'rgba(124,140,255,0.6)';
+    ctx.lineWidth = 1.5;
+    const dx = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(sx(state.x - dx), sy(fn.f(state.x) - gr * dx));
+    ctx.lineTo(sx(state.x + dx), sy(fn.f(state.x) + gr * dx));
+    ctx.stroke();
+
+    (document.getElementById('iter') as HTMLElement).textContent = String(state.iter);
+    (document.getElementById('x') as HTMLElement).textContent = state.x.toFixed(4);
+    (document.getElementById('loss') as HTMLElement).textContent = fn.f(state.x).toFixed(4);
+    (document.getElementById('grad') as HTMLElement).textContent = gr.toFixed(4);
+  }
+
+  function step() {
+    const fn = FNS[state.fn];
+    const g = fn.g(state.x);
+    state.x = state.x - state.lr * g;
+    state.x = Math.max(X.min, Math.min(X.max, state.x));
+    state.iter++;
+    state.path.push(state.x);
+    if (state.path.length > 200) state.path.shift();
+    draw();
+  }
+
+  function reset() {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    state.x = state.x0;
+    state.iter = 0;
+    state.path = [state.x0];
+    (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
+    draw();
+  }
+
+  function loop() {
+    step();
+    raf = requestAnimationFrame(() => setTimeout(loop, 120));
+  }
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+      runBtn.textContent = 'Run';
+    } else {
+      runBtn.textContent = 'Pause';
+      loop();
+    }
+  });
+  document.getElementById('step')!.addEventListener('click', step);
+  document.getElementById('reset')!.addEventListener('click', reset);
+
+  const lr = document.getElementById('lr') as HTMLInputElement;
+  lr.addEventListener('input', () => {
+    state.lr = +lr.value;
+    (document.getElementById('lrval') as HTMLElement).textContent = state.lr.toFixed(2);
+  });
+  const x0 = document.getElementById('x0') as HTMLInputElement;
+  x0.addEventListener('input', () => {
+    state.x0 = +x0.value;
+    (document.getElementById('x0val') as HTMLElement).textContent = state.x0.toFixed(2);
+    reset();
+  });
+
+  document.getElementById('fn')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#fn button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.fn = btn.dataset.fn!;
+    reset();
+  });
+
+  reset();
+</script>

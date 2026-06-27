@@ -1,0 +1,172 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="2D Linear Transformations"
+  description="A linear map is fully described by where it sends the basis vectors. Move the matrix entries and watch the whole plane deform."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="lin" width="760" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Transformation matrix</label>
+        <div class="matrix-view" aria-label="current matrix">
+          <span class="bracket" aria-hidden="true"></span>
+          <div class="matrix-cells">
+            <b id="m-a">1.00</b><b id="m-b">0.00</b>
+            <b id="m-c">0.00</b><b id="m-d">1.00</b>
+          </div>
+          <span class="bracket" aria-hidden="true"></span>
+        </div>
+        <div style="display:grid;gap:12px;margin-top:14px">
+          <div class="control"><label>a <b id="aval">1.00</b></label><input type="range" id="a" min="-3" max="3" step="0.05" value="1"></div>
+          <div class="control"><label>b <b id="bval">0.00</b></label><input type="range" id="b" min="-3" max="3" step="0.05" value="0"></div>
+          <div class="control"><label>c <b id="cval">0.00</b></label><input type="range" id="c" min="-3" max="3" step="0.05" value="0"></div>
+          <div class="control"><label>d <b id="dval">1.00</b></label><input type="range" id="d" min="-3" max="3" step="0.05" value="1"></div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Presets</label>
+        <div class="seg" id="presets">
+          <button data-m="1,0,0,1">Identity</button>
+          <button data-m="0,-1,1,0">Rotate 90°</button>
+          <button data-m="1,1,0,1">Shear</button>
+          <button data-m="-1,0,0,1">Reflect</button>
+          <button data-m="1.5,0,0,0.5">Scale</button>
+        </div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>î → </span><b id="ihat">(1, 0)</b></div>
+        <div class="row"><span>ĵ → </span><b id="jhat">(0, 1)</b></div>
+        <div class="row"><span>Determinant</span><b id="det">1.000</b></div>
+      </div>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const M = { a: 1, b: 0, c: 0, d: 1 };
+  const canvas = document.getElementById('lin') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const ORIGIN = { x: W / 2, y: H / 2 };
+  const UNIT = 52;
+  const css = (v: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  // world (math) coords -> screen pixels, applying matrix
+  function toScreen(x: number, y: number) {
+    const tx = M.a * x + M.b * y;
+    const ty = M.c * x + M.d * y;
+    return { px: ORIGIN.x + tx * UNIT, py: ORIGIN.y - ty * UNIT };
+  }
+
+  function line(x1: number, y1: number, x2: number, y2: number) {
+    const p = toScreen(x1, y1);
+    const q = toScreen(x2, y2);
+    ctx.beginPath();
+    ctx.moveTo(p.px, p.py);
+    ctx.lineTo(q.px, q.py);
+    ctx.stroke();
+  }
+
+  function arrow(x: number, y: number, color: string, label: string) {
+    const p = toScreen(x, y);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(ORIGIN.x, ORIGIN.y);
+    ctx.lineTo(p.px, p.py);
+    ctx.stroke();
+    const ang = Math.atan2(p.py - ORIGIN.y, p.px - ORIGIN.x);
+    ctx.beginPath();
+    ctx.moveTo(p.px, p.py);
+    ctx.lineTo(p.px - 12 * Math.cos(ang - 0.4), p.py - 12 * Math.sin(ang - 0.4));
+    ctx.lineTo(p.px - 12 * Math.cos(ang + 0.4), p.py - 12 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = "600 14px 'JetBrains Mono', monospace";
+    ctx.fillText(label, p.px + 8, p.py - 8);
+  }
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    ctx.clearRect(0, 0, W, H);
+
+    const R = 7;
+    // transformed grid
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.9;
+    for (let i = -R; i <= R; i++) {
+      line(i, -R, i, R);
+      line(-R, i, R, i);
+    }
+    ctx.globalAlpha = 1;
+
+    // determinant area (unit square image)
+    const det = M.a * M.d - M.b * M.c;
+    const o = toScreen(0, 0);
+    const i = toScreen(1, 0);
+    const ij = toScreen(1, 1);
+    const j = toScreen(0, 1);
+    ctx.fillStyle = det >= 0 ? 'rgba(94,234,212,0.12)' : 'rgba(248,113,113,0.14)';
+    ctx.beginPath();
+    ctx.moveTo(o.px, o.py);
+    ctx.lineTo(i.px, i.py);
+    ctx.lineTo(ij.px, ij.py);
+    ctx.lineTo(j.px, j.py);
+    ctx.closePath();
+    ctx.fill();
+
+    // basis vectors
+    arrow(1, 0, accent, 'î');
+    arrow(0, 1, teal, 'ĵ');
+
+    // readouts
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+      (document.getElementById('m-' + k) as HTMLElement).textContent = M[k].toFixed(2);
+    });
+    (document.getElementById('ihat') as HTMLElement).textContent = `(${M.a.toFixed(2)}, ${M.c.toFixed(2)})`;
+    (document.getElementById('jhat') as HTMLElement).textContent = `(${M.b.toFixed(2)}, ${M.d.toFixed(2)})`;
+    (document.getElementById('det') as HTMLElement).textContent = det.toFixed(3);
+  }
+
+  function sync() {
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      (document.getElementById(k) as HTMLInputElement).value = String(M[k]);
+    });
+  }
+
+  (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+    const el = document.getElementById(k) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      M[k] = +el.value;
+      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      draw();
+    });
+  });
+
+  document.getElementById('presets')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    const [a, b, c, d] = btn.dataset.m!.split(',').map(Number);
+    Object.assign(M, { a, b, c, d });
+    sync();
+    draw();
+  });
+
+  draw();
+</script>

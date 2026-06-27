@@ -1,0 +1,200 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Scalar Fields & Gradients"
+  description="Move a small square probe across a density cloud. Feel where the field grows fastest and how steep the slope is around any point."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="field" class="probe-canvas" width="600" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Probe size <b id="sizeval">22</b></label>
+        <input type="range" id="size" min="6" max="70" value="22" />
+      </div>
+
+      <button class="btn ghost" id="regen">New field</button>
+
+      <div class="readout">
+        <div class="row"><span>Slope</span><b id="r1v">—</b></div>
+        <div class="row"><span>Uphill</span><b id="r2v">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Hover the cloud to move the probe. The arrow points toward denser
+        regions; its length grows where the field changes fastest. Shrink the
+        probe to read a single point, enlarge it to feel the neighbourhood.
+      </p>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const N = 600;
+  const canvas = document.getElementById('field') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+
+  const state = { size: 22, px: N / 2, py: N / 2 };
+
+  const fGrid = new Float32Array(N * N);
+  let densImg!: ImageData;
+  let fMin = 0,
+    fMax = 1,
+    gradRef = 1;
+
+  const at = (x: number, y: number) =>
+    fGrid[Math.max(0, Math.min(N - 1, y)) * N + Math.max(0, Math.min(N - 1, x))];
+
+  function lerp(a: number, b: number, t: number) {
+    return a + (b - a) * t;
+  }
+  function mix(c1: number[], c2: number[], t: number) {
+    return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
+  }
+
+  function generate() {
+    const blobs: { x: number; y: number; s: number; a: number }[] = [];
+    const n = 5 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      blobs.push({
+        x: Math.random() * 1.7 - 0.85,
+        y: Math.random() * 1.7 - 0.85,
+        s: 0.16 + Math.random() * 0.26,
+        a: (Math.random() < 0.7 ? 1 : -1) * (0.5 + Math.random() * 1.1),
+      });
+    }
+
+    fMin = Infinity;
+    fMax = -Infinity;
+    for (let py = 0; py < N; py++) {
+      const wy = (py / N) * 2.4 - 1.2;
+      for (let px = 0; px < N; px++) {
+        const wx = (px / N) * 2.4 - 1.2;
+        let f = 0;
+        for (const b of blobs) {
+          const dx = wx - b.x;
+          const dy = wy - b.y;
+          f += b.a * Math.exp(-(dx * dx + dy * dy) / (2 * b.s * b.s));
+        }
+        fGrid[py * N + px] = f;
+        if (f < fMin) fMin = f;
+        if (f > fMax) fMax = f;
+      }
+    }
+
+    buildImage();
+    draw();
+  }
+
+  function buildImage() {
+    densImg = ctx.createImageData(N, N);
+    const low = [12, 14, 20];
+    const mid = [58, 70, 150];
+    const high = [206, 214, 255];
+
+    let maxG = 1e-6;
+    for (let py = 0; py < N; py++) {
+      for (let px = 0; px < N; px++) {
+        const i = py * N + px;
+        const f = fGrid[i];
+
+        const t = (f - fMin) / (fMax - fMin || 1);
+        const c = t < 0.5 ? mix(low, mid, t * 2) : mix(mid, high, (t - 0.5) * 2);
+        const j = i * 4;
+        densImg.data[j] = c[0];
+        densImg.data[j + 1] = c[1];
+        densImg.data[j + 2] = c[2];
+        densImg.data[j + 3] = 255;
+
+        const gx = (at(px + 1, py) - at(px - 1, py)) * 0.5;
+        const gy = (at(px, py + 1) - at(px, py - 1)) * 0.5;
+        const gm = Math.hypot(gx, gy);
+        if (gm > maxG) maxG = gm;
+      }
+    }
+    gradRef = maxG;
+  }
+
+  function draw() {
+    ctx.putImageData(densImg, 0, 0);
+
+    const half = state.size;
+    const cx = state.px;
+    const cy = state.py;
+
+    const gx = (at(cx + half, cy) - at(cx - half, cy)) * 0.5;
+    const gy = (at(cx, cy + half) - at(cx, cy - half)) * 0.5;
+    const gm = Math.hypot(gx, gy);
+
+    // probe square
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.strokeRect(cx - half, cy - half, half * 2, half * 2);
+
+    // center dot
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // gradient arrow toward steeper density
+    const ang = Math.atan2(gy, gx);
+    const len = Math.min(half + 90, 18 + (gm / (gradRef || 1)) * (half + 70));
+    const ex = cx + Math.cos(ang) * len;
+    const ey = cy + Math.sin(ang) * len;
+    ctx.strokeStyle = '#7c8cff';
+    ctx.fillStyle = '#7c8cff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - 11 * Math.cos(ang - 0.4), ey - 11 * Math.sin(ang - 0.4));
+    ctx.lineTo(ex - 11 * Math.cos(ang + 0.4), ey - 11 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+
+    // readout
+    const rel = gm / (gradRef || 1);
+    (document.getElementById('r1v') as HTMLElement).textContent =
+      rel < 0.08 ? 'almost flat' : rel < 0.4 ? 'gentle' : 'steep';
+    const deg = ((-Math.atan2(gy, gx) * 180) / Math.PI + 360) % 360;
+    (document.getElementById('r2v') as HTMLElement).textContent = `${deg.toFixed(0)}°`;
+  }
+
+  function moveTo(clientX: number, clientY: number) {
+    const rect = canvas.getBoundingClientRect();
+    state.px = Math.max(0, Math.min(N - 1, Math.round(((clientX - rect.left) / rect.width) * N)));
+    state.py = Math.max(0, Math.min(N - 1, Math.round(((clientY - rect.top) / rect.height) * N)));
+    draw();
+  }
+  canvas.addEventListener('pointermove', (e) => {
+    e.preventDefault();
+    moveTo(e.clientX, e.clientY);
+  });
+
+  const sizeEl = document.getElementById('size') as HTMLInputElement;
+  sizeEl.addEventListener('input', () => {
+    state.size = +sizeEl.value;
+    (document.getElementById('sizeval') as HTMLElement).textContent = sizeEl.value;
+    draw();
+  });
+
+  document.getElementById('regen')!.addEventListener('click', generate);
+
+  generate();
+</script>
+
+<style>
+  .probe-canvas {
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>

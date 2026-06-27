@@ -1,0 +1,208 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Riemann Sums"
+  description="Approximate the area under a curve with n rectangles (or trapezoids) and watch the estimate converge to the true integral."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="riemann" width="900" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Function</label>
+        <div class="seg" id="fn">
+          <button data-fn="quad" class="active">x²</button>
+          <button data-fn="sine">sin x + 1.5</button>
+          <button data-fn="gauss">e^(−x²)</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Method</label>
+        <div class="seg" id="method">
+          <button data-method="left">Left</button>
+          <button data-method="mid" class="active">Midpoint</button>
+          <button data-method="right">Right</button>
+          <button data-method="trap">Trapezoid</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Rectangles <b id="nval">12</b></label>
+        <input type="range" id="n" min="1" max="120" value="12" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Approximation</span><b id="approx">—</b></div>
+        <div class="row"><span>Exact integral</span><b id="exact">—</b></div>
+        <div class="row"><span>Error</span><b id="err">—</b></div>
+      </div>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  type Fn = { f: (x: number) => number; a: number; b: number };
+  const FNS: Record<string, Fn> = {
+    quad: { f: (x) => x * x, a: 0, b: 3 },
+    sine: { f: (x) => Math.sin(x) + 1.5, a: 0, b: 2 * Math.PI },
+    gauss: { f: (x) => Math.exp(-x * x), a: -2.2, b: 2.2 },
+  };
+
+  const state = { fn: 'quad', method: 'mid', n: 12 };
+
+  const canvas = document.getElementById('riemann') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const PAD = { l: 48, r: 24, t: 24, b: 40 };
+
+  const css = (v: string) =>
+    getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  function exactIntegral(fn: Fn) {
+    const N = 40000;
+    const h = (fn.b - fn.a) / N;
+    let s = 0;
+    for (let i = 0; i < N; i++) s += fn.f(fn.a + (i + 0.5) * h);
+    return s * h;
+  }
+
+  function approxIntegral(fn: Fn, n: number, method: string) {
+    const h = (fn.b - fn.a) / n;
+    let s = 0;
+    for (let i = 0; i < n; i++) {
+      const xl = fn.a + i * h;
+      if (method === 'left') s += fn.f(xl);
+      else if (method === 'right') s += fn.f(xl + h);
+      else if (method === 'mid') s += fn.f(xl + h / 2);
+      else s += (fn.f(xl) + fn.f(xl + h)) / 2; // trapezoid
+    }
+    return s * h;
+  }
+
+  function draw() {
+    const fn = FNS[state.fn];
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+
+    // y-range from samples
+    let yMin = 0;
+    let yMax = -Infinity;
+    for (let i = 0; i <= 200; i++) {
+      const y = fn.f(fn.a + ((fn.b - fn.a) * i) / 200);
+      yMin = Math.min(yMin, y);
+      yMax = Math.max(yMax, y);
+    }
+    yMax *= 1.1;
+    yMin = yMin < 0 ? yMin * 1.1 : 0;
+
+    const sx = (x: number) =>
+      PAD.l + ((x - fn.a) / (fn.b - fn.a)) * (W - PAD.l - PAD.r);
+    const sy = (y: number) =>
+      H - PAD.b - ((y - yMin) / (yMax - yMin)) * (H - PAD.t - PAD.b);
+
+    ctx.clearRect(0, 0, W, H);
+
+    // axes / grid
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    const xticks = 6;
+    for (let i = 0; i <= xticks; i++) {
+      const xv = fn.a + ((fn.b - fn.a) * i) / xticks;
+      const px = sx(xv);
+      ctx.beginPath();
+      ctx.moveTo(px, PAD.t);
+      ctx.lineTo(px, H - PAD.b);
+      ctx.globalAlpha = 0.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+    }
+    // x-axis (y=0)
+    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, sy(0));
+    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.stroke();
+
+    // rectangles / trapezoids
+    const h = (fn.b - fn.a) / state.n;
+    ctx.fillStyle = 'rgba(124,140,255,0.18)';
+    ctx.strokeStyle = 'rgba(124,140,255,0.55)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < state.n; i++) {
+      const xl = fn.a + i * h;
+      const xr = xl + h;
+      if (state.method === 'trap') {
+        ctx.beginPath();
+        ctx.moveTo(sx(xl), sy(0));
+        ctx.lineTo(sx(xl), sy(fn.f(xl)));
+        ctx.lineTo(sx(xr), sy(fn.f(xr)));
+        ctx.lineTo(sx(xr), sy(0));
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        const xs = state.method === 'left' ? xl : state.method === 'right' ? xr : xl + h / 2;
+        const hgt = fn.f(xs);
+        const top = sy(hgt);
+        const base = sy(0);
+        ctx.fillRect(sx(xl), Math.min(top, base), sx(xr) - sx(xl), Math.abs(base - top));
+        ctx.strokeRect(sx(xl), Math.min(top, base), sx(xr) - sx(xl), Math.abs(base - top));
+      }
+    }
+
+    // curve
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 400; i++) {
+      const xv = fn.a + ((fn.b - fn.a) * i) / 400;
+      const px = sx(xv);
+      const py = sy(fn.f(xv));
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // readout
+    const approx = approxIntegral(fn, state.n, state.method);
+    const exact = exactIntegral(fn);
+    (document.getElementById('approx') as HTMLElement).textContent = approx.toFixed(5);
+    (document.getElementById('exact') as HTMLElement).textContent = exact.toFixed(5);
+    (document.getElementById('err') as HTMLElement).textContent = Math.abs(approx - exact).toFixed(5);
+    void accent;
+  }
+
+  function bindSeg(id: string, key: 'fn' | 'method') {
+    const group = document.getElementById(id)!;
+    group.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('button');
+      if (!btn) return;
+      group.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state[key] = btn.dataset[key === 'fn' ? 'fn' : 'method']!;
+      draw();
+    });
+  }
+  bindSeg('fn', 'fn');
+  bindSeg('method', 'method');
+
+  const nInput = document.getElementById('n') as HTMLInputElement;
+  nInput.addEventListener('input', () => {
+    state.n = +nInput.value;
+    (document.getElementById('nval') as HTMLElement).textContent = String(state.n);
+    draw();
+  });
+
+  draw();
+</script>
