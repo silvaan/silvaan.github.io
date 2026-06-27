@@ -1,0 +1,397 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Optimizer Showdown"
+  description="The same starting point, the same learning rate, five different optimizers. Watch SGD, Momentum, Nesterov, RMSProp and Adam descend a 3D loss surface and see how their paths diverge: who stalls at saddles, who overshoots, who adapts."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="opt" class="probe-canvas" width="660" height="620"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Surface</label>
+        <div class="seg" id="surf">
+          <button data-s="saddle" class="active">Saddle</button>
+          <button data-s="wells">Two wells</button>
+          <button data-s="ripples">Ripples</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Learning rate <b id="lrval">0.030</b></label>
+        <input type="range" id="lr" min="5" max="140" value="30" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="newstart">New start</button>
+      </div>
+
+      <div class="legend-list" id="legend"></div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit. Each coloured ball is one optimizer leaving a trail. Try
+        the saddle to see who escapes the flat point, or crank the learning rate
+        until they overshoot.
+      </p>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const canvas = document.getElementById('opt') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const CX = W / 2;
+  const CY = H / 2;
+  const CAM = 3.2;
+  const FOCAL = 2.7;
+  const SCALE = 250;
+  const D = 2; // domain half-width
+
+  type Surf = {
+    f: (x: number, y: number) => number;
+    g: (x: number, y: number) => { x: number; y: number };
+  };
+  const SURFACES: Record<string, Surf> = {
+    saddle: {
+      f: (x, y) => 0.5 * (x * x - y * y),
+      g: (x, y) => ({ x, y: -y }),
+    },
+    wells: {
+      f: (x, y) => 0.6 * (x * x - 1) ** 2 + 0.5 * y * y,
+      g: (x, y) => ({ x: 2.4 * x * (x * x - 1), y }),
+    },
+    ripples: {
+      f: (x, y) => 0.18 * (x * x + y * y) - 0.5 * Math.cos(2.2 * x) - 0.5 * Math.cos(2.2 * y),
+      g: (x, y) => ({ x: 0.36 * x + 1.1 * Math.sin(2.2 * x), y: 0.36 * y + 1.1 * Math.sin(2.2 * y) }),
+    },
+  };
+
+  const state = {
+    yaw: 0.7,
+    pitch: -0.62,
+    surf: 'saddle',
+    lr: 0.03,
+    running: true,
+    start: { x: 0.9, y: 0.0009 },
+  };
+  let fmin = 0, fspan = 1;
+
+  function curF(x: number, y: number) {
+    return SURFACES[state.surf].f(x, y);
+  }
+
+  function computeRange() {
+    fmin = Infinity;
+    let fmax = -Infinity;
+    for (let i = 0; i <= 40; i++)
+      for (let j = 0; j <= 40; j++) {
+        const x = -D + (2 * D * i) / 40;
+        const y = -D + (2 * D * j) / 40;
+        const f = curF(x, y);
+        if (f < fmin) fmin = f;
+        if (f > fmax) fmax = f;
+      }
+    fspan = fmax - fmin || 1;
+  }
+
+  // domain (x,y,height) -> world coords for the 3D camera
+  function worldOf(x: number, y: number) {
+    const wy = ((curF(x, y) - fmin) / fspan) * 1.3 - 0.65;
+    return project(x / D, wy, y / D);
+  }
+
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp;
+    const z2 = y * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const s = FOCAL / Math.max(0.05, zc);
+    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
+  }
+
+  function turbo(t: number) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [[40, 60, 150], [30, 150, 200], [50, 200, 120], [240, 200, 70], [235, 80, 70]];
+    const seg = t * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(seg));
+    const f = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    return `rgb(${(a[0] + (b[0] - a[0]) * f) | 0},${(a[1] + (b[1] - a[1]) * f) | 0},${(a[2] + (b[2] - a[2]) * f) | 0})`;
+  }
+
+  // ---- optimizers ----
+  type Opt = {
+    name: string; color: string; x: number; y: number;
+    mx: number; my: number; vx: number; vy: number; t: number;
+    step: (o: Opt, lr: number, g: Surf['g']) => void;
+  };
+  const B1 = 0.9, B2 = 0.999, EPS = 1e-7, RHO = 0.9, MOM = 0.9;
+
+  function makeOpts(): Opt[] {
+    return [
+      {
+        name: 'SGD', color: '#f87171', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
+        step: (o, lr, g) => { const d = g(o.x, o.y); o.x -= lr * d.x; o.y -= lr * d.y; },
+      },
+      {
+        name: 'Momentum', color: '#fbbf24', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
+        step: (o, lr, g) => {
+          const d = g(o.x, o.y);
+          o.vx = MOM * o.vx - lr * d.x; o.vy = MOM * o.vy - lr * d.y;
+          o.x += o.vx; o.y += o.vy;
+        },
+      },
+      {
+        name: 'Nesterov', color: '#34d399', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
+        step: (o, lr, g) => {
+          const d = g(o.x + MOM * o.vx, o.y + MOM * o.vy);
+          o.vx = MOM * o.vx - lr * d.x; o.vy = MOM * o.vy - lr * d.y;
+          o.x += o.vx; o.y += o.vy;
+        },
+      },
+      {
+        name: 'RMSProp', color: '#60a5fa', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
+        step: (o, lr, g) => {
+          const d = g(o.x, o.y);
+          o.vx = RHO * o.vx + (1 - RHO) * d.x * d.x;
+          o.vy = RHO * o.vy + (1 - RHO) * d.y * d.y;
+          o.x -= (lr * d.x) / (Math.sqrt(o.vx) + EPS);
+          o.y -= (lr * d.y) / (Math.sqrt(o.vy) + EPS);
+        },
+      },
+      {
+        name: 'Adam', color: '#c084fc', x: 0, y: 0, mx: 0, my: 0, vx: 0, vy: 0, t: 0,
+        step: (o, lr, g) => {
+          const d = g(o.x, o.y); o.t++;
+          o.mx = B1 * o.mx + (1 - B1) * d.x; o.my = B1 * o.my + (1 - B1) * d.y;
+          o.vx = B2 * o.vx + (1 - B2) * d.x * d.x; o.vy = B2 * o.vy + (1 - B2) * d.y * d.y;
+          const mhx = o.mx / (1 - B1 ** o.t), mhy = o.my / (1 - B1 ** o.t);
+          const vhx = o.vx / (1 - B2 ** o.t), vhy = o.vy / (1 - B2 ** o.t);
+          o.x -= (lr * mhx) / (Math.sqrt(vhx) + EPS);
+          o.y -= (lr * mhy) / (Math.sqrt(vhy) + EPS);
+        },
+      },
+    ];
+  }
+
+  let opts = makeOpts();
+  const trails: { x: number; y: number }[][] = [];
+
+  function resetOpts() {
+    opts = makeOpts();
+    for (const o of opts) { o.x = state.start.x; o.y = state.start.y; }
+    trails.length = 0;
+    for (let i = 0; i < opts.length; i++) trails.push([{ ...state.start }]);
+  }
+
+  function stepAll() {
+    const g = SURFACES[state.surf].g;
+    opts.forEach((o, i) => {
+      if (!isFinite(o.x) || !isFinite(o.y)) return;
+      o.step(o, state.lr, g);
+      o.x = Math.max(-D, Math.min(D, o.x));
+      o.y = Math.max(-D, Math.min(D, o.y));
+      const tr = trails[i];
+      tr.push({ x: o.x, y: o.y });
+      if (tr.length > 500) tr.shift();
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const M = 30;
+
+    // wireframe surface coloured by height
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= M; i++) {
+      // line of constant y (varying x) and constant x (varying y)
+      for (const axis of [0, 1]) {
+        ctx.beginPath();
+        let started = false;
+        for (let j = 0; j <= M; j++) {
+          const a = -D + (2 * D * i) / M;
+          const b = -D + (2 * D * j) / M;
+          const x = axis === 0 ? b : a;
+          const y = axis === 0 ? a : b;
+          const p = worldOf(x, y);
+          if (p.zc <= 0.1) { started = false; continue; }
+          if (!started) { ctx.moveTo(p.sx, p.sy); started = true; } else ctx.lineTo(p.sx, p.sy);
+        }
+        const a = -D + (2 * D * i) / M;
+        const tH = (curF(axis === 0 ? 0 : a, axis === 0 ? a : 0) - fmin) / fspan;
+        ctx.strokeStyle = turbo(tH);
+        ctx.globalAlpha = 0.4;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // start marker
+    const sp = worldOf(state.start.x, state.start.y);
+    if (sp.zc > 0.1) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sp.sx, sp.sy, 4, 0, 6.2832);
+      ctx.stroke();
+    }
+
+    // trails + balls
+    opts.forEach((o, i) => {
+      const tr = trails[i];
+      ctx.strokeStyle = o.color;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      let started = false;
+      for (const pt of tr) {
+        const p = worldOf(pt.x, pt.y);
+        if (p.zc <= 0.1) { started = false; continue; }
+        if (!started) { ctx.moveTo(p.sx, p.sy); started = true; } else ctx.lineTo(p.sx, p.sy);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      const p = worldOf(o.x, o.y);
+      if (p.zc > 0.1) {
+        ctx.fillStyle = o.color;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, Math.max(3.5, 4.5 * p.s), 0, 6.2832);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    });
+
+    drawGizmo();
+  }
+
+  function drawGizmo() {
+    const ox = 50, oy = H - 50, len = 28;
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const axes = [
+      { v: [1, 0, 0], c: '#f87171', l: 'x' },
+      { v: [0, 1, 0], c: '#4ade80', l: 'f' },
+      { v: [0, 0, 1], c: '#60a5fa', l: 'y' },
+    ];
+    const proj = axes.map((a) => {
+      const [x, y, z] = a.v;
+      const x1 = x * cy + z * sy;
+      const z1 = -x * sy + z * cy;
+      const y2 = y * cp - z1 * sp;
+      const z2 = y * sp + z1 * cp;
+      return { ex: ox + x1 * len, ey: oy - y2 * len, depth: z2, c: a.c, l: a.l };
+    });
+    proj.sort((a, b) => a.depth - b.depth);
+    ctx.lineWidth = 2;
+    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    for (const a of proj) {
+      ctx.strokeStyle = a.c; ctx.fillStyle = a.c;
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(a.ex, a.ey); ctx.stroke();
+      ctx.beginPath(); ctx.arc(a.ex, a.ey, 2.3, 0, 6.2832); ctx.fill();
+      ctx.fillText(a.l, a.ex + 3, a.ey - 3);
+    }
+  }
+
+  // legend
+  const legend = document.getElementById('legend')!;
+  legend.innerHTML = makeOpts()
+    .map((o) => `<span class="leg"><i style="background:${o.color}"></i>${o.name}</span>`)
+    .join('');
+
+  // ---- interaction ----
+  let dragging = false, lastX = 0, lastY = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lastX) * 0.01;
+    state.pitch = Math.max(-1.45, Math.min(-0.05, state.pitch + (e.clientY - lastY) * 0.01));
+    lastX = e.clientX; lastY = e.clientY;
+    if (!state.running) draw();
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  // ---- controls ----
+  document.getElementById('surf')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#surf button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.surf = btn.dataset.s!;
+    computeRange();
+    resetOpts();
+  });
+
+  const lrEl = document.getElementById('lr') as HTMLInputElement;
+  lrEl.addEventListener('input', () => {
+    state.lr = +lrEl.value / 1000;
+    (document.getElementById('lrval') as HTMLElement).textContent = state.lr.toFixed(3);
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('reset')!.addEventListener('click', resetOpts);
+  document.getElementById('newstart')!.addEventListener('click', () => {
+    state.start = { x: (Math.random() * 2 - 1) * 1.5, y: (Math.random() * 2 - 1) * 1.5 };
+    resetOpts();
+  });
+
+  function loop() {
+    if (state.running) stepAll();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  computeRange();
+  resetOpts();
+  loop();
+</script>
+
+<style>
+  .probe-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .probe-canvas:active {
+    cursor: grabbing;
+  }
+  .legend-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+  .legend-list .leg {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+  }
+  .legend-list .leg i {
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+</style>

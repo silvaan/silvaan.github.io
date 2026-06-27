@@ -72,6 +72,30 @@ export const AREAS: Area[] = [
         href: '/simulations/deep-learning/gradient-descent',
         status: 'live',
       },
+      {
+        slug: 'optimizers',
+        title: 'Optimizer Showdown',
+        description:
+          'Race SGD, Momentum, NAG, RMSProp and Adam down a 3D loss surface and watch how differently they descend.',
+        href: '/simulations/deep-learning/optimizers',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'statistics',
+    title: 'Statistics',
+    description: 'Randomness, distributions and the patterns that emerge from them.',
+    icon: 'M3 20h18 M3 20c4 0 5-13 9-13s5 13 9 13',
+    simulators: [
+      {
+        slug: 'central-limit-theorem',
+        title: 'Central Limit Theorem',
+        description:
+          'Average samples from any distribution and watch the means pile up into a Gaussian, faster as the sample size grows.',
+        href: '/simulations/statistics/central-limit-theorem',
+        status: 'live',
+      },
     ],
   },
   {

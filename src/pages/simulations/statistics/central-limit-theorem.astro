@@ -1,0 +1,237 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Central Limit Theorem"
+  description="Take a wildly non-Gaussian distribution, draw n samples, average them, and record the mean. Repeat. No matter the source, the distribution of those means tends to a bell curve, and it tightens as n grows."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="clt" width="900" height="540"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Source distribution</label>
+        <div class="seg" id="src">
+          <button data-src="uniform" class="active">Uniform</button>
+          <button data-src="exponential">Exponential</button>
+          <button data-src="bimodal">Bimodal</button>
+          <button data-src="dice">Dice</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Sample size n <b id="nval">5</b></label>
+        <input type="range" id="n" min="1" max="50" value="5" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Means collected</span><b id="cnt">0</b></div>
+        <div class="row"><span>Std of mean</span><b id="sd">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Faint bars at the top are the source distribution. The big histogram is
+        the distribution of sample means, with the predicted Gaussian overlaid.
+        Set n = 1 to see the raw source, then raise n and watch it turn into a
+        bell.
+      </p>
+    </div>
+  </div>
+</SimLayout>
+
+<script>
+  const canvas = document.getElementById('clt') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const W = canvas.width;
+  const H = canvas.height;
+  const PAD = { l: 46, r: 20, t: 90, b: 36 };
+
+  type Src = {
+    sample: () => number;
+    mean: number;
+    var: number;
+    range: [number, number];
+  };
+
+  const SOURCES: Record<string, Src> = {
+    uniform: { sample: () => Math.random(), mean: 0.5, var: 1 / 12, range: [0, 1] },
+    exponential: {
+      sample: () => -Math.log(1 - Math.random()),
+      mean: 1,
+      var: 1,
+      range: [0, 4],
+    },
+    bimodal: {
+      sample: () => (Math.random() < 0.5 ? Math.random() * 0.2 : 0.8 + Math.random() * 0.2),
+      mean: 0.5,
+      var: 0.16 + 1 / 12 * 0.04, // ~0.1633
+      range: [0, 1],
+    },
+    dice: {
+      sample: () => 1 + Math.floor(Math.random() * 6),
+      mean: 3.5,
+      var: 35 / 12,
+      range: [0.5, 6.5],
+    },
+  };
+
+  const BINS = 64;
+  const state = { src: 'uniform', n: 5, running: true };
+  let bins = new Float64Array(BINS);
+  let count = 0;
+
+  function reset() {
+    bins = new Float64Array(BINS);
+    count = 0;
+  }
+
+  function trial() {
+    const s = SOURCES[state.src];
+    let sum = 0;
+    for (let i = 0; i < state.n; i++) sum += s.sample();
+    const mean = sum / state.n;
+    const [a, b] = s.range;
+    let bi = Math.floor(((mean - a) / (b - a)) * BINS);
+    bi = Math.max(0, Math.min(BINS - 1, bi));
+    bins[bi]++;
+    count++;
+  }
+
+  function draw() {
+    const s = SOURCES[state.src];
+    const [a, b] = s.range;
+    const grid = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#262a32';
+    const faint = '#6b7280';
+
+    ctx.clearRect(0, 0, W, H);
+
+    const plotW = W - PAD.l - PAD.r;
+    const plotH = H - PAD.t - PAD.b;
+    const x0 = PAD.l;
+    const yBase = H - PAD.b;
+    const xOf = (val: number) => x0 + ((val - a) / (b - a)) * plotW;
+
+    // axis
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, yBase);
+    ctx.lineTo(x0 + plotW, yBase);
+    ctx.stroke();
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let t = 0; t <= 5; t++) {
+      const val = a + ((b - a) * t) / 5;
+      ctx.fillText(val.toFixed(1), xOf(val) - 10, yBase + 18);
+    }
+
+    // ---- source distribution preview (faint bars across the top) ----
+    const srcBins = new Float64Array(BINS);
+    for (let i = 0; i < 4000; i++) {
+      let bi = Math.floor(((s.sample() - a) / (b - a)) * BINS);
+      bi = Math.max(0, Math.min(BINS - 1, bi));
+      srcBins[bi]++;
+    }
+    let srcMax = 1;
+    for (const v of srcBins) if (v > srcMax) srcMax = v;
+    const bw = plotW / BINS;
+    ctx.fillStyle = 'rgba(154,160,172,0.28)';
+    for (let i = 0; i < BINS; i++) {
+      const h = (srcBins[i] / srcMax) * 56;
+      ctx.fillRect(x0 + i * bw, PAD.t - 64 + (56 - h), bw - 0.5, h);
+    }
+    ctx.fillStyle = faint;
+    ctx.fillText('source', x0, PAD.t - 70);
+
+    // ---- means histogram (as density) + gaussian ----
+    const sdMean = Math.sqrt(s.var / state.n);
+    // gaussian peak density (per unit x)
+    const gPeak = 1 / (sdMean * Math.sqrt(2 * Math.PI));
+    // histogram density: count_i / (total * binWidth)
+    const binWidth = (b - a) / BINS;
+    let histMaxDensity = 1e-9;
+    for (let i = 0; i < BINS; i++) {
+      const d = count > 0 ? bins[i] / (count * binWidth) : 0;
+      if (d > histMaxDensity) histMaxDensity = d;
+    }
+    const yMax = Math.max(histMaxDensity, gPeak) * 1.1;
+    const yOf = (d: number) => yBase - (d / yMax) * plotH;
+
+    // histogram bars
+    ctx.fillStyle = 'rgba(124,140,255,0.55)';
+    for (let i = 0; i < BINS; i++) {
+      if (bins[i] === 0) continue;
+      const d = bins[i] / (count * binWidth);
+      const y = yOf(d);
+      ctx.fillRect(x0 + i * bw, y, bw - 0.6, yBase - y);
+    }
+
+    // gaussian overlay
+    ctx.strokeStyle = '#5eead4';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let pxi = 0; pxi <= plotW; pxi += 2) {
+      const val = a + (pxi / plotW) * (b - a);
+      const d = gPeak * Math.exp(-((val - s.mean) ** 2) / (2 * sdMean * sdMean));
+      const X = x0 + pxi;
+      const Y = yOf(d);
+      pxi === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+    }
+    ctx.stroke();
+
+    // mean marker
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(xOf(s.mean), PAD.t - 4);
+    ctx.lineTo(xOf(s.mean), yBase);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    (document.getElementById('cnt') as HTMLElement).textContent = String(count);
+    (document.getElementById('sd') as HTMLElement).textContent = sdMean.toFixed(4);
+  }
+
+  function loop() {
+    if (state.running) {
+      for (let k = 0; k < 24; k++) trial();
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById('src')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#src button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.src = btn.dataset.src!;
+    reset();
+  });
+
+  const nEl = document.getElementById('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    state.n = +nEl.value;
+    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
+    reset();
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('reset')!.addEventListener('click', reset);
+
+  reset();
+  loop();
+</script>
