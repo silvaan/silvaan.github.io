@@ -1,0 +1,256 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Lagrange Multipliers"
+  description="To optimize something under a constraint, walk along the constraint until you can't climb any higher without leaving it. That happens exactly where the objective's contour is tangent to the constraint, where the two gradients line up."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="lag" width="600" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Objective f(x, y)</label>
+        <div class="seg" id="obj">
+          <button data-o="sum" class="active">x + y</button>
+          <button data-o="prod">x · y</button>
+          <button data-o="tilt">2x + y</button>
+        </div>
+      </div>
+
+      <button class="btn" id="snap">Snap to maximum</button>
+
+      <div class="readout">
+        <div class="row"><span>f at point</span><b id="fval">—</b></div>
+        <div class="row"><span>∠(∇f, ∇g)</span><b id="ang">—</b></div>
+        <div class="row"><span>Multiplier λ</span><b id="lam">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        The circle is the constraint g = x² + y² − 1 = 0. Drag the point around
+        it. The amber curve is the objective's contour through the point; ∇f is
+        indigo, ∇g is teal.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the point. Where the amber contour <b>crosses</b> the circle you can
+      still slide along the constraint to a higher contour, so it is not
+      optimal. The gradients point in different directions there.
+    </li>
+    <li>
+      Slide to where the contour is <b>tangent</b> to the circle. Now ∇f and ∇g
+      are <b>parallel</b> (the angle hits 0°), and you cannot improve without
+      leaving the constraint. That is the maximum.
+    </li>
+    <li>
+      Tangency means <b>∇f = λ∇g</b> for some number λ, the Lagrange multiplier.
+      It measures how hard the constraint is pushing back on the objective.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type Obj = { f: (x: number, y: number) => number; g: (x: number, y: number) => [number, number] };
+  const OBJ: Record<string, Obj> = {
+    sum: { f: (x, y) => x + y, g: () => [1, 1] },
+    prod: { f: (x, y) => x * y, g: (x, y) => [y, x] },
+    tilt: { f: (x, y) => 2 * x + y, g: () => [2, 1] },
+  };
+
+  const state = { obj: 'sum', theta: 0.7 };
+
+  const canvas = document.getElementById('lag') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const O = { x: W / 2, y: H / 2 };
+  const U = 150;
+  const DOM = 1.9;
+  const toPx = (x: number, y: number) => ({ px: O.x + x * U, py: O.y - y * U });
+
+  function marchingContour(level: number, color: string, width: number) {
+    const Ncol = 90;
+    const f = OBJ[state.obj].f;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    const step = (2 * DOM) / Ncol;
+    for (let i = 0; i < Ncol; i++)
+      for (let j = 0; j < Ncol; j++) {
+        const x0 = -DOM + i * step, y0 = -DOM + j * step;
+        const x1 = x0 + step, y1 = y0 + step;
+        const v = [f(x0, y0) - level, f(x1, y0) - level, f(x1, y1) - level, f(x0, y1) - level];
+        const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        const pts: { px: number; py: number }[] = [];
+        for (let e = 0; e < 4; e++) {
+          const a = v[e], b = v[(e + 1) % 4];
+          if ((a < 0 && b >= 0) || (a >= 0 && b < 0)) {
+            const t = a / (a - b);
+            const [ax, ay] = corners[e];
+            const [bx, by] = corners[(e + 1) % 4];
+            pts.push(toPx(ax + (bx - ax) * t, ay + (by - ay) * t));
+          }
+        }
+        if (pts.length === 2) {
+          ctx.moveTo(pts[0].px, pts[0].py);
+          ctx.lineTo(pts[1].px, pts[1].py);
+        }
+      }
+    ctx.stroke();
+  }
+
+  function arrow(x: number, y: number, dx: number, dy: number, color: string, label: string) {
+    const m = Math.hypot(dx, dy) || 1;
+    const L = 0.6;
+    const a = toPx(x, y);
+    const b = toPx(x + (dx / m) * L, y + (dy / m) * L);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(a.px, a.py);
+    ctx.lineTo(b.px, b.py);
+    ctx.stroke();
+    const ang = Math.atan2(b.py - a.py, b.px - a.px);
+    ctx.beginPath();
+    ctx.moveTo(b.px, b.py);
+    ctx.lineTo(b.px - 11 * Math.cos(ang - 0.4), b.py - 11 * Math.sin(ang - 0.4));
+    ctx.lineTo(b.px - 11 * Math.cos(ang + 0.4), b.py - 11 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = "600 14px 'JetBrains Mono', monospace";
+    ctx.fillText(label, b.px + 6, b.py - 4);
+  }
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
+    const f = OBJ[state.obj].f;
+    ctx.clearRect(0, 0, W, H);
+
+    // faint objective heatmap
+    const light = css('--stage-light') === '1';
+    const GG = 60;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= GG; i++)
+      for (let j = 0; j <= GG; j++) {
+        const val = f(-DOM + (2 * DOM * i) / GG, -DOM + (2 * DOM * j) / GG);
+        lo = Math.min(lo, val); hi = Math.max(hi, val);
+      }
+    const cell = W / GG;
+    for (let i = 0; i < GG; i++)
+      for (let j = 0; j < GG; j++) {
+        const val = f(-DOM + (2 * DOM * (i + 0.5)) / GG, -DOM + (2 * DOM * (j + 0.5)) / GG);
+        const t = (val - lo) / (hi - lo || 1);
+        const a = (light ? 0.14 : 0.18) * t + 0.02;
+        ctx.fillStyle = `rgba(124,140,255,${a})`;
+        ctx.fillRect(i * cell, H - (j + 1) * cell, cell + 1, cell + 1);
+      }
+
+    // faint contour levels
+    for (let n = -4; n <= 4; n++) marchingContour(n * (state.obj === 'prod' ? 0.5 : 1), grid, 1);
+
+    // constraint circle
+    ctx.strokeStyle = `rgba(${ink},0.7)`;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(O.x, O.y, U, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // current level contour (through the point)
+    const px = Math.cos(state.theta), py = Math.sin(state.theta);
+    const level = f(px, py);
+    marchingContour(level, '#f59e0b', 2.4);
+
+    // gradients
+    const gf = OBJ[state.obj].g(px, py);
+    arrow(px, py, gf[0], gf[1], accent, '∇f');
+    arrow(px, py, px, py, teal, '∇g'); // grad of x²+y² is (2x,2y) ∝ (x,y)
+
+    // point
+    const pp = toPx(px, py);
+    ctx.fillStyle = `rgba(${ink},1)`;
+    ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pp.px, pp.py, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // readouts
+    const gg: [number, number] = [px, py]; // direction of ∇g
+    const dot = gf[0] * gg[0] + gf[1] * gg[1];
+    const ang = (Math.atan2(Math.abs(gf[0] * gg[1] - gf[1] * gg[0]), dot) * 180) / Math.PI;
+    const aligned = Math.min(ang, 180 - ang) < 2.5;
+    const gmag2 = 4 * (px * px + py * py); // |∇g|² with ∇g=(2x,2y)
+    const lam = (gf[0] * 2 * px + gf[1] * 2 * py) / (gmag2 || 1);
+    (document.getElementById('fval') as HTMLElement).textContent = level.toFixed(3);
+    (document.getElementById('ang') as HTMLElement).textContent = Math.min(ang, 180 - ang).toFixed(1) + '°' + (aligned ? '  ✓ optimal' : '');
+    (document.getElementById('lam') as HTMLElement).textContent = lam.toFixed(3);
+    void faint;
+  }
+
+  function setTheta(t: number) {
+    state.theta = t;
+    draw();
+  }
+
+  let dragging = false;
+  function fromPointer(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W - O.x;
+    const my = -(((e.clientY - rect.top) / rect.height) * H - O.y);
+    setTheta(Math.atan2(my, mx));
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    fromPointer(e);
+  });
+  canvas.addEventListener('pointermove', (e) => dragging && fromPointer(e));
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  document.getElementById('obj')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#obj button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.obj = btn.dataset.o!;
+    draw();
+  });
+  document.getElementById('snap')!.addEventListener('click', () => {
+    const f = OBJ[state.obj].f;
+    let bestT = 0, bestV = -Infinity;
+    for (let i = 0; i < 2000; i++) {
+      const t = (i / 2000) * Math.PI * 2;
+      const val = f(Math.cos(t), Math.sin(t));
+      if (val > bestV) { bestV = val; bestT = t; }
+    }
+    setTheta(bestT);
+  });
+
+  draw();
+</script>
+
+<style>
+  #lag {
+    cursor: grab;
+    touch-action: none;
+  }
+  #lag:active {
+    cursor: grabbing;
+  }
+</style>

@@ -8,7 +8,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   description="Two of the classic field pictures in 3D. In Electric mode, field lines stream from positive to negative charges. In Magnetic mode, the field wraps in circles around a current-carrying wire. Orbit to look around."
 >
   <div class="sim">
-    <div class="sim-stage stage-dark">
+    <div class="sim-stage">
       <canvas id="em" class="probe-canvas" width="640" height="640"></canvas>
     </div>
 
@@ -61,11 +61,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   import { setupCanvas } from '../../../lib/sim';
   const canvas = document.getElementById('em') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
   const CX = W / 2;
   const CY = H / 2;
   const CAM = 3.4;
   const FOCAL = 2.8;
   const SCALE = 250;
+
+  // Field-line colours are chosen at draw time so a theme switch recolours live.
+  function fieldColor(kind: 'e' | 'm') {
+    if (kind === 'e') return isLight() ? 'rgba(37,99,235,0.75)' : 'rgba(150,180,255,0.7)';
+    return isLight() ? 'rgba(13,148,136,0.85)' : 'rgba(94,234,212,0.7)';
+  }
 
   type V = { x: number; y: number; z: number };
   type Charge = { x: number; y: number; z: number; q: number };
@@ -79,7 +87,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   };
 
   let charges: Charge[] = [];
-  let lines: { pts: V[]; col: string }[] = [];
+  let lines: { pts: V[]; kind: 'e' | 'm' }[] = [];
 
   function project(x: number, y: number, z: number) {
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
@@ -139,7 +147,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
             if (o.q < 0 && Math.hypot(p.x - o.x, p.y - o.y, p.z - o.z) < 0.07) { hit = true; break; }
           if (hit) break;
         }
-        if (pts.length > 2) lines.push({ pts, col: 'rgba(150,180,255,0.7)' });
+        if (pts.length > 2) lines.push({ pts, kind: 'e' });
       }
     }
   }
@@ -157,7 +165,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           const a = state.current * (i / K) * Math.PI * 2;
           pts.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, z });
         }
-        lines.push({ pts, col: 'rgba(94,234,212,0.7)' });
+        lines.push({ pts, kind: 'm' });
       }
     }
   }
@@ -226,7 +234,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (let t = -0.6; t <= 0.8; t += 0.7) {
       const p0 = project(0, 0, t * state.current);
       const p1 = project(0, 0, (t + 0.25) * state.current);
-      arrowHead(p0.sx, p0.sy, p1.sx, p1.sy, '#ffce9e');
+      arrowHead(p0.sx, p0.sy, p1.sx, p1.sy, isLight() ? '#b45309' : '#ffce9e');
     }
   }
 
@@ -236,7 +244,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     // field lines
     for (const ln of lines) {
-      ctx.strokeStyle = ln.col;
+      const col = fieldColor(ln.kind);
+      ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       let started = false;
@@ -252,7 +261,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       if (mi > 0 && mi < ln.pts.length) {
         const a = project(ln.pts[mi - 1].x, ln.pts[mi - 1].y, ln.pts[mi - 1].z);
         const b = project(ln.pts[mi].x, ln.pts[mi].y, ln.pts[mi].z);
-        if (a.zc > 0.1 && b.zc > 0.1) arrowHead(a.sx, a.sy, b.sx, b.sy, ln.col);
+        if (a.zc > 0.1 && b.zc > 0.1) arrowHead(a.sx, a.sy, b.sx, b.sy, col);
       }
     }
 

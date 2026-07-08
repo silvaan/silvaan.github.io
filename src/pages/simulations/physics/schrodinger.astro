@@ -1,0 +1,238 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Schrödinger Equation"
+  description="A quantum particle is a wave of probability. Launch a wave packet at a barrier taller than its energy and, instead of simply bouncing back, part of it leaks through to the other side. That is quantum tunneling, and it is why the sun shines and flash memory works."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="sch" width="900" height="460"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Relaunch</button>
+      </div>
+
+      <div class="control">
+        <label>Particle energy <b id="eval">0.13</b></label>
+        <input type="range" id="k" min="20" max="90" value="50" />
+      </div>
+
+      <div class="control">
+        <label>Barrier height <b id="vval">0.18</b></label>
+        <input type="range" id="v" min="0" max="60" value="18" />
+      </div>
+
+      <div class="control">
+        <label>Barrier width <b id="wval">8</b></label>
+        <input type="range" id="w" min="2" max="30" value="8" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Energy E</span><b id="energy">—</b></div>
+        <div class="row"><span>Barrier V₀</span><b id="bar">—</b></div>
+        <div class="row"><span>Transmitted</span><b id="trans">—</b></div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Set the barrier <b>higher</b> than the particle's energy (V₀ &gt; E).
+      Classically nothing should get through, yet a sliver of the packet
+      <b>tunnels</b> out the far side. The taller or wider the wall, the less
+      leaks.
+    </li>
+    <li>
+      The packet also <b>spreads</b> as it travels: a well-localized particle has
+      a spread of momenta, so it smears out over time. Position and momentum
+      cannot both be sharp, that's uncertainty.
+    </li>
+    <li>
+      Lower the barrier below E and most of the wave sails over, but a bit still
+      <b>reflects</b>, another purely wave-like effect with no classical
+      counterpart.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const N = 640;
+  const R = new Float64Array(N);
+  const I = new Float64Array(N);
+  const V = new Float64Array(N);
+  const mask = new Float64Array(N);
+  const state = { k0: 0.5, V0: 0.18, bw: 8, playing: true };
+  const x0 = 150;
+  const sigma = 20;
+  const barrierCenter = Math.round(N * 0.6);
+  let dispScale = 1;
+
+  const canvas = document.getElementById('sch') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const PAD = { l: 12, r: 12, t: 16, b: 26 };
+
+  function buildV() {
+    const half = state.bw / 2;
+    for (let i = 0; i < N; i++) V[i] = Math.abs(i - barrierCenter) <= half ? state.V0 : 0;
+  }
+  function buildMask() {
+    const edge = 60;
+    for (let i = 0; i < N; i++) {
+      let m = 1;
+      if (i < edge) m = 0.5 + 0.5 * (i / edge);
+      else if (i > N - edge) m = 0.5 + 0.5 * ((N - 1 - i) / edge);
+      mask[i] = 0.94 + 0.06 * m; // gentle absorption near the walls
+    }
+  }
+
+  function launch() {
+    let norm = 0;
+    for (let i = 0; i < N; i++) {
+      const g = Math.exp(-((i - x0) ** 2) / (2 * sigma * sigma));
+      R[i] = g * Math.cos(state.k0 * i);
+      I[i] = g * Math.sin(state.k0 * i);
+      norm += R[i] * R[i] + I[i] * I[i];
+    }
+    const s = 1 / Math.sqrt(norm);
+    let peak = 0;
+    for (let i = 0; i < N; i++) {
+      R[i] *= s;
+      I[i] *= s;
+      peak = Math.max(peak, R[i] * R[i] + I[i] * I[i]);
+    }
+    dispScale = 1 / (peak * 1.25);
+    buildV();
+    buildMask();
+  }
+
+  const DT = 0.2;
+  function step() {
+    for (let i = 1; i < N - 1; i++) R[i] += DT * (-0.5 * (I[i - 1] - 2 * I[i] + I[i + 1]) + V[i] * I[i]);
+    for (let i = 1; i < N - 1; i++) I[i] += DT * (0.5 * (R[i - 1] - 2 * R[i] + R[i + 1]) - V[i] * R[i]);
+    for (let i = 0; i < N; i++) { R[i] *= mask[i]; I[i] *= mask[i]; }
+  }
+
+  const sx = (i: number) => PAD.l + (i / (N - 1)) * (W - PAD.l - PAD.r);
+  const baseY = H - PAD.b;
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const ink = css('--stage-ink') || '232,233,236';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+
+    // barrier
+    const half = state.bw / 2;
+    const bx0 = sx(barrierCenter - half);
+    const bx1 = sx(barrierCenter + half);
+    ctx.fillStyle = 'rgba(248,113,113,0.16)';
+    ctx.fillRect(bx0, PAD.t, bx1 - bx0, baseY - PAD.t);
+    ctx.strokeStyle = 'rgba(248,113,113,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx0, PAD.t, bx1 - bx0, baseY - PAD.t);
+
+    // baseline
+    ctx.strokeStyle = `rgba(${ink},0.4)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, baseY);
+    ctx.lineTo(W - PAD.r, baseY);
+    ctx.stroke();
+
+    const amp = (baseY - PAD.t) * 0.9;
+    // Re(psi) faint
+    ctx.strokeStyle = `rgba(${ink},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const y = baseY - R[i] * Math.sqrt(dispScale) * amp * 0.5 - 0;
+      i === 0 ? ctx.moveTo(sx(i), y) : ctx.lineTo(sx(i), y);
+    }
+    ctx.stroke();
+
+    // |psi|^2 filled
+    ctx.beginPath();
+    ctx.moveTo(sx(0), baseY);
+    for (let i = 0; i < N; i++) {
+      const p = (R[i] * R[i] + I[i] * I[i]) * dispScale;
+      ctx.lineTo(sx(i), baseY - p * amp);
+    }
+    ctx.lineTo(sx(N - 1), baseY);
+    ctx.closePath();
+    ctx.fillStyle = teal + '55';
+    ctx.fill();
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const p = (R[i] * R[i] + I[i] * I[i]) * dispScale;
+      i === 0 ? ctx.moveTo(sx(i), baseY - p * amp) : ctx.lineTo(sx(i), baseY - p * amp);
+    }
+    ctx.stroke();
+
+    // labels
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('|ψ|²', PAD.l + 4, PAD.t + 12);
+    ctx.fillStyle = 'rgba(248,113,113,0.8)';
+    ctx.fillText('barrier', bx1 + 6, PAD.t + 12);
+    void accent;
+
+    // transmission (prob right of barrier)
+    let left = 0, right = 0;
+    for (let i = 0; i < N; i++) {
+      const p = R[i] * R[i] + I[i] * I[i];
+      if (i > barrierCenter + half) right += p;
+      else if (i < barrierCenter - half) left += p;
+    }
+    const tot = left + right || 1;
+    const E = 0.5 * state.k0 * state.k0;
+    (document.getElementById('energy') as HTMLElement).textContent = E.toFixed(3);
+    (document.getElementById('bar') as HTMLElement).textContent = state.V0.toFixed(3);
+    (document.getElementById('trans') as HTMLElement).textContent = ((right / tot) * 100).toFixed(1) + '%';
+  }
+
+  function loop() {
+    if (state.playing) for (let s = 0; s < 6; s++) step();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  const kEl = document.getElementById('k') as HTMLInputElement;
+  kEl.addEventListener('input', () => {
+    state.k0 = +kEl.value / 100;
+    (document.getElementById('eval') as HTMLElement).textContent = (0.5 * state.k0 * state.k0).toFixed(2);
+    launch();
+  });
+  const vEl = document.getElementById('v') as HTMLInputElement;
+  vEl.addEventListener('input', () => {
+    state.V0 = +vEl.value / 100;
+    (document.getElementById('vval') as HTMLElement).textContent = state.V0.toFixed(2);
+    buildV();
+  });
+  const wEl = document.getElementById('w') as HTMLInputElement;
+  wEl.addEventListener('input', () => {
+    state.bw = +wEl.value;
+    (document.getElementById('wval') as HTMLElement).textContent = wEl.value;
+    buildV();
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.playing = !state.playing;
+    runBtn.textContent = state.playing ? 'Pause' : 'Play';
+  });
+  document.getElementById('reset')!.addEventListener('click', launch);
+
+  launch();
+  requestAnimationFrame(loop);
+</script>

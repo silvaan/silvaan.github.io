@@ -1,0 +1,243 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Bayes' Theorem"
+  description="A test that is 90% accurate can still be wrong most of the time it says 'positive'. Picture 1,000 people as dots: the ones who test positive split into truly sick (teal) and false alarms (red), and when the disease is rare the false alarms win."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="bayes" width="760" height="470"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>View</label>
+        <div class="seg" id="view">
+          <button data-v="all" class="active">Everyone (1,000)</button>
+          <button data-v="pos">Positive tests only</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Prevalence (base rate) <b id="prval">1.0%</b></label>
+        <input type="range" id="pr" min="1" max="500" value="10" />
+      </div>
+      <div class="control">
+        <label>Sensitivity (true positive) <b id="seval">90%</b></label>
+        <input type="range" id="se" min="50" max="100" value="90" />
+      </div>
+      <div class="control">
+        <label>Specificity (true negative) <b id="spval">90%</b></label>
+        <input type="range" id="sp" min="50" max="100" value="90" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>P(disease | positive)</span><b id="post">—</b></div>
+        <div class="row"><span>P(disease | negative)</span><b id="postneg">—</b></div>
+      </div>
+
+      <div class="control">
+        <label>Per 1,000 people</label>
+        <div class="tally" id="tally"></div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Start at <b>1% prevalence</b> with a 90% / 90% test, then switch to
+      <b>Positive tests only</b>. Barely a tenth of the dots are teal: a positive
+      result means only about an <b>8% chance</b> of actually being sick.
+    </li>
+    <li>
+      Why? There are so many more healthy people that even a small false-positive
+      rate produces a <b>flood of red</b>. The answer depends on the
+      <b>base rate</b>, not just the test's accuracy.
+    </li>
+    <li>
+      Slide prevalence up and watch the positive dots flip from mostly-red to
+      mostly-teal. Then push <b>specificity</b> toward 100%: shrinking that tiny
+      false-positive rate is what really moves the posterior.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const state = { prev: 0.01, sens: 0.9, spec: 0.9, view: 'all' };
+
+  const canvas = document.getElementById('bayes') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const COL = {
+    tp: '#2dd4bf',
+    fp: '#f87171',
+    fnDark: 'rgba(45,212,191,0.30)',
+    tnDark: 'rgba(130,140,155,0.28)',
+  };
+
+  const COLS = 50;
+  const ROWS = 20;
+  const N = COLS * ROWS; // 1000
+
+  function counts() {
+    const diseased = state.prev * N;
+    const tp = Math.round(diseased * state.sens);
+    const fn = Math.round(diseased * (1 - state.sens));
+    const healthy = N - Math.round(diseased);
+    const fp = Math.round(healthy * (1 - state.spec));
+    const tn = N - tp - fn - fp;
+    return { tp, fn, fp, tn: Math.max(0, tn) };
+  }
+
+  function draw() {
+    const ink = css('--stage-ink') || '232,233,236';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+
+    const { tp, fn, fp, tn } = counts();
+    const cell = 13;
+    const gridW = COLS * cell;
+    const gx0 = (W - gridW) / 2;
+    const gy0 = 64;
+    const r = 4;
+
+    // Build the colour sequence. Positives (tp, fp) come first so they form a
+    // single contiguous block you can read like a bar chart.
+    const seq: string[] = [];
+    const push = (n: number, c: string) => {
+      for (let i = 0; i < n; i++) seq.push(c);
+    };
+    let total = N;
+    if (state.view === 'pos') {
+      push(tp, COL.tp);
+      push(fp, COL.fp);
+      total = tp + fp;
+    } else {
+      push(tp, COL.tp);
+      push(fp, COL.fp);
+      push(fn, COL.fnDark);
+      push(tn, COL.tnDark);
+    }
+
+    // headline
+    const tpA = state.prev * state.sens;
+    const fpA = (1 - state.prev) * (1 - state.spec);
+    const post = tpA + fpA > 0 ? tpA / (tpA + fpA) : 0;
+    ctx.fillStyle = `rgba(${ink},1)`;
+    ctx.font = "700 18px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      state.view === 'pos'
+        ? `${(post * 100).toFixed(1)}% of positive tests are truly sick`
+        : `A positive test → ${(post * 100).toFixed(1)}% chance of disease`,
+      W / 2,
+      32
+    );
+    ctx.textAlign = 'left';
+
+    // dots
+    for (let i = 0; i < total; i++) {
+      const col = Math.floor(i / ROWS);
+      const row = i % ROWS;
+      const cx = gx0 + col * cell + cell / 2;
+      const cy = gy0 + row * cell + cell / 2;
+      ctx.fillStyle = seq[i];
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // caption under grid
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    const capY = gy0 + ROWS * cell + 22;
+    if (state.view === 'pos') {
+      ctx.fillText(`${tp} truly sick (teal)   ·   ${fp} false alarms (red)`, W / 2, capY);
+    } else {
+      ctx.fillText('each dot is one person · teal = correctly caught · red = false alarm · faded = negatives', W / 2, capY);
+    }
+    ctx.textAlign = 'left';
+
+    // readouts
+    const postNeg = (() => {
+      const a = state.prev * (1 - state.sens);
+      const b = (1 - state.prev) * state.spec;
+      return a + b > 0 ? a / (a + b) : 0;
+    })();
+    (document.getElementById('post') as HTMLElement).textContent = (post * 100).toFixed(1) + '%';
+    (document.getElementById('postneg') as HTMLElement).textContent = (postNeg * 100).toFixed(2) + '%';
+
+    const r2 = (n: number) => String(n);
+    (document.getElementById('tally') as HTMLElement).innerHTML =
+      `<span class="t tp">${r2(tp)} true +</span>` +
+      `<span class="t fp">${r2(fp)} false +</span>` +
+      `<span class="t fn">${r2(fn)} false −</span>` +
+      `<span class="t tn">${r2(tn)} true −</span>`;
+  }
+
+  document.getElementById('view')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#view button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.view = btn.dataset.v!;
+    draw();
+  });
+
+  function bind(id: string, key: 'prev' | 'sens' | 'spec', scale: number, fmt: (v: number) => string) {
+    const el = document.getElementById(id) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      state[key] = +el.value / scale;
+      (document.getElementById(id.slice(0, 2) + 'val') as HTMLElement).textContent = fmt(state[key]);
+      draw();
+    });
+  }
+  bind('pr', 'prev', 1000, (v) => (v * 100).toFixed(1) + '%');
+  bind('se', 'sens', 100, (v) => Math.round(v * 100) + '%');
+  bind('sp', 'spec', 100, (v) => Math.round(v * 100) + '%');
+
+  draw();
+</script>
+
+<style>
+  .tally {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .tally .t {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border-left: 3px solid;
+  }
+  .tally .tp {
+    border-color: #2dd4bf;
+    color: var(--text);
+    background: rgba(45, 212, 191, 0.1);
+  }
+  .tally .fp {
+    border-color: #f87171;
+    color: var(--text);
+    background: rgba(248, 113, 113, 0.1);
+  }
+  .tally .fn {
+    border-color: rgba(45, 212, 191, 0.5);
+    color: var(--text-muted);
+    background: var(--surface-2);
+  }
+  .tally .tn {
+    border-color: rgba(130, 140, 155, 0.5);
+    color: var(--text-muted);
+    background: var(--surface-2);
+  }
+</style>

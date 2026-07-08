@@ -1,0 +1,301 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Image Convolution"
+  description="A convolutional layer is just a small window of weights sliding over an image, multiplying and summing as it goes. Change the kernel and it detects edges, blurs, or sharpens; change the stride, padding and dilation and you reshape the output itself."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="conv" width="900" height="480"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Restart</button>
+      </div>
+
+      <div class="control">
+        <label>Kernel</label>
+        <div class="seg" id="kernel">
+          <button data-k="edge" class="active">Edge</button>
+          <button data-k="sobelx">Sobel X</button>
+          <button data-k="sharpen">Sharpen</button>
+          <button data-k="blur">Blur</button>
+          <button data-k="emboss">Emboss</button>
+          <button data-k="identity">Identity</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Kernel weights</label>
+        <div class="kernel-grid" id="kgrid"></div>
+      </div>
+
+      <div class="control"><label>Stride <b id="sval">1</b></label><input type="range" id="s" min="1" max="4" value="1" /></div>
+      <div class="control"><label>Padding <b id="pval">0</b></label><input type="range" id="p" min="0" max="3" value="0" /></div>
+      <div class="control"><label>Dilation <b id="dval">1</b></label><input type="range" id="d" min="1" max="4" value="1" /></div>
+
+      <div class="readout">
+        <div class="row"><span>Input</span><b id="insize">—</b></div>
+        <div class="row"><span>Output</span><b id="outsize">—</b></div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The kernel is the whole "neuron": the output is just its weights multiplied
+      against the patch under it, summed. <b>Edge</b> and <b>Sobel</b> fire on
+      brightness changes; <b>Blur</b> averages; <b>Sharpen</b> exaggerates.
+    </li>
+    <li>
+      Raise the <b>stride</b> and the window jumps in bigger hops, shrinking the
+      output (that is how networks downsample). <b>Padding</b> adds a zero border
+      so the output can keep the input's size.
+    </li>
+    <li>
+      Increase <b>dilation</b>: the same nine weights spread apart, so the kernel
+      sees a wider area without adding parameters. The output size follows
+      <b>⌊(W + 2p − d(k−1) − 1)/s⌋ + 1</b>.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const KERNELS: Record<string, number[][]> = {
+    edge: [[0, 1, 0], [1, -4, 1], [0, 1, 0]],
+    sobelx: [[1, 0, -1], [2, 0, -2], [1, 0, -1]],
+    sharpen: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]],
+    blur: [[1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9]],
+    emboss: [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]],
+    identity: [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+  };
+  const K = 3;
+  const GI = 20;
+  const state = { kernel: 'edge', stride: 1, pad: 0, dil: 1, running: false };
+
+  const canvas = document.getElementById('conv') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  // procedural grayscale input with clear edges
+  const input: number[][] = [];
+  for (let y = 0; y < GI; y++) {
+    input[y] = [];
+    for (let x = 0; x < GI; x++) {
+      let v = 0.32 + 0.22 * (x / GI);
+      if ((x - 6) ** 2 + (y - 8) ** 2 < 20) v = 0.9;
+      if (x >= 12 && x <= 17 && y >= 4 && y <= 10) v = 0.1;
+      if (Math.abs(x - y) < 1.1 && x > 3) v = 0.98;
+      input[y][x] = Math.max(0, Math.min(1, v));
+    }
+  }
+
+  let out: number[][] = [];
+  let outN = 0, outMin = 0, outMax = 1, reveal = 0;
+
+  const span = () => state.dil * (K - 1) + 1;
+  const outSize = () => Math.max(1, Math.floor((GI + 2 * state.pad - span()) / state.stride) + 1);
+
+  function sampleIn(iy: number, ix: number) {
+    if (iy < 0 || ix < 0 || iy >= GI || ix >= GI) return 0; // zero padding
+    return input[iy][ix];
+  }
+  function compute() {
+    const ker = KERNELS[state.kernel];
+    outN = outSize();
+    out = [];
+    outMin = Infinity;
+    outMax = -Infinity;
+    for (let oy = 0; oy < outN; oy++) {
+      out[oy] = [];
+      for (let ox = 0; ox < outN; ox++) {
+        const iy0 = oy * state.stride - state.pad;
+        const ix0 = ox * state.stride - state.pad;
+        let s = 0;
+        for (let dy = 0; dy < K; dy++)
+          for (let dx = 0; dx < K; dx++)
+            s += sampleIn(iy0 + dy * state.dil, ix0 + dx * state.dil) * ker[dy][dx];
+        out[oy][ox] = s;
+        outMin = Math.min(outMin, s);
+        outMax = Math.max(outMax, s);
+      }
+    }
+    if (outMax - outMin < 1e-6) outMax = outMin + 1;
+    reveal = 0;
+    updateReadout();
+  }
+
+  function updateReadout() {
+    (document.getElementById('insize') as HTMLElement).textContent = `${GI}×${GI}`;
+    (document.getElementById('outsize') as HTMLElement).textContent = `${outN}×${outN}`;
+  }
+
+  function renderKernelGrid() {
+    const ker = KERNELS[state.kernel];
+    const grid = document.getElementById('kgrid')!;
+    grid.innerHTML = ker
+      .flat()
+      .map((v) => `<span>${Number.isInteger(v) ? v : v.toFixed(2)}</span>`)
+      .join('');
+  }
+
+  function gray(v: number) {
+    const g = Math.round(v * 255);
+    return `rgb(${g},${g},${g})`;
+  }
+
+  function draw() {
+    const ink = css('--stage-ink') || '232,233,236';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+
+    const inBox = 260;
+    const cellIn = inBox / GI;
+    const ix0 = 30, iy0 = 70;
+    const outBox = 260;
+    const cellOut = outBox / outN;
+    const ox0 = W - outBox - 30, oy0 = 70;
+
+    // current output cell
+    const cy = Math.floor(reveal / outN);
+    const cx = reveal % outN;
+    const cur = Math.min(reveal, outN * outN - 1);
+    const ccy = Math.floor(cur / outN), ccx = cur % outN;
+
+    // input image
+    for (let y = 0; y < GI; y++)
+      for (let x = 0; x < GI; x++) {
+        ctx.fillStyle = gray(input[y][x]);
+        ctx.fillRect(ix0 + x * cellIn, iy0 + y * cellIn, cellIn + 0.5, cellIn + 0.5);
+      }
+    // receptive field for current cell
+    const riy0 = ccy * state.stride - state.pad;
+    const rix0 = ccx * state.stride - state.pad;
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    for (let dy = 0; dy < K; dy++)
+      for (let dx = 0; dx < K; dx++) {
+        const iy = riy0 + dy * state.dil;
+        const ix = rix0 + dx * state.dil;
+        ctx.strokeRect(ix0 + ix * cellIn + 1, iy0 + iy * cellIn + 1, cellIn - 2, cellIn - 2);
+      }
+    ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ix0 + rix0 * cellIn, iy0 + riy0 * cellIn, (span()) * cellIn, (span()) * cellIn);
+
+    // output image (revealed cells)
+    for (let i = 0; i < reveal; i++) {
+      const y = Math.floor(i / outN), x = i % outN;
+      const nv = (out[y][x] - outMin) / (outMax - outMin);
+      ctx.fillStyle = gray(nv);
+      ctx.fillRect(ox0 + x * cellOut, oy0 + y * cellOut, cellOut + 0.5, cellOut + 0.5);
+    }
+    ctx.strokeStyle = `rgba(${ink},0.3)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox0, oy0, outBox, outBox);
+    if (reveal < outN * outN) {
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(ox0 + cx * cellOut, oy0 + cy * cellOut, cellOut, cellOut);
+    }
+
+    // arrow between
+    ctx.fillStyle = faint;
+    ctx.font = "13px 'JetBrains Mono', monospace";
+    ctx.fillText('input', ix0, iy0 - 12);
+    ctx.fillText('⊛ kernel  →  output', ix0 + inBox + 18, iy0 + inBox / 2);
+    ctx.fillText('feature map', ox0, oy0 - 12);
+  }
+
+  let acc = 0, last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = (ts - last) / 1000;
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      while (acc >= 0.05) {
+        acc -= 0.05;
+        if (reveal < outN * outN) reveal++;
+        else {
+          state.running = false;
+          (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
+        }
+      }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById('kernel')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#kernel button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.kernel = btn.dataset.k!;
+    renderKernelGrid();
+    compute();
+  });
+  const bindSlider = (id: string, key: 'stride' | 'pad' | 'dil') => {
+    const el = document.getElementById(id) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      state[key] = +el.value;
+      (document.getElementById(id + 'val') as HTMLElement).textContent = el.value;
+      compute();
+    });
+  };
+  bindSlider('s', 'stride');
+  bindSlider('p', 'pad');
+  bindSlider('d', 'dil');
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    if (reveal >= outN * outN) reveal = 0;
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    if (reveal >= outN * outN) reveal = 0;
+    else reveal++;
+    draw();
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    reveal = 0;
+    state.running = false;
+    runBtn.textContent = 'Run';
+    draw();
+  });
+
+  renderKernelGrid();
+  compute();
+  reveal = outN * outN; // start fully computed
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .kernel-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    max-width: 160px;
+  }
+  .kernel-grid span {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+  }
+</style>

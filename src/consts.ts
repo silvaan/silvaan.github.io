@@ -11,6 +11,6 @@ export const NAV_LINKS = [
 
 export const SOCIAL = {
   email: 'sjrmiranda@gmail.com',
-  github: 'https://github.com/',
+  github: 'https://github.com/silvaan',
   twitter: 'https://x.com/',
 };

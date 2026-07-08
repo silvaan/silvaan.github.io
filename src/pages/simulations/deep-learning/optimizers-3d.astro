@@ -8,7 +8,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   description="Instead of a 2D surface, the loss here is a volumetric density cloud, like coloured smoke. Five optimizers move freely through 3D space, each descending toward the densest cores. Orbit, zoom, and watch their paths through the haze."
 >
   <div class="sim">
-    <div class="sim-stage stage-dark">
+    <div class="sim-stage">
       <canvas id="cloud" class="probe-canvas" width="660" height="620"></canvas>
     </div>
 
@@ -75,6 +75,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   import { setupCanvas } from '../../../lib/sim';
   const canvas = document.getElementById('cloud') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const ink = () => css('--stage-ink') || '232,233,236';
   const CX = W / 2;
   const CY = H / 2;
   const CAM = 3.3;
@@ -272,14 +275,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function draw() {
     ctx.clearRect(0, 0, W, H);
 
-    // density cloud (additive)
-    ctx.globalCompositeOperation = 'lighter';
+    // density cloud (additive on dark, multiply on light so it darkens paper)
+    const light = isLight();
+    ctx.globalCompositeOperation = light ? 'multiply' : 'lighter';
     const count = Math.min(state.count, nPoints);
     for (let i = 0; i < count; i++) {
       const p = project(px[i], py[i], pz[i]);
       if (p.zc <= 0.1) continue;
       const c = turbo(pt[i]);
-      const alpha = 0.07 + 0.36 * pt[i];
+      const alpha = light ? 0.1 + 0.44 * pt[i] : 0.07 + 0.36 * pt[i];
       const r = Math.max(0.7, 1.5 * p.s);
       ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
       ctx.beginPath();
@@ -309,7 +313,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       if (state.showGrad) {
         const g = grad(o.p);
         const m = Math.hypot(g[0], g[1], g[2]);
-        if (m > 1e-5) arrow(o.p, [-g[0] / m, -g[1] / m, -g[2] / m], 0.3, 'rgba(255,255,255,0.92)', true);
+        if (m > 1e-5) arrow(o.p, [-g[0] / m, -g[1] / m, -g[2] / m], 0.3, `rgba(${ink()},0.92)`, true);
       }
       if (state.showMom) {
         const v = momentumOf(i);

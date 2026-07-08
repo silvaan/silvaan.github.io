@@ -1,0 +1,238 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Wave Equation"
+  description="Where heat diffuses and forgets, a wave remembers. The same second derivative in space now drives an acceleration, not a decay, so a pluck keeps its shape and travels. Drag the string, then watch pulses race and reflect."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="wave" width="900" height="420"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Pluck shape</label>
+        <div class="seg" id="shape">
+          <button data-s="center" class="active">Center</button>
+          <button data-s="pulse">Pulse</button>
+          <button data-s="two">Two pulses</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Boundaries</label>
+        <div class="seg" id="bc">
+          <button data-b="fixed" class="active">Fixed ends</button>
+          <button data-b="free">Free ends</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Wave speed <b id="cval">0.50</b></label>
+        <input type="range" id="c" min="10" max="98" value="50" />
+      </div>
+
+      <div class="control">
+        <label>Damping <b id="dval">0.000</b></label>
+        <input type="range" id="damp" min="0" max="60" value="0" />
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag anywhere on the string to pull it into a new shape, then let go and
+        watch it release.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Compare with the <b>heat equation</b>: heat smears a bump out and forgets
+      it, but the wave <b>keeps its shape</b> and carries it along. The same
+      curvature term drives an acceleration here, not a decay.
+    </li>
+    <li>
+      Watch a pulse hit the wall. With <b>Fixed ends</b> it reflects
+      <b>upside down</b>; with <b>Free ends</b> it bounces back <b>upright</b>.
+    </li>
+    <li>
+      Send <b>Two pulses</b> toward each other: they pass straight through,
+      briefly adding up where they overlap. That is <b>superposition</b>.
+    </li>
+    <li>
+      Add <b>damping</b> and the energy bleeds away, the string slowly returns
+      to rest, like a real plucked string.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const N = 240;
+  let u = new Float32Array(N);
+  let uPrev = new Float32Array(N);
+  const state = { shape: 'center', bc: 'fixed', C: 0.5, damp: 0, playing: true };
+
+  const canvas = document.getElementById('wave') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const PAD = { l: 20, r: 20, t: 20, b: 20 };
+  const AMP = (H - PAD.t - PAD.b) * 0.42;
+  const midY = H / 2;
+
+  function gaussian(center: number, width: number, height: number) {
+    for (let i = 0; i < N; i++) {
+      const d = (i - center) / width;
+      u[i] += height * Math.exp(-d * d);
+    }
+  }
+
+  function setShape(shape: string) {
+    u = new Float32Array(N);
+    if (shape === 'center') gaussian(N / 2, 16, 1);
+    else if (shape === 'pulse') gaussian(N * 0.25, 10, 1);
+    else {
+      gaussian(N * 0.22, 9, 1);
+      gaussian(N * 0.78, 9, -1);
+    }
+    uPrev = u.slice(); // start at rest
+  }
+
+  function applyBC(a: Float32Array) {
+    if (state.bc === 'fixed') {
+      a[0] = 0;
+      a[N - 1] = 0;
+    } else {
+      a[0] = a[1];
+      a[N - 1] = a[N - 2];
+    }
+  }
+
+  function step() {
+    const C2 = state.C * state.C;
+    const damp = state.damp;
+    const uNext = new Float32Array(N);
+    for (let i = 1; i < N - 1; i++) {
+      const lap = u[i - 1] - 2 * u[i] + u[i + 1];
+      const vel = u[i] - uPrev[i];
+      uNext[i] = u[i] + (1 - damp) * vel + C2 * lap;
+    }
+    applyBC(uNext);
+    uPrev = u;
+    u = uNext;
+  }
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const grid = css('--border-strong') || '#343a45';
+    ctx.clearRect(0, 0, W, H);
+
+    // rest line
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, midY);
+    ctx.lineTo(W - PAD.r, midY);
+    ctx.stroke();
+
+    // end supports
+    ctx.fillStyle = css('--text-faint') || '#6b7280';
+    for (const gx of [PAD.l, W - PAD.r]) {
+      ctx.beginPath();
+      ctx.arc(gx, midY, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // string
+    const sx = (i: number) => PAD.l + (i / (N - 1)) * (W - PAD.l - PAD.r);
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const x = sx(i);
+      const y = midY - u[i] * AMP;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  function loop() {
+    if (state.playing) {
+      for (let k = 0; k < 3; k++) step();
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // drag to pull the string
+  let dragging = false;
+  function pull(e: PointerEvent) {
+    if (!dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const fx = ((e.clientX - rect.left) / rect.width) * W;
+    const fy = ((e.clientY - rect.top) / rect.height) * H;
+    const ci = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (N - 1));
+    const target = (midY - fy) / AMP;
+    for (let i = 0; i < N; i++) {
+      const d = (i - ci) / 12;
+      const w = Math.exp(-d * d);
+      u[i] = u[i] * (1 - w) + target * w;
+    }
+    applyBC(u);
+    uPrev = u.slice(); // hold it still until released
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    pull(e);
+  });
+  canvas.addEventListener('pointermove', pull);
+  const drop = () => (dragging = false);
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  document.getElementById('shape')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#shape button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.shape = btn.dataset.s!;
+    setShape(state.shape);
+  });
+  document.getElementById('bc')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#bc button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.bc = btn.dataset.b!;
+  });
+
+  const cEl = document.getElementById('c') as HTMLInputElement;
+  cEl.addEventListener('input', () => {
+    state.C = +cEl.value / 100;
+    (document.getElementById('cval') as HTMLElement).textContent = state.C.toFixed(2);
+  });
+  const dEl = document.getElementById('damp') as HTMLInputElement;
+  dEl.addEventListener('input', () => {
+    state.damp = +dEl.value / 10000;
+    (document.getElementById('dval') as HTMLElement).textContent = state.damp.toFixed(3);
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.playing = !state.playing;
+    runBtn.textContent = state.playing ? 'Pause' : 'Run';
+  });
+  document.getElementById('reset')!.addEventListener('click', () => setShape(state.shape));
+
+  setShape('center');
+  requestAnimationFrame(loop);
+</script>

@@ -1,0 +1,207 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Random Walk & Diffusion"
+  description="Give thousands of particles no goal at all, just a coin flip each step, and a shape still emerges. The crowd spreads into a bell whose width grows like the square root of time: the particle's-eye view of diffusion."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="walk" width="900" height="460"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Walkers <b id="nval">2000</b></label>
+        <input type="range" id="n" min="200" max="6000" step="200" value="2000" />
+      </div>
+
+      <div class="control">
+        <label>Speed <b id="spval">4</b></label>
+        <input type="range" id="sp" min="1" max="20" value="4" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Steps t</span><b id="steps">0</b></div>
+        <div class="row"><span>Measured spread σ</span><b id="sd">0.0</b></div>
+        <div class="row"><span>Predicted √t</span><b id="pred">0.0</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Top: every walker as a dot, all starting at the centre. Bottom: the
+        histogram of their positions, with the predicted Gaussian overlaid.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      No walker has any preferred direction, yet the crowd reliably fans out into
+      a <b>bell curve</b>. Same mechanism as the Central Limit Theorem: a sum of
+      independent steps.
+    </li>
+    <li>
+      Watch the readouts: the spread <b>σ tracks √t</b>, not t. To reach twice as
+      far, the cloud needs <b>four times</b> the steps. That square-root law is
+      the fingerprint of diffusion.
+    </li>
+    <li>
+      This is the <b>heat equation</b> seen from the particles. The bell widening
+      here is the very same profile that heat follows as it spreads.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const NMAX = 6000;
+  const pos = new Float32Array(NMAX);
+  const lane = new Float32Array(NMAX); // fixed vertical position per walker
+  for (let i = 0; i < NMAX; i++) lane[i] = Math.random();
+
+  const state = { n: 2000, speed: 4, steps: 0, playing: true };
+
+  const canvas = document.getElementById('walk') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const TOP = { y0: 28, y1: 196 };
+  const BOT = { y0: 236, y1: 430 };
+  const PADX = 30;
+  const BINS = 81;
+
+  function reset() {
+    pos.fill(0);
+    state.steps = 0;
+  }
+
+  function step() {
+    for (let i = 0; i < state.n; i++) pos[i] += Math.random() < 0.5 ? -1 : 1;
+    state.steps++;
+  }
+
+  function stdOf() {
+    let m = 0;
+    for (let i = 0; i < state.n; i++) m += pos[i];
+    m /= state.n;
+    let v = 0;
+    for (let i = 0; i < state.n; i++) v += (pos[i] - m) ** 2;
+    return Math.sqrt(v / state.n);
+  }
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    const sd = stdOf();
+    const R = Math.max(12, 4 * Math.max(sd, Math.sqrt(state.steps)));
+    const mapX = (x: number) => PADX + ((x + R) / (2 * R)) * (W - 2 * PADX);
+
+    // centre line
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(mapX(0), TOP.y0);
+    ctx.lineTo(mapX(0), BOT.y1);
+    ctx.stroke();
+
+    // walker dots
+    ctx.fillStyle = `rgba(${ink},0.5)`;
+    for (let i = 0; i < state.n; i++) {
+      const x = mapX(pos[i]);
+      const y = TOP.y0 + lane[i] * (TOP.y1 - TOP.y0);
+      ctx.fillRect(x, y, 1.6, 1.6);
+    }
+
+    // histogram
+    const bins = new Float64Array(BINS);
+    const lo = -R, hi = R;
+    for (let i = 0; i < state.n; i++) {
+      let b = Math.floor(((pos[i] - lo) / (hi - lo)) * BINS);
+      b = Math.max(0, Math.min(BINS - 1, b));
+      bins[b]++;
+    }
+    const binW = (W - 2 * PADX) / BINS;
+    const binWidthX = (hi - lo) / BINS;
+    let maxDens = 1e-9;
+    for (let b = 0; b < BINS; b++) {
+      const d = bins[b] / (state.n * binWidthX);
+      if (d > maxDens) maxDens = d;
+    }
+    const gPeak = 1 / (Math.max(sd, 1e-6) * Math.sqrt(2 * Math.PI));
+    const yMax = Math.max(maxDens, gPeak) * 1.1;
+    const yOf = (d: number) => BOT.y1 - (d / yMax) * (BOT.y1 - BOT.y0);
+
+    ctx.fillStyle = 'rgba(94,234,212,0.5)';
+    for (let b = 0; b < BINS; b++) {
+      if (!bins[b]) continue;
+      const d = bins[b] / (state.n * binWidthX);
+      const x = PADX + b * binW;
+      ctx.fillRect(x, yOf(d), binW - 0.5, BOT.y1 - yOf(d));
+    }
+
+    // gaussian overlay
+    if (sd > 1e-6) {
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (let px = 0; px <= W - 2 * PADX; px += 2) {
+        const xv = lo + (px / (W - 2 * PADX)) * (hi - lo);
+        const d = gPeak * Math.exp(-(xv * xv) / (2 * sd * sd));
+        const X = PADX + px;
+        const Y = yOf(d);
+        px === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+      }
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('position →', W - 96, BOT.y1 + 18);
+
+    (document.getElementById('steps') as HTMLElement).textContent = String(state.steps);
+    (document.getElementById('sd') as HTMLElement).textContent = sd.toFixed(1);
+    (document.getElementById('pred') as HTMLElement).textContent = Math.sqrt(state.steps).toFixed(1);
+  }
+
+  function loop() {
+    if (state.playing) {
+      for (let k = 0; k < state.speed; k++) step();
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  const nEl = document.getElementById('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    state.n = +nEl.value;
+    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
+    reset();
+  });
+  const spEl = document.getElementById('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value;
+    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.playing = !state.playing;
+    runBtn.textContent = state.playing ? 'Pause' : 'Run';
+  });
+  document.getElementById('reset')!.addEventListener('click', reset);
+
+  reset();
+  requestAnimationFrame(loop);
+</script>

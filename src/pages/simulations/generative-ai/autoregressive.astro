@@ -1,0 +1,250 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="generative-ai"
+  title="Autoregressive Models"
+  description="Every large language model runs the same loop: read the text so far, predict a probability distribution over the next word, sample one, append it, repeat. Here the model is a word-level n-gram counted from a paragraph, but the mechanics, and the effect of temperature, are exactly those of an LLM."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="ar" width="900" height="500"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Next word</button>
+        <button class="btn ghost" id="reset">Restart</button>
+      </div>
+
+      <div class="control">
+        <label>Context length (words) <b id="nval">1</b></label>
+        <input type="range" id="n" min="1" max="3" value="1" />
+      </div>
+
+      <div class="control">
+        <label>Temperature <b id="tval">0.80</b></label>
+        <input type="range" id="t" min="5" max="200" value="80" />
+      </div>
+
+      <div class="control">
+        <label>Speed <b id="spval">3</b></label>
+        <input type="range" id="sp" min="1" max="16" value="3" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Vocabulary</span><b id="vocab">—</b></div>
+        <div class="row"><span>Next-word options</span><b id="opts">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        The highlighted words are the context. The bars are the live distribution
+        over the next word; drag temperature and watch them reshape.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag <b>temperature</b> without stepping and watch the bars breathe. Near
+      <b>0</b> one bar towers over the rest (greedy, repetitive); crank it up and
+      they <b>flatten</b> toward uniform (adventurous, then incoherent). Same
+      counts, reshaped before sampling.
+    </li>
+    <li>
+      With <b>context = 1</b> the model only knows the previous word, so common
+      words like "the" branch into many options and the text wanders. Raise the
+      context and it copies longer real phrases: more fluent, but closer to just
+      quoting the source.
+    </li>
+    <li>
+      Nothing here understands anything. It only tallies "what word usually
+      follows these". Swap the counts for a neural network and the vocabulary for
+      billions of tokens and this exact loop becomes a large language model.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const CORPUS =
+    'The city wakes slowly in the pale light of morning. The baker opens the shop and the smell of warm bread drifts along the narrow street. The old woman sweeps the stone steps while the children run toward the square, laughing in the cool air. A cart rolls past the fountain, and the driver waves to the vendors who arrange their fruit in bright rows. The market fills with voices, with the ring of coins and the shuffle of feet, and the sun climbs above the rooftops. By noon the heat settles over the tiles and the cats sleep in the shade of the walls. The river moves quietly beyond the bridge, carrying small boats and the reflections of the clouds. In the afternoon the wind returns from the sea, and the shutters rattle, and the awnings lift and fall like slow breathing. The students cross the plaza with their books, arguing about numbers and stars and the shapes of distant things. The painter sits beneath the arch and studies the light on the water, mixing blue and gray until the color feels right. When evening comes the lamps glow along the avenue, and the tables spill out from the cafes onto the pavement. People gather to talk and to eat, and the music leaks from open windows into the warm dark. The night deepens and the streets grow quiet again, and the city keeps its slow and patient rhythm beneath the turning sky. Somewhere a clock counts the hours, and the last train hums away into the distance, and the stars burn steady above the sleeping town. Tomorrow the light will return to the same streets and the same doors, and the baker will open the shop once more, and the whole bright ordinary morning will begin again.';
+
+  const TOKENS = CORPUS.match(/[A-Za-z]+|[.,;!?]/g) || [];
+  const isPunct = (t: string) => /^[.,;!?]$/.test(t);
+  const key = (arr: string[]) => arr.map((t) => t.toLowerCase()).join('');
+
+  const state = { n: 1, temp: 0.8, speed: 3, running: false };
+  let models: Map<string, Map<string, number>>[] = [];
+  let tokens: string[] = [];
+
+  const canvas = document.getElementById('ar') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  function buildModels() {
+    models = [];
+    for (let order = 1; order <= 3; order++) {
+      const m = new Map<string, Map<string, number>>();
+      for (let i = order; i < TOKENS.length; i++) {
+        const k = key(TOKENS.slice(i - order, i));
+        if (!m.has(k)) m.set(k, new Map());
+        const inner = m.get(k)!;
+        inner.set(TOKENS[i], (inner.get(TOKENS[i]) || 0) + 1);
+      }
+      models[order] = m;
+    }
+  }
+
+  function rawCounts(): Map<string, number> {
+    for (let order = state.n; order >= 1; order--) {
+      const ctxTok = tokens.slice(-order);
+      if (ctxTok.length < order) continue;
+      const m = models[order].get(key(ctxTok));
+      if (m && m.size) return m;
+    }
+    // unigram fallback
+    const uni = new Map<string, number>();
+    for (const t of TOKENS) uni.set(t, (uni.get(t) || 0) + 1);
+    return uni;
+  }
+
+  function distribution() {
+    const counts = rawCounts();
+    let total = 0;
+    counts.forEach((v) => (total += v));
+    const inv = 1 / Math.max(0.05, state.temp);
+    let z = 0;
+    const arr: { w: string; p: number }[] = [];
+    counts.forEach((v, w) => {
+      const q = Math.pow(v / total, inv);
+      z += q;
+      arr.push({ w, p: q });
+    });
+    for (const a of arr) a.p /= z;
+    arr.sort((a, b) => b.p - a.p);
+    return arr;
+  }
+
+  function sample(dist: { w: string; p: number }[]) {
+    let r = Math.random();
+    for (const d of dist) {
+      r -= d.p;
+      if (r <= 0) return d.w;
+    }
+    return dist[dist.length - 1]?.w ?? '.';
+  }
+
+  function seed() {
+    tokens = ['The'];
+  }
+  function stepOnce() {
+    tokens.push(sample(distribution()));
+    if (tokens.length > 160) tokens = tokens.slice(-150);
+  }
+
+  function draw() {
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    // ---- generated text (word wrap) ----
+    ctx.font = "16px 'Inter', system-ui, sans-serif";
+    ctx.textBaseline = 'top';
+    const x0 = 24, y0 = 26, rowH = 25, maxX = W - 24;
+    const spaceW = ctx.measureText(' ').width;
+    const ctxStart = Math.max(0, tokens.length - state.n);
+    let x = x0, y = y0;
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      const w = ctx.measureText(tok).width;
+      let sep = i > 0 && !isPunct(tok) ? spaceW : 0;
+      if (x + sep + w > maxX) { x = x0; y += rowH; sep = 0; }
+      if (i >= ctxStart) {
+        ctx.fillStyle = accent + '33';
+        ctx.fillRect(x + sep - 2, y - 3, w + 4, rowH - 4);
+      }
+      ctx.fillStyle = i >= ctxStart ? `rgba(${ink},1)` : `rgba(${ink},0.66)`;
+      ctx.fillText(tok, x + sep, y);
+      x += sep + w;
+      if (y > 210) break;
+    }
+    // caret
+    ctx.fillStyle = teal;
+    ctx.fillRect(x + spaceW, y + 2, 2, rowH - 8);
+
+    // ---- distribution bars (horizontal) ----
+    const dist = distribution();
+    const top = dist.slice(0, 9);
+    const bx = 24, by = 280, labelW = 150, barMax = W - 48 - labelW - 60;
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    const ctxStr = tokens.slice(-state.n).join(' ');
+    ctx.fillText(`P(next word  |  "${ctxStr}")`, bx, by - 22);
+
+    const maxP = top.length ? top[0].p : 1;
+    const rowH2 = 22;
+    top.forEach((d, i) => {
+      const ry = by + i * rowH2;
+      ctx.fillStyle = `rgba(${ink},0.9)`;
+      ctx.font = "14px 'Inter', system-ui, sans-serif";
+      ctx.textAlign = 'right';
+      ctx.fillText(d.w, bx + labelW - 8, ry + 3);
+      ctx.textAlign = 'left';
+      const bw = (d.p / maxP) * barMax;
+      ctx.fillStyle = i === 0 ? accent : `rgba(${ink},0.35)`;
+      ctx.fillRect(bx + labelW, ry, Math.max(1, bw), rowH2 - 6);
+      ctx.fillStyle = faint;
+      ctx.font = "11px 'JetBrains Mono', monospace";
+      ctx.fillText((d.p * 100).toFixed(1) + '%', bx + labelW + bw + 6, ry + 3);
+    });
+
+    (document.getElementById('vocab') as HTMLElement).textContent = String(new Set(TOKENS.map((t) => t.toLowerCase())).size);
+    (document.getElementById('opts') as HTMLElement).textContent = String(dist.length);
+  }
+
+  let acc = 0, last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = (ts - last) / 1000;
+    last = ts;
+    if (state.running) {
+      acc += dt * state.speed;
+      while (acc >= 1) { acc -= 1; stepOnce(); }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  const nEl = document.getElementById('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    state.n = +nEl.value;
+    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
+  });
+  const tEl = document.getElementById('t') as HTMLInputElement;
+  tEl.addEventListener('input', () => {
+    state.temp = +tEl.value / 100;
+    (document.getElementById('tval') as HTMLElement).textContent = state.temp.toFixed(2);
+  });
+  const spEl = document.getElementById('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value;
+    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => { stepOnce(); draw(); });
+  document.getElementById('reset')!.addEventListener('click', () => { seed(); draw(); });
+
+  buildModels();
+  seed();
+  requestAnimationFrame(loop);
+</script>

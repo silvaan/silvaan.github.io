@@ -1,0 +1,219 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Wave Interference"
+  description="Two sources send out ripples that cross and combine. Where crests meet crests the wave doubles; where crest meets trough it cancels to stillness. Those cancellations trace the dark fringes behind the double-slit experiment."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="wi" class="wi-canvas" width="640" height="460"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+      </div>
+
+      <div class="control">
+        <label>Wavelength <b id="wlval">40</b></label>
+        <input type="range" id="wl" min="16" max="90" value="40" />
+      </div>
+
+      <div class="control">
+        <label>Sources</label>
+        <div class="seg" id="src">
+          <button data-n="1">1</button>
+          <button data-n="2" class="active">2</button>
+        </div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Source separation</span><b id="sep">—</b></div>
+        <div class="row"><span>Wavelength</span><b id="wl2">—</b></div>
+      </div>
+
+      <div class="legend"><span>trough</span><span class="bar"></span><span>crest</span></div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag either white source. The dark lines that never move are nodal lines,
+        where the two waves are exactly out of phase and cancel.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Follow one of the <b>dark bands</b>: it stays put while the waves stream
+      through it. Along that line the two sources are always a half-wavelength out
+      of step, so they <b>cancel</b>. This is destructive interference.
+    </li>
+    <li>
+      Move the sources <b>farther apart</b> or shorten the <b>wavelength</b> and
+      the fringes crowd together. It is the ratio λ / separation that sets their
+      spacing, exactly the double-slit formula.
+    </li>
+    <li>
+      Drop to <b>1 source</b>: plain circular ripples, no fringes. Interference
+      needs at least two coherent waves to add and subtract.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const state = { wl: 40, n: 2, playing: true };
+  const sources = [
+    { x: 250, y: 230 },
+    { x: 390, y: 230 },
+  ];
+
+  const canvas = document.getElementById('wi') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const GW = 256, GH = 184;
+  const off = document.createElement('canvas');
+  off.width = GW;
+  off.height = GH;
+  const octx = off.getContext('2d')!;
+  const img = octx.createImageData(GW, GH);
+  let t = 0;
+
+  function palette() {
+    const light = css('--stage-light') === '1';
+    return light
+      ? { lo: [70, 60, 220], mid: [246, 247, 249], hi: [13, 148, 136] }
+      : { lo: [96, 116, 255], mid: [13, 14, 18], hi: [45, 212, 191] };
+  }
+
+  function render() {
+    const P = palette();
+    const k = (2 * Math.PI) / state.wl;
+    const omega = 0.12;
+    const sxScale = W / GW;
+    const syScale = H / GH;
+    const nS = state.n;
+    for (let j = 0; j < GH; j++) {
+      const wy = j * syScale;
+      for (let i = 0; i < GW; i++) {
+        const wx = i * sxScale;
+        let a = 0;
+        for (let s = 0; s < nS; s++) {
+          const dx = wx - sources[s].x;
+          const dy = wy - sources[s].y;
+          const r = Math.sqrt(dx * dx + dy * dy);
+          a += Math.sin(k * r - omega * t) / (1 + r * 0.012);
+        }
+        // normalise to about [-1,1]
+        const v = Math.max(-1, Math.min(1, a / nS));
+        const tt = (v + 1) / 2;
+        let c: number[];
+        if (tt < 0.5) {
+          const u = tt * 2;
+          c = [P.lo[0] + (P.mid[0] - P.lo[0]) * u, P.lo[1] + (P.mid[1] - P.lo[1]) * u, P.lo[2] + (P.mid[2] - P.lo[2]) * u];
+        } else {
+          const u = (tt - 0.5) * 2;
+          c = [P.mid[0] + (P.hi[0] - P.mid[0]) * u, P.mid[1] + (P.hi[1] - P.mid[1]) * u, P.mid[2] + (P.hi[2] - P.mid[2]) * u];
+        }
+        const idx = (j * GW + i) * 4;
+        img.data[idx] = c[0];
+        img.data[idx + 1] = c[1];
+        img.data[idx + 2] = c[2];
+        img.data[idx + 3] = 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, W, H);
+
+    // source markers
+    const ink = css('--stage-ink') || '232,233,236';
+    for (let s = 0; s < nS; s++) {
+      ctx.fillStyle = `rgba(${ink},1)`;
+      ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sources[s].x, sources[s].y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    const sep = Math.hypot(sources[0].x - sources[1].x, sources[0].y - sources[1].y);
+    (document.getElementById('sep') as HTMLElement).textContent = state.n === 2 ? sep.toFixed(0) + ' px' : '—';
+    (document.getElementById('wl2') as HTMLElement).textContent = state.wl + ' px';
+  }
+
+  function loop() {
+    if (state.playing) t += 1;
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // drag sources
+  let drag = -1;
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    drag = -1;
+    for (let s = 0; s < state.n; s++)
+      if (Math.hypot(mx - sources[s].x, my - sources[s].y) < 22) drag = s;
+    if (drag >= 0) canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (drag < 0) return;
+    const rect = canvas.getBoundingClientRect();
+    sources[drag].x = Math.max(10, Math.min(W - 10, ((e.clientX - rect.left) / rect.width) * W));
+    sources[drag].y = Math.max(10, Math.min(H - 10, ((e.clientY - rect.top) / rect.height) * H));
+  });
+  const stop = () => (drag = -1);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  document.getElementById('src')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#src button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.n = +btn.dataset.n!;
+  });
+  const wlEl = document.getElementById('wl') as HTMLInputElement;
+  wlEl.addEventListener('input', () => {
+    state.wl = +wlEl.value;
+    (document.getElementById('wlval') as HTMLElement).textContent = wlEl.value;
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.playing = !state.playing;
+    runBtn.textContent = state.playing ? 'Pause' : 'Play';
+  });
+
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .wi-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .wi-canvas:active {
+    cursor: grabbing;
+  }
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text-faint);
+  }
+  .legend .bar {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(to right, rgb(96, 116, 255), #16181d, rgb(45, 212, 191));
+  }
+</style>

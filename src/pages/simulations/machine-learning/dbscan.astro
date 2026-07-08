@@ -1,0 +1,287 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="DBSCAN"
+  description="Density-based clustering that needs no k. It grows clusters wherever points are packed tightly, follows whatever shape they take, and labels the sparse leftovers as noise. Step through the expansion, or draw your own dense blobs and watch it flood-fill them."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="db" width="600" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Restart</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" id="regen">Random points</button>
+        <button class="btn ghost" id="clear">Clear</button>
+      </div>
+
+      <div class="control">
+        <label>Random data</label>
+        <div class="seg" id="data">
+          <button data-d="moons" class="active">Moons</button>
+          <button data-d="blobs">Blobs</button>
+          <button data-d="noise">Blobs + noise</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Neighborhood ε <b id="epsval">42</b></label>
+        <input type="range" id="eps" min="12" max="90" value="42" />
+      </div>
+      <div class="control">
+        <label>Min points <b id="mpval">5</b></label>
+        <input type="range" id="mp" min="2" max="12" value="5" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Clusters found</span><b id="nclust">—</b></div>
+        <div class="row"><span>Noise points</span><b id="nnoise">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Click the canvas to add points. Restart, then Step, to watch clusters
+        flood outward from dense cores.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Hit <b>Restart</b> then <b>Step</b>. DBSCAN picks a dense point and
+      <b>floods outward</b> through neighbors within ε, so a cluster takes on
+      whatever shape the data has, even a long crescent.
+    </li>
+    <li>
+      Grey points are <b>noise</b>: they never gather enough ε-neighbors to join
+      anyone. Built-in outlier detection, for free.
+    </li>
+    <li>
+      The two knobs fight each other. Too small an <b>ε</b> (or too high
+      <b>min points</b>) shatters everything into noise; too large and separate
+      clusters <b>merge</b>. The right density sits in between.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type P = { x: number; y: number };
+  const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399', '#f472b6', '#38bdf8'];
+
+  const state = { data: 'moons', eps: 42, minPts: 5, running: false };
+  let pts: P[] = [];
+  let labels: number[] = [];
+  let oi = 0, cid = -1, seeds: number[] = [], done = false;
+
+  const canvas = document.getElementById('db') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const PAD = 44;
+  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+  function gen() {
+    pts = [];
+    if (state.data === 'moons') {
+      for (let i = 0; i < 130; i++) {
+        const t = Math.PI * (i / 130);
+        const r = 190 + rnd(-12, 12);
+        pts.push({ x: W / 2 + r * Math.cos(t) - 80, y: H / 2 - r * Math.sin(t) + 55 });
+        pts.push({ x: W / 2 + r * Math.cos(t) + 80, y: H / 2 + r * Math.sin(t) - 55 });
+      }
+    } else {
+      const nb = 4;
+      const bc = Array.from({ length: nb }, () => ({ x: rnd(PAD + 70, W - PAD - 70), y: rnd(PAD + 70, H - PAD - 70) }));
+      for (let i = 0; i < 240; i++) {
+        const b = bc[i % nb];
+        pts.push({ x: b.x + rnd(-40, 40) + rnd(-14, 14), y: b.y + rnd(-40, 40) + rnd(-14, 14) });
+      }
+      if (state.data === 'noise')
+        for (let i = 0; i < 70; i++) pts.push({ x: rnd(PAD, W - PAD), y: rnd(PAD, H - PAD) });
+    }
+  }
+
+  function neighbors(i: number) {
+    const eps2 = state.eps * state.eps;
+    const out: number[] = [];
+    for (let j = 0; j < pts.length; j++) {
+      if (j === i) continue;
+      const dx = pts[i].x - pts[j].x;
+      const dy = pts[i].y - pts[j].y;
+      if (dx * dx + dy * dy <= eps2) out.push(j);
+    }
+    return out;
+  }
+
+  function restart() {
+    labels = new Array(pts.length).fill(-2); // -2 unvisited, -1 noise, >=0 cluster
+    oi = 0;
+    cid = -1;
+    seeds = [];
+    done = pts.length === 0;
+  }
+
+  function stepOnce() {
+    if (seeds.length) {
+      const q = seeds.shift()!;
+      if (labels[q] === -1) labels[q] = cid; // border reclaimed
+      if (labels[q] === -2) {
+        labels[q] = cid;
+        const nbq = neighbors(q);
+        if (nbq.length + 1 >= state.minPts) for (const x of nbq) if (labels[x] < 0) seeds.push(x);
+      }
+      return;
+    }
+    while (oi < pts.length && labels[oi] !== -2) oi++;
+    if (oi >= pts.length) {
+      done = true;
+      return;
+    }
+    const p = oi++;
+    const nb = neighbors(p);
+    if (nb.length + 1 < state.minPts) {
+      labels[p] = -1;
+    } else {
+      cid++;
+      labels[p] = cid;
+      seeds = nb.slice();
+    }
+  }
+
+  function runFull() {
+    restart();
+    let guard = 0;
+    while (!done && guard++ < 200000) stepOnce();
+    updateReadout();
+  }
+
+  function updateReadout() {
+    (document.getElementById('nclust') as HTMLElement).textContent = String(Math.max(0, cid + 1));
+    (document.getElementById('nnoise') as HTMLElement).textContent = String(labels.filter((l) => l === -1).length);
+  }
+
+  function draw() {
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    const seedSet = new Set(seeds);
+    for (let i = 0; i < pts.length; i++) {
+      const l = labels[i];
+      if (l === -2) {
+        ctx.strokeStyle = `rgba(${ink},0.35)`;
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.arc(pts[i].x, pts[i].y, 3.4, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = l === -1 ? `rgba(${ink},0.28)` : PALETTE[l % PALETTE.length];
+        ctx.beginPath();
+        ctx.arc(pts[i].x, pts[i].y, l === -1 ? 3 : 4.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (seedSet.has(i)) {
+        ctx.strokeStyle = `rgba(${ink},0.9)`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(pts[i].x, pts[i].y, 7, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // epsilon scale reference
+    ctx.strokeStyle = `rgba(${ink},0.5)`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(40, H - 40, state.eps, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = css('--text-faint') || '#6b7280';
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('ε', 37, H - 36);
+  }
+
+  function loop() {
+    if (state.running) {
+      for (let k = 0; k < 6 && !done; k++) stepOnce();
+      updateReadout();
+      if (done) {
+        state.running = false;
+        (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
+      }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    pts.push({
+      x: ((e.clientX - rect.left) / rect.width) * W,
+      y: ((e.clientY - rect.top) / rect.height) * H,
+    });
+    runFull();
+  });
+
+  document.getElementById('data')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#data button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.data = btn.dataset.d!;
+    gen();
+    runFull();
+  });
+  const epsEl = document.getElementById('eps') as HTMLInputElement;
+  epsEl.addEventListener('input', () => {
+    state.eps = +epsEl.value;
+    (document.getElementById('epsval') as HTMLElement).textContent = epsEl.value;
+    runFull();
+  });
+  const mpEl = document.getElementById('mp') as HTMLInputElement;
+  mpEl.addEventListener('input', () => {
+    state.minPts = +mpEl.value;
+    (document.getElementById('mpval') as HTMLElement).textContent = mpEl.value;
+    runFull();
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    if (done) restart();
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    if (done) restart();
+    stepOnce();
+    updateReadout();
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    state.running = false;
+    runBtn.textContent = 'Run';
+    restart();
+    updateReadout();
+  });
+  document.getElementById('regen')!.addEventListener('click', () => {
+    gen();
+    runFull();
+  });
+  document.getElementById('clear')!.addEventListener('click', () => {
+    pts = [];
+    state.running = false;
+    runBtn.textContent = 'Run';
+    restart();
+    updateReadout();
+  });
+
+  gen();
+  runFull();
+  requestAnimationFrame(loop);
+</script>

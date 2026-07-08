@@ -1,0 +1,287 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="k-Means Clustering"
+  description="Pick k centers, colour each point by its nearest one, then move each center to the average of its points. Repeat. Step through it by hand, or throw your own points onto the canvas and watch the loop sort them out."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="km" width="600" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="restart">New centers</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" id="regen">Random points</button>
+        <button class="btn ghost" id="clear">Clear</button>
+      </div>
+
+      <div class="control">
+        <label>Clusters k <b id="kval">3</b></label>
+        <input type="range" id="k" min="2" max="6" value="3" />
+      </div>
+
+      <div class="control">
+        <label>Random data</label>
+        <div class="seg" id="data">
+          <button data-d="blobs" class="active">Blobs</button>
+          <button data-d="uniform">Uniform</button>
+          <button data-d="moons">Moons</button>
+        </div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Iteration</span><b id="iter">0</b></div>
+        <div class="row"><span>Inertia</span><b id="inertia">—</b></div>
+        <div class="row"><span>Status</span><b id="status">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Click the canvas to drop your own points. Clear to start from an empty
+        board.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      One <b>Step</b> is one full round: recolor every point to its nearest
+      center, then slide each center to the mean of its color. Watch the two
+      halves of the loop take turns.
+    </li>
+    <li>
+      Hit <b>New centers</b> a few times on the same points: k-means can settle
+      into <b>different</b> groupings depending on where it started. It finds a
+      local optimum, not the global one.
+    </li>
+    <li>
+      Switch to <b>Moons</b>, or draw two crescents by hand. k-means insists on
+      round, straight-edged clusters and splits them wrongly, exactly the blind
+      spot DBSCAN fixes.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type P = { x: number; y: number };
+  const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399'];
+
+  const state = { k: 3, data: 'blobs', running: false, iter: 0 };
+  let pts: P[] = [];
+  let centers: P[] = [];
+  let assign: number[] = [];
+
+  const canvas = document.getElementById('km') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const PAD = 40;
+  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+  function genData() {
+    pts = [];
+    if (state.data === 'uniform') {
+      for (let i = 0; i < 260; i++) pts.push({ x: rnd(PAD, W - PAD), y: rnd(PAD, H - PAD) });
+    } else if (state.data === 'moons') {
+      for (let i = 0; i < 150; i++) {
+        const t = Math.PI * (i / 150);
+        const r = 200 + rnd(-14, 14);
+        pts.push({ x: W / 2 + r * Math.cos(t) - 90, y: H / 2 - r * Math.sin(t) + 60 });
+        pts.push({ x: W / 2 + r * Math.cos(t) + 90, y: H / 2 + r * Math.sin(t) - 60 });
+      }
+    } else {
+      const nb = 4;
+      const bc = Array.from({ length: nb }, () => ({ x: rnd(PAD + 60, W - PAD - 60), y: rnd(PAD + 60, H - PAD - 60) }));
+      for (let i = 0; i < 280; i++) {
+        const b = bc[i % nb];
+        pts.push({ x: b.x + rnd(-55, 55) + rnd(-20, 20), y: b.y + rnd(-55, 55) + rnd(-20, 20) });
+      }
+    }
+  }
+
+  function initCenters() {
+    centers = [];
+    if (pts.length === 0) {
+      assign = [];
+      return;
+    }
+    const used = new Set<number>();
+    let guard = 0;
+    while (centers.length < state.k && guard++ < 1000) {
+      const i = Math.floor(Math.random() * pts.length);
+      if (used.has(i)) continue;
+      used.add(i);
+      centers.push({ ...pts[i] });
+    }
+    state.iter = 0;
+    reassign();
+  }
+
+  function nearest(p: P) {
+    let best = 0, bd = Infinity;
+    for (let c = 0; c < centers.length; c++) {
+      const d = (p.x - centers[c].x) ** 2 + (p.y - centers[c].y) ** 2;
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  function reassign() {
+    assign = pts.map((p) => (centers.length ? nearest(p) : -1));
+  }
+
+  function stepOnce() {
+    if (!centers.length || !pts.length) return 0;
+    reassign();
+    const sum = centers.map(() => ({ x: 0, y: 0, n: 0 }));
+    for (let i = 0; i < pts.length; i++) {
+      const a = assign[i];
+      sum[a].x += pts[i].x;
+      sum[a].y += pts[i].y;
+      sum[a].n++;
+    }
+    let moved = 0;
+    for (let c = 0; c < centers.length; c++) {
+      if (sum[c].n === 0) continue;
+      const tx = sum[c].x / sum[c].n;
+      const ty = sum[c].y / sum[c].n;
+      moved += Math.hypot(tx - centers[c].x, ty - centers[c].y);
+      centers[c].x = tx;
+      centers[c].y = ty;
+    }
+    state.iter++;
+    (document.getElementById('iter') as HTMLElement).textContent = String(state.iter);
+    (document.getElementById('inertia') as HTMLElement).textContent = inertia().toFixed(0);
+    (document.getElementById('status') as HTMLElement).textContent = moved < 0.5 ? 'converged' : 'iterating…';
+    return moved;
+  }
+
+  function inertia() {
+    if (!centers.length) return 0;
+    let s = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const c = centers[assign[i]];
+      s += (pts[i].x - c.x) ** 2 + (pts[i].y - c.y) ** 2;
+    }
+    return s / Math.max(1, pts.length);
+  }
+
+  function draw() {
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    if (centers.length) {
+      const G = 44;
+      const cell = W / G;
+      for (let i = 0; i < G; i++)
+        for (let j = 0; j < G; j++) {
+          const c = nearest({ x: (i + 0.5) * cell, y: (j + 0.5) * cell });
+          ctx.fillStyle = PALETTE[c % PALETTE.length] + '18';
+          ctx.fillRect(i * cell, j * cell, cell + 1, cell + 1);
+        }
+    }
+
+    for (let i = 0; i < pts.length; i++) {
+      ctx.fillStyle = assign[i] >= 0 ? PALETTE[assign[i] % PALETTE.length] : `rgba(${ink},0.55)`;
+      ctx.beginPath();
+      ctx.arc(pts[i].x, pts[i].y, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    for (let c = 0; c < centers.length; c++) {
+      ctx.fillStyle = PALETTE[c % PALETTE.length];
+      ctx.strokeStyle = `rgba(${ink},1)`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(centers[c].x, centers[c].y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  let acc = 0, last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = (ts - last) / 1000;
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      if (acc >= 0.6) {
+        acc = 0;
+        const moved = stepOnce();
+        if (moved < 0.5) {
+          state.running = false;
+          (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
+        }
+      }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function fullReset() {
+    genData();
+    initCenters();
+    (document.getElementById('iter') as HTMLElement).textContent = '0';
+    (document.getElementById('inertia') as HTMLElement).textContent = pts.length ? inertia().toFixed(0) : '—';
+    (document.getElementById('status') as HTMLElement).textContent = 'ready';
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * W;
+    const y = ((e.clientY - rect.top) / rect.height) * H;
+    pts.push({ x, y });
+    assign.push(centers.length ? nearest({ x, y }) : -1);
+    (document.getElementById('inertia') as HTMLElement).textContent = centers.length ? inertia().toFixed(0) : '—';
+  });
+
+  document.getElementById('data')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#data button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.data = btn.dataset.d!;
+    fullReset();
+  });
+  const kEl = document.getElementById('k') as HTMLInputElement;
+  kEl.addEventListener('input', () => {
+    state.k = +kEl.value;
+    (document.getElementById('kval') as HTMLElement).textContent = kEl.value;
+    initCenters();
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    if (!centers.length) initCenters();
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    if (!centers.length) initCenters();
+    else stepOnce();
+    draw();
+  });
+  document.getElementById('restart')!.addEventListener('click', initCenters);
+  document.getElementById('regen')!.addEventListener('click', fullReset);
+  document.getElementById('clear')!.addEventListener('click', () => {
+    pts = [];
+    centers = [];
+    assign = [];
+    state.iter = 0;
+    state.running = false;
+    runBtn.textContent = 'Run';
+    (document.getElementById('iter') as HTMLElement).textContent = '0';
+    (document.getElementById('inertia') as HTMLElement).textContent = '—';
+    (document.getElementById('status') as HTMLElement).textContent = 'empty';
+  });
+
+  fullReset();
+  requestAnimationFrame(loop);
+</script>

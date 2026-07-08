@@ -1,0 +1,193 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Special Relativity"
+  description="Space and time are not separate stages but one woven fabric. Boost to a moving frame and its axes skew: clocks run slow, rulers shrink, and events that looked simultaneous no longer are. Only the speed of light, the 45° cone, stays fixed for everyone."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="sr" width="600" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Velocity β = v/c <b id="bval">0.00</b></label>
+        <input type="range" id="b" min="-90" max="90" value="0" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Lorentz factor γ</span><b id="gamma">1.000</b></div>
+        <div class="row"><span>Event (lab)</span><b id="lab">—</b></div>
+        <div class="row"><span>Event (moving)</span><b id="mov">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Horizontal is space, vertical is time (ct). The indigo mesh is the moving
+        observer's grid of space and time. Drag the white event to read its
+        coordinates in both frames.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      As β grows, the moving observer's time axis (ct′) and space axis (x′)
+      <b>scissor toward the light cone</b> from opposite sides, but the 45° cone
+      itself never moves: light has the same speed for everyone.
+    </li>
+    <li>
+      Put the event on the moving x′ axis (its "now"). In the <b>lab</b> that same
+      instant sits at a different height, a different time. Simultaneity is
+      <b>relative</b>.
+    </li>
+    <li>
+      One tick up the ct′ axis is one second for the moving clock, yet it reaches
+      <b>higher than one</b> lab-second (time dilation, γ &gt; 1), while a moving
+      ruler measures <b>shorter</b> (length contraction). Same fabric, different
+      slices.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const state = { beta: 0, ev: { x: 2, ct: 1.2 } };
+
+  const canvas = document.getElementById('sr') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const O = { x: W / 2, y: H / 2 };
+  const U = 58; // pixels per unit
+  const R = 4.4;
+
+  const toPx = (x: number, ct: number) => ({ px: O.x + x * U, py: O.y - ct * U });
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
+    const b = state.beta;
+    const g = 1 / Math.sqrt(1 - b * b);
+    ctx.clearRect(0, 0, W, H);
+
+    // lab grid
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.5;
+    for (let n = -4; n <= 4; n++) {
+      let p = toPx(n, -R), q = toPx(n, R);
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+      p = toPx(-R, n); q = toPx(R, n);
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // moving-frame mesh (inverse Lorentz: x = g(x'+b ct'), ct = g(ct'+b x'))
+    const inv = (xp: number, ctp: number) => toPx(g * (xp + b * ctp), g * (ctp + b * xp));
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.28;
+    ctx.lineWidth = 1;
+    for (let n = -4; n <= 4; n++) {
+      let p = inv(n, -R), q = inv(n, R); // x' = n
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+      p = inv(-R, n); q = inv(R, n); // ct' = n
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // light cone
+    ctx.strokeStyle = `rgba(${ink},0.5)`;
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1.5;
+    for (const s of [1, -1]) {
+      const p = toPx(-R, -R * s), q = toPx(R, R * s);
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // moving axes highlighted
+    const axis = (dx: number, dy: number, color: string, label: string) => {
+      const p = toPx(-dx * R, -dy * R), q = toPx(dx * R, dy * R);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+      const tip = toPx(dx * (R - 0.5), dy * (R - 0.5));
+      ctx.fillStyle = color;
+      ctx.font = "600 14px 'JetBrains Mono', monospace";
+      ctx.fillText(label, tip.px + 6, tip.py);
+    };
+    // ct' axis: direction (b,1); x' axis: direction (1,b)
+    axis(b, 1, teal, "ct'");
+    axis(1, b, accent, "x'");
+
+    // event + its simultaneity/worldline helpers
+    const ep = toPx(state.ev.x, state.ev.ct);
+    const xp = g * (state.ev.x - b * state.ev.ct);
+    const ctp = g * (state.ev.ct - b * state.ev.x);
+    // moving-frame gridline through event (its 'now' and 'here')
+    ctx.strokeStyle = `rgba(${ink},0.3)`;
+    ctx.setLineDash([3, 4]);
+    let a = inv(-R, ctp), c = inv(R, ctp); // simultaneity line in moving frame
+    ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(c.px, c.py); ctx.stroke();
+    a = inv(xp, -R); c = inv(xp, R);
+    ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(c.px, c.py); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = `rgba(${ink},1)`;
+    ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(ep.px, ep.py, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('x (space) →', W - 110, O.y - 8);
+
+    (document.getElementById('bval') as HTMLElement).textContent = b.toFixed(2);
+    (document.getElementById('gamma') as HTMLElement).textContent = g.toFixed(3);
+    (document.getElementById('lab') as HTMLElement).textContent = `x=${state.ev.x.toFixed(2)}, ct=${state.ev.ct.toFixed(2)}`;
+    (document.getElementById('mov') as HTMLElement).textContent = `x'=${xp.toFixed(2)}, ct'=${ctp.toFixed(2)}`;
+  }
+
+  const bEl = document.getElementById('b') as HTMLInputElement;
+  bEl.addEventListener('input', () => {
+    state.beta = +bEl.value / 100;
+    draw();
+  });
+
+  let dragging = false;
+  function setEv(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    state.ev.x = Math.max(-R, Math.min(R, (mx - O.x) / U));
+    state.ev.ct = Math.max(-R, Math.min(R, (O.y - my) / U));
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    setEv(e);
+  });
+  canvas.addEventListener('pointermove', (e) => dragging && setEv(e));
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  draw();
+</script>
+
+<style>
+  #sr {
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>

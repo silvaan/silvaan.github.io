@@ -1,0 +1,261 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Maximum Likelihood"
+  description="Given data, which bell curve most likely produced it? Slide the mean and spread of a Gaussian and watch the likelihood of the sample rise and fall. The best fit is no accident: it lands exactly on the sample's own mean and spread."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="mle" width="900" height="470"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Mean μ <b id="muval">0.00</b></label>
+        <input type="range" id="mu" min="-3" max="3" step="0.02" value="0" />
+      </div>
+      <div class="control">
+        <label>Std dev σ <b id="sgval">1.00</b></label>
+        <input type="range" id="sg" min="0.4" max="2.5" step="0.02" value="1" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="snap">Snap to best fit</button>
+        <button class="btn ghost" id="regen">New sample</button>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Log-likelihood</span><b id="ll">—</b></div>
+        <div class="row"><span>Sample mean</span><b id="smean">—</b></div>
+        <div class="row"><span>Sample std</span><b id="sstd">—</b></div>
+      </div>
+
+      <div class="control">
+        <label>Log-likelihood vs. μ</label>
+        <canvas id="llcurve" class="mini-canvas" width="300" height="150"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Each vertical stick is one data point's <b>likelihood</b>: how tall the bell
+      sits above it. The total (log-)likelihood adds them up. Drag μ and σ to make
+      the curve sit as high as possible over the data.
+    </li>
+    <li>
+      Hit <b>Snap to best fit</b>. The maximum-likelihood μ is exactly the
+      <b>sample mean</b>, and the best σ is the <b>sample standard deviation</b>.
+      Maximizing likelihood re-derives the formulas you already know.
+    </li>
+    <li>
+      The mini-plot is the log-likelihood as you slide μ. It is a smooth hill with
+      a single peak, which is why gradient ascent (and every trained model) can
+      climb straight to it.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const state = { mu: 0, sg: 1 };
+  let data: number[] = [];
+
+  const canvas = document.getElementById('mle') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const llCanvas = document.getElementById('llcurve') as HTMLCanvasElement;
+  const llc = setupCanvas(llCanvas, () => drawLL());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const PAD = { l: 20, r: 20, t: 20, b: 34 };
+  const XR = [-5, 5] as const;
+  const YMAX = 1.05;
+
+  function gauss() {
+    const u = 1 - Math.random();
+    const v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  function regen() {
+    const tm = 0.6, ts = 1.1;
+    data = Array.from({ length: 34 }, () => tm + ts * gauss());
+  }
+
+  const pdf = (x: number, mu: number, sg: number) =>
+    Math.exp(-((x - mu) ** 2) / (2 * sg * sg)) / (sg * Math.sqrt(2 * Math.PI));
+  const logLik = (mu: number, sg: number) =>
+    data.reduce((s, x) => s + Math.log(pdf(x, mu, sg) + 1e-12), 0);
+
+  const sx = (x: number) => PAD.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - PAD.l - PAD.r);
+  const sy = (y: number) => H - PAD.b - (y / YMAX) * (H - PAD.t - PAD.b);
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    // axis
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let xv = XR[0]; xv <= XR[1]; xv++) {
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.moveTo(sx(xv), PAD.t);
+      ctx.lineTo(sx(xv), H - PAD.b);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(String(xv), sx(xv) - 4, H - PAD.b + 18);
+    }
+    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, sy(0));
+    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.stroke();
+
+    // likelihood sticks
+    ctx.strokeStyle = `rgba(${ink},0.35)`;
+    ctx.lineWidth = 1;
+    for (const x of data) {
+      const h = pdf(x, state.mu, state.sg);
+      ctx.beginPath();
+      ctx.moveTo(sx(x), sy(0));
+      ctx.lineTo(sx(x), sy(h));
+      ctx.stroke();
+    }
+
+    // gaussian curve
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    for (let i = 0; i <= 500; i++) {
+      const x = XR[0] + ((XR[1] - XR[0]) * i) / 500;
+      const y = sy(pdf(x, state.mu, state.sg));
+      i === 0 ? ctx.moveTo(sx(x), y) : ctx.lineTo(sx(x), y);
+    }
+    ctx.stroke();
+
+    // data points on the curve + on axis
+    for (const x of data) {
+      const h = pdf(x, state.mu, state.sg);
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.arc(sx(x), sy(h), 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(${ink},0.6)`;
+      ctx.beginPath();
+      ctx.arc(sx(x), sy(0), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // mean marker
+    ctx.strokeStyle = accent;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(sx(state.mu), PAD.t);
+    ctx.lineTo(sx(state.mu), sy(0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const n = data.length;
+    const m = data.reduce((a, b) => a + b, 0) / n;
+    const sd = Math.sqrt(data.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+    (document.getElementById('ll') as HTMLElement).textContent = logLik(state.mu, state.sg).toFixed(3);
+    (document.getElementById('smean') as HTMLElement).textContent = m.toFixed(3);
+    (document.getElementById('sstd') as HTMLElement).textContent = sd.toFixed(3);
+  }
+
+  function drawLL() {
+    const c = llc.ctx, Ws = llc.W, Hs = llc.H;
+    const accent = css('--accent') || '#7c8cff';
+    const ink = css('--stage-ink') || '232,233,236';
+    const pad = { l: 8, r: 8, t: 10, b: 10 };
+    c.clearRect(0, 0, Ws, Hs);
+
+    const muMin = -3, muMax = 3;
+    let lo = Infinity, hi = -Infinity;
+    const vals: number[] = [];
+    for (let i = 0; i <= 120; i++) {
+      const mu = muMin + ((muMax - muMin) * i) / 120;
+      const v = logLik(mu, state.sg);
+      vals.push(v);
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+    if (hi - lo < 1e-6) hi = lo + 1;
+    const gx = (mu: number) => pad.l + ((mu - muMin) / (muMax - muMin)) * (Ws - pad.l - pad.r);
+    const gy = (v: number) => pad.t + (1 - (v - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
+
+    c.strokeStyle = accent;
+    c.lineWidth = 2;
+    c.beginPath();
+    vals.forEach((v, i) => {
+      const mu = muMin + ((muMax - muMin) * i) / 120;
+      i === 0 ? c.moveTo(gx(mu), gy(v)) : c.lineTo(gx(mu), gy(v));
+    });
+    c.stroke();
+
+    // current mu marker
+    c.strokeStyle = `rgba(${ink},0.5)`;
+    c.setLineDash([4, 4]);
+    c.beginPath();
+    c.moveTo(gx(state.mu), pad.t);
+    c.lineTo(gx(state.mu), Hs - pad.b);
+    c.stroke();
+    c.setLineDash([]);
+    c.fillStyle = accent;
+    c.beginPath();
+    c.arc(gx(state.mu), gy(logLik(state.mu, state.sg)), 3.5, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  function redraw() {
+    draw();
+    drawLL();
+  }
+
+  const muEl = document.getElementById('mu') as HTMLInputElement;
+  const sgEl = document.getElementById('sg') as HTMLInputElement;
+  function setMu(v: number) {
+    state.mu = v;
+    muEl.value = String(v);
+    (document.getElementById('muval') as HTMLElement).textContent = v.toFixed(2);
+  }
+  function setSg(v: number) {
+    state.sg = v;
+    sgEl.value = String(v);
+    (document.getElementById('sgval') as HTMLElement).textContent = v.toFixed(2);
+  }
+  muEl.addEventListener('input', () => {
+    setMu(+muEl.value);
+    redraw();
+  });
+  sgEl.addEventListener('input', () => {
+    setSg(+sgEl.value);
+    redraw();
+  });
+
+  document.getElementById('snap')!.addEventListener('click', () => {
+    const n = data.length;
+    const m = data.reduce((a, b) => a + b, 0) / n;
+    const sd = Math.sqrt(data.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+    setMu(+Math.max(-3, Math.min(3, m)).toFixed(2));
+    setSg(+Math.max(0.4, Math.min(2.5, sd)).toFixed(2));
+    redraw();
+  });
+  document.getElementById('regen')!.addEventListener('click', () => {
+    regen();
+    redraw();
+  });
+
+  regen();
+  redraw();
+</script>

@@ -1,0 +1,272 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Overfitting & Regularization"
+  description="Fit a polynomial to noisy data and raise its degree. A flexible enough curve can pass through every training point exactly, yet do worse on new data. That gap between memorizing and learning is the central tension in machine learning."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="of" width="900" height="470"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Polynomial degree <b id="dval">3</b></label>
+        <input type="range" id="d" min="0" max="12" value="3" />
+      </div>
+
+      <div class="control">
+        <label>Regularization λ <b id="lval">0.000</b></label>
+        <input type="range" id="l" min="0" max="100" value="0" />
+      </div>
+
+      <button class="btn ghost" id="regen">New data</button>
+
+      <div class="readout">
+        <div class="row"><span>Train error</span><b id="trainerr">—</b></div>
+        <div class="row"><span>Test error</span><b id="testerr">—</b></div>
+      </div>
+
+      <div class="control">
+        <label>Error vs. degree (teal train · amber test)</label>
+        <canvas id="curve" class="mini-canvas" width="300" height="160"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Slide the degree up. <b>Train error</b> keeps falling, all the way to zero
+      when the curve threads every point. But watch <b>test error</b>: it bottoms
+      out, then climbs as the curve starts chasing noise.
+    </li>
+    <li>
+      That U-shape in the mini-plot is the <b>bias–variance tradeoff</b>. Too
+      simple underfits (high bias); too flexible overfits (high variance). The
+      sweet spot is in the middle.
+    </li>
+    <li>
+      Take a wiggly high-degree fit, then raise <b>λ</b>. Regularization penalizes
+      large weights and <b>smooths</b> the curve back down, recovering
+      generalization without lowering the degree.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const state = { degree: 3, lambda: 0 };
+  let train: { x: number; y: number }[] = [];
+  let test: { x: number; y: number }[] = [];
+
+  const canvas = document.getElementById('of') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const curveCanvas = document.getElementById('curve') as HTMLCanvasElement;
+  const mc = setupCanvas(curveCanvas, () => drawCurve());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const PAD = { l: 20, r: 20, t: 20, b: 28 };
+  const XR = [-1, 1] as const;
+  const YR = [-1.7, 1.7] as const;
+  const trueF = (x: number) => 0.85 * Math.sin(Math.PI * x) + 0.15 * x;
+
+  function gen() {
+    const noise = () => (Math.random() * 2 - 1) * 0.28;
+    train = [];
+    for (let i = 0; i < 15; i++) {
+      const x = -1 + (2 * i) / 14 + (Math.random() * 2 - 1) * 0.03;
+      train.push({ x, y: trueF(x) + noise() });
+    }
+    test = [];
+    for (let i = 0; i < 40; i++) {
+      const x = Math.random() * 2 - 1;
+      test.push({ x, y: trueF(x) + noise() });
+    }
+  }
+
+  // ridge polynomial fit via normal equations + Gaussian elimination
+  function fit(degree: number, lambda: number): number[] {
+    const m = degree + 1;
+    const A = Array.from({ length: m }, () => new Array(m).fill(0));
+    const b = new Array(m).fill(0);
+    for (const p of train) {
+      const pw = [1];
+      for (let k = 1; k < 2 * m; k++) pw.push(pw[k - 1] * p.x);
+      for (let i = 0; i < m; i++) {
+        for (let j = 0; j < m; j++) A[i][j] += pw[i + j];
+        b[i] += pw[i] * p.y;
+      }
+    }
+    for (let i = 0; i < m; i++) A[i][i] += lambda + 1e-8;
+    // solve A w = b
+    for (let c = 0; c < m; c++) {
+      let piv = c;
+      for (let r = c + 1; r < m; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+      [A[c], A[piv]] = [A[piv], A[c]];
+      [b[c], b[piv]] = [b[piv], b[c]];
+      const d = A[c][c] || 1e-9;
+      for (let j = c; j < m; j++) A[c][j] /= d;
+      b[c] /= d;
+      for (let r = 0; r < m; r++) {
+        if (r === c) continue;
+        const f = A[r][c];
+        for (let j = c; j < m; j++) A[r][j] -= f * A[c][j];
+        b[r] -= f * b[c];
+      }
+    }
+    return b;
+  }
+
+  const evalPoly = (w: number[], x: number) => {
+    let s = 0, p = 1;
+    for (const c of w) { s += c * p; p *= x; }
+    return s;
+  };
+  const mse = (w: number[], set: { x: number; y: number }[]) =>
+    set.reduce((s, p) => s + (evalPoly(w, p.x) - p.y) ** 2, 0) / set.length;
+
+  const sx = (x: number) => PAD.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - PAD.l - PAD.r);
+  const sy = (y: number) => H - PAD.b - ((y - YR[0]) / (YR[1] - YR[0])) * (H - PAD.t - PAD.b);
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.35;
+    for (let i = 0; i <= 8; i++) {
+      const x = XR[0] + ((XR[1] - XR[0]) * i) / 8;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), PAD.t);
+      ctx.lineTo(sx(x), H - PAD.b);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, sy(0));
+    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.stroke();
+
+    // true function
+    ctx.strokeStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.35)`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    for (let i = 0; i <= 300; i++) {
+      const x = XR[0] + ((XR[1] - XR[0]) * i) / 300;
+      i === 0 ? ctx.moveTo(sx(x), sy(trueF(x))) : ctx.lineTo(sx(x), sy(trueF(x)));
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // fit
+    const w = fit(state.degree, state.lambda);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i <= 400; i++) {
+      const x = XR[0] + ((XR[1] - XR[0]) * i) / 400;
+      const y = evalPoly(w, x);
+      if (y < YR[0] - 1 || y > YR[1] + 1) { pen = false; continue; }
+      pen ? ctx.lineTo(sx(x), sy(y)) : ((ctx.moveTo(sx(x), sy(y))), (pen = true));
+    }
+    ctx.stroke();
+
+    // test points (faint) + train points
+    for (const p of test) {
+      ctx.fillStyle = faint;
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const p of train) {
+      ctx.fillStyle = accent;
+      ctx.strokeStyle = '#0b0c0e';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    void teal;
+
+    (document.getElementById('trainerr') as HTMLElement).textContent = mse(w, train).toFixed(4);
+    (document.getElementById('testerr') as HTMLElement).textContent = mse(w, test).toFixed(4);
+  }
+
+  function drawCurve() {
+    const c = mc.ctx, Ws = mc.W, Hs = mc.H;
+    const ink = css('--stage-ink') || '232,233,236';
+    const pad = { l: 8, r: 8, t: 8, b: 16 };
+    c.clearRect(0, 0, Ws, Hs);
+
+    const maxD = 12;
+    const tr: number[] = [], te: number[] = [];
+    for (let d = 0; d <= maxD; d++) {
+      const w = fit(d, state.lambda);
+      tr.push(mse(w, train));
+      te.push(Math.min(2, mse(w, test)));
+    }
+    const hi = Math.max(0.3, ...te, ...tr) * 1.1;
+    const gx = (d: number) => pad.l + (d / maxD) * (Ws - pad.l - pad.r);
+    const gy = (v: number) => pad.t + (1 - v / hi) * (Hs - pad.t - pad.b);
+
+    const plot = (arr: number[], color: string) => {
+      c.strokeStyle = color;
+      c.lineWidth = 2;
+      c.beginPath();
+      arr.forEach((v, d) => (d ? c.lineTo(gx(d), gy(v)) : c.moveTo(gx(d), gy(v))));
+      c.stroke();
+    };
+    plot(tr, css('--accent-2') || '#5eead4');
+    plot(te, '#f59e0b');
+
+    // current degree marker
+    c.strokeStyle = `rgba(${ink},0.5)`;
+    c.setLineDash([4, 4]);
+    c.beginPath();
+    c.moveTo(gx(state.degree), pad.t);
+    c.lineTo(gx(state.degree), Hs - pad.b);
+    c.stroke();
+    c.setLineDash([]);
+    c.fillStyle = css('--text-faint') || '#8b93a5';
+    c.font = "10px 'JetBrains Mono', monospace";
+    c.fillText('degree →', Ws - 56, Hs - 4);
+  }
+
+  function redraw() {
+    draw();
+    drawCurve();
+  }
+
+  const dEl = document.getElementById('d') as HTMLInputElement;
+  dEl.addEventListener('input', () => {
+    state.degree = +dEl.value;
+    (document.getElementById('dval') as HTMLElement).textContent = dEl.value;
+    redraw();
+  });
+  const lEl = document.getElementById('l') as HTMLInputElement;
+  lEl.addEventListener('input', () => {
+    state.lambda = (+lEl.value / 100) ** 2 * 2; // 0 .. 2, eased
+    (document.getElementById('lval') as HTMLElement).textContent = state.lambda.toFixed(3);
+    redraw();
+  });
+  document.getElementById('regen')!.addEventListener('click', () => {
+    gen();
+    redraw();
+  });
+
+  gen();
+  redraw();
+</script>

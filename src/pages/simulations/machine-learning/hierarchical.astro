@@ -1,0 +1,308 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Hierarchical Clustering"
+  description="Instead of committing to a number of clusters, merge the two closest groups over and over until everything is one. Step through the merges and watch the dendrogram grow branch by branch, or drop your own points and cluster them."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="hc" width="900" height="470"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Restart</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" id="regen">Random points</button>
+        <button class="btn ghost" id="clear">Clear</button>
+      </div>
+
+      <div class="control">
+        <label>Linkage</label>
+        <div class="seg" id="link">
+          <button data-l="average" class="active">Average</button>
+          <button data-l="single">Single</button>
+          <button data-l="complete">Complete</button>
+        </div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Merges done</span><b id="mdone">0</b></div>
+        <div class="row"><span>Clusters</span><b id="nclust">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Click the left half to add points. Restart, then Step, to merge the two
+        nearest groups one at a time.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Each <b>Step</b> joins the <b>two nearest groups</b> and records how far
+      apart they were as the bar's height. Short bars mean tight, obvious groups;
+      tall bars join things only reluctantly.
+    </li>
+    <li>
+      You never chose a number of clusters. One tree holds them at <b>every
+      scale</b>: stop early for many small groups, run to the end for one.
+    </li>
+    <li>
+      Switch the <b>linkage</b>. Single-link chains through bridges and can merge
+      far things via stepping stones; complete-link keeps clusters compact. Same
+      points, different tree.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type Node = {
+    x: number;
+    height: number;
+    members: number[];
+    left?: Node;
+    right?: Node;
+    repL?: number;
+    repR?: number;
+  };
+  const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399', '#f472b6', '#38bdf8'];
+
+  const state = { link: 'average', merges: 0, running: false };
+  let pts: { x: number; y: number }[] = [];
+  let mergeNodes: Node[] = [];
+  let leafNodes: Node[] = [];
+  let root: Node | null = null;
+  let maxH = 1;
+
+  const canvas = document.getElementById('hc') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+
+  const LEFT = { x0: 36, x1: 410, y0: 40, y1: 430 };
+  const RIGHT = { x0: 468, x1: 876, y0: 46, y1: 420 };
+
+  function gen() {
+    pts = [];
+    const nb = 4;
+    const bc = Array.from({ length: nb }, () => ({
+      x: rnd(LEFT.x0 + 50, LEFT.x1 - 50),
+      y: rnd(LEFT.y0 + 50, LEFT.y1 - 50),
+    }));
+    for (let i = 0; i < 26; i++) {
+      const b = bc[i % nb];
+      pts.push({ x: b.x + rnd(-34, 34), y: b.y + rnd(-34, 34) });
+    }
+  }
+
+  const dist = (a: number, b: number) => Math.hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y);
+  function linkage(A: number[], B: number[]) {
+    let best = state.link === 'single' ? Infinity : state.link === 'complete' ? -Infinity : 0;
+    let cnt = 0;
+    for (const a of A)
+      for (const b of B) {
+        const d = dist(a, b);
+        if (state.link === 'single') best = Math.min(best, d);
+        else if (state.link === 'complete') best = Math.max(best, d);
+        else { best += d; cnt++; }
+      }
+    return state.link === 'average' ? best / cnt : best;
+  }
+
+  function build() {
+    mergeNodes = [];
+    leafNodes = pts.map((_, i) => ({ x: 0, height: 0, members: [i] }));
+    let clusters = [...leafNodes];
+    while (clusters.length > 1) {
+      let bi = 0, bj = 1, bd = Infinity;
+      for (let i = 0; i < clusters.length; i++)
+        for (let j = i + 1; j < clusters.length; j++) {
+          const d = linkage(clusters[i].members, clusters[j].members);
+          if (d < bd) { bd = d; bi = i; bj = j; }
+        }
+      const a = clusters[bi], b = clusters[bj];
+      const node: Node = {
+        x: 0, height: bd, members: [...a.members, ...b.members],
+        left: a, right: b, repL: a.members[0], repR: b.members[0],
+      };
+      clusters = clusters.filter((_, k) => k !== bi && k !== bj);
+      clusters.push(node);
+      mergeNodes.push(node);
+    }
+    root = clusters[0] || null;
+    maxH = (root && root.height) || 1;
+    if (root) {
+      let counter = 0;
+      const assignX = (n: Node) => {
+        if (!n.left) { n.x = counter++; return; }
+        assignX(n.left);
+        assignX(n.right!);
+        n.x = (n.left.x + n.right!.x) / 2;
+      };
+      assignX(root);
+    }
+    state.merges = 0;
+  }
+
+  function clustersAt(m: number) {
+    const parent = pts.map((_, i) => i);
+    const find = (a: number): number => {
+      while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+      return a;
+    };
+    for (let k = 0; k < m; k++) parent[find(mergeNodes[k].repL!)] = find(mergeNodes[k].repR!);
+    const groups = new Map<number, number[]>();
+    for (let i = 0; i < pts.length; i++) {
+      const r = find(i);
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r)!.push(i);
+    }
+    const rootColor = new Map<number, string>();
+    const roots = [...groups.keys()].sort((a, b) => Math.min(...groups.get(a)!) - Math.min(...groups.get(b)!));
+    let ci = 0;
+    for (const r of roots) if (groups.get(r)!.length >= 2) rootColor.set(r, PALETTE[ci++ % PALETTE.length]);
+    return { find, rootColor, nClusters: groups.size };
+  }
+
+  function draw() {
+    const ink = css('--stage-ink') || '232,233,236';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+
+    if (pts.length === 0) {
+      ctx.fillStyle = faint;
+      ctx.font = "13px 'JetBrains Mono', monospace";
+      ctx.fillText('click the left half to add points', LEFT.x0, LEFT.y0 + 20);
+      (document.getElementById('mdone') as HTMLElement).textContent = '0';
+      (document.getElementById('nclust') as HTMLElement).textContent = '0';
+      return;
+    }
+
+    const cl = clustersAt(state.merges);
+
+    // scatter
+    for (let i = 0; i < pts.length; i++) {
+      const col = cl.rootColor.get(cl.find(i));
+      ctx.fillStyle = col || `rgba(${ink},0.4)`;
+      ctx.strokeStyle = `rgba(${ink},0.5)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(pts[i].x, pts[i].y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // dendrogram (reveal first `merges` connectors)
+    if (root && pts.length > 1) {
+      const L = pts.length;
+      const dx = (x: number) => RIGHT.x0 + (x / (L - 1)) * (RIGHT.x1 - RIGHT.x0);
+      const dy = (ht: number) => RIGHT.y1 - (ht / maxH) * (RIGHT.y1 - RIGHT.y0);
+      for (let k = 0; k < state.merges; k++) {
+        const n = mergeNodes[k];
+        const col = cl.rootColor.get(cl.find(n.repL!)) || `rgba(${ink},0.4)`;
+        const yTop = dy(n.height);
+        const lx = dx(n.left!.x), rx = dx(n.right!.x);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(lx, dy(n.left!.height));
+        ctx.lineTo(lx, yTop);
+        ctx.lineTo(rx, yTop);
+        ctx.lineTo(rx, dy(n.right!.height));
+        ctx.stroke();
+      }
+      // baseline ticks for leaves
+      ctx.fillStyle = `rgba(${ink},0.3)`;
+      for (const leaf of leafNodes) {
+        ctx.beginPath();
+        ctx.arc(dx(leaf.x), dy(0), 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('points', LEFT.x0, LEFT.y1 + 22);
+    ctx.fillText('dendrogram', RIGHT.x0, RIGHT.y1 + 26);
+
+    (document.getElementById('mdone') as HTMLElement).textContent = String(state.merges);
+    (document.getElementById('nclust') as HTMLElement).textContent = String(cl.nClusters);
+  }
+
+  function loop() {
+    if (state.running) {
+      if (state.merges < mergeNodes.length) state.merges++;
+      else {
+        state.running = false;
+        (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
+      }
+    }
+    draw();
+    if (state.running) setTimeout(() => requestAnimationFrame(loop), 260);
+    else requestAnimationFrame(loop);
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * W;
+    const y = ((e.clientY - rect.top) / rect.height) * H;
+    if (x > LEFT.x1 + 20) return; // only the scatter half
+    pts.push({ x: Math.max(LEFT.x0, Math.min(LEFT.x1, x)), y: Math.max(LEFT.y0, Math.min(LEFT.y1, y)) });
+    build();
+    draw();
+  });
+
+  document.getElementById('link')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#link button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.link = btn.dataset.l!;
+    build();
+    draw();
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    if (state.merges >= mergeNodes.length) state.merges = 0;
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    if (state.merges < mergeNodes.length) state.merges++;
+    draw();
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    state.merges = 0;
+    state.running = false;
+    runBtn.textContent = 'Run';
+    draw();
+  });
+  document.getElementById('regen')!.addEventListener('click', () => {
+    gen();
+    build();
+    draw();
+  });
+  document.getElementById('clear')!.addEventListener('click', () => {
+    pts = [];
+    mergeNodes = [];
+    leafNodes = [];
+    root = null;
+    state.merges = 0;
+    state.running = false;
+    runBtn.textContent = 'Run';
+    draw();
+  });
+
+  gen();
+  build();
+  requestAnimationFrame(loop);
+</script>

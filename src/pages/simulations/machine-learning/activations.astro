@@ -1,0 +1,212 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Activation Functions"
+  description="The nonlinearity between layers is what lets a network bend, not just scale. Compare the classic activations and, just as importantly, their derivatives: where the slope goes flat, gradients vanish and learning stalls."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="act" width="900" height="470"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Activation</label>
+        <div class="seg" id="fn">
+          <button data-f="sigmoid" class="active">Sigmoid</button>
+          <button data-f="tanh">tanh</button>
+          <button data-f="relu">ReLU</button>
+          <button data-f="leaky">Leaky</button>
+          <button data-f="gelu">GELU</button>
+          <button data-f="softplus">Softplus</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Input x <b id="xval">0.00</b></label>
+        <input type="range" id="x" min="-500" max="500" value="80" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>f(x)</span><b id="fx">—</b></div>
+        <div class="row"><span>f′(x) &nbsp;(gradient)</span><b id="dfx">—</b></div>
+      </div>
+
+      <p id="note" style="font-size:.84rem;color:var(--text-muted);margin:0;line-height:1.55"></p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Teal is the activation, amber is its <b>derivative</b>, the factor every
+      gradient gets multiplied by during backprop. Where amber sits near zero,
+      that layer barely learns.
+    </li>
+    <li>
+      Drag x into the tails of <b>Sigmoid</b> or <b>tanh</b>: the curve flattens
+      and f′ collapses toward 0. Stack many such layers and gradients
+      <b>vanish</b>, the problem ReLU was invented to dodge.
+    </li>
+    <li>
+      <b>ReLU</b> keeps a slope of exactly 1 for x &gt; 0 (no vanishing) but is
+      flat and <b>dead</b> for x &lt; 0. <b>Leaky</b> and <b>GELU</b> patch that
+      dead zone in different ways.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const erf = (x: number) => {
+    // Abramowitz-Stegun approximation
+    const t = 1 / (1 + 0.3275911 * Math.abs(x));
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return x >= 0 ? y : -y;
+  };
+  const FNS: Record<string, (x: number) => number> = {
+    sigmoid: (x) => 1 / (1 + Math.exp(-x)),
+    tanh: (x) => Math.tanh(x),
+    relu: (x) => Math.max(0, x),
+    leaky: (x) => (x > 0 ? x : 0.1 * x),
+    gelu: (x) => 0.5 * x * (1 + erf(x / Math.SQRT2)),
+    softplus: (x) => Math.log(1 + Math.exp(x)),
+  };
+  const NOTES: Record<string, string> = {
+    sigmoid: 'Squashes any input into (0, 1). Smooth, but it saturates at both ends, so its gradient vanishes for large |x|.',
+    tanh: 'Like sigmoid but zero-centered, mapping to (−1, 1). Still saturates in the tails.',
+    relu: 'Cheap and non-saturating for x > 0, where its slope is exactly 1. But it is flat for x < 0, so those neurons can go permanently dead.',
+    leaky: 'A ReLU that leaks a small slope (0.1) for x < 0, so gradients never fully vanish and neurons rarely die.',
+    gelu: 'A smooth, probabilistic cousin of ReLU. The default activation in most modern transformers.',
+    softplus: 'A smooth approximation of ReLU. Beautifully, its derivative is exactly the sigmoid.',
+  };
+
+  const state = { fn: 'sigmoid', x: 0.8 };
+
+  const canvas = document.getElementById('act') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const PAD = { l: 40, r: 20, t: 20, b: 34 };
+  const XR = [-5, 5] as const;
+  const YR = [-1.6, 3] as const;
+
+  const f = (x: number) => FNS[state.fn](x);
+  const df = (x: number) => (f(x + 1e-4) - f(x - 1e-4)) / 2e-4;
+
+  const sx = (x: number) => PAD.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - PAD.l - PAD.r);
+  const sy = (y: number) => H - PAD.b - ((y - YR[0]) / (YR[1] - YR[0])) * (H - PAD.t - PAD.b);
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    // saturation shading (|f'| < 0.1)
+    for (let px = PAD.l; px <= W - PAD.r; px += 3) {
+      const x = XR[0] + ((px - PAD.l) / (W - PAD.l - PAD.r)) * (XR[1] - XR[0]);
+      if (Math.abs(df(x)) < 0.1) {
+        ctx.fillStyle = 'rgba(248,113,113,0.07)';
+        ctx.fillRect(px, PAD.t, 3, H - PAD.t - PAD.b);
+      }
+    }
+
+    // grid + axes
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let xv = -5; xv <= 5; xv++) {
+      ctx.globalAlpha = 0.3;
+      ctx.beginPath();
+      ctx.moveTo(sx(xv), PAD.t);
+      ctx.lineTo(sx(xv), H - PAD.b);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(String(xv), sx(xv) - 4, H - PAD.b + 18);
+    }
+    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, sy(0));
+    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.stroke();
+
+    const plot = (g: (x: number) => number, color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      let pen = false;
+      for (let i = 0; i <= 500; i++) {
+        const x = XR[0] + ((XR[1] - XR[0]) * i) / 500;
+        const y = g(x);
+        if (y < YR[0] - 1 || y > YR[1] + 1) { pen = false; continue; }
+        pen ? ctx.lineTo(sx(x), sy(y)) : ((ctx.moveTo(sx(x), sy(y))), (pen = true));
+      }
+      ctx.stroke();
+    };
+    plot((x) => df(x), '#f59e0b', 2); // derivative
+    plot((x) => f(x), teal, 2.8); // activation
+
+    // marker at current x
+    const xv = state.x;
+    ctx.strokeStyle = `rgba(${ink},0.4)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx(xv), PAD.t);
+    ctx.lineTo(sx(xv), H - PAD.b);
+    ctx.stroke();
+    ctx.fillStyle = teal;
+    ctx.beginPath();
+    ctx.arc(sx(xv), sy(f(xv)), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(sx(xv), sy(df(xv)), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // legend
+    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    ctx.fillStyle = teal;
+    ctx.fillText('f(x)', W - 120, PAD.t + 6);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillText("f′(x)", W - 60, PAD.t + 6);
+
+    (document.getElementById('fx') as HTMLElement).textContent = f(xv).toFixed(3);
+    (document.getElementById('dfx') as HTMLElement).textContent = df(xv).toFixed(3);
+  }
+
+  document.getElementById('fn')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#fn button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.fn = btn.dataset.f!;
+    (document.getElementById('note') as HTMLElement).textContent = NOTES[state.fn];
+    draw();
+  });
+
+  const xEl = document.getElementById('x') as HTMLInputElement;
+  xEl.addEventListener('input', () => {
+    state.x = +xEl.value / 100;
+    (document.getElementById('xval') as HTMLElement).textContent = state.x.toFixed(2);
+    draw();
+  });
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
+    const x = XR[0] + ((px - PAD.l) / (W - PAD.l - PAD.r)) * (XR[1] - XR[0]);
+    state.x = Math.max(-5, Math.min(5, x));
+    xEl.value = String(Math.round(state.x * 100));
+    (document.getElementById('xval') as HTMLElement).textContent = state.x.toFixed(2);
+    draw();
+  });
+
+  (document.getElementById('note') as HTMLElement).textContent = NOTES[state.fn];
+  (document.getElementById('xval') as HTMLElement).textContent = state.x.toFixed(2);
+  draw();
+</script>

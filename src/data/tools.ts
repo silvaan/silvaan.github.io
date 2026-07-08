@@ -64,6 +64,22 @@ export const AREAS: Area[] = [
         href: '/simulations/calculus/scalar-fields',
         status: 'live',
       },
+      {
+        slug: 'lagrange-multipliers',
+        title: 'Lagrange Multipliers',
+        description:
+          'Optimize along a constraint and watch the objective contour kiss the constraint curve, exactly where the two gradients line up.',
+        href: '/simulations/calculus/lagrange-multipliers',
+        status: 'live',
+      },
+      {
+        slug: 'tangent-plane',
+        title: 'Tangent Plane & Directional Derivative',
+        description:
+          'Ride a point over a 3D surface with its tangent plane attached, and watch the slope change with direction, steepest along the gradient.',
+        href: '/simulations/calculus/tangent-plane',
+        status: 'live',
+      },
     ],
   },
   {
@@ -86,6 +102,118 @@ export const AREAS: Area[] = [
         description:
           'Spin a vector around the circle and watch where the matrix sends it. When the input and output line up, you have found an eigenvector.',
         href: '/simulations/linear-algebra/eigenvectors',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'statistics',
+    title: 'Statistics',
+    description: 'Randomness, distributions and the patterns that emerge from them.',
+    icon: 'M3 20h18 M3 20c4 0 5-13 9-13s5 13 9 13',
+    simulators: [
+      {
+        slug: 'central-limit-theorem',
+        title: 'Central Limit Theorem',
+        description:
+          'Average samples from any distribution and watch the means pile up into a Gaussian, faster as the sample size grows.',
+        href: '/simulations/statistics/central-limit-theorem',
+        status: 'live',
+      },
+      {
+        slug: 'random-walk',
+        title: 'Random Walk & Diffusion',
+        description:
+          'Thousands of aimless walkers spread from a point into a Gaussian whose width grows like the square root of time, the particle view of diffusion.',
+        href: '/simulations/statistics/random-walk',
+        status: 'live',
+      },
+      {
+        slug: 'monte-carlo',
+        title: 'Monte Carlo Estimation of π',
+        description:
+          'Throw random darts at a square with a circle inside and count the hits. The fraction inside estimates π, converging slowly as 1/√n.',
+        href: '/simulations/statistics/monte-carlo',
+        status: 'live',
+      },
+      {
+        slug: 'bayes-theorem',
+        title: "Bayes' Theorem",
+        description:
+          'See why a 90% accurate test for a rare disease is usually wrong when it says positive. 1,000 people as dots make the posterior obvious.',
+        href: '/simulations/statistics/bayes-theorem',
+        status: 'live',
+      },
+      {
+        slug: 'mle',
+        title: 'Maximum Likelihood',
+        description:
+          'Slide a Gaussian over sample data and watch the likelihood rise and fall. The best fit lands exactly on the sample mean and standard deviation.',
+        href: '/simulations/statistics/mle',
+        status: 'live',
+      },
+      {
+        slug: 'least-squares',
+        title: 'Least Squares',
+        description:
+          'Drag data points and fit the best line live. The residuals are drawn as literal squares, least squares minimises their total area.',
+        href: '/simulations/statistics/least-squares',
+        status: 'live',
+      },
+      {
+        slug: 'wasserstein',
+        title: 'Wasserstein Distance',
+        description:
+          'Measure the distance between two distributions as the least work to reshape one into the other, the area between their CDFs.',
+        href: '/simulations/statistics/wasserstein',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'machine-learning',
+    title: 'Machine Learning',
+    description: 'Clustering, model fitting and the ideas that turn data into predictions.',
+    icon: 'M4.4 7 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 M4.4 14 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 M9.9 10.5 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 M16.4 8 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0 M16.4 15 a1.6 1.6 0 1 0 3.2 0 a1.6 1.6 0 1 0 -3.2 0',
+    simulators: [
+      {
+        slug: 'kmeans',
+        title: 'k-Means Clustering',
+        description:
+          'Assign points to the nearest center, move each center to its mean, repeat. Watch clusters snap into place, and sometimes into the wrong place.',
+        href: '/simulations/machine-learning/kmeans',
+        status: 'live',
+      },
+      {
+        slug: 'dbscan',
+        title: 'DBSCAN',
+        description:
+          'Density-based clustering that finds arbitrary shapes and flags outliers as noise, with no need to choose the number of clusters up front.',
+        href: '/simulations/machine-learning/dbscan',
+        status: 'live',
+      },
+      {
+        slug: 'hierarchical',
+        title: 'Hierarchical Clustering',
+        description:
+          'Merge the closest groups over and over to build a dendrogram, then slice it at any height to read off clusters at that scale.',
+        href: '/simulations/machine-learning/hierarchical',
+        status: 'live',
+      },
+      {
+        slug: 'overfitting',
+        title: 'Overfitting & Regularization',
+        description:
+          'Raise a polynomial’s degree until it threads every training point yet fails on new data, then tame it with regularization.',
+        href: '/simulations/machine-learning/overfitting',
+        status: 'live',
+      },
+      {
+        slug: 'activations',
+        title: 'Activation Functions',
+        description:
+          'Compare sigmoid, tanh, ReLU and friends alongside their derivatives, and see where flat slopes make gradients vanish.',
+        href: '/simulations/machine-learning/activations',
         status: 'live',
       },
     ],
@@ -120,28 +248,36 @@ export const AREAS: Area[] = [
         href: '/simulations/deep-learning/optimizers-3d',
         status: 'live',
       },
-    ],
-  },
-  {
-    slug: 'statistics',
-    title: 'Statistics',
-    description: 'Randomness, distributions and the patterns that emerge from them.',
-    icon: 'M3 20h18 M3 20c4 0 5-13 9-13s5 13 9 13',
-    simulators: [
       {
-        slug: 'central-limit-theorem',
-        title: 'Central Limit Theorem',
+        slug: 'neural-net',
+        title: 'Neural Network Playground',
         description:
-          'Average samples from any distribution and watch the means pile up into a Gaussian, faster as the sample size grows.',
-        href: '/simulations/statistics/central-limit-theorem',
+          'Train a small neural network to separate two classes of dots and watch its decision boundary bend and fold in real time.',
+        href: '/simulations/deep-learning/neural-net',
         status: 'live',
       },
       {
-        slug: 'least-squares',
-        title: 'Least Squares',
+        slug: 'image-convolution',
+        title: 'Image Convolution',
         description:
-          'Drag data points and fit the best line live. The residuals are drawn as literal squares, least squares minimises their total area.',
-        href: '/simulations/statistics/least-squares',
+          'Slide a kernel over an image to detect edges, blur or sharpen, and see how stride, padding and dilation reshape the output feature map.',
+        href: '/simulations/deep-learning/image-convolution',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'generative-ai',
+    title: 'Generative AI',
+    description: 'How models learn to produce new text, one token at a time.',
+    icon: 'M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4z M18.5 13.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z',
+    simulators: [
+      {
+        slug: 'autoregressive',
+        title: 'Autoregressive Models',
+        description:
+          'Predict the next character from the text so far, sample it, append, repeat. The same next-token loop that powers large language models.',
+        href: '/simulations/generative-ai/autoregressive',
         status: 'live',
       },
     ],
@@ -166,6 +302,38 @@ export const AREAS: Area[] = [
         description:
           'Watch temperature diffuse across a room from a radiator and a cold window, and paint in your own heat.',
         href: '/simulations/physics/heat-equation',
+        status: 'live',
+      },
+      {
+        slug: 'wave-equation',
+        title: 'Wave Equation',
+        description:
+          'Pluck a string and watch the pulse travel and reflect. The contrast with heat: waves keep their shape and carry energy instead of smearing out.',
+        href: '/simulations/physics/wave-equation',
+        status: 'live',
+      },
+      {
+        slug: 'wave-interference',
+        title: 'Wave Interference',
+        description:
+          'Two sources of ripples cross and combine into bright and dark fringes. Drag the sources to see the pattern behind the double-slit experiment.',
+        href: '/simulations/physics/wave-interference',
+        status: 'live',
+      },
+      {
+        slug: 'schrodinger',
+        title: 'Schrödinger Equation',
+        description:
+          'Launch a quantum wave packet at a barrier taller than its energy and watch part of it tunnel through, the wave nature of matter in action.',
+        href: '/simulations/physics/schrodinger',
+        status: 'live',
+      },
+      {
+        slug: 'special-relativity',
+        title: 'Special Relativity',
+        description:
+          'Boost to a moving frame on a spacetime diagram and watch its axes skew: relativity of simultaneity, time dilation and length contraction, all at once.',
+        href: '/simulations/physics/special-relativity',
         status: 'live',
       },
     ],
