@@ -1,0 +1,250 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Derivative as a Limit"
+  description="The derivative is the slope of the tangent line, but the tangent is only born in a limit. Shrink the step h toward zero and watch the secant line settle onto the curve."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="deriv" width="900" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Function</label>
+        <div class="seg" id="fn">
+          <button data-fn="quad" class="active">x²</button>
+          <button data-fn="sine">sin x</button>
+          <button data-fn="expo">eˣ</button>
+          <button data-fn="cubic">x³</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Point x₀ <b id="x0val">0.80</b></label>
+        <input type="range" id="x0" min="-3" max="3" step="0.05" value="0.8" />
+      </div>
+
+      <div class="control">
+        <label>Step h <b id="hval">1.20</b></label>
+        <input type="range" id="h" min="0.02" max="2.5" step="0.02" value="1.2" />
+      </div>
+
+      <button class="btn" id="run">Animate h → 0</button>
+
+      <div class="readout">
+        <div class="row"><span>Secant slope</span><b id="sec">—</b></div>
+        <div class="row"><span>Tangent slope f′(x₀)</span><b id="tan">—</b></div>
+        <div class="row"><span>Difference</span><b id="gap">—</b></div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The <b>secant</b> slope is the average rate of change over [x₀, x₀+h]. As
+      <b>h → 0</b> it converges to the <b>tangent</b> slope: the instantaneous
+      rate. That limit is the derivative.
+    </li>
+    <li>
+      Halve h and watch the <b>Difference</b> readout roughly halve too: for
+      these smooth curves the secant approaches the tangent linearly in h.
+    </li>
+    <li>
+      Pick <b>eˣ</b>. The tangent slope always equals the curve's own
+      <b>height</b> f(x₀), the property that makes e special.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  type Fn = { f: (x: number) => number; df: (x: number) => number };
+  const FNS: Record<string, Fn> = {
+    quad: { f: (x) => 0.5 * x * x, df: (x) => x },
+    sine: { f: (x) => 1.6 * Math.sin(x), df: (x) => 1.6 * Math.cos(x) },
+    expo: { f: (x) => Math.exp(x), df: (x) => Math.exp(x) },
+    cubic: { f: (x) => 0.25 * x * x * x, df: (x) => 0.75 * x * x },
+  };
+
+  const state = { fn: 'quad', x0: 0.8, h: 1.2 };
+  let raf = 0;
+
+  const canvas = document.getElementById('deriv') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const PAD = { l: 46, r: 24, t: 24, b: 40 };
+  const X = { min: -3.4, max: 3.4 };
+  const css = (v: string) =>
+    getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  function yRange(fn: Fn) {
+    let lo = Infinity,
+      hi = -Infinity;
+    for (let i = 0; i <= 240; i++) {
+      const x = X.min + ((X.max - X.min) * i) / 240;
+      const y = fn.f(x);
+      if (isFinite(y)) {
+        lo = Math.min(lo, y);
+        hi = Math.max(hi, y);
+      }
+    }
+    const pad = (hi - lo) * 0.12 || 1;
+    return { lo: lo - pad, hi: hi + pad };
+  }
+
+  function draw() {
+    const fn = FNS[state.fn];
+    const { lo, hi } = yRange(fn);
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+
+    const sx = (x: number) => PAD.l + ((x - X.min) / (X.max - X.min)) * (W - PAD.l - PAD.r);
+    const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = grid;
+    ctx.fillStyle = faint;
+    ctx.lineWidth = 1;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let i = 0; i <= 8; i++) {
+      const xv = X.min + ((X.max - X.min) * i) / 8;
+      const px = sx(xv);
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(px, PAD.t);
+      ctx.lineTo(px, H - PAD.b);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+    }
+    if (lo < 0 && hi > 0) {
+      ctx.strokeStyle = css('--border-strong') || '#343a45';
+      ctx.beginPath();
+      ctx.moveTo(PAD.l, sy(0));
+      ctx.lineTo(W - PAD.r, sy(0));
+      ctx.stroke();
+    }
+
+    // curve
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 480; i++) {
+      const x = X.min + ((X.max - X.min) * i) / 480;
+      const px = sx(x);
+      const py = sy(fn.f(x));
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    const x0 = state.x0;
+    const x1 = state.x0 + state.h;
+    const y0 = fn.f(x0);
+    const y1 = fn.f(x1);
+    const secSlope = (y1 - y0) / state.h;
+    const tanSlope = fn.df(x0);
+
+    // tangent (dashed)
+    ctx.strokeStyle = accent;
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1.6;
+    const tdx = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(sx(x0 - tdx), sy(y0 - tanSlope * tdx));
+    ctx.lineTo(sx(x0 + tdx), sy(y0 + tanSlope * tdx));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // secant (solid) through the two points, extended
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2;
+    const sdx = 3.4;
+    ctx.beginPath();
+    ctx.moveTo(sx(x0 - sdx), sy(y0 - secSlope * sdx));
+    ctx.lineTo(sx(x0 + sdx), sy(y0 + secSlope * sdx));
+    ctx.stroke();
+
+    // the h span, drawn as a slope triangle
+    ctx.strokeStyle = 'rgba(251,191,36,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx(x0), sy(y0));
+    ctx.lineTo(sx(x1), sy(y0));
+    ctx.lineTo(sx(x1), sy(y1));
+    ctx.stroke();
+
+    // points
+    const dot = (x: number, y: number, col: string) => {
+      ctx.fillStyle = col;
+      ctx.strokeStyle = '#0b0c0e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(x), sy(y), 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    };
+    dot(x1, y1, '#fbbf24');
+    dot(x0, y0, accent);
+
+    (document.getElementById('sec') as HTMLElement).textContent = secSlope.toFixed(4);
+    (document.getElementById('tan') as HTMLElement).textContent = tanSlope.toFixed(4);
+    (document.getElementById('gap') as HTMLElement).textContent = Math.abs(secSlope - tanSlope).toFixed(4);
+  }
+
+  document.getElementById('fn')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#fn button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.fn = btn.dataset.fn!;
+    draw();
+  });
+
+  const x0El = document.getElementById('x0') as HTMLInputElement;
+  x0El.addEventListener('input', () => {
+    state.x0 = +x0El.value;
+    (document.getElementById('x0val') as HTMLElement).textContent = state.x0.toFixed(2);
+    draw();
+  });
+
+  const hEl = document.getElementById('h') as HTMLInputElement;
+  function setH(h: number) {
+    state.h = h;
+    hEl.value = String(h);
+    (document.getElementById('hval') as HTMLElement).textContent = h.toFixed(2);
+  }
+  hEl.addEventListener('input', () => {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    setH(+hEl.value);
+    draw();
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    cancelAnimationFrame(raf);
+    setH(2.5);
+    const shrink = () => {
+      const next = state.h * 0.94;
+      if (next <= 0.02) {
+        setH(0.02);
+        draw();
+        raf = 0;
+        return;
+      }
+      setH(+next.toFixed(3));
+      draw();
+      raf = requestAnimationFrame(() => setTimeout(shrink, 40));
+    };
+    shrink();
+  });
+
+  draw();
+</script>

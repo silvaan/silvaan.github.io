@@ -1,0 +1,268 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Least Squares"
+  description="The best-fit line is the one that minimises the total squared error. Here each error is drawn as a literal square, so the line is quite literally the one that shrinks the total area the most."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="ls" width="820" height="560"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" id="reset">Reset points</button>
+        <button class="btn ghost" id="clear">Clear</button>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" id="squares" checked /> Show residual squares
+      </label>
+
+      <div class="readout">
+        <div class="row"><span>Fit</span><b id="eq">—</b></div>
+        <div class="row"><span>Sum of squares</span><b id="sse">—</b></div>
+        <div class="row"><span>R²</span><b id="r2">—</b></div>
+        <div class="row"><span>Points</span><b id="cnt">0</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag any point to move it. Click empty space to add a point. The orange
+        line is the least-squares fit; the shaded squares are the residuals,
+        squared.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The fit line is exactly the one that makes the <b>total area</b> of the
+      shaded squares as small as possible. Drag a point and watch the squares
+      fight back.
+    </li>
+    <li>
+      Drag one point far off the trend. Because errors are <b>squared</b>, that
+      single <b>outlier</b> drags the whole line toward it: least squares is not
+      robust.
+    </li>
+    <li>
+      The line always pivots through the <b>mean point</b> (x̄, ȳ). Add points
+      symmetrically and the slope changes while that balance point stays put.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type P = { x: number; y: number };
+  const DEFAULT: P[] = [
+    { x: 1, y: 2.2 }, { x: 2, y: 2.8 }, { x: 3, y: 3.2 }, { x: 4, y: 4.6 },
+    { x: 5, y: 4.9 }, { x: 6, y: 6.3 }, { x: 7, y: 6.1 }, { x: 8, y: 7.8 },
+  ];
+  let pts: P[] = DEFAULT.map((p) => ({ ...p }));
+  const state = { squares: true };
+
+  const canvas = document.getElementById('ls') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const PAD = { l: 48, r: 24, t: 24, b: 40 };
+  const XR = [0, 10] as const;
+  const YR = [0, 10] as const;
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const sx = (x: number) => PAD.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - PAD.l - PAD.r);
+  const sy = (y: number) => H - PAD.b - ((y - YR[0]) / (YR[1] - YR[0])) * (H - PAD.t - PAD.b);
+  const dataX = (px: number) => XR[0] + ((px - PAD.l) / (W - PAD.l - PAD.r)) * (XR[1] - XR[0]);
+  const dataY = (py: number) => YR[0] + ((H - PAD.b - py) / (H - PAD.t - PAD.b)) * (YR[1] - YR[0]);
+
+  function fit() {
+    const n = pts.length;
+    if (n < 2) return null;
+    let sxx = 0, syy = 0, sxy = 0, mx = 0, my = 0;
+    for (const p of pts) {
+      mx += p.x;
+      my += p.y;
+    }
+    mx /= n;
+    my /= n;
+    for (const p of pts) {
+      sxx += (p.x - mx) ** 2;
+      syy += (p.y - my) ** 2;
+      sxy += (p.x - mx) * (p.y - my);
+    }
+    if (sxx < 1e-9) return null;
+    const slope = sxy / sxx;
+    const intercept = my - slope * mx;
+    let sse = 0;
+    for (const p of pts) sse += (p.y - (slope * p.x + intercept)) ** 2;
+    const r2 = syy < 1e-9 ? 1 : 1 - sse / syy;
+    return { slope, intercept, sse, r2, mx, my };
+  }
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+    const accent = css('--accent') || '#7c8cff';
+    ctx.clearRect(0, 0, W, H);
+
+    // grid + axes
+    ctx.strokeStyle = grid;
+    ctx.fillStyle = faint;
+    ctx.lineWidth = 1;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let i = 0; i <= 10; i++) {
+      ctx.globalAlpha = 0.3;
+      const gx = sx(i);
+      ctx.beginPath();
+      ctx.moveTo(gx, PAD.t);
+      ctx.lineTo(gx, H - PAD.b);
+      ctx.stroke();
+      const gy = sy(i);
+      ctx.beginPath();
+      ctx.moveTo(PAD.l, gy);
+      ctx.lineTo(W - PAD.r, gy);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    const f = fit();
+    if (f) {
+      // residual squares
+      if (state.squares) {
+        for (const p of pts) {
+          const yhat = f.slope * p.x + f.intercept;
+          const sidePx = Math.abs(sy(p.y) - sy(yhat));
+          const dir = p.y >= yhat ? 1 : -1; // draw square toward the point's side
+          ctx.fillStyle = 'rgba(251,191,36,0.16)';
+          ctx.strokeStyle = 'rgba(251,191,36,0.4)';
+          ctx.lineWidth = 1;
+          const rx = sx(p.x);
+          const topPy = Math.min(sy(p.y), sy(yhat));
+          ctx.fillRect(rx, topPy, dir * sidePx, sidePx);
+          ctx.strokeRect(rx, topPy, dir * sidePx, sidePx);
+        }
+      }
+
+      // fit line
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(sx(XR[0]), sy(f.slope * XR[0] + f.intercept));
+      ctx.lineTo(sx(XR[1]), sy(f.slope * XR[1] + f.intercept));
+      ctx.stroke();
+
+      // mean point
+      ctx.fillStyle = 'rgba(94,234,212,0.9)';
+      ctx.beginPath();
+      ctx.arc(sx(f.mx), sy(f.my), 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // points
+    for (const p of pts) {
+      ctx.fillStyle = accent;
+      ctx.strokeStyle = '#0b0c0e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // readouts
+    (document.getElementById('cnt') as HTMLElement).textContent = String(pts.length);
+    if (f) {
+      const sign = f.intercept >= 0 ? '+' : '−';
+      (document.getElementById('eq') as HTMLElement).textContent =
+        `y = ${f.slope.toFixed(2)}x ${sign} ${Math.abs(f.intercept).toFixed(2)}`;
+      (document.getElementById('sse') as HTMLElement).textContent = f.sse.toFixed(3);
+      (document.getElementById('r2') as HTMLElement).textContent = f.r2.toFixed(3);
+    } else {
+      (document.getElementById('eq') as HTMLElement).textContent = 'need ≥ 2 points';
+      (document.getElementById('sse') as HTMLElement).textContent = '—';
+      (document.getElementById('r2') as HTMLElement).textContent = '—';
+    }
+  }
+
+  // interaction: drag nearest point, or add a new one on empty space
+  let drag = -1;
+  function pick(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    let best = -1, bestD = 16 * 16;
+    pts.forEach((p, i) => {
+      const d = (sx(p.x) - mx) ** 2 + (sy(p.y) - my) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return { mx, my, best };
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const { mx, my, best } = pick(e);
+    canvas.setPointerCapture(e.pointerId);
+    if (best >= 0) {
+      drag = best;
+    } else {
+      const nx = Math.max(XR[0], Math.min(XR[1], dataX(mx)));
+      const ny = Math.max(YR[0], Math.min(YR[1], dataY(my)));
+      pts.push({ x: nx, y: ny });
+      drag = pts.length - 1;
+      draw();
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (drag < 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    pts[drag] = {
+      x: Math.max(XR[0], Math.min(XR[1], dataX(mx))),
+      y: Math.max(YR[0], Math.min(YR[1], dataY(my))),
+    };
+    draw();
+  });
+  const stop = () => (drag = -1);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  document.getElementById('reset')!.addEventListener('click', () => {
+    pts = DEFAULT.map((p) => ({ ...p }));
+    draw();
+  });
+  document.getElementById('clear')!.addEventListener('click', () => {
+    pts = [];
+    draw();
+  });
+  document.getElementById('squares')!.addEventListener('change', (e) => {
+    state.squares = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+
+  draw();
+</script>
+
+<style>
+  #ls {
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .check input {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+  }
+</style>

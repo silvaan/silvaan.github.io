@@ -23,8 +23,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <input type="range" id="diff" min="2" max="24" value="18" />
       </div>
 
+      <div class="control">
+        <label>Click action</label>
+        <div class="seg" id="tool">
+          <button data-tool="paint" class="active">Paint heat</button>
+          <button data-tool="probe">Thermometer</button>
+        </div>
+      </div>
+
       <div class="readout">
         <div class="row"><span>Temp at cursor</span><b id="temp">—</b></div>
+        <div class="row"><span>Thermometer</span><b id="ptemp">—</b></div>
+      </div>
+
+      <div class="control">
+        <label>Thermometer over time</label>
+        <canvas id="thermo" class="mini-canvas" width="300" height="150"></canvas>
       </div>
 
       <div class="legend">
@@ -35,18 +49,37 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
         Orange = radiator (hot), blue strip on the right = window (cold), walls
-        sit at room temperature. Drag anywhere inside to paint in heat and watch
-        it diffuse. Lower the diffusivity to make heat spread more slowly.
+        sit at room temperature. In <b>Paint heat</b> mode, drag inside to add
+        heat; in <b>Thermometer</b> mode, drag the white ring to probe a point.
       </p>
     </div>
   </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drop the thermometer <b>next to the radiator</b>: its temperature shoots up
+      fast, then levels off as the region around it warms and the gradient
+      driving the flow shrinks.
+    </li>
+    <li>
+      Place it <b>midway</b> between radiator and window. It settles at a steady
+      in-between value: heat flows continuously through it from hot to cold
+      (steady state, not "no flow").
+    </li>
+    <li>
+      Lower the <b>diffusivity</b> and reset. The same final picture emerges, but
+      the thermometer curve rises far more slowly: diffusivity sets the timescale,
+      not the destination.
+    </li>
+  </Fragment>
 </SimLayout>
 
 <script>
+  import { setupCanvas } from '../../../lib/sim';
   const canvas = document.getElementById('heat') as HTMLCanvasElement;
-  const ctx = canvas.getContext('2d')!;
-  const W = canvas.width;
-  const H = canvas.height;
+  const { ctx, W, H } = setupCanvas(canvas, () => render());
+  const thermoCanvas = document.getElementById('thermo') as HTMLCanvasElement;
+  const th = setupCanvas(thermoCanvas, () => drawThermo());
   const G = 120; // grid resolution
 
   const off = document.createElement('canvas');
@@ -60,7 +93,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const idx = (x: number, y: number) => y * G + x;
 
   const AMBIENT = 0.3;
-  const state = { playing: true, diff: 0.18, cursor: -1 };
+  const state = {
+    playing: true,
+    diff: 0.18,
+    cursor: -1,
+    tool: 'paint' as 'paint' | 'probe',
+    probe: { x: Math.round(G * 0.5), y: Math.round(G * 0.5) },
+  };
+  const toCelsius = (v: number) => 10 + v * 20;
+  let history: number[] = [];
 
   function inRadiator(x: number, y: number) {
     return x >= 3 && x <= 7 && y >= G * 0.4 && y <= G * 0.6;
@@ -89,6 +130,37 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     u = new Float32Array(G * G).fill(AMBIENT);
     v = new Float32Array(G * G);
     applyFixed(u);
+    history = [];
+  }
+
+  function drawThermo() {
+    const c = th.ctx, Ws = th.W, Hs = th.H;
+    const pad = { l: 30, r: 8, t: 10, b: 14 };
+    const lo = 10, hi = 30;
+    const sy = (val: number) =>
+      pad.t + (1 - (Math.max(lo, Math.min(hi, val)) - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
+    const ink = getComputedStyle(canvas).getPropertyValue('--stage-ink').trim() || '232,233,236';
+    c.clearRect(0, 0, Ws, Hs);
+    c.strokeStyle = `rgba(${ink},0.16)`;
+    c.fillStyle = getComputedStyle(canvas).getPropertyValue('--text-faint').trim() || '#8b93a5';
+    c.lineWidth = 1;
+    c.font = "10px 'JetBrains Mono', monospace";
+    for (const t of [10, 20, 30]) {
+      const y = sy(t);
+      c.beginPath();
+      c.moveTo(pad.l, y);
+      c.lineTo(Ws - pad.r, y);
+      c.stroke();
+      c.fillText(t + '°', 6, y + 3);
+    }
+    if (history.length < 2) return;
+    const n = history.length;
+    const sx = (i: number) => pad.l + (i / (n - 1)) * (Ws - pad.l - pad.r);
+    c.strokeStyle = '#5eead4';
+    c.lineWidth = 2;
+    c.beginPath();
+    history.forEach((val, i) => (i ? c.lineTo(sx(i), sy(val)) : c.moveTo(sx(i), sy(val))));
+    c.stroke();
   }
 
   function step() {
@@ -144,11 +216,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.fillStyle = 'rgba(150,200,255,0.9)';
     ctx.fillRect((G - 2) * cell, G * 0.28 * cell, 2 * cell, G * 0.44 * cell);
 
+    // thermometer probe marker
+    const pcell = W / G;
+    const pcx = (state.probe.x + 0.5) * pcell;
+    const pcy = (state.probe.y + 0.5) * pcell;
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, 8, 0, 6.2832);
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, 2.4, 0, 6.2832);
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fill();
+
+    const pc = toCelsius(u[idx(state.probe.x, state.probe.y)]);
+    (document.getElementById('ptemp') as HTMLElement).textContent = `${pc.toFixed(1)}°C`;
+    history.push(pc);
+    if (history.length > 300) history.shift();
+    drawThermo();
+
     // cursor temp
     const tEl = document.getElementById('temp') as HTMLElement;
     if (state.cursor >= 0) {
-      const celsius = 10 + u[state.cursor] * 20;
-      tEl.textContent = `${celsius.toFixed(1)}°C`;
+      tEl.textContent = `${toCelsius(u[state.cursor]).toFixed(1)}°C`;
     } else tEl.textContent = '—';
   }
 
@@ -166,8 +257,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const rect = canvas.getBoundingClientRect();
     const gx = Math.round(((e.clientX - rect.left) / rect.width) * G);
     const gy = Math.round(((e.clientY - rect.top) / rect.height) * G);
-    state.cursor = gy >= 0 && gy < G && gx >= 0 && gx < G ? idx(gx, gy) : -1;
+    const inside = gy >= 0 && gy < G && gx >= 0 && gx < G;
+    state.cursor = inside ? idx(gx, gy) : -1;
     if (!painting) return;
+    if (state.tool === 'probe') {
+      if (inside)
+        state.probe = {
+          x: Math.max(1, Math.min(G - 2, gx)),
+          y: Math.max(1, Math.min(G - 2, gy)),
+        };
+      return;
+    }
     const R = 5;
     for (let dy = -R; dy <= R; dy++)
       for (let dx = -R; dx <= R; dx++) {
@@ -198,6 +298,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   diffEl.addEventListener('input', () => {
     state.diff = +diffEl.value / 100;
     (document.getElementById('diffval') as HTMLElement).textContent = state.diff.toFixed(2);
+  });
+
+  document.getElementById('tool')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#tool button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.tool = btn.dataset.tool as 'paint' | 'probe';
+    canvas.style.cursor = state.tool === 'probe' ? 'grab' : 'crosshair';
   });
 
   reset();

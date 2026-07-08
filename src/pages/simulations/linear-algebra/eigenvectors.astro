@@ -1,0 +1,294 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="Eigenvectors & Eigenvalues"
+  description="Most vectors get knocked off their line when a matrix acts on them. Eigenvectors are the special directions that only stretch. Spin the input around and hunt for the moment the output lines up."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="eigen" width="640" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Matrix A</label>
+        <div style="display:grid;gap:12px;margin-top:6px">
+          <div class="control"><label>a <b id="aval">2.00</b></label><input type="range" id="a" min="-3" max="3" step="0.05" value="2"></div>
+          <div class="control"><label>b <b id="bval">1.00</b></label><input type="range" id="b" min="-3" max="3" step="0.05" value="1"></div>
+          <div class="control"><label>c <b id="cval">1.00</b></label><input type="range" id="c" min="-3" max="3" step="0.05" value="1"></div>
+          <div class="control"><label>d <b id="dval">2.00</b></label><input type="range" id="d" min="-3" max="3" step="0.05" value="2"></div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Presets</label>
+        <div class="seg" id="presets">
+          <button data-m="2,1,1,2">Symmetric</button>
+          <button data-m="2,0,0,-1">Diagonal</button>
+          <button data-m="1,1,0,1">Shear</button>
+          <button data-m="0,-1,1,0">Rotation</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Input angle <b id="thval">0°</b></label>
+        <input type="range" id="th" min="0" max="360" step="1" value="0" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Eigenvalues</span><b id="eigval">—</b></div>
+        <div class="row"><span>|Av| / |v|</span><b id="stretch">—</b></div>
+        <div class="row"><span>v ∠ Av</span><b id="align">—</b></div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the blue input vector or sweep the angle. The orange output
+      <b>Av</b> swings around too, but at a different rate: it is not just a
+      rotation of the input.
+    </li>
+    <li>
+      When <b>v ∠ Av</b> hits <b>0°</b> (or 180°) the two line up. There
+      <b>Av = λv</b>: you have found an eigenvector, and the stretch factor is
+      the eigenvalue λ.
+    </li>
+    <li>
+      Try the presets. <b>Symmetric</b> has perpendicular eigenvectors,
+      <b>Shear</b> has only one, and <b>Rotation</b> has none in the real
+      plane, its eigenvalues are complex.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const M = { a: 2, b: 1, c: 1, d: 2 };
+  const state = { theta: 0 };
+
+  const canvas = document.getElementById('eigen') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const O = { x: W / 2, y: H / 2 };
+  const UNIT = 78;
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const toPx = (x: number, y: number) => ({ px: O.x + x * UNIT, py: O.y - y * UNIT });
+  const apply = (x: number, y: number) => ({
+    x: M.a * x + M.b * y,
+    y: M.c * x + M.d * y,
+  });
+
+  type Eig = { l: number; v: [number, number] };
+  function eigen(): Eig[] {
+    const tr = M.a + M.d;
+    const det = M.a * M.d - M.b * M.c;
+    const disc = (tr * tr) / 4 - det;
+    if (disc < -1e-9) return [];
+    const s = Math.sqrt(Math.max(0, disc));
+    const ls = [tr / 2 + s, tr / 2 - s];
+    const norm = (x: number, y: number): [number, number] => {
+      const n = Math.hypot(x, y) || 1;
+      return [x / n, y / n];
+    };
+    const vecFor = (l: number): [number, number] => {
+      if (Math.abs(M.b) > 1e-9) return norm(M.b, l - M.a);
+      if (Math.abs(M.c) > 1e-9) return norm(l - M.d, M.c);
+      return Math.abs(M.a - l) < 1e-9 ? [1, 0] : [0, 1];
+    };
+    const out: Eig[] = [{ l: ls[0], v: vecFor(ls[0]) }];
+    if (Math.abs(ls[0] - ls[1]) > 1e-6) out.push({ l: ls[1], v: vecFor(ls[1]) });
+    return out;
+  }
+
+  function drawArrow(x: number, y: number, color: string, width: number, label?: string) {
+    const p = toPx(x, y);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(O.x, O.y);
+    ctx.lineTo(p.px, p.py);
+    ctx.stroke();
+    const ang = Math.atan2(p.py - O.y, p.px - O.x);
+    ctx.beginPath();
+    ctx.moveTo(p.px, p.py);
+    ctx.lineTo(p.px - 13 * Math.cos(ang - 0.4), p.py - 13 * Math.sin(ang - 0.4));
+    ctx.lineTo(p.px - 13 * Math.cos(ang + 0.4), p.py - 13 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+    if (label) {
+      ctx.font = "600 14px 'JetBrains Mono', monospace";
+      ctx.fillText(label, p.px + 8, p.py - 8);
+    }
+  }
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+    const accent = css('--accent') || '#7c8cff';
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.6;
+    for (let i = -4; i <= 4; i++) {
+      const a = toPx(i, -4), b = toPx(i, 4);
+      const c = toPx(-4, i), e = toPx(4, i);
+      ctx.beginPath();
+      ctx.moveTo(a.px, a.py);
+      ctx.lineTo(b.px, b.py);
+      ctx.moveTo(c.px, c.py);
+      ctx.lineTo(e.px, e.py);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // unit circle of inputs
+    ctx.strokeStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.32)`;
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.arc(O.x, O.y, UNIT, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // image ellipse: A applied to the unit circle
+    ctx.strokeStyle = 'rgba(251,191,36,0.35)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const t = (i / 120) * Math.PI * 2;
+      const q = apply(Math.cos(t), Math.sin(t));
+      const p = toPx(q.x, q.y);
+      i === 0 ? ctx.moveTo(p.px, p.py) : ctx.lineTo(p.px, p.py);
+    }
+    ctx.stroke();
+
+    // eigen-directions (real)
+    const eigs = eigen();
+    for (const eg of eigs) {
+      const [vx, vy] = eg.v;
+      const p1 = toPx(vx * 4.5, vy * 4.5);
+      const p2 = toPx(-vx * 4.5, -vy * 4.5);
+      ctx.strokeStyle = 'rgba(94,234,212,0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      ctx.moveTo(p1.px, p1.py);
+      ctx.lineTo(p2.px, p2.py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // input v and output Av
+    const vx = Math.cos(state.theta);
+    const vy = Math.sin(state.theta);
+    const av = apply(vx, vy);
+    const avMag = Math.hypot(av.x, av.y);
+
+    drawArrow(av.x, av.y, '#fbbf24', 3, 'Av');
+    drawArrow(vx, vy, accent, 3, 'v');
+
+    // alignment test
+    const cross = vx * av.y - vy * av.x;
+    const dot = vx * av.x + vy * av.y;
+    const angleBetween = Math.atan2(Math.abs(cross), dot) * (180 / Math.PI);
+    const aligned = avMag > 1e-6 && (angleBetween < 2.2 || angleBetween > 177.8);
+    if (aligned) {
+      const p = toPx(av.x, av.y);
+      ctx.strokeStyle = '#5eead4';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(p.px, p.py, 15, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#5eead4';
+      ctx.font = "600 15px 'JetBrains Mono', monospace";
+      const lam = dot; // λ = (Av·v)/(v·v), and |v| = 1
+      ctx.fillText('eigenvector · λ=' + lam.toFixed(2), O.x - 90, 28);
+    }
+
+    ctx.fillStyle = faint;
+
+    // readouts
+    (document.getElementById('eigval') as HTMLElement).textContent = eigs.length
+      ? eigs.map((e) => e.l.toFixed(2)).join(', ')
+      : 'complex';
+    (document.getElementById('stretch') as HTMLElement).textContent = avMag.toFixed(3);
+    (document.getElementById('align') as HTMLElement).textContent = Math.min(angleBetween, 180 - angleBetween).toFixed(1) + '°';
+  }
+
+  function syncInputs() {
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      (document.getElementById(k) as HTMLInputElement).value = String(M[k]);
+    });
+  }
+
+  (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+    const el = document.getElementById(k) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      M[k] = +el.value;
+      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      draw();
+    });
+  });
+
+  document.getElementById('presets')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    const [a, b, c, d] = btn.dataset.m!.split(',').map(Number);
+    Object.assign(M, { a, b, c, d });
+    syncInputs();
+    draw();
+  });
+
+  const thEl = document.getElementById('th') as HTMLInputElement;
+  function setTheta(deg: number) {
+    state.theta = (deg * Math.PI) / 180;
+    thEl.value = String(((deg % 360) + 360) % 360);
+    (document.getElementById('thval') as HTMLElement).textContent = Math.round(((deg % 360) + 360) % 360) + '°';
+  }
+  thEl.addEventListener('input', () => {
+    setTheta(+thEl.value);
+    draw();
+  });
+
+  // drag the input vector directly
+  let dragging = false;
+  function setFromPointer(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W - O.x;
+    const my = -(((e.clientY - rect.top) / rect.height) * H - O.y);
+    const deg = (Math.atan2(my, mx) * 180) / Math.PI;
+    setTheta(deg);
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    setFromPointer(e);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (dragging) setFromPointer(e);
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  draw();
+</script>
+
+<style>
+  #eigen {
+    cursor: grab;
+    touch-action: none;
+  }
+  #eigen:active {
+    cursor: grabbing;
+  }
+</style>

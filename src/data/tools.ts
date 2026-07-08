@@ -25,11 +25,35 @@ export const AREAS: Area[] = [
     icon: 'M3 3v18h18 M7 16c2-9 5-9 7 0s4 6 5 0',
     simulators: [
       {
+        slug: 'derivative-limit',
+        title: 'Derivative as a Limit',
+        description:
+          'Slide the secant line as h shrinks to zero and watch it settle into the tangent and the derivative born from a limit.',
+        href: '/simulations/calculus/derivative-limit',
+        status: 'live',
+      },
+      {
         slug: 'riemann-sum',
         title: 'Riemann Sums',
         description:
           'Approximate the area under a curve with rectangles and watch it converge to the integral.',
         href: '/simulations/calculus/riemann-sum',
+        status: 'live',
+      },
+      {
+        slug: 'taylor-series',
+        title: 'Taylor Series',
+        description:
+          'Add polynomial terms one by one and watch the approximation hug a curve near a point, then fall apart past its radius of convergence.',
+        href: '/simulations/calculus/taylor-series',
+        status: 'live',
+      },
+      {
+        slug: 'fourier-series',
+        title: 'Fourier Series',
+        description:
+          'Stack rotating circles (epicycles) to build a square, sawtooth or triangle wave from pure sine harmonics.',
+        href: '/simulations/calculus/fourier-series',
         status: 'live',
       },
       {
@@ -56,6 +80,14 @@ export const AREAS: Area[] = [
         href: '/simulations/linear-algebra/linear-transformation',
         status: 'live',
       },
+      {
+        slug: 'eigenvectors',
+        title: 'Eigenvectors & Eigenvalues',
+        description:
+          'Spin a vector around the circle and watch where the matrix sends it. When the input and output line up, you have found an eigenvector.',
+        href: '/simulations/linear-algebra/eigenvectors',
+        status: 'live',
+      },
     ],
   },
   {
@@ -68,7 +100,7 @@ export const AREAS: Area[] = [
         slug: 'gradient-descent',
         title: 'Gradient Descent',
         description:
-          'Tune the learning rate and starting point to watch optimization roll downhill — or diverge.',
+          'Tune the learning rate and starting point to watch optimization roll downhill, or diverge.',
         href: '/simulations/deep-learning/gradient-descent',
         status: 'live',
       },
@@ -102,6 +134,14 @@ export const AREAS: Area[] = [
         description:
           'Average samples from any distribution and watch the means pile up into a Gaussian, faster as the sample size grows.',
         href: '/simulations/statistics/central-limit-theorem',
+        status: 'live',
+      },
+      {
+        slug: 'least-squares',
+        title: 'Least Squares',
+        description:
+          'Drag data points and fit the best line live. The residuals are drawn as literal squares, least squares minimises their total area.',
+        href: '/simulations/statistics/least-squares',
         status: 'live',
       },
     ],

@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="linear-algebra"
   title="2D Linear Transformations"
-  description="A linear map is fully described by where it sends the basis vectors. Move the matrix entries and watch the whole plane deform."
+  description="A linear map is fully described by where it sends the basis vectors. Drag the tips of î and ĵ, sweep the transform in from the identity, and reveal the eigen-directions that never rotate."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -32,6 +32,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <div class="control">
+        <label>Interpolate&nbsp;&nbsp;I → A <b id="tval">1.00</b></label>
+        <input type="range" id="t" min="0" max="1" step="0.01" value="1" />
+        <div class="row-controls">
+          <button class="btn ghost" id="animate">Animate</button>
+          <label class="check">
+            <input type="checkbox" id="eig" /> Eigenvectors
+          </label>
+        </div>
+      </div>
+
+      <div class="control">
         <label>Presets</label>
         <div class="seg" id="presets">
           <button data-m="1,0,0,1">Identity</button>
@@ -39,6 +50,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           <button data-m="1,1,0,1">Shear</button>
           <button data-m="-1,0,0,1">Reflect</button>
           <button data-m="1.5,0,0,0.5">Scale</button>
+          <button data-m="1,1,1,1">Collapse</button>
         </div>
       </div>
 
@@ -46,28 +58,68 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span>î → </span><b id="ihat">(1, 0)</b></div>
         <div class="row"><span>ĵ → </span><b id="jhat">(0, 1)</b></div>
         <div class="row"><span>Determinant</span><b id="det">1.000</b></div>
+        <div class="row"><span>Eigenvalues</span><b id="eigval">1, 1</b></div>
       </div>
     </div>
   </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the tip of <b>î</b> (indigo) or <b>ĵ</b> (teal). The whole grid follows:
+      a linear map is nothing more than where the two basis vectors land.
+    </li>
+    <li>
+      Watch the shaded unit square. Its signed area <b>is</b> the determinant;
+      pick <b>Collapse</b> and the plane flattens onto a line as
+      <b>det → 0</b> (and the map becomes non-invertible).
+    </li>
+    <li>
+      Turn on <b>Eigenvectors</b>. Those dashed lines are the directions that
+      only <b>stretch</b>, never rotate, scaled by their eigenvalue. Rotations
+      have none (the values go complex).
+    </li>
+    <li>
+      Slide <b>Interpolate</b> or hit <b>Animate</b> to sweep continuously from
+      the identity to the matrix, the moving-picture view of a transformation.
+    </li>
+  </Fragment>
 </SimLayout>
 
 <script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  // A = the target matrix set by sliders / presets / dragging.
+  // M = the matrix actually drawn, interpolated from the identity by t.
+  const A = { a: 1, b: 0, c: 0, d: 1 };
   const M = { a: 1, b: 0, c: 0, d: 1 };
+  const view = { t: 1, showEig: false };
+
   const canvas = document.getElementById('lin') as HTMLCanvasElement;
-  const ctx = canvas.getContext('2d')!;
-  const W = canvas.width;
-  const H = canvas.height;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const ORIGIN = { x: W / 2, y: H / 2 };
   const UNIT = 52;
   const css = (v: string) =>
-    getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+    getComputedStyle(canvas).getPropertyValue(v).trim();
 
-  // world (math) coords -> screen pixels, applying matrix
+  function recompute() {
+    const t = view.t;
+    M.a = (1 - t) * 1 + t * A.a;
+    M.b = t * A.b;
+    M.c = t * A.c;
+    M.d = (1 - t) * 1 + t * A.d;
+  }
+
+  // world (math) coords -> screen pixels, applying the displayed matrix M
   function toScreen(x: number, y: number) {
     const tx = M.a * x + M.b * y;
     const ty = M.c * x + M.d * y;
     return { px: ORIGIN.x + tx * UNIT, py: ORIGIN.y - ty * UNIT };
   }
+  // raw math coords -> pixels, no transform (for eigen-lines)
+  const rawToScreen = (x: number, y: number) => ({
+    px: ORIGIN.x + x * UNIT,
+    py: ORIGIN.y - y * UNIT,
+  });
 
   function line(x1: number, y1: number, x2: number, y2: number) {
     const p = toScreen(x1, y1);
@@ -96,6 +148,71 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.fill();
     ctx.font = "600 14px 'JetBrains Mono', monospace";
     ctx.fillText(label, p.px + 8, p.py - 8);
+  }
+
+  type Eig = { l: number; v: [number, number] };
+  function eigen(m: typeof M): Eig[] {
+    const tr = m.a + m.d;
+    const det = m.a * m.d - m.b * m.c;
+    const disc = (tr * tr) / 4 - det;
+    if (disc < -1e-9) return []; // complex eigenvalues → no real invariant line
+    const s = Math.sqrt(Math.max(0, disc));
+    const ls = [tr / 2 + s, tr / 2 - s];
+    const norm = (x: number, y: number): [number, number] => {
+      const n = Math.hypot(x, y) || 1;
+      return [x / n, y / n];
+    };
+    const vecFor = (l: number): [number, number] => {
+      if (Math.abs(m.b) > 1e-9) return norm(m.b, l - m.a);
+      if (Math.abs(m.c) > 1e-9) return norm(l - m.d, m.c);
+      return Math.abs(m.a - l) < 1e-9 ? [1, 0] : [0, 1];
+    };
+    const out: Eig[] = [{ l: ls[0], v: vecFor(ls[0]) }];
+    if (Math.abs(ls[0] - ls[1]) > 1e-6) out.push({ l: ls[1], v: vecFor(ls[1]) });
+    return out;
+  }
+
+  function drawEigen() {
+    const eigs = eigen(M);
+    const el = document.getElementById('eigval') as HTMLElement;
+    el.textContent = eigs.length
+      ? eigs.map((e) => e.l.toFixed(2)).join(', ')
+      : 'complex';
+    if (!view.showEig || eigs.length === 0) return;
+    const color = '#fbbf24';
+    for (const e of eigs) {
+      const [vx, vy] = e.v;
+      const L = 9;
+      const p1 = rawToScreen(vx * L, vy * L);
+      const p2 = rawToScreen(-vx * L, -vy * L);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      ctx.moveTo(p1.px, p1.py);
+      ctx.lineTo(p2.px, p2.py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // arrow showing the eigenvalue as a stretch of the unit eigenvector
+      const lc = Math.max(-3.2, Math.min(3.2, e.l));
+      const tip = rawToScreen(vx * lc, vy * lc);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(ORIGIN.x, ORIGIN.y);
+      ctx.lineTo(tip.px, tip.py);
+      ctx.stroke();
+      const ang = Math.atan2(tip.py - ORIGIN.y, tip.px - ORIGIN.x);
+      ctx.beginPath();
+      ctx.moveTo(tip.px, tip.py);
+      ctx.lineTo(tip.px - 10 * Math.cos(ang - 0.4), tip.py - 10 * Math.sin(ang - 0.4));
+      ctx.lineTo(tip.px - 10 * Math.cos(ang + 0.4), tip.py - 10 * Math.sin(ang + 0.4));
+      ctx.closePath();
+      ctx.fill();
+      ctx.font = "600 12px 'JetBrains Mono', monospace";
+      ctx.fillText('λ=' + e.l.toFixed(2), p1.px + 6, p1.py - 4);
+    }
   }
 
   function draw() {
@@ -130,43 +247,154 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.closePath();
     ctx.fill();
 
+    drawEigen();
+
     // basis vectors
     arrow(1, 0, accent, 'î');
     arrow(0, 1, teal, 'ĵ');
 
-    // readouts
-    (['a', 'b', 'c', 'd'] as const).forEach((k) => {
-      (document.getElementById('m-' + k) as HTMLElement).textContent = M[k].toFixed(2);
-    });
+    // readouts (reflect the displayed matrix M)
+    (document.getElementById('m-a') as HTMLElement).textContent = M.a.toFixed(2);
+    (document.getElementById('m-b') as HTMLElement).textContent = M.b.toFixed(2);
+    (document.getElementById('m-c') as HTMLElement).textContent = M.c.toFixed(2);
+    (document.getElementById('m-d') as HTMLElement).textContent = M.d.toFixed(2);
     (document.getElementById('ihat') as HTMLElement).textContent = `(${M.a.toFixed(2)}, ${M.c.toFixed(2)})`;
     (document.getElementById('jhat') as HTMLElement).textContent = `(${M.b.toFixed(2)}, ${M.d.toFixed(2)})`;
     (document.getElementById('det') as HTMLElement).textContent = det.toFixed(3);
   }
 
-  function sync() {
+  // keep the a/b/c/d sliders + readout labels in sync with A
+  function syncInputs() {
     (['a', 'b', 'c', 'd'] as const).forEach((k) => {
-      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
-      (document.getElementById(k) as HTMLInputElement).value = String(M[k]);
+      (document.getElementById(k + 'val') as HTMLElement).textContent = A[k].toFixed(2);
+      (document.getElementById(k) as HTMLInputElement).value = String(A[k]);
     });
+  }
+  function setT(t: number) {
+    view.t = t;
+    (document.getElementById('t') as HTMLInputElement).value = String(t);
+    (document.getElementById('tval') as HTMLElement).textContent = t.toFixed(2);
   }
 
   (['a', 'b', 'c', 'd'] as const).forEach((k) => {
     const el = document.getElementById(k) as HTMLInputElement;
     el.addEventListener('input', () => {
-      M[k] = +el.value;
-      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      A[k] = +el.value;
+      (document.getElementById(k + 'val') as HTMLElement).textContent = A[k].toFixed(2);
+      recompute();
       draw();
     });
+  });
+
+  document.getElementById('t')!.addEventListener('input', (e) => {
+    view.t = +(e.target as HTMLInputElement).value;
+    (document.getElementById('tval') as HTMLElement).textContent = view.t.toFixed(2);
+    recompute();
+    draw();
+  });
+
+  document.getElementById('eig')!.addEventListener('change', (e) => {
+    view.showEig = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+
+  let animRAF = 0;
+  document.getElementById('animate')!.addEventListener('click', () => {
+    cancelAnimationFrame(animRAF);
+    const start = performance.now();
+    const dur = 1100;
+    setT(0);
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / dur);
+      setT(+p.toFixed(3));
+      recompute();
+      draw();
+      if (p < 1) animRAF = requestAnimationFrame(tick);
+    };
+    animRAF = requestAnimationFrame(tick);
   });
 
   document.getElementById('presets')!.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('button');
     if (!btn) return;
     const [a, b, c, d] = btn.dataset.m!.split(',').map(Number);
-    Object.assign(M, { a, b, c, d });
-    sync();
+    Object.assign(A, { a, b, c, d });
+    setT(1);
+    syncInputs();
+    recompute();
     draw();
   });
 
+  // ---- drag the basis-vector tips ----
+  // î tip sits at math point (A.a, A.c); ĵ tip at (A.b, A.d) when t = 1.
+  let dragging: 'i' | 'j' | null = null;
+  function tipPixel(which: 'i' | 'j') {
+    return which === 'i' ? toScreen(1, 0) : toScreen(0, 1);
+  }
+  function near(e: PointerEvent, which: 'i' | 'j') {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    const t = tipPixel(which);
+    return Math.hypot(mx - t.px, my - t.py) < 16;
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = near(e, 'i') ? 'i' : near(e, 'j') ? 'j' : null;
+    if (dragging) {
+      setT(1); // snap to the full transform so the tip you grab is the one you set
+      recompute();
+      canvas.setPointerCapture(e.pointerId);
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) {
+      canvas.style.cursor = near(e, 'i') || near(e, 'j') ? 'grab' : 'default';
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    const wx = (mx - ORIGIN.x) / UNIT;
+    const wy = (ORIGIN.y - my) / UNIT;
+    const snap = (v: number) => (Math.abs(v - Math.round(v)) < 0.08 ? Math.round(v) : +v.toFixed(2));
+    if (dragging === 'i') {
+      A.a = Math.max(-3, Math.min(3, snap(wx)));
+      A.c = Math.max(-3, Math.min(3, snap(wy)));
+    } else {
+      A.b = Math.max(-3, Math.min(3, snap(wx)));
+      A.d = Math.max(-3, Math.min(3, snap(wy)));
+    }
+    syncInputs();
+    recompute();
+    draw();
+  });
+  const endDrag = () => (dragging = null);
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  recompute();
   draw();
 </script>
+
+<style>
+  .row-controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .check input {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+  }
+</style>

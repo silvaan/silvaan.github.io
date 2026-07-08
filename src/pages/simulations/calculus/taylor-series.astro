@@ -1,0 +1,260 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Taylor Series"
+  description="A Taylor series rebuilds a function out of polynomial pieces. Add terms one at a time and watch the approximation cling to the curve near the centre, then break away once you leave the radius of convergence."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="taylor" width="900" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Function</label>
+        <div class="seg" id="fn">
+          <button data-fn="sin" class="active">sin x</button>
+          <button data-fn="cos">cos x</button>
+          <button data-fn="exp">eˣ</button>
+          <button data-fn="ln">ln(1+x)</button>
+          <button data-fn="geom">1/(1−x)</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Terms <b id="nval">3</b></label>
+        <input type="range" id="n" min="1" max="16" value="3" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Animate</button>
+        <button class="btn ghost" id="step">Add term</button>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Terms</span><b id="terms">3</b></div>
+        <div class="row"><span>Error at x = 1.5</span><b id="err">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Teal is the true function, indigo is the polynomial. The shaded band, when
+        shown, is the radius of convergence around x = 0.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Add terms and watch the polynomial <b>match the curve near x = 0</b> first,
+      spreading outward as the degree grows. Each term fixes one more derivative
+      at the centre.
+    </li>
+    <li>
+      For <b>sin, cos, eˣ</b> the series converges everywhere: the error at
+      x = 1.5 keeps shrinking toward zero.
+    </li>
+    <li>
+      For <b>ln(1+x)</b> and <b>1/(1−x)</b> the radius of convergence is 1.
+      Outside the shaded band the polynomial <b>diverges</b> no matter how many
+      terms you add, the error at x = 1.5 blows up.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const fact: number[] = [1];
+  for (let k = 1; k <= 40; k++) fact[k] = fact[k - 1] * k;
+
+  type TF = {
+    f: (x: number) => number;
+    // k-th non-zero term of the series (k from 0)
+    term: (k: number, x: number) => number;
+    xr: [number, number];
+    yr: [number, number];
+    radius?: number;
+  };
+  const FNS: Record<string, TF> = {
+    sin: {
+      f: Math.sin,
+      term: (k, x) => ((-1) ** k * x ** (2 * k + 1)) / fact[2 * k + 1],
+      xr: [-7, 7],
+      yr: [-4, 4],
+    },
+    cos: {
+      f: Math.cos,
+      term: (k, x) => ((-1) ** k * x ** (2 * k)) / fact[2 * k],
+      xr: [-7, 7],
+      yr: [-4, 4],
+    },
+    exp: {
+      f: Math.exp,
+      term: (k, x) => x ** k / fact[k],
+      xr: [-3.5, 3],
+      yr: [-2, 14],
+    },
+    ln: {
+      f: (x) => Math.log(1 + x),
+      term: (k, x) => ((-1) ** k * x ** (k + 1)) / (k + 1),
+      xr: [-1.3, 3],
+      yr: [-4, 3],
+      radius: 1,
+    },
+    geom: {
+      f: (x) => 1 / (1 - x),
+      term: (k, x) => x ** k,
+      xr: [-2.5, 2.5],
+      yr: [-7, 7],
+      radius: 1,
+    },
+  };
+
+  const state = { fn: 'sin', n: 3 };
+  let raf = 0;
+
+  const canvas = document.getElementById('taylor') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const PAD = { l: 46, r: 24, t: 24, b: 40 };
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  function partial(fn: TF, x: number, n: number) {
+    let s = 0;
+    for (let k = 0; k < n; k++) s += fn.term(k, x);
+    return s;
+  }
+
+  function draw() {
+    const fn = FNS[state.fn];
+    const [xmin, xmax] = fn.xr;
+    const [lo, hi] = fn.yr;
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const grid = css('--border') || '#262a32';
+    const faint = css('--text-faint') || '#6b7280';
+
+    const sx = (x: number) => PAD.l + ((x - xmin) / (xmax - xmin)) * (W - PAD.l - PAD.r);
+    const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+
+    ctx.clearRect(0, 0, W, H);
+
+    // radius-of-convergence band
+    if (fn.radius) {
+      ctx.fillStyle = 'rgba(124,140,255,0.07)';
+      ctx.fillRect(sx(-fn.radius), PAD.t, sx(fn.radius) - sx(-fn.radius), H - PAD.t - PAD.b);
+      ctx.strokeStyle = 'rgba(124,140,255,0.4)';
+      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 1;
+      for (const xv of [-fn.radius, fn.radius]) {
+        ctx.beginPath();
+        ctx.moveTo(sx(xv), PAD.t);
+        ctx.lineTo(sx(xv), H - PAD.b);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // grid + axes
+    ctx.strokeStyle = grid;
+    ctx.fillStyle = faint;
+    ctx.lineWidth = 1;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    for (let i = 0; i <= 8; i++) {
+      const xv = xmin + ((xmax - xmin) * i) / 8;
+      const px = sx(xv);
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.moveTo(px, PAD.t);
+      ctx.lineTo(px, H - PAD.b);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+    }
+    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, sy(0));
+    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.stroke();
+
+    const plot = (g: (x: number) => number, color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      let pen = false;
+      for (let i = 0; i <= 600; i++) {
+        const x = xmin + ((xmax - xmin) * i) / 600;
+        const y = g(x);
+        if (!isFinite(y) || y < lo - 6 || y > hi + 6) {
+          pen = false;
+          continue;
+        }
+        const px = sx(x);
+        const py = sy(y);
+        pen ? ctx.lineTo(px, py) : ((ctx.moveTo(px, py)), (pen = true));
+      }
+      ctx.stroke();
+    };
+
+    plot((x) => fn.f(x), teal, 2.4);
+    plot((x) => partial(fn, x, state.n), accent, 2.2);
+
+    // centre marker
+    ctx.fillStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.9)`;
+    ctx.beginPath();
+    ctx.arc(sx(0), sy(fn.f(0)), 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    const errAt = Math.abs(fn.f(1.5) - partial(fn, 1.5, state.n));
+    (document.getElementById('terms') as HTMLElement).textContent = String(state.n);
+    (document.getElementById('err') as HTMLElement).textContent =
+      errAt > 1e6 ? '≫ diverging' : errAt.toFixed(4);
+  }
+
+  function setN(n: number) {
+    state.n = n;
+    (document.getElementById('n') as HTMLInputElement).value = String(n);
+    (document.getElementById('nval') as HTMLElement).textContent = String(n);
+  }
+
+  document.getElementById('fn')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#fn button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.fn = btn.dataset.fn!;
+    draw();
+  });
+
+  const nEl = document.getElementById('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    cancelAnimationFrame(raf);
+    setN(+nEl.value);
+    draw();
+  });
+
+  document.getElementById('step')!.addEventListener('click', () => {
+    setN(Math.min(16, state.n + 1));
+    draw();
+  });
+
+  document.getElementById('run')!.addEventListener('click', () => {
+    cancelAnimationFrame(raf);
+    setN(1);
+    draw();
+    const grow = () => {
+      if (state.n >= 16) {
+        raf = 0;
+        return;
+      }
+      setN(state.n + 1);
+      draw();
+      raf = requestAnimationFrame(() => setTimeout(grow, 420));
+    };
+    raf = requestAnimationFrame(() => setTimeout(grow, 420));
+  });
+
+  draw();
+</script>

@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Gradient Descent"
-  description="The workhorse of training neural nets. Set a learning rate and a starting point, then watch the parameter roll downhill — converge, oscillate, or diverge."
+  description="The workhorse of training neural nets. Set a learning rate and a starting point, then watch the parameter roll downhill: converge, oscillate, or diverge."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -24,7 +24,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
       <div class="control">
         <label>Learning rate <b id="lrval">0.10</b></label>
-        <input type="range" id="lr" min="0.01" max="1.2" step="0.01" value="0.1" />
+        <input type="range" id="lr" min="0.01" max="2.5" step="0.01" value="0.1" />
       </div>
 
       <div class="control">
@@ -44,11 +44,35 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span>loss f(x)</span><b id="loss">—</b></div>
         <div class="row"><span>gradient</span><b id="grad">—</b></div>
       </div>
+
+      <div class="control">
+        <label>Loss over iterations</label>
+        <canvas id="losscurve" class="mini-canvas" width="300" height="150"></canvas>
+      </div>
     </div>
   </div>
+
+  <Fragment slot="observe">
+    <li>
+      On the <b>Convex</b> bowl, raise the learning rate slowly. Around
+      <b>η = 1</b> the steps start to overshoot and bounce across the valley;
+      past <b>η = 2</b> the loss curve turns upward and it <b>diverges</b>.
+    </li>
+    <li>
+      The loss plot is the "training curve" you will meet everywhere in deep
+      learning: down and flattening means converging, up means the step is too
+      big.
+    </li>
+    <li>
+      Switch to <b>Double well</b> and drag the start point across the hump. The
+      <b>starting point</b> alone decides which minimum you reach: convexity
+      guarantees one basin, non-convexity does not.
+    </li>
+  </Fragment>
 </SimLayout>
 
 <script>
+  import { setupCanvas } from '../../../lib/sim';
   type Fn = { f: (x: number) => number; g: (x: number) => number };
   const FNS: Record<string, Fn> = {
     bowl: { f: (x) => 0.5 * x * x, g: (x) => x },
@@ -60,13 +84,49 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   let raf = 0;
 
   const canvas = document.getElementById('gd') as HTMLCanvasElement;
-  const ctx = canvas.getContext('2d')!;
-  const W = canvas.width;
-  const H = canvas.height;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const PAD = { l: 48, r: 24, t: 24, b: 40 };
   const X = { min: -3.2, max: 3.2 };
   const css = (v: string) =>
-    getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+    getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const lossCanvas = document.getElementById('losscurve') as HTMLCanvasElement;
+  const lc = setupCanvas(lossCanvas, () => drawLoss());
+
+  // Loss (training) curve: f(x) at each iterate. Rising = diverging.
+  function drawLoss() {
+    const fn = FNS[state.fn];
+    const c = lc.ctx, Ws = lc.W, Hs = lc.H;
+    const pad = { l: 10, r: 10, t: 12, b: 14 };
+    c.clearRect(0, 0, Ws, Hs);
+    const losses = state.path.map((x) => fn.f(x));
+    if (losses.length === 0) return;
+    let lo = Math.min(0, ...losses);
+    let hi = Math.max(...losses);
+    if (hi - lo < 1e-6) hi = lo + 1;
+    const sx = (i: number) =>
+      pad.l + (losses.length <= 1 ? 0 : i / (losses.length - 1)) * (Ws - pad.l - pad.r);
+    const sy = (v: number) => pad.t + (1 - (v - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
+
+    c.strokeStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.16)`;
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(pad.l, sy(0));
+    c.lineTo(Ws - pad.r, sy(0));
+    c.stroke();
+
+    c.strokeStyle = css('--accent') || '#7c8cff';
+    c.lineWidth = 2;
+    c.beginPath();
+    losses.forEach((v, i) => (i ? c.lineTo(sx(i), sy(v)) : c.moveTo(sx(i), sy(v))));
+    c.stroke();
+
+    const last = losses.length - 1;
+    c.fillStyle = css('--accent') || '#7c8cff';
+    c.beginPath();
+    c.arc(sx(last), sy(losses[last]), 3, 0, Math.PI * 2);
+    c.fill();
+  }
 
   function yRange(fn: Fn) {
     let lo = Infinity, hi = -Infinity;
@@ -158,6 +218,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     (document.getElementById('x') as HTMLElement).textContent = state.x.toFixed(4);
     (document.getElementById('loss') as HTMLElement).textContent = fn.f(state.x).toFixed(4);
     (document.getElementById('grad') as HTMLElement).textContent = gr.toFixed(4);
+    drawLoss();
   }
 
   function step() {

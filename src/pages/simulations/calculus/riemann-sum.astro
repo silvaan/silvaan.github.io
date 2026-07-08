@@ -19,6 +19,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           <button data-fn="quad" class="active">x²</button>
           <button data-fn="sine">sin x + 1.5</button>
           <button data-fn="gauss">e^(−x²)</button>
+          <button data-fn="cubic">x³ − x</button>
         </div>
       </div>
 
@@ -42,28 +43,60 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span>Exact integral</span><b id="exact">—</b></div>
         <div class="row"><span>Error</span><b id="err">—</b></div>
       </div>
+
+      <div class="control">
+        <label>Error vs. rectangles (log–log)</label>
+        <canvas id="sweep" class="mini-canvas" width="300" height="190"></canvas>
+        <div class="sweep-legend">
+          <span style="--c:#f87171">left</span>
+          <span style="--c:#fbbf24">right</span>
+          <span style="--c:#60a5fa">mid</span>
+          <span style="--c:#34d399">trap</span>
+        </div>
+      </div>
     </div>
   </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the slider up. Every method converges, but watch the <b>Error</b>
+      readout: doubling the rectangles roughly <b>halves</b> the error for Left,
+      yet <b>quarters</b> it for Midpoint and Trapezoid.
+    </li>
+    <li>
+      That is exactly the log–log plot: Left and Right fall with slope
+      <b>−1</b> (error ∝ 1/n), Midpoint and Trapezoid with slope <b>−2</b>
+      (error ∝ 1/n²). Order of accuracy, made visible.
+    </li>
+    <li>
+      Switch to <b>x³ − x</b>. Rectangles below the axis count as negative area,
+      and over the symmetric interval the positive and negative parts cancel to
+      a <b>signed integral of 0</b>.
+    </li>
+  </Fragment>
 </SimLayout>
 
 <script>
+  import { setupCanvas } from '../../../lib/sim';
   type Fn = { f: (x: number) => number; a: number; b: number };
   const FNS: Record<string, Fn> = {
     quad: { f: (x) => x * x, a: 0, b: 3 },
     sine: { f: (x) => Math.sin(x) + 1.5, a: 0, b: 2 * Math.PI },
     gauss: { f: (x) => Math.exp(-x * x), a: -2.2, b: 2.2 },
+    cubic: { f: (x) => x * x * x - x, a: -1.5, b: 1.5 },
   };
 
   const state = { fn: 'quad', method: 'mid', n: 12 };
 
   const canvas = document.getElementById('riemann') as HTMLCanvasElement;
-  const ctx = canvas.getContext('2d')!;
-  const W = canvas.width;
-  const H = canvas.height;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const PAD = { l: 48, r: 24, t: 24, b: 40 };
 
+  const sweepCanvas = document.getElementById('sweep') as HTMLCanvasElement;
+  const sw = setupCanvas(sweepCanvas, () => drawSweep());
+
   const css = (v: string) =>
-    getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+    getComputedStyle(canvas).getPropertyValue(v).trim();
 
   function exactIntegral(fn: Fn) {
     const N = 40000;
@@ -183,6 +216,54 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     void accent;
   }
 
+  // Convergence plot: |error| vs number of rectangles, log–log, for every
+  // method at once. Left/Right fall with slope −1, Midpoint/Trapezoid with −2.
+  const METHOD_COLORS: Record<string, string> = {
+    left: '#f87171', right: '#fbbf24', mid: '#60a5fa', trap: '#34d399',
+  };
+  function drawSweep() {
+    const fn = FNS[state.fn];
+    const exact = exactIntegral(fn);
+    const c = sw.ctx, Ws = sw.W, Hs = sw.H;
+    const pad = { l: 40, r: 8, t: 10, b: 20 };
+    const nMax = 128;
+    const xMin = 0, xMax = Math.log10(nMax);
+    const yMin = -9, yMax = 1;
+    const sx = (lx: number) => pad.l + ((lx - xMin) / (xMax - xMin)) * (Ws - pad.l - pad.r);
+    const sy = (ly: number) => pad.t + (1 - (ly - yMin) / (yMax - yMin)) * (Hs - pad.t - pad.b);
+
+    const ink = css('--stage-ink') || '232,233,236';
+    c.clearRect(0, 0, Ws, Hs);
+    c.strokeStyle = `rgba(${ink},0.14)`;
+    c.fillStyle = css('--text-faint') || '#8b93a5';
+    c.lineWidth = 1;
+    c.font = "10px 'JetBrains Mono', monospace";
+    for (let e = -8; e <= 0; e += 2) {
+      const y = sy(e);
+      c.beginPath();
+      c.moveTo(pad.l, y);
+      c.lineTo(Ws - pad.r, y);
+      c.stroke();
+      c.fillText('1e' + e, 2, y + 3);
+    }
+    for (const n of [1, 10, 100]) c.fillText(String(n), sx(Math.log10(n)) - 4, Hs - 6);
+
+    for (const m of ['left', 'right', 'mid', 'trap'] as const) {
+      c.strokeStyle = METHOD_COLORS[m];
+      c.lineWidth = 1.6;
+      c.beginPath();
+      let started = false;
+      for (let n = 1; n <= nMax; n++) {
+        const err = Math.abs(approxIntegral(fn, n, m) - exact);
+        const ly = Math.max(yMin, Math.min(yMax, Math.log10(Math.max(err, 1e-12))));
+        const X = sx(Math.log10(n));
+        const Y = sy(ly);
+        started ? c.lineTo(X, Y) : (c.moveTo(X, Y), (started = true));
+      }
+      c.stroke();
+    }
+  }
+
   function bindSeg(id: string, key: 'fn' | 'method') {
     const group = document.getElementById(id)!;
     group.addEventListener('click', (e) => {
@@ -192,6 +273,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       btn.classList.add('active');
       state[key] = btn.dataset[key === 'fn' ? 'fn' : 'method']!;
       draw();
+      if (key === 'fn') drawSweep();
     });
   }
   bindSeg('fn', 'fn');
@@ -205,4 +287,28 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   });
 
   draw();
+  drawSweep();
 </script>
+
+<style>
+  .sweep-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+  }
+  .sweep-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .sweep-legend span::before {
+    content: '';
+    width: 12px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--c);
+  }
+</style>

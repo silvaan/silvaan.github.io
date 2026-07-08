@@ -1,0 +1,221 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Fourier Series"
+  description="Any periodic wave is a sum of pure sines. Stack them as rotating circles (epicycles) and the tip traces out a square, sawtooth or triangle wave as you add harmonics."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="fourier" width="900" height="460"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Target wave</label>
+        <div class="seg" id="wave">
+          <button data-w="square" class="active">Square</button>
+          <button data-w="saw">Sawtooth</button>
+          <button data-w="triangle">Triangle</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Harmonics <b id="nval">4</b></label>
+        <input type="range" id="n" min="1" max="40" value="4" />
+      </div>
+
+      <div class="control">
+        <label>Speed <b id="spval">1.0</b></label>
+        <input type="range" id="sp" min="0" max="30" value="10" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Each circle is one harmonic: its radius is that sine's amplitude and it
+        spins at an integer multiple of the base frequency. The stacked tip draws
+        the wave on the right.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      A single circle traces a <b>pure sine</b>. Each harmonic you add sharpens
+      the corners, and the flat parts flatten, closing in on the target wave.
+    </li>
+    <li>
+      Near every jump a small <b>overshoot</b> refuses to disappear however many
+      harmonics you add: that is the <b>Gibbs phenomenon</b>.
+    </li>
+    <li>
+      The <b>triangle</b> wave's amplitudes fall off like 1/k², far faster than
+      the square's 1/k, so it converges to a clean shape with only a handful of
+      circles.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type Harm = { k: number; amp: number };
+  function harmonics(wave: string, N: number): Harm[] {
+    const out: Harm[] = [];
+    if (wave === 'square') {
+      for (let i = 0; i < N; i++) {
+        const k = 2 * i + 1;
+        out.push({ k, amp: (4 / Math.PI) / k });
+      }
+    } else if (wave === 'saw') {
+      for (let k = 1; k <= N; k++) {
+        out.push({ k, amp: ((2 / Math.PI) * (-1) ** (k + 1)) / k });
+      }
+    } else {
+      for (let i = 0; i < N; i++) {
+        const k = 2 * i + 1;
+        out.push({ k, amp: ((8 / Math.PI ** 2) * (-1) ** i) / (k * k) });
+      }
+    }
+    return out;
+  }
+
+  const state = { wave: 'square', n: 4, speed: 1, running: true };
+  let t = 0;
+  let history: number[] = [];
+
+  const canvas = document.getElementById('fourier') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+
+  const CX = 210;
+  const CY = H / 2;
+  const TRACE_X = 360;
+  const DX = 2;
+  const MAXH = Math.floor((W - TRACE_X - 16) / DX);
+
+  function firstAmp() {
+    return Math.abs(harmonics(state.wave, 1)[0].amp);
+  }
+
+  function draw() {
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const grid = css('--border') || '#262a32';
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+
+    const SCALE = 108 / firstAmp();
+    const hs = harmonics(state.wave, state.n);
+
+    // baseline
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(TRACE_X, CY);
+    ctx.lineTo(W - 12, CY);
+    ctx.stroke();
+
+    // epicycles
+    let x = CX;
+    let y = CY;
+    for (const h of hs) {
+      const r = Math.abs(h.amp) * SCALE;
+      const phi = h.k * t + (h.amp < 0 ? Math.PI : 0);
+      ctx.strokeStyle = `rgba(${ink},0.22)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      const nx = x + r * Math.cos(phi);
+      const ny = y + r * Math.sin(phi);
+      ctx.strokeStyle = `rgba(${ink},0.8)`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(nx, ny);
+      ctx.stroke();
+      x = nx;
+      y = ny;
+    }
+
+    // connector from tip to the trace
+    ctx.strokeStyle = 'rgba(124,140,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(TRACE_X, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // tip dot
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // traced wave (newest at the left, scrolling right)
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (let i = 0; i < history.length; i++) {
+      const px = TRACE_X + i * DX;
+      const py = history[i];
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    return y;
+  }
+
+  function frame() {
+    const tipY = draw();
+    if (state.running) {
+      history.unshift(tipY);
+      if (history.length > MAXH) history.pop();
+      t += 0.012 * state.speed;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  document.getElementById('wave')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#wave button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.wave = btn.dataset.w!;
+    history = [];
+    t = 0;
+  });
+
+  const nEl = document.getElementById('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    state.n = +nEl.value;
+    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
+  });
+
+  const spEl = document.getElementById('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value / 10;
+    (document.getElementById('spval') as HTMLElement).textContent = state.speed.toFixed(1);
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    history = [];
+    t = 0;
+  });
+
+  requestAnimationFrame(frame);
+</script>
