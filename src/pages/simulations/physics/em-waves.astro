@@ -317,7 +317,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   function pushHist(c: Charge) {
     c.hist.push({ t: state.time, p: { ...c.p }, v: { ...c.v }, a: { ...c.a } });
-    if (c.hist.length > 1000) c.hist.shift();
+    if (c.hist.length > 2400) c.hist.shift();
   }
 
   function resetDefaultCharges() {
@@ -353,11 +353,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   function advance(dt: number) {
     state.time += dt;
+    const idt = 1 / Math.max(dt, 1e-4);
 
     for (const c of charges) {
-      c.prevP = { ...c.p };
-      c.prevV = { ...c.v };
-
+      // oscillating charges are driven; manual charges keep whatever position
+      // the drag handler left them at this frame
       if (c.mode !== 'manual') {
         const axis = axisFor(c.mode);
         const w = TAU * visualFreq();
@@ -365,9 +365,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         c.p = V.add(c.origin, V.mul(axis, s));
       }
 
-      c.v = V.mul(V.sub(c.p, c.prevP), 1 / Math.max(dt, 1e-4));
-      c.a = V.mul(V.sub(c.v, c.prevV), 1 / Math.max(dt, 1e-4));
+      // velocity/acceleration from the change since the previous frame, so a
+      // dragged charge radiates too
+      const newV = V.mul(V.sub(c.p, c.prevP), idt);
+      c.a = V.mul(V.sub(newV, c.prevV), idt);
+      c.v = newV;
+      c.prevP = { ...c.p };
+      c.prevV = { ...c.v };
 
+      // one history sample per frame keeps timestamps clean and the buffer
+      // covering many seconds, so retarded lookups stay correct while dragging
       pushHist(c);
     }
   }
@@ -407,8 +414,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (const src of charges) {
       if (!src.on) continue;
 
-      const rNow = Math.max(0.04, V.norm(V.sub(p, src.p)));
-      const ret = sampleHist(src, state.time - rNow / cVis);
+      // solve the retarded time self-consistently (t_ret = t - |p - x(t_ret)|/c)
+      // with a couple of iterations, so the field genuinely trails the source
+      let tRet = state.time - Math.max(0.04, V.norm(V.sub(p, src.p))) / cVis;
+      for (let it = 0; it < 2; it++) {
+        const guess = sampleHist(src, tRet).p;
+        tRet = state.time - Math.max(0.04, V.norm(V.sub(p, guess))) / cVis;
+      }
+      const ret = sampleHist(src, tRet);
 
       const R = V.sub(p, ret.p);
       const r = Math.max(0.045, V.norm(R));
@@ -755,7 +768,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const cVis = visualC();
     const maxR = FIELD_MAX;
     const maxAge = maxR / cVis;
-    const alphaBase = isLight() ? 0.12 : 0.16;
+    const alphaBase = isLight() ? 0.18 : 0.24;
     // one ring emitted every `interval` of sim-time; they expand as they age
     const interval = Math.max(0.12, (1 / visualFreq()) * 0.5);
     const nRings = Math.min(26, Math.ceil(maxAge / interval) + 1);
@@ -1248,24 +1261,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     if (draggingCharge) {
       const c = getCharge(state.selectedId);
-      const loc = toLocal(e);
-      const p = intersectActivePlane(loc.x, loc.y);
+      const p = intersectActivePlane(toLocal(e).x, toLocal(e).y);
 
       if (c && p) {
-        const dt = 1 / 60;
-
-        c.prevP = { ...c.p };
-        c.prevV = { ...c.v };
-
+        // just move it; advance() records history and velocity once per frame
         c.p = p;
         c.origin = { ...p };
 
-        c.v = V.mul(V.sub(c.p, c.prevP), 1 / dt);
-        c.a = V.mul(V.sub(c.v, c.prevV), 1 / dt);
-
-        pushHist(c);
-
-        if (!state.running) draw();
+        if (!state.running) {
+          // keep the field frozen but avoid a velocity spike when unpaused
+          c.prevP = { ...p };
+          c.prevV = V.zero();
+          draw();
+        }
       }
     }
   });
