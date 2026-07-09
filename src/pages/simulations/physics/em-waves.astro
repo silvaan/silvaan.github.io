@@ -1,0 +1,1357 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Electromagnetic Waves in 3D"
+  description="Move charged particles with the mouse and watch an approximate retarded electromagnetic field propagate through a configurable medium. Show E and B vectors on a plane or throughout the volume, build a simple dipole antenna, and compare how permittivity and permeability change wave speed, impedance, and wavelength."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="em3d" class="em-canvas" width="820" height="720"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="add">Add charge</button>
+        <button class="btn ghost" id="dipole">Dipole antenna</button>
+      </div>
+
+      <div class="control">
+        <label>Animation speed <b id="speedVal">1.00×</b></label>
+        <input type="range" id="speed" min="20" max="220" value="100" />
+      </div>
+
+      <div class="control">
+        <label>Field vectors</label>
+        <div class="seg" id="fieldMode">
+          <button data-v="e" class="active">E</button>
+          <button data-v="b">B</button>
+          <button data-v="both">E + B</button>
+          <button data-v="off">Off</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Sampling</label>
+        <div class="seg" id="sampleMode">
+          <button data-v="plane" class="active">Plane</button>
+          <button data-v="space">Space</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Plane</label>
+        <div class="seg" id="planeMode">
+          <button data-v="xy" class="active">XY</button>
+          <button data-v="xz">XZ</button>
+          <button data-v="yz">YZ</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Plane position <b id="planeVal">0.00</b></label>
+        <input type="range" id="planePos" min="-450" max="450" value="0" />
+      </div>
+
+      <div class="control">
+        <label>Vector density <b id="densityVal">15</b></label>
+        <input type="range" id="density" min="5" max="31" step="2" value="15" />
+      </div>
+
+      <div class="control">
+        <label>Vector scale <b id="fieldScaleVal">2.10</b></label>
+        <input type="range" id="fieldScale" min="50" max="520" value="210" />
+      </div>
+
+      <div class="block-label">Medium</div>
+
+      <div class="control">
+        <label>Preset</label>
+        <select id="preset" class="select">
+          <option value="vacuum">Vacuum</option>
+          <option value="air">Air</option>
+          <option value="glass">Glass-like dielectric</option>
+          <option value="water">Water-like dielectric</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <label>Relative permittivity εᵣ <b id="epsVal">1.00</b></label>
+        <input type="range" id="eps" min="100" max="8000" value="100" />
+      </div>
+
+      <div class="control">
+        <label>Relative permeability μᵣ <b id="muVal">1.00</b></label>
+        <input type="range" id="mu" min="100" max="1000" value="100" />
+      </div>
+
+      <div class="control">
+        <label>Loss / attenuation σ <b id="sigmaVal">0.00</b></label>
+        <input type="range" id="sigma" min="0" max="200" value="0" />
+      </div>
+
+      <div class="control">
+        <label>Frequency <b id="freqVal">100 MHz</b></label>
+        <input type="range" id="freq" min="20" max="1000" value="100" />
+      </div>
+
+      <div class="control">
+        <label>Source oscillation amplitude <b id="ampVal">0.38</b></label>
+        <input type="range" id="amp" min="0" max="90" value="38" />
+      </div>
+
+      <div class="block-label">Charges</div>
+      <div id="charges"></div>
+
+      <div class="readout">
+        <div class="row"><span>n = √(εᵣ μᵣ)</span><b id="nOut">1.000</b></div>
+        <div class="row"><span>v = c / n</span><b id="vOut">3.00e8 m/s</b></div>
+        <div class="row"><span>η = η₀√(μᵣ/εᵣ)</span><b id="etaOut">376.7 Ω</b></div>
+        <div class="row"><span>λ = v / f</span><b id="lambdaOut">3.00 m</b></div>
+        <div class="row"><span>Simulation time</span><b id="timeOut">0.00</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Left-drag a charge to move it on the selected plane. Right-drag, Alt-drag, or Shift-drag to orbit the camera.
+        Scroll to zoom. The field is an educational retarded-source approximation, not a full FDTD Maxwell solver.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Set sampling to <b>Plane</b> first. EM vectors in all 3D points quickly become visual spaghetti.
+    </li>
+    <li>
+      Use <b>Dipole antenna</b> and show <b>E + B</b>. In the far field the vectors become transverse and approximately perpendicular.
+    </li>
+    <li>
+      Increase εᵣ or μᵣ. The wavefronts slow down, the wavelength shrinks, and the impedance changes.
+    </li>
+    <li>
+      Add attenuation σ. The waves decay with distance, mimicking a lossy medium.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const canvas = document.getElementById('em3d') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const CX = W / 2;
+  const CY = H / 2;
+
+  const CAM = 10.5;
+  const FOCAL = 2.8;
+  const SCALE = 300;
+
+  const BOX = 4.5;
+  const FIELD_MIN = -4.2;
+  const FIELD_MAX = 4.2;
+  const GRID_STEP = 0.6;
+
+  const C0 = 299792458;
+  const ETA0 = 376.730313668;
+  const TAU = Math.PI * 2;
+  const EPS = 1e-8;
+
+  const E_COLOR = '#60a5fa';
+  const B_COLOR = '#f87171';
+
+  type Vec = { x: number; y: number; z: number };
+  type Hist = { t: number; p: Vec; v: Vec; a: Vec };
+  type Charge = {
+    id: number;
+    on: boolean;
+    q: number;
+    color: string;
+    p: Vec;
+    origin: Vec;
+    v: Vec;
+    a: Vec;
+    prevP: Vec;
+    prevV: Vec;
+    phase: number;
+    mode: 'manual' | 'osc-x' | 'osc-y' | 'osc-z';
+    hist: Hist[];
+  };
+
+  type DrawItem = {
+    z: number;
+    kind: 'arrow' | 'charge';
+    p?: Vec;
+    dir?: Vec;
+    mag?: number;
+    color?: string;
+    charge?: Charge;
+  };
+
+  const V = {
+    add: (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }),
+    sub: (a: Vec, b: Vec): Vec => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }),
+    mul: (a: Vec, s: number): Vec => ({ x: a.x * s, y: a.y * s, z: a.z * s }),
+    cross: (a: Vec, b: Vec): Vec => ({
+      x: a.y * b.z - a.z * b.y,
+      y: a.z * b.x - a.x * b.z,
+      z: a.x * b.y - a.y * b.x,
+    }),
+    norm: (a: Vec) => Math.hypot(a.x, a.y, a.z),
+    unit: (a: Vec): Vec => {
+      const m = Math.hypot(a.x, a.y, a.z) || 1;
+      return { x: a.x / m, y: a.y / m, z: a.z / m };
+    },
+    mix: (a: Vec, b: Vec, f: number): Vec => ({
+      x: a.x + (b.x - a.x) * f,
+      y: a.y + (b.y - a.y) * f,
+      z: a.z + (b.z - a.z) * f,
+    }),
+    zero: (): Vec => ({ x: 0, y: 0, z: 0 }),
+  };
+
+  const state = {
+    yaw: 0.72,
+    pitch: -0.42,
+    zoom: 0.9,
+    running: true,
+    time: 0,
+    speed: 1,
+    epsR: 1,
+    muR: 1,
+    sigma: 0,
+    freqMHz: 100,
+    amp: 0.38,
+    fieldScale: 2.1,
+    density: 15,
+    sampleMode: 'plane' as 'plane' | 'space',
+    plane: 'xy' as 'xy' | 'xz' | 'yz',
+    planePos: 0,
+    fieldMode: 'e' as 'e' | 'b' | 'both' | 'off',
+    selectedId: 1,
+  };
+
+  let nextId = 1;
+  let charges: Charge[] = [];
+
+  function visualC() {
+    return 1.08 / Math.sqrt(Math.max(0.05, state.epsR * state.muR));
+  }
+
+  function visualFreq() {
+    return Math.max(0.08, state.freqMHz / 180);
+  }
+
+  function physicalN() {
+    return Math.sqrt(state.epsR * state.muR);
+  }
+
+  function physicalV() {
+    return C0 / physicalN();
+  }
+
+  function physicalEta() {
+    return ETA0 * Math.sqrt(state.muR / state.epsR);
+  }
+
+  function physicalLambda() {
+    return physicalV() / (state.freqMHz * 1e6);
+  }
+
+  function fmtSci(x: number) {
+    if (x === 0) return '0';
+    if (Math.abs(x) < 0.01 || Math.abs(x) >= 1e5) return x.toExponential(2);
+    return x.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  function makeCharge(q = 1, p: Vec = { x: 0, y: 0, z: 0 }, mode: Charge['mode'] = 'manual', phase = 0): Charge {
+    const c: Charge = {
+      id: nextId++,
+      on: true,
+      q,
+      color: q >= 0 ? '#f87171' : '#60a5fa',
+      p: { ...p },
+      origin: { ...p },
+      v: V.zero(),
+      a: V.zero(),
+      prevP: { ...p },
+      prevV: V.zero(),
+      phase,
+      mode,
+      hist: [],
+    };
+    pushHist(c);
+    return c;
+  }
+
+  function pushHist(c: Charge) {
+    c.hist.push({ t: state.time, p: { ...c.p }, v: { ...c.v }, a: { ...c.a } });
+    if (c.hist.length > 1000) c.hist.shift();
+  }
+
+  function resetDefaultCharges() {
+    state.time = 0;
+    nextId = 1;
+    charges = [
+      makeCharge(1, { x: 0, y: 0, z: 0 }, 'manual', 0),
+    ];
+    state.selectedId = charges[0].id;
+    renderCharges();
+  }
+
+  function setDipole() {
+    state.time = 0;
+    nextId = 1;
+
+    const d = 0.55;
+
+    charges = [
+      makeCharge(1, { x: 0, y: 0, z: d }, 'osc-z', 0),
+      makeCharge(-1, { x: 0, y: 0, z: -d }, 'osc-z', Math.PI),
+    ];
+
+    state.selectedId = charges[0].id;
+    renderCharges();
+  }
+
+  function axisFor(mode: Charge['mode']) {
+    if (mode === 'osc-x') return { x: 1, y: 0, z: 0 };
+    if (mode === 'osc-y') return { x: 0, y: 1, z: 0 };
+    return { x: 0, y: 0, z: 1 };
+  }
+
+  function advance(dt: number) {
+    state.time += dt;
+
+    for (const c of charges) {
+      c.prevP = { ...c.p };
+      c.prevV = { ...c.v };
+
+      if (c.mode !== 'manual') {
+        const axis = axisFor(c.mode);
+        const w = TAU * visualFreq();
+        const s = state.amp * Math.sin(w * state.time + c.phase);
+        c.p = V.add(c.origin, V.mul(axis, s));
+      }
+
+      c.v = V.mul(V.sub(c.p, c.prevP), 1 / Math.max(dt, 1e-4));
+      c.a = V.mul(V.sub(c.v, c.prevV), 1 / Math.max(dt, 1e-4));
+
+      pushHist(c);
+    }
+  }
+
+  function sampleHist(c: Charge, t: number): Hist {
+    const h = c.hist;
+
+    if (h.length === 0) return { t: state.time, p: c.p, v: c.v, a: c.a };
+    if (t <= h[0].t) return h[0];
+
+    const last = h[h.length - 1];
+    if (t >= last.t) return last;
+
+    for (let i = h.length - 2; i >= 0; i--) {
+      const a = h[i];
+      const b = h[i + 1];
+
+      if (a.t <= t && t <= b.t) {
+        const f = (t - a.t) / Math.max(EPS, b.t - a.t);
+
+        return {
+          t,
+          p: V.mix(a.p, b.p, f),
+          v: V.mix(a.v, b.v, f),
+          a: V.mix(a.a, b.a, f),
+        };
+      }
+    }
+
+    return last;
+  }
+
+  function fieldAt(p: Vec) {
+    let E = V.zero();
+    let B = V.zero();
+
+    const cVis = visualC();
+
+    for (const src of charges) {
+      if (!src.on) continue;
+
+      const rNow = Math.max(0.04, V.norm(V.sub(p, src.p)));
+      const ret = sampleHist(src, state.time - rNow / cVis);
+
+      const R = V.sub(p, ret.p);
+      const r = Math.max(0.045, V.norm(R));
+      const n = V.mul(R, 1 / r);
+
+      const softR2 = r * r + 0.025;
+
+      const near = V.mul(n, (0.16 * src.q) / (state.epsR * softR2));
+
+      const transverseA = V.cross(n, V.cross(n, ret.a));
+      const rad = V.mul(
+        transverseA,
+        (0.075 * src.q) / (Math.max(0.05, cVis * cVis) * r)
+      );
+
+      const att = Math.exp(-state.sigma * r);
+
+      const eNear = V.mul(near, att);
+      const eRad = V.mul(rad, att);
+      const ePart = V.add(eNear, eRad);
+
+      const bVel = V.mul(
+        V.cross(ret.v, eNear),
+        0.65 / Math.max(0.05, cVis * cVis)
+      );
+
+      const bRad = V.mul(
+        V.cross(n, eRad),
+        1 / Math.max(0.05, cVis)
+      );
+
+      const bPart = V.add(bVel, bRad);
+
+      E = V.add(E, ePart);
+      B = V.add(B, bPart);
+    }
+
+    return { E, B };
+  }
+
+  function worldToCamera(p: Vec) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+
+    const x1 = p.x * cy + p.z * sy;
+    const z1 = -p.x * sy + p.z * cy;
+
+    const y2 = p.y * cp - z1 * sp;
+    const z2 = p.y * sp + z1 * cp;
+
+    const zc = z2 + CAM;
+
+    return { x: x1, y: y2, z: z2, zc };
+  }
+
+  function cameraToWorld(p: Vec) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+
+    const y = p.y * cp + p.z * sp;
+    const z1 = -p.y * sp + p.z * cp;
+
+    const x = p.x * cy - z1 * sy;
+    const z = p.x * sy + z1 * cy;
+
+    return { x, y, z };
+  }
+
+  function project(x: number, y: number, z: number) {
+    const cam = worldToCamera({ x, y, z });
+
+    const s = FOCAL / Math.max(0.05, cam.zc);
+    const k = s * SCALE * state.zoom;
+
+    return {
+      sx: CX + cam.x * k,
+      sy: CY - cam.y * k,
+      s: s * state.zoom,
+      zc: cam.zc,
+      z: cam.z,
+    };
+  }
+
+  function rayFromScreen(sx: number, sy: number) {
+    const k = FOCAL * SCALE * state.zoom;
+
+    const dirCam = V.unit({
+      x: (sx - CX) / k,
+      y: -(sy - CY) / k,
+      z: 1,
+    });
+
+    const originCam = { x: 0, y: 0, z: -CAM };
+
+    return {
+      o: cameraToWorld(originCam),
+      d: cameraToWorld(dirCam),
+    };
+  }
+
+  function intersectActivePlane(sx: number, sy: number): Vec | null {
+    const ray = rayFromScreen(sx, sy);
+    const coord = state.planePos;
+
+    let t = 0;
+
+    if (state.plane === 'xy') {
+      if (Math.abs(ray.d.z) < 1e-4) return null;
+      t = (coord - ray.o.z) / ray.d.z;
+    } else if (state.plane === 'xz') {
+      if (Math.abs(ray.d.y) < 1e-4) return null;
+      t = (coord - ray.o.y) / ray.d.y;
+    } else {
+      if (Math.abs(ray.d.x) < 1e-4) return null;
+      t = (coord - ray.o.x) / ray.d.x;
+    }
+
+    if (t < 0) return null;
+
+    return {
+      x: Math.max(-BOX, Math.min(BOX, ray.o.x + ray.d.x * t)),
+      y: Math.max(-BOX, Math.min(BOX, ray.o.y + ray.d.y * t)),
+      z: Math.max(-BOX, Math.min(BOX, ray.o.z + ray.d.z * t)),
+    };
+  }
+
+  function samplePoints() {
+    const pts: Vec[] = [];
+    const n = state.density;
+    const a = FIELD_MIN;
+    const b = FIELD_MAX;
+
+    if (state.sampleMode === 'plane') {
+      for (let i = 0; i < n; i++) {
+        const u = a + (b - a) * i / (n - 1);
+
+        for (let j = 0; j < n; j++) {
+          const v = a + (b - a) * j / (n - 1);
+
+          if (state.plane === 'xy') pts.push({ x: u, y: v, z: state.planePos });
+          else if (state.plane === 'xz') pts.push({ x: u, y: state.planePos, z: v });
+          else pts.push({ x: state.planePos, y: u, z: v });
+        }
+      }
+
+      return pts;
+    }
+
+    const m = Math.max(3, Math.min(11, Math.floor(n / 2)));
+
+    for (let i = 0; i < m; i++) {
+      const x = a + (b - a) * i / (m - 1);
+
+      for (let j = 0; j < m; j++) {
+        const y = a + (b - a) * j / (m - 1);
+
+        for (let k = 0; k < m; k++) {
+          const z = a + (b - a) * k / (m - 1);
+          pts.push({ x, y, z });
+        }
+      }
+    }
+
+    return pts;
+  }
+
+  // parse "#rrggbb" once into [r,g,b]
+  function hexRGB(hex: string): [number, number, number] {
+    return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+  }
+  const E_RGB = hexRGB(E_COLOR);
+  const B_RGB = hexRGB(B_COLOR);
+
+  function drawArrow3D(p: Vec, dir: Vec, mag: number, color: string, modeAlpha = 1) {
+    const m = Math.hypot(dir.x, dir.y, dir.z);
+    if (m < 1e-6 || mag < 1e-5) return;
+
+    const u = V.mul(dir, 1 / m);
+
+    const strength = 1 - Math.exp(-mag * state.fieldScale * 1.35); // 0..1
+    const len = 0.12 + 0.52 * strength;
+
+    const a = project(p.x, p.y, p.z);
+    const end = V.add(p, V.mul(u, len));
+    const b = project(end.x, end.y, end.z);
+
+    if (a.zc <= 0.08 || b.zc <= 0.08) return;
+
+    const dx = b.sx - a.sx;
+    const dy = b.sy - a.sy;
+    const screenLen = Math.hypot(dx, dy);
+    if (screenLen < 3) return;
+
+    const ux = dx / screenLen;
+    const uy = dy / screenLen;
+    const nx = -uy;
+    const ny = ux;
+
+    // strong fields read brighter and more opaque; weak ones fade out to cut clutter
+    const alpha = modeAlpha * (0.22 + 0.78 * strength);
+    const rgb = color === E_COLOR ? E_RGB : color === B_COLOR ? B_RGB : hexRGB(color);
+    const lift = 0.35 * strength; // mix toward white on strong vectors
+    const cr = Math.round(rgb[0] + (255 - rgb[0]) * lift);
+    const cg = Math.round(rgb[1] + (255 - rgb[1]) * lift);
+    const cb = Math.round(rgb[2] + (255 - rgb[2]) * lift);
+    const fill = `rgba(${cr},${cg},${cb},${alpha})`;
+
+    const headLen = Math.min(16, Math.max(7, screenLen * 0.32));
+    const headWidth = headLen * 0.82;
+    const shaftW = Math.min(4.6, Math.max(1.6, 1.4 + 3.2 * strength));
+    const tipW = shaftW * 0.55;
+
+    const baseX = b.sx - headLen * ux;
+    const baseY = b.sy - headLen * uy;
+
+    ctx.save();
+    ctx.lineJoin = 'round';
+
+    // soft halo underneath strong vectors
+    if (strength > 0.25) {
+      ctx.globalAlpha = alpha * 0.18;
+      ctx.strokeStyle = fill;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = shaftW + 4;
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = fill;
+
+    // tapered shaft (wider at tail, narrower where the head begins)
+    ctx.beginPath();
+    ctx.moveTo(a.sx + nx * shaftW * 0.5, a.sy + ny * shaftW * 0.5);
+    ctx.lineTo(baseX + nx * tipW * 0.5, baseY + ny * tipW * 0.5);
+    ctx.lineTo(baseX - nx * tipW * 0.5, baseY - ny * tipW * 0.5);
+    ctx.lineTo(a.sx - nx * shaftW * 0.5, a.sy - ny * shaftW * 0.5);
+    ctx.closePath();
+    ctx.fill();
+
+    // arrowhead
+    ctx.beginPath();
+    ctx.moveTo(b.sx, b.sy);
+    ctx.lineTo(baseX + nx * headWidth * 0.5, baseY + ny * headWidth * 0.5);
+    ctx.lineTo(baseX - nx * headWidth * 0.5, baseY - ny * headWidth * 0.5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawLine(a: Vec, b: Vec, color: string, alpha = 1, width = 1.2) {
+    const pa = project(a.x, a.y, a.z);
+    const pb = project(b.x, b.y, b.z);
+
+    if (pa.zc <= 0.05 || pb.zc <= 0.05) return;
+
+    const dx = pb.sx - pa.sx;
+    const dy = pb.sy - pa.sy;
+    const len = Math.hypot(dx, dy);
+
+    if (len < 0.5) return;
+
+    ctx.save();
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    ctx.beginPath();
+    ctx.moveTo(pa.sx, pa.sy);
+    ctx.lineTo(pb.sx, pb.sy);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawBox() {
+    const col = `rgba(${ink()},${isLight() ? 0.22 : 0.18})`;
+    const s = BOX;
+
+    const corners = [
+      { x: -s, y: -s, z: -s },
+      { x: s, y: -s, z: -s },
+      { x: s, y: s, z: -s },
+      { x: -s, y: s, z: -s },
+      { x: -s, y: -s, z: s },
+      { x: s, y: -s, z: s },
+      { x: s, y: s, z: s },
+      { x: -s, y: s, z: s },
+    ];
+
+    const edges = [
+      [0, 1], [1, 2], [2, 3], [3, 0],
+      [4, 5], [5, 6], [6, 7], [7, 4],
+      [0, 4], [1, 5], [2, 6], [3, 7],
+    ];
+
+    for (const [i, j] of edges) {
+      drawLine(corners[i], corners[j], col, 1, 1);
+    }
+  }
+
+  function gridValues() {
+    const values: number[] = [];
+
+    for (let x = FIELD_MIN; x <= FIELD_MAX + EPS; x += GRID_STEP) {
+      values.push(+x.toFixed(2));
+    }
+
+    return values;
+  }
+
+  function drawPlane() {
+    if (state.sampleMode !== 'plane') return;
+
+    const pos = state.planePos;
+    const col = `rgba(${ink()},${isLight() ? 0.13 : 0.11})`;
+    const strong = `rgba(${ink()},${isLight() ? 0.24 : 0.20})`;
+
+    for (const u of gridValues()) {
+      const lineColor = Math.abs(u) < 1e-5 ? strong : col;
+
+      if (state.plane === 'xy') {
+        drawLine({ x: FIELD_MIN, y: u, z: pos }, { x: FIELD_MAX, y: u, z: pos }, lineColor, 1, 1);
+        drawLine({ x: u, y: FIELD_MIN, z: pos }, { x: u, y: FIELD_MAX, z: pos }, lineColor, 1, 1);
+      } else if (state.plane === 'xz') {
+        drawLine({ x: FIELD_MIN, y: pos, z: u }, { x: FIELD_MAX, y: pos, z: u }, lineColor, 1, 1);
+        drawLine({ x: u, y: pos, z: FIELD_MIN }, { x: u, y: pos, z: FIELD_MAX }, lineColor, 1, 1);
+      } else {
+        drawLine({ x: pos, y: FIELD_MIN, z: u }, { x: pos, y: FIELD_MAX, z: u }, lineColor, 1, 1);
+        drawLine({ x: pos, y: u, z: FIELD_MIN }, { x: pos, y: u, z: FIELD_MAX }, lineColor, 1, 1);
+      }
+    }
+  }
+
+  function drawWavefronts() {
+    const cVis = visualC();
+    const period = 1 / visualFreq();
+    const maxR = FIELD_MAX;
+    const alphaBase = isLight() ? 0.11 : 0.15;
+
+    for (const q of charges) {
+      if (!q.on) continue;
+
+      const source = q.origin;
+
+      for (let k = 0; k < 12; k++) {
+        const phaseAge = ((state.time + q.phase / TAU / visualFreq()) % period + k * period * 0.5);
+        const r = phaseAge * cVis;
+
+        if (r <= 0.05 || r > maxR) continue;
+
+        const p = project(source.x, source.y, source.z);
+        const px = project(source.x + r, source.y, source.z);
+
+        if (p.zc <= 0.05 || px.zc <= 0.05) continue;
+
+        const rr = Math.abs(px.sx - p.sx);
+        const alpha = alphaBase * (1 - r / maxR);
+
+        ctx.strokeStyle = q.q >= 0
+          ? `rgba(248,113,113,${alpha})`
+          : `rgba(96,165,250,${alpha})`;
+
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, rr, 0, TAU);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawCharge(c: Charge) {
+    const p = project(c.p.x, c.p.y, c.p.z);
+    if (p.zc <= 0.05) return;
+
+    const r = Math.max(6, 7.5 * p.s);
+
+    ctx.fillStyle = c.q >= 0 ? '#f87171' : '#60a5fa';
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, r, 0, TAU);
+    ctx.fill();
+
+    ctx.strokeStyle = c.id === state.selectedId
+      ? `rgba(${ink()},0.95)`
+      : 'rgba(0,0,0,0.45)';
+
+    ctx.lineWidth = c.id === state.selectedId ? 2.2 : 1.2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `700 ${Math.max(10, 12 * p.s)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(c.q >= 0 ? '+' : '−', p.sx, p.sy + 0.5);
+  }
+
+  function drawGizmo() {
+    const ox = 50, oy = H - 50, len = 28;
+
+    const axes = [
+      { v: { x: 1, y: 0, z: 0 }, c: '#f87171', l: 'x' },
+      { v: { x: 0, y: 1, z: 0 }, c: '#4ade80', l: 'y' },
+      { v: { x: 0, y: 0, z: 1 }, c: '#60a5fa', l: 'z' },
+    ];
+
+    const projected = axes.map((a) => {
+      const cam = worldToCamera(a.v);
+      return { ex: ox + cam.x * len, ey: oy - cam.y * len, depth: cam.z, c: a.c, l: a.l };
+    }).sort((a, b) => a.depth - b.depth);
+
+    ctx.lineWidth = 2;
+    ctx.font = "600 11px 'JetBrains Mono', monospace";
+
+    for (const a of projected) {
+      ctx.strokeStyle = a.c;
+      ctx.fillStyle = a.c;
+
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(a.ex, a.ey);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(a.ex, a.ey, 2.4, 0, TAU);
+      ctx.fill();
+
+      ctx.fillText(a.l, a.ex + 4, a.ey - 4);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    drawBox();
+    drawPlane();
+    drawWavefronts();
+
+    const items: DrawItem[] = [];
+
+    if (state.fieldMode !== 'off') {
+      for (const p of samplePoints()) {
+        const f = fieldAt(p);
+        const eMag = V.norm(f.E);
+        const bMag = V.norm(f.B);
+        const depth = worldToCamera(p).zc;
+
+        if (state.fieldMode === 'e' || state.fieldMode === 'both') {
+          if (eMag > 2e-4) {
+            items.push({ kind: 'arrow', z: depth, p, dir: f.E, mag: eMag, color: E_COLOR });
+          }
+        }
+
+        if (state.fieldMode === 'b' || state.fieldMode === 'both') {
+          if (bMag > 2e-4) {
+            items.push({ kind: 'arrow', z: depth + 0.001, p, dir: f.B, mag: bMag, color: B_COLOR });
+          }
+        }
+      }
+    }
+
+    for (const c of charges) {
+      items.push({ kind: 'charge', z: worldToCamera(c.p).zc, charge: c });
+    }
+
+    items.sort((a, b) => b.z - a.z);
+
+    for (const it of items) {
+      if (it.kind === 'arrow' && it.p && it.dir && it.mag && it.color) {
+        drawArrow3D(it.p, it.dir, it.mag, it.color, state.sampleMode === 'space' ? 0.72 : 0.9);
+      } else if (it.kind === 'charge' && it.charge) {
+        drawCharge(it.charge);
+      }
+    }
+
+    drawGizmo();
+    updateReadouts();
+  }
+
+  function updateReadouts() {
+    (document.getElementById('nOut') as HTMLElement).textContent = physicalN().toFixed(3);
+    (document.getElementById('vOut') as HTMLElement).textContent = `${fmtSci(physicalV())} m/s`;
+    (document.getElementById('etaOut') as HTMLElement).textContent = `${physicalEta().toFixed(1)} Ω`;
+    (document.getElementById('lambdaOut') as HTMLElement).textContent = `${physicalLambda().toFixed(3)} m`;
+    (document.getElementById('timeOut') as HTMLElement).textContent = state.time.toFixed(2);
+  }
+
+  function renderCharges() {
+    const host = document.getElementById('charges')!;
+
+    host.innerHTML = charges.map((c) => `
+      <div class="charge-card ${c.id === state.selectedId ? 'selected' : ''}" data-id="${c.id}">
+        <div class="charge-head">
+          <input type="checkbox" class="charge-on" data-id="${c.id}" ${c.on ? 'checked' : ''} style="accent-color:${c.color}">
+          <button class="charge-select" data-id="${c.id}">${c.q >= 0 ? '+' : '−'} charge ${c.id}</button>
+          <button class="charge-remove" data-id="${c.id}" title="Remove">×</button>
+        </div>
+
+        <div class="control compact">
+          <label>Charge q <b id="qv-${c.id}">${c.q.toFixed(1)}</b></label>
+          <input type="range" class="charge-q" data-id="${c.id}" min="-20" max="20" value="${Math.round(c.q * 10)}">
+        </div>
+
+        <div class="control compact">
+          <label>Motion</label>
+          <select class="charge-mode select" data-id="${c.id}">
+            <option value="manual" ${c.mode === 'manual' ? 'selected' : ''}>Manual</option>
+            <option value="osc-x" ${c.mode === 'osc-x' ? 'selected' : ''}>Oscillate X</option>
+            <option value="osc-y" ${c.mode === 'osc-y' ? 'selected' : ''}>Oscillate Y</option>
+            <option value="osc-z" ${c.mode === 'osc-z' ? 'selected' : ''}>Oscillate Z</option>
+          </select>
+        </div>
+
+        <div class="control compact">
+          <label>Phase <b id="phv-${c.id}">${(c.phase / Math.PI).toFixed(2)}π</b></label>
+          <input type="range" class="charge-phase" data-id="${c.id}" min="0" max="200" value="${Math.round((c.phase / TAU) * 200)}">
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function getCharge(id: number) {
+    return charges.find((c) => c.id === id);
+  }
+
+  document.getElementById('charges')!.addEventListener('click', (e) => {
+    const sel = (e.target as HTMLElement).closest('.charge-select') as HTMLElement | null;
+    const rem = (e.target as HTMLElement).closest('.charge-remove') as HTMLElement | null;
+
+    if (sel) {
+      state.selectedId = +sel.dataset.id!;
+      renderCharges();
+      draw();
+      return;
+    }
+
+    if (rem && charges.length > 1) {
+      const id = +rem.dataset.id!;
+      charges = charges.filter((c) => c.id !== id);
+
+      if (!getCharge(state.selectedId)) {
+        state.selectedId = charges[0].id;
+      }
+
+      renderCharges();
+      draw();
+    }
+  });
+
+  document.getElementById('charges')!.addEventListener('input', (e) => {
+    const target = e.target as HTMLInputElement | HTMLSelectElement;
+    const id = +(target.dataset.id || 0);
+    const c = getCharge(id);
+
+    if (!c) return;
+
+    if (target.classList.contains('charge-q')) {
+      c.q = +(target as HTMLInputElement).value / 10;
+      c.color = c.q >= 0 ? '#f87171' : '#60a5fa';
+
+      const out = document.getElementById(`qv-${c.id}`);
+      if (out) out.textContent = c.q.toFixed(1);
+
+      renderCharges();
+    }
+
+    if (target.classList.contains('charge-phase')) {
+      c.phase = (+(target as HTMLInputElement).value / 200) * TAU;
+
+      const out = document.getElementById(`phv-${c.id}`);
+      if (out) out.textContent = `${(c.phase / Math.PI).toFixed(2)}π`;
+    }
+
+    if (target.classList.contains('charge-mode')) {
+      c.mode = (target as HTMLSelectElement).value as Charge['mode'];
+      c.origin = { ...c.p };
+    }
+  });
+
+  document.getElementById('charges')!.addEventListener('change', (e) => {
+    const cb = (e.target as HTMLElement).closest('.charge-on') as HTMLInputElement | null;
+
+    if (!cb) return;
+
+    const c = getCharge(+cb.dataset.id!);
+    if (c) c.on = cb.checked;
+  });
+
+  function setMediumPreset(name: string) {
+    if (name === 'vacuum') {
+      state.epsR = 1;
+      state.muR = 1;
+      state.sigma = 0;
+    } else if (name === 'air') {
+      state.epsR = 1.0006;
+      state.muR = 1;
+      state.sigma = 0;
+    } else if (name === 'glass') {
+      state.epsR = 4.5;
+      state.muR = 1;
+      state.sigma = 0.02;
+    } else if (name === 'water') {
+      state.epsR = 80;
+      state.muR = 1;
+      state.sigma = 0.08;
+    }
+
+    syncMediumInputs();
+  }
+
+  function syncMediumInputs() {
+    (document.getElementById('eps') as HTMLInputElement).value = String(Math.round(state.epsR * 100));
+    (document.getElementById('mu') as HTMLInputElement).value = String(Math.round(state.muR * 100));
+    (document.getElementById('sigma') as HTMLInputElement).value = String(Math.round(state.sigma * 100));
+
+    (document.getElementById('epsVal') as HTMLElement).textContent = state.epsR.toFixed(state.epsR < 10 ? 2 : 1);
+    (document.getElementById('muVal') as HTMLElement).textContent = state.muR.toFixed(2);
+    (document.getElementById('sigmaVal') as HTMLElement).textContent = state.sigma.toFixed(2);
+  }
+
+  function activateSeg(containerId: string, value: string) {
+    document.querySelectorAll(`#${containerId} button`).forEach((b) => {
+      (b as HTMLElement).classList.toggle('active', (b as HTMLElement).dataset.v === value);
+    });
+  }
+
+  document.getElementById('fieldMode')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+
+    state.fieldMode = btn.dataset.v as typeof state.fieldMode;
+    activateSeg('fieldMode', state.fieldMode);
+    draw();
+  });
+
+  document.getElementById('sampleMode')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+
+    state.sampleMode = btn.dataset.v as typeof state.sampleMode;
+    activateSeg('sampleMode', state.sampleMode);
+    draw();
+  });
+
+  document.getElementById('planeMode')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+
+    state.plane = btn.dataset.v as typeof state.plane;
+    activateSeg('planeMode', state.plane);
+    draw();
+  });
+
+  (document.getElementById('speed') as HTMLInputElement).addEventListener('input', (e) => {
+    state.speed = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('speedVal') as HTMLElement).textContent = `${state.speed.toFixed(2)}×`;
+  });
+
+  (document.getElementById('density') as HTMLInputElement).addEventListener('input', (e) => {
+    state.density = +(e.target as HTMLInputElement).value;
+    (document.getElementById('densityVal') as HTMLElement).textContent = String(state.density);
+    draw();
+  });
+
+  (document.getElementById('fieldScale') as HTMLInputElement).addEventListener('input', (e) => {
+    state.fieldScale = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('fieldScaleVal') as HTMLElement).textContent = state.fieldScale.toFixed(2);
+    draw();
+  });
+
+  (document.getElementById('planePos') as HTMLInputElement).addEventListener('input', (e) => {
+    state.planePos = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('planeVal') as HTMLElement).textContent = state.planePos.toFixed(2);
+    draw();
+  });
+
+  (document.getElementById('preset') as HTMLSelectElement).addEventListener('change', (e) => {
+    setMediumPreset((e.target as HTMLSelectElement).value);
+  });
+
+  (document.getElementById('eps') as HTMLInputElement).addEventListener('input', (e) => {
+    state.epsR = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('epsVal') as HTMLElement).textContent = state.epsR.toFixed(state.epsR < 10 ? 2 : 1);
+    (document.getElementById('preset') as HTMLSelectElement).value = 'custom';
+    draw();
+  });
+
+  (document.getElementById('mu') as HTMLInputElement).addEventListener('input', (e) => {
+    state.muR = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('muVal') as HTMLElement).textContent = state.muR.toFixed(2);
+    (document.getElementById('preset') as HTMLSelectElement).value = 'custom';
+    draw();
+  });
+
+  (document.getElementById('sigma') as HTMLInputElement).addEventListener('input', (e) => {
+    state.sigma = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('sigmaVal') as HTMLElement).textContent = state.sigma.toFixed(2);
+    (document.getElementById('preset') as HTMLSelectElement).value = 'custom';
+    draw();
+  });
+
+  (document.getElementById('freq') as HTMLInputElement).addEventListener('input', (e) => {
+    state.freqMHz = +(e.target as HTMLInputElement).value;
+    (document.getElementById('freqVal') as HTMLElement).textContent = `${state.freqMHz} MHz`;
+    draw();
+  });
+
+  (document.getElementById('amp') as HTMLInputElement).addEventListener('input', (e) => {
+    state.amp = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('ampVal') as HTMLElement).textContent = state.amp.toFixed(2);
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+
+  document.getElementById('step')!.addEventListener('click', () => {
+    advance(1 / 45);
+    draw();
+  });
+
+  document.getElementById('reset')!.addEventListener('click', () => {
+    resetDefaultCharges();
+    draw();
+  });
+
+  document.getElementById('add')!.addEventListener('click', () => {
+    const q = charges.length % 2 === 0 ? 1 : -1;
+
+    const c = makeCharge(q, {
+      x: +(Math.random() * 2 - 1).toFixed(2),
+      y: +(Math.random() * 2 - 1).toFixed(2),
+      z: +(Math.random() * 2 - 1).toFixed(2),
+    }, 'manual', 0);
+
+    charges.push(c);
+    state.selectedId = c.id;
+
+    renderCharges();
+    draw();
+  });
+
+  document.getElementById('dipole')!.addEventListener('click', () => {
+    setDipole();
+    draw();
+  });
+
+  let draggingCharge = false;
+  let orbiting = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  canvas.addEventListener('pointerdown', (e) => {
+    lastX = e.clientX;
+    lastY = e.clientY;
+
+    const wantsOrbit = e.button === 2 || e.altKey || e.shiftKey;
+
+    if (wantsOrbit) {
+      orbiting = true;
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    let best: Charge | null = null;
+    let bestD = Infinity;
+
+    for (const c of charges) {
+      const p = project(c.p.x, c.p.y, c.p.z);
+      const d = Math.hypot(e.offsetX - p.sx, e.offsetY - p.sy);
+
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+
+    if (best && bestD < 24) {
+      state.selectedId = best.id;
+
+      best.mode = 'manual';
+      best.origin = { ...best.p };
+
+      draggingCharge = true;
+
+      renderCharges();
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    orbiting = true;
+    canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (orbiting) {
+      state.yaw += (e.clientX - lastX) * 0.01;
+      state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch + (e.clientY - lastY) * 0.01));
+
+      lastX = e.clientX;
+      lastY = e.clientY;
+
+      if (!state.running) draw();
+      return;
+    }
+
+    if (draggingCharge) {
+      const c = getCharge(state.selectedId);
+      const p = intersectActivePlane(e.offsetX, e.offsetY);
+
+      if (c && p) {
+        const dt = 1 / 60;
+
+        c.prevP = { ...c.p };
+        c.prevV = { ...c.v };
+
+        c.p = p;
+        c.origin = { ...p };
+
+        c.v = V.mul(V.sub(c.p, c.prevP), 1 / dt);
+        c.a = V.mul(V.sub(c.v, c.prevV), 1 / dt);
+
+        pushHist(c);
+
+        if (!state.running) draw();
+      }
+    }
+  });
+
+  const stopDrag = () => {
+    draggingCharge = false;
+    orbiting = false;
+  };
+
+  canvas.addEventListener('pointerup', stopDrag);
+  canvas.addEventListener('pointercancel', stopDrag);
+
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+
+    state.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    state.zoom = Math.max(0.35, Math.min(5.5, state.zoom));
+
+    if (!state.running) draw();
+  }, { passive: false });
+
+  let last = 0;
+
+  function loop(ts: number) {
+    if (!last) last = ts;
+
+    const dt = Math.min(0.045, (ts - last) / 1000);
+    last = ts;
+
+    if (state.running) {
+      advance(dt * state.speed);
+    }
+
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  syncMediumInputs();
+  resetDefaultCharges();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .em-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .em-canvas:active {
+    cursor: grabbing;
+  }
+
+  .block-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-faint);
+    margin-top: 4px;
+  }
+
+  .select {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font: inherit;
+  }
+</style>
+
+<style is:global>
+  .charge-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elev);
+    padding: 8px 10px 10px;
+    margin-bottom: 7px;
+  }
+
+  .charge-card.selected {
+    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+
+  .charge-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+  }
+
+  .charge-on {
+    width: 15px;
+    height: 15px;
+    flex: none;
+  }
+
+  .charge-select {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    padding: 0;
+    font: inherit;
+    font-size: 0.86rem;
+    cursor: pointer;
+  }
+
+  .charge-remove {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-faint);
+    border-radius: 999px;
+    width: 22px;
+    height: 22px;
+    cursor: pointer;
+  }
+
+  .charge-remove:hover {
+    color: var(--text);
+  }
+
+  .control.compact {
+    margin-bottom: 8px;
+  }
+
+  .control.compact:last-child {
+    margin-bottom: 0;
+  }
+</style>

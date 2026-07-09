@@ -297,6 +297,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'em-waves',
+        title: 'Electromagnetic Waves in 3D',
+        description:
+          'Drag charges through space and watch retarded E and B fields ripple outward. Build a dipole antenna and tune the medium to change wave speed and impedance.',
+        href: '/simulations/physics/em-waves',
+        status: 'live',
+      },
+      {
         slug: 'heat-equation',
         title: 'Heat Equation',
         description:
