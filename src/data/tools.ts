@@ -344,6 +344,14 @@ export const AREAS: Area[] = [
         href: '/simulations/physics/special-relativity',
         status: 'live',
       },
+      {
+        slug: 'schwarzschild',
+        title: 'General Relativity: Schwarzschild',
+        description:
+          'Fall down the curved-space funnel of a black hole. Clocks run slow deep in the well and a proper meter swallows less coordinate distance near the horizon.',
+        href: '/simulations/physics/schwarzschild',
+        status: 'live',
+      },
     ],
   },
 ];

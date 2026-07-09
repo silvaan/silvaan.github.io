@@ -1,0 +1,384 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="General Relativity: Schwarzschild"
+  description="Mass bends spacetime. The funnel is the real curved geometry of space around a black hole (Flamm's paraboloid), the clocks show time running slow deep in the well, and the ruler shows a proper 'meter' swallowing less and less coordinate distance as you fall toward the horizon."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="gr" class="gr-canvas" width="700" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset clocks</button>
+      </div>
+
+      <div class="control">
+        <label>Show</label>
+        <div class="seg" id="show">
+          <button data-v="both" class="active">Clocks + ruler</button>
+          <button data-v="clocks">Clocks</button>
+          <button data-v="ruler">Ruler</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Schwarzschild radius rₛ <b id="rsVal">2.0</b></label>
+        <input type="range" id="rs" min="6" max="45" value="20" />
+      </div>
+
+      <div class="control">
+        <label>Probe radius r <b id="rVal">4.0</b></label>
+        <input type="range" id="probe" min="0" max="1000" value="400" />
+      </div>
+
+      <div class="control">
+        <label>Clock speed <b id="spVal">1.0×</b></label>
+        <input type="range" id="speed" min="0" max="40" value="10" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>r / rₛ</span><b id="ratioOut">2.00</b></div>
+        <div class="row"><span>Clock rate √(1−rₛ/r)</span><b id="dilOut">0.707</b></div>
+        <div class="row"><span>Ruler stretch 1/√(1−rₛ/r)</span><b id="stretchOut">1.414</b></div>
+        <div class="row"><span>1 s here = distant</span><b id="farOut">1.41 s</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit, scroll to zoom. The bright ring is the event horizon
+        (r = rₛ); the white ring is your probe. Colour runs red (slow clocks,
+        near) to teal (normal, far).
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Watch the row of clock hands. The far ones keep pace, but each clock deeper
+      in the well runs <b>slower</b>, its rate is exactly <b>√(1 − rₛ/r)</b>.
+      Right at the horizon it <b>freezes</b>: time stops for a distant onlooker.
+    </li>
+    <li>
+      The ruler marks are spaced by equal <b>proper distance</b> (real meters),
+      yet they <b>crowd together</b> in coordinate r near the throat. A meter of
+      space near the mass spans less r: radial distance is stretched by
+      <b>1/√(1 − rₛ/r)</b>, the steepness of the funnel.
+    </li>
+    <li>
+      Both effects blow up together at <b>r = rₛ</b> (clocks stop, the funnel
+      goes vertical) and both fade to 1 far away, where the funnel flattens back
+      into ordinary flat space.
+    </li>
+    <li>
+      Grow <b>rₛ</b> (more mass) and the whole well deepens: the curvature, the
+      time dilation and the stretching all reach farther out.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const TAU = Math.PI * 2;
+  const RMAX = 10;
+  const NORM = 2.0 / RMAX;
+  const Y0 = 0.85; // vertical centring offset
+
+  const canvas = document.getElementById('gr') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const CX = W / 2, CY = H / 2;
+  const CAM = 4.4, FOCAL = 2.7, SCALE = 250;
+
+  const CLOCK_FR = [0.012, 0.05, 0.14, 0.34, 0.7, 1.0];
+  const CLOCK_PHI = -Math.PI / 2;
+  const RULER_PHI = Math.PI / 2;
+  const RULER_UNIT = 1.15; // proper length per ruler segment
+
+  const state = {
+    rs: 2, probe: 4, speed: 1, show: 'both' as 'both' | 'clocks' | 'ruler',
+    yaw: 0.62, pitch: -0.5, zoom: 1, running: true,
+  };
+  let T = 0;
+  const clockTau = CLOCK_FR.map(() => 0);
+  let probeTau = 0;
+  let rulerTicks: number[] = [];
+
+  const zDepth = (r: number) => 2 * Math.sqrt(state.rs * Math.max(0, r - state.rs));
+  const dil = (r: number) => Math.sqrt(Math.max(0, 1 - state.rs / r));
+
+  function world(r: number, phi: number) {
+    const R = r * NORM;
+    return { x: R * Math.cos(phi), y: zDepth(r) * NORM - Y0, z: R * Math.sin(phi) };
+  }
+
+  function project(p: { x: number; y: number; z: number }) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const x1 = p.x * cy + p.z * sy;
+    const z1 = -p.x * sy + p.z * cy;
+    const y2 = p.y * cp - z1 * sp;
+    const z2 = p.y * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const s = (FOCAL / Math.max(0.05, zc)) * state.zoom;
+    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
+  }
+  const projRP = (r: number, phi: number) => project(world(r, phi));
+
+  function dilColor(t: number, alpha = 1) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [[235, 80, 70], [240, 190, 70], [45, 212, 191]];
+    const seg = t * 2;
+    const i = Math.min(1, Math.floor(seg));
+    const fr = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    let r = a[0] + (b[0] - a[0]) * fr;
+    let g = a[1] + (b[1] - a[1]) * fr;
+    let bl = a[2] + (b[2] - a[2]) * fr;
+    if (isLight()) { r *= 0.72; g *= 0.72; bl *= 0.72; }
+    return `rgba(${r | 0},${g | 0},${bl | 0},${alpha})`;
+  }
+
+  function computeRulerTicks() {
+    rulerTicks = [state.rs];
+    let acc = 0, threshold = RULER_UNIT;
+    const steps = 3000;
+    const step = (RMAX - state.rs) / steps;
+    for (let i = 1; i <= steps; i++) {
+      const rm = state.rs + (i - 0.5) * step;
+      acc += (1 / Math.sqrt(Math.max(1e-6, 1 - state.rs / rm))) * step;
+      if (acc >= threshold) { rulerTicks.push(state.rs + i * step); threshold += RULER_UNIT; }
+    }
+  }
+
+  function ringPath(r: number) {
+    ctx.beginPath();
+    const N = 64;
+    for (let i = 0; i <= N; i++) {
+      const p = projRP(r, (i / N) * TAU);
+      i === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
+    }
+  }
+
+  function drawFunnel() {
+    // radial spokes
+    ctx.lineWidth = 1;
+    for (let k = 0; k < 24; k++) {
+      const phi = (k / 24) * TAU;
+      ctx.beginPath();
+      for (let i = 0; i <= 40; i++) {
+        const r = state.rs + ((RMAX - state.rs) * i) / 40;
+        const p = projRP(r, phi);
+        i === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
+      }
+      ctx.strokeStyle = `rgba(${ink()},0.16)`;
+      ctx.stroke();
+    }
+    // rings at equal coordinate r, coloured by clock rate
+    const rings = 22;
+    for (let k = 1; k <= rings; k++) {
+      const r = state.rs + ((RMAX - state.rs) * k) / rings;
+      ringPath(r);
+      ctx.strokeStyle = dilColor(dil(r), isLight() ? 0.6 : 0.5);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+    // event horizon (throat)
+    ringPath(state.rs);
+    ctx.fillStyle = isLight() ? 'rgba(20,20,26,0.9)' : 'rgba(0,0,0,0.92)';
+    ctx.fill();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+  }
+
+  function billboardClock(sx: number, sy: number, radius: number, tau: number, r: number, label?: string) {
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius, 0, TAU);
+    ctx.fillStyle = isLight() ? 'rgba(255,255,255,0.92)' : 'rgba(10,11,15,0.9)';
+    ctx.fill();
+    ctx.strokeStyle = dilColor(dil(r));
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    // hand
+    const ang = -tau * 1.7 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.cos(ang) * radius * 0.82, sy + Math.sin(ang) * radius * 0.82);
+    ctx.strokeStyle = `rgba(${ink()},1)`;
+    ctx.lineWidth = Math.max(1.4, radius * 0.11);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(1.5, radius * 0.12), 0, TAU);
+    ctx.fillStyle = `rgba(${ink()},1)`;
+    ctx.fill();
+    if (label) {
+      ctx.fillStyle = css('--text-faint') || '#8b93a5';
+      ctx.font = "10px 'JetBrains Mono', monospace";
+      ctx.textAlign = 'center';
+      ctx.fillText(label, sx, sy + radius + 12);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function drawClocks() {
+    const items = CLOCK_FR.map((fr, i) => {
+      const r = state.rs + (RMAX - state.rs) * fr;
+      const p = projRP(r, CLOCK_PHI);
+      return { p, r, tau: clockTau[i] };
+    }).sort((a, b) => b.p.zc - a.p.zc);
+    for (const it of items) {
+      if (it.p.zc <= 0.1) continue;
+      billboardClock(it.p.sx, it.p.sy, Math.max(9, 15 * it.p.s), it.tau, it.r);
+    }
+  }
+
+  function drawRuler() {
+    // rods of equal proper length laid radially; alternate colour so the
+    // coordinate crowding near the throat is obvious
+    for (let i = 0; i < rulerTicks.length - 1; i++) {
+      const rA = rulerTicks[i], rB = rulerTicks[i + 1];
+      ctx.beginPath();
+      const seg = 6;
+      for (let j = 0; j <= seg; j++) {
+        const r = rA + ((rB - rA) * j) / seg;
+        const p = projRP(r, RULER_PHI);
+        j === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
+      }
+      ctx.strokeStyle = i % 2 === 0 ? '#7c8cff' : dilColor(0.9);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      // tick
+      const pt = projRP(rA, RULER_PHI);
+      ctx.fillStyle = `rgba(${ink()},0.9)`;
+      ctx.beginPath();
+      ctx.arc(pt.sx, pt.sy, 2.4, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  function drawProbe() {
+    ringPath(state.probe);
+    ctx.strokeStyle = `rgba(${ink()},0.95)`;
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+    const p = projRP(state.probe, CLOCK_PHI);
+    if (p.zc > 0.1) billboardClock(p.sx, p.sy, Math.max(13, 22 * p.s), probeTau, state.probe, `r/rₛ = ${(state.probe / state.rs).toFixed(2)}`);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawFunnel();
+    if (state.show !== 'clocks') drawRuler();
+    if (state.show !== 'ruler') drawClocks();
+    drawProbe();
+
+    const d = dil(state.probe);
+    (document.getElementById('ratioOut') as HTMLElement).textContent = (state.probe / state.rs).toFixed(2);
+    (document.getElementById('dilOut') as HTMLElement).textContent = d.toFixed(3);
+    (document.getElementById('stretchOut') as HTMLElement).textContent = (1 / Math.max(1e-3, d)).toFixed(3);
+    (document.getElementById('farOut') as HTMLElement).textContent = `${(1 / Math.max(1e-3, d)).toFixed(2)} s`;
+  }
+
+  let last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      T += dt * state.speed;
+      CLOCK_FR.forEach((fr, i) => {
+        const r = state.rs + (RMAX - state.rs) * fr;
+        clockTau[i] += dt * state.speed * dil(r);
+      });
+      probeTau += dt * state.speed * dil(state.probe);
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---- controls ----
+  const rsEl = document.getElementById('rs') as HTMLInputElement;
+  rsEl.addEventListener('input', () => {
+    state.rs = +rsEl.value / 10;
+    if (state.probe < state.rs * 1.02) state.probe = state.rs * 1.02;
+    (document.getElementById('rsVal') as HTMLElement).textContent = state.rs.toFixed(1);
+    computeRulerTicks();
+    syncProbeSlider();
+  });
+  const probeEl = document.getElementById('probe') as HTMLInputElement;
+  function syncProbeSlider() {
+    const frac = (state.probe - state.rs) / (RMAX - state.rs);
+    probeEl.value = String(Math.round(Math.max(0, Math.min(1, frac)) * 1000));
+    (document.getElementById('rVal') as HTMLElement).textContent = state.probe.toFixed(1);
+  }
+  probeEl.addEventListener('input', () => {
+    const frac = +probeEl.value / 1000;
+    state.probe = state.rs * 1.02 + frac * (RMAX - state.rs * 1.02);
+    (document.getElementById('rVal') as HTMLElement).textContent = state.probe.toFixed(1);
+  });
+  const spEl = document.getElementById('speed') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value / 10;
+    (document.getElementById('spVal') as HTMLElement).textContent = state.speed.toFixed(1) + '×';
+  });
+  document.getElementById('show')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#show button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.show = btn.dataset.v as typeof state.show;
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    T = 0;
+    probeTau = 0;
+    for (let i = 0; i < clockTau.length; i++) clockTau[i] = 0;
+  });
+
+  // orbit + zoom
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lx) * 0.01;
+    state.pitch = Math.max(-1.4, Math.min(0.2, state.pitch + (e.clientY - ly) * 0.01));
+    lx = e.clientX; ly = e.clientY;
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    state.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    state.zoom = Math.max(0.4, Math.min(4, state.zoom));
+  }, { passive: false });
+
+  computeRulerTicks();
+  syncProbeSlider();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .gr-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .gr-canvas:active {
+    cursor: grabbing;
+  }
+</style>
