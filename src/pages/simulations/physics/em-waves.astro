@@ -130,8 +130,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Left-drag a charge to move it on the selected plane. Right-drag, Alt-drag, or Shift-drag to orbit the camera.
-        Scroll to zoom. The field is an educational retarded-source approximation, not a full FDTD Maxwell solver.
+        Left-drag a charge to move it, or use its x·y·z sliders to place it anywhere, including off the
+        sampling plane, where the field then tilts out into 3D. Right-drag (or Alt/Shift-drag) to orbit, scroll
+        to zoom. The field is an educational retarded-source approximation, not a full FDTD Maxwell solver.
       </p>
     </div>
   </div>
@@ -539,9 +540,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     };
   }
 
-  function intersectActivePlane(sx: number, sy: number): Vec | null {
+  function intersectActivePlane(sx: number, sy: number, coord = state.planePos): Vec | null {
     const ray = rayFromScreen(sx, sy);
-    const coord = state.planePos;
 
     let t = 0;
 
@@ -953,6 +953,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         </div>
 
         <div class="control compact">
+          <label>Position x·y·z <b id="posv-${c.id}">${c.p.x.toFixed(1)}, ${c.p.y.toFixed(1)}, ${c.p.z.toFixed(1)}</b></label>
+          <div class="pos-row">
+            <input type="range" class="charge-pos" data-id="${c.id}" data-axis="x" min="-450" max="450" value="${Math.round(c.p.x * 100)}">
+            <input type="range" class="charge-pos" data-id="${c.id}" data-axis="y" min="-450" max="450" value="${Math.round(c.p.y * 100)}">
+            <input type="range" class="charge-pos" data-id="${c.id}" data-axis="z" min="-450" max="450" value="${Math.round(c.p.z * 100)}">
+          </div>
+        </div>
+
+        <div class="control compact">
           <label>Charge q <b id="qv-${c.id}">${c.q.toFixed(1)}</b></label>
           <input type="range" class="charge-q" data-id="${c.id}" min="-20" max="20" value="${Math.round(c.q * 10)}">
         </div>
@@ -1018,6 +1027,23 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       if (out) out.textContent = c.q.toFixed(1);
 
       renderCharges();
+    }
+
+    if (target.classList.contains('charge-pos')) {
+      const axis = (target as HTMLInputElement).dataset.axis as 'x' | 'y' | 'z';
+      const val = +(target as HTMLInputElement).value / 100;
+      c.target[axis] = val;
+      c.origin[axis] = val;
+      if (!state.running) {
+        c.p[axis] = val;
+        c.prevP = { ...c.p };
+        c.prevV = V.zero();
+        c.v = V.zero();
+        c.a = V.zero();
+        draw();
+      }
+      const out = document.getElementById(`posv-${c.id}`);
+      if (out) out.textContent = `${c.target.x.toFixed(1)}, ${c.target.y.toFixed(1)}, ${c.target.z.toFixed(1)}`;
     }
 
     if (target.classList.contains('charge-phase')) {
@@ -1280,7 +1306,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     if (draggingCharge) {
       const c = getCharge(state.selectedId);
-      const p = intersectActivePlane(toLocal(e).x, toLocal(e).y);
+      // drag within a plane at the charge's OWN depth, so a charge placed off
+      // the sampling plane keeps its offset (and its field stays 3D there)
+      const perp = c ? (state.plane === 'xy' ? c.p.z : state.plane === 'xz' ? c.p.y : c.p.x) : state.planePos;
+      const p = intersectActivePlane(toLocal(e).x, toLocal(e).y, perp);
 
       if (c && p) {
         // set a target; advance() eases the charge toward it and records the
@@ -1463,5 +1492,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   .control.compact:last-child {
     margin-bottom: 0;
+  }
+
+  .pos-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .pos-row input[type='range'] {
+    flex: 1;
+    min-width: 0;
   }
 </style>
