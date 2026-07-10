@@ -1,0 +1,290 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="Span & Linear Combinations"
+  description="The span of a set of vectors is everywhere you can reach by scaling and adding them. Two vectors usually fill the whole plane, but line them up and their span collapses to a single line. Drag the vectors and the target to feel independence, dependence, and coordinates."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="span" width="640" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Combination v = a·u₁ + b·u₂</label>
+        <div class="control"><label>a <b id="aval">1.00</b></label><input type="range" id="a" min="-3" max="3" step="0.05" value="1"></div>
+        <div class="control"><label>b <b id="bval">1.00</b></label><input type="range" id="b" min="-3" max="3" step="0.05" value="1"></div>
+      </div>
+
+      <label class="check"><input type="checkbox" id="lattice" checked /> Show combination lattice</label>
+      <label class="check"><input type="checkbox" id="solve" /> Solve a, b to hit the target</label>
+
+      <div class="control">
+        <label>Presets</label>
+        <div class="seg" id="presets">
+          <button data-m="2,0.4,0.6,2">Independent</button>
+          <button data-m="1.6,0.8,0.8,0.4">Dependent</button>
+          <button data-m="1.5,0,0,1.5">Axes</button>
+        </div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Span</span><b id="spanOut">the whole plane</b></div>
+        <div class="row"><span>Determinant [u₁ u₂]</span><b id="detOut">—</b></div>
+        <div class="row"><span>Combination v</span><b id="vOut">—</b></div>
+        <div class="row"><span>Target reachable?</span><b id="reachOut">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the tips of <b>u₁</b> (indigo) and <b>u₂</b> (amber), or the white
+        <b>target</b>. The teal dot is the current combination a·u₁ + b·u₂.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Slide <b>a</b> and <b>b</b>: the teal dot sweeps out everything the two
+      vectors can build. With independent u₁, u₂ the reachable set is the
+      <b>whole plane</b> (shaded), so every target has exactly one pair (a, b).
+    </li>
+    <li>
+      Now drag u₂ until it lies <b>along</b> u₁ (or use the Dependent preset).
+      The shaded region collapses to a <b>line</b>: the vectors are linearly
+      dependent, the determinant hits 0, and targets off that line become
+      <b>unreachable</b>.
+    </li>
+    <li>
+      Turn on <b>Solve</b> and drag the target around. The a, b that hit it are
+      its <b>coordinates</b> in the u₁, u₂ basis, read straight off the lattice.
+      Watch them explode as the basis gets close to degenerate.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const u1 = { x: 2, y: 0.4 };
+  const u2 = { x: 0.6, y: 2 };
+  const target = { x: 2.2, y: 1.4 };
+  const state = { a: 1, b: 1, lattice: true, solve: false };
+
+  const canvas = document.getElementById('span') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const O = { x: W / 2, y: H / 2 };
+  const U = 84;
+  const toPx = (x: number, y: number) => ({ px: O.x + x * U, py: O.y - y * U });
+  const toWorld = (px: number, py: number) => ({ x: (px - O.x) / U, y: (O.y - py) / U });
+
+  const det = () => u1.x * u2.y - u1.y * u2.x;
+
+  function arrow(v: { x: number; y: number }, color: string, label: string) {
+    const p = toPx(v.x, v.y);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(p.px, p.py); ctx.stroke();
+    const ang = Math.atan2(p.py - O.y, p.px - O.x);
+    ctx.beginPath();
+    ctx.moveTo(p.px, p.py);
+    ctx.lineTo(p.px - 13 * Math.cos(ang - 0.4), p.py - 13 * Math.sin(ang - 0.4));
+    ctx.lineTo(p.px - 13 * Math.cos(ang + 0.4), p.py - 13 * Math.sin(ang + 0.4));
+    ctx.closePath(); ctx.fill();
+    ctx.font = "600 14px 'JetBrains Mono', monospace";
+    ctx.fillText(label, p.px + 8, p.py - 8);
+  }
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const amber = '#f59e0b';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+    const D = det();
+    const degenerate = Math.abs(D) < 0.06;
+
+    // grid
+    ctx.strokeStyle = grid;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
+    for (let i = -4; i <= 4; i++) {
+      const a = toPx(i, -4), b = toPx(i, 4), c = toPx(-4, i), e = toPx(4, i);
+      ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(c.px, c.py); ctx.lineTo(e.px, e.py); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // span region: whole plane (tint) or a line
+    if (!degenerate) {
+      ctx.fillStyle = 'rgba(94,234,212,0.07)';
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      const dir = Math.hypot(u1.x, u1.y) > 1e-6 ? u1 : u2;
+      const p1 = toPx(dir.x * 8, dir.y * 8), p2 = toPx(-dir.x * 8, -dir.y * 8);
+      ctx.strokeStyle = 'rgba(94,234,212,0.5)';
+      ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.moveTo(p1.px, p1.py); ctx.lineTo(p2.px, p2.py); ctx.stroke();
+    }
+
+    // combination lattice
+    if (state.lattice) {
+      ctx.strokeStyle = `rgba(${ink()},0.13)`;
+      ctx.lineWidth = 1;
+      for (let i = -6; i <= 6; i++) {
+        // lines of constant a (vary b)
+        let s = toPx(u1.x * i - u2.x * 6, u1.y * i - u2.y * 6);
+        let e = toPx(u1.x * i + u2.x * 6, u1.y * i + u2.y * 6);
+        ctx.beginPath(); ctx.moveTo(s.px, s.py); ctx.lineTo(e.px, e.py); ctx.stroke();
+        // lines of constant b (vary a)
+        s = toPx(u2.x * i - u1.x * 6, u2.y * i - u1.y * 6);
+        e = toPx(u2.x * i + u1.x * 6, u2.y * i + u1.y * 6);
+        ctx.beginPath(); ctx.moveTo(s.px, s.py); ctx.lineTo(e.px, e.py); ctx.stroke();
+      }
+    }
+
+    // if solving, set a,b to the target's coordinates
+    if (state.solve && !degenerate) {
+      const a = (target.x * u2.y - target.y * u2.x) / D;
+      const b = (u1.x * target.y - u1.y * target.x) / D;
+      state.a = a; state.b = b;
+      (document.getElementById('a') as HTMLInputElement).value = String(Math.max(-3, Math.min(3, a)));
+      (document.getElementById('b') as HTMLInputElement).value = String(Math.max(-3, Math.min(3, b)));
+      (document.getElementById('aval') as HTMLElement).textContent = a.toFixed(2);
+      (document.getElementById('bval') as HTMLElement).textContent = b.toFixed(2);
+    }
+
+    // parallelogram of a·u1 + b·u2
+    const comb = { x: state.a * u1.x + state.b * u2.x, y: state.a * u1.y + state.b * u2.y };
+    const au = { x: state.a * u1.x, y: state.a * u1.y };
+    ctx.strokeStyle = `rgba(${ink()},0.4)`;
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.4;
+    const pa = toPx(au.x, au.y), pc = toPx(comb.x, comb.y);
+    ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(pa.px, pa.py); ctx.lineTo(pc.px, pc.py); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // basis vectors
+    arrow(u1, accent, 'u₁');
+    arrow(u2, amber, 'u₂');
+
+    // target
+    const tp = toPx(target.x, target.y);
+    ctx.fillStyle = `rgba(${ink()},1)`;
+    ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(tp.px, tp.py, 6.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('target', tp.px + 9, tp.py - 8);
+
+    // combination point
+    ctx.fillStyle = teal;
+    ctx.beginPath(); ctx.arc(pc.px, pc.py, 6, 0, Math.PI * 2); ctx.fill();
+
+    // readouts
+    (document.getElementById('detOut') as HTMLElement).textContent = D.toFixed(3);
+    (document.getElementById('vOut') as HTMLElement).textContent = `(${comb.x.toFixed(2)}, ${comb.y.toFixed(2)})`;
+    const spanEl = document.getElementById('spanOut') as HTMLElement;
+    if (degenerate) {
+      const zero = Math.hypot(u1.x, u1.y) < 1e-6 && Math.hypot(u2.x, u2.y) < 1e-6;
+      spanEl.textContent = zero ? 'a single point' : 'a line';
+      spanEl.style.color = amber;
+    } else {
+      spanEl.textContent = 'the whole plane';
+      spanEl.style.color = teal;
+    }
+    // reachability of target
+    const err = Math.hypot(comb.x - target.x, comb.y - target.y);
+    const reach = document.getElementById('reachOut') as HTMLElement;
+    if (!degenerate) {
+      reach.textContent = state.solve ? 'yes (solved)' : 'yes, unique a, b';
+      reach.style.color = teal;
+    } else {
+      // reachable only if target lies on the span line
+      const dir = Math.hypot(u1.x, u1.y) > 1e-6 ? u1 : u2;
+      const cross = Math.abs(dir.x * target.y - dir.y * target.x) / (Math.hypot(dir.x, dir.y) || 1);
+      reach.textContent = cross < 0.12 ? 'only if on the line' : 'no, off the span';
+      reach.style.color = cross < 0.12 ? faint : amber;
+    }
+    void err;
+  }
+
+  // dragging
+  let dragTarget: 'u1' | 'u2' | 'target' | null = null;
+  function near(px: number, py: number, v: { x: number; y: number }) {
+    const p = toPx(v.x, v.y);
+    return Math.hypot(px - p.px, py - p.py) < 16;
+  }
+  function local(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const l = local(e);
+    dragTarget = near(l.x, l.y, target) ? 'target' : near(l.x, l.y, u1) ? 'u1' : near(l.x, l.y, u2) ? 'u2' : null;
+    if (dragTarget) canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragTarget) {
+      const l = local(e);
+      canvas.style.cursor = near(l.x, l.y, target) || near(l.x, l.y, u1) || near(l.x, l.y, u2) ? 'grab' : 'default';
+      return;
+    }
+    const l = local(e);
+    const w = toWorld(l.x, l.y);
+    const obj = dragTarget === 'u1' ? u1 : dragTarget === 'u2' ? u2 : target;
+    obj.x = Math.max(-4, Math.min(4, +w.x.toFixed(2)));
+    obj.y = Math.max(-4, Math.min(4, +w.y.toFixed(2)));
+    draw();
+  });
+  const stop = () => (dragTarget = null);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  document.getElementById('a')!.addEventListener('input', (e) => {
+    state.a = +(e.target as HTMLInputElement).value;
+    (document.getElementById('aval') as HTMLElement).textContent = state.a.toFixed(2);
+    if (state.solve) { state.solve = false; (document.getElementById('solve') as HTMLInputElement).checked = false; }
+    draw();
+  });
+  document.getElementById('b')!.addEventListener('input', (e) => {
+    state.b = +(e.target as HTMLInputElement).value;
+    (document.getElementById('bval') as HTMLElement).textContent = state.b.toFixed(2);
+    if (state.solve) { state.solve = false; (document.getElementById('solve') as HTMLInputElement).checked = false; }
+    draw();
+  });
+  document.getElementById('lattice')!.addEventListener('change', (e) => {
+    state.lattice = (e.target as HTMLInputElement).checked; draw();
+  });
+  document.getElementById('solve')!.addEventListener('change', (e) => {
+    state.solve = (e.target as HTMLInputElement).checked; draw();
+  });
+  document.getElementById('presets')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    const [a, b, c, d] = btn.dataset.m!.split(',').map(Number);
+    u1.x = a; u1.y = b; u2.x = c; u2.y = d;
+    draw();
+  });
+
+  draw();
+</script>
+
+<style>
+  #span { touch-action: none; }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.86rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .check input { accent-color: var(--accent); width: 15px; height: 15px; }
+</style>

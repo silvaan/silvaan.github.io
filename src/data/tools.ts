@@ -65,6 +65,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'tangent-plane',
+        title: 'Tangent Plane & Directional Derivative',
+        description:
+          'Ride a point over a 3D surface with its tangent plane attached, and watch the slope change with direction, steepest along the gradient.',
+        href: '/simulations/calculus/tangent-plane',
+        status: 'live',
+      },
+      {
         slug: 'lagrange-multipliers',
         title: 'Lagrange Multipliers',
         description:
@@ -73,11 +81,19 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'tangent-plane',
-        title: 'Tangent Plane & Directional Derivative',
+        slug: 'divergence',
+        title: 'Divergence',
         description:
-          'Ride a point over a 3D surface with its tangent plane attached, and watch the slope change with direction, steepest along the gradient.',
-        href: '/simulations/calculus/tangent-plane',
+          'Place a tiny material patch in a vector field and watch it expand near sources, contract near sinks, or deform at zero divergence.',
+        href: '/simulations/calculus/divergence',
+        status: 'live',
+      },
+      {
+        slug: 'curl',
+        title: 'Curl',
+        description:
+          'Drop a paddle wheel into a vector field and watch local circulation make it spin, revealing the magnitude and sign of curl.',
+        href: '/simulations/calculus/curl',
         status: 'live',
       },
     ],
@@ -102,6 +118,22 @@ export const AREAS: Area[] = [
         description:
           'Spin a vector around the circle and watch where the matrix sends it. When the input and output line up, you have found an eigenvector.',
         href: '/simulations/linear-algebra/eigenvectors',
+        status: 'live',
+      },
+      {
+        slug: 'span',
+        title: 'Span & Linear Combinations',
+        description:
+          'Drag two vectors and see everywhere their scaled sums can reach, the whole plane, or a single line when they line up.',
+        href: '/simulations/linear-algebra/span',
+        status: 'live',
+      },
+      {
+        slug: 'svd',
+        title: 'Singular Value Decomposition',
+        description:
+          'Watch any matrix turn a circle into an ellipse as rotate, stretch, rotate, the geometry of A = U Σ Vᵀ.',
+        href: '/simulations/linear-algebra/svd',
         status: 'live',
       },
     ],
@@ -272,6 +304,14 @@ export const AREAS: Area[] = [
     description: 'How models learn to produce new text, one token at a time.',
     icon: 'M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4z M18.5 13.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z',
     simulators: [
+      {
+        slug: 'data-manifold',
+        title: 'The Data Manifold',
+        description:
+          'Explore the enormous space of possible pixel arrays and see how real images occupy only a thin, structured region where probability concentrates.',
+        href: '/simulations/generative-ai/data-manifold',
+        status: 'live',
+      },
       {
         slug: 'autoregressive',
         title: 'Autoregressive Models',

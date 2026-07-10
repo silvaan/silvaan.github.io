@@ -1,0 +1,284 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="Singular Value Decomposition"
+  description="Every matrix, however messy, is secretly just three clean steps: rotate, stretch along the axes, rotate again. That is the SVD, A = U Σ Vᵀ. Watch the unit circle turn into an ellipse and see exactly which rotation and which stretch produced it."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="svd" width="640" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Matrix A</label>
+        <div class="matrix-view" aria-label="current matrix">
+          <span class="bracket" aria-hidden="true"></span>
+          <div class="matrix-cells">
+            <b id="m-a">1.20</b><b id="m-b">0.80</b>
+            <b id="m-c">0.30</b><b id="m-d">1.10</b>
+          </div>
+          <span class="bracket" aria-hidden="true"></span>
+        </div>
+        <div style="display:grid;gap:12px;margin-top:14px">
+          <div class="control"><label>a <b id="aval">1.20</b></label><input type="range" id="a" min="-2.5" max="2.5" step="0.05" value="1.2"></div>
+          <div class="control"><label>b <b id="bval">0.80</b></label><input type="range" id="b" min="-2.5" max="2.5" step="0.05" value="0.8"></div>
+          <div class="control"><label>c <b id="cval">0.30</b></label><input type="range" id="c" min="-2.5" max="2.5" step="0.05" value="0.3"></div>
+          <div class="control"><label>d <b id="dval">1.10</b></label><input type="range" id="d" min="-2.5" max="2.5" step="0.05" value="1.1"></div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Stage of A = U Σ Vᵀ <b id="tval">whole</b></label>
+        <input type="range" id="t" min="0" max="300" value="300" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn ghost" id="animate">Animate steps</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Presets</label>
+        <div class="seg" id="presets">
+          <button data-m="1.2,0.8,0.3,1.1">Generic</button>
+          <button data-m="2,0,0,0.6">Diagonal</button>
+          <button data-m="1,1,1,1">Rank 1</button>
+          <button data-m="0.8,-1.4,1.4,0.8">Rotation+</button>
+        </div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Singular values σ₁, σ₂</span><b id="sv">—</b></div>
+        <div class="row"><span>Condition σ₁/σ₂</span><b id="cond">—</b></div>
+        <div class="row"><span>Determinant</span><b id="det">—</b></div>
+        <div class="row"><span>Rank</span><b id="rank">—</b></div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the <b>Stage</b> slider left to right. The circle first <b>rotates</b>
+      (Vᵀ), then <b>stretches along the axes</b> by σ₁ and σ₂ (Σ), then
+      <b>rotates</b> again (U). Three simple moves rebuild any matrix.
+    </li>
+    <li>
+      The teal and amber arrows are the <b>right singular vectors</b> v₁, v₂: the
+      special input directions that stay perpendicular. A sends them to the
+      ellipse's axes, scaled by the <b>singular values</b> σ₁ ≥ σ₂.
+    </li>
+    <li>
+      Push a preset toward <b>Rank 1</b>: σ₂ collapses to 0, the ellipse
+      flattens to a line, and the determinant (σ₁σ₂) vanishes. The condition
+      number σ₁/σ₂ blowing up is exactly what makes a matrix hard to invert.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const M = { a: 1.2, b: 0.8, c: 0.3, d: 1.1 };
+  const view = { t: 1 }; // 0..3 across the three stages
+
+  const canvas = document.getElementById('svd') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const O = { x: W / 2, y: H / 2 };
+  const U = 118;
+  const toPx = (x: number, y: number) => ({ px: O.x + x * U, py: O.y - y * U });
+
+  // 2x2 SVD via the symmetric eigenproblem of AᵀA
+  function svd() {
+    const { a, b, c, d } = M;
+    // AᵀA = [[a²+c², ab+cd],[ab+cd, b²+d²]]
+    const e = a * a + c * c, f = a * b + c * d, g = b * b + d * d;
+    const theta = 0.5 * Math.atan2(2 * f, e - g); // rotates AᵀA to diagonal → V
+    const cv = Math.cos(theta), sv = Math.sin(theta);
+    // singular values from A·v_i
+    const v1 = { x: cv, y: sv }, v2 = { x: -sv, y: cv };
+    const Av1 = { x: a * v1.x + b * v1.y, y: c * v1.x + d * v1.y };
+    const Av2 = { x: a * v2.x + b * v2.y, y: c * v2.x + d * v2.y };
+    let s1 = Math.hypot(Av1.x, Av1.y), s2 = Math.hypot(Av2.x, Av2.y);
+    const u1 = s1 > 1e-9 ? { x: Av1.x / s1, y: Av1.y / s1 } : { x: 1, y: 0 };
+    const u2 = s2 > 1e-9 ? { x: Av2.x / s2, y: Av2.y / s2 } : { x: -u1.y, y: u1.x };
+    // order so σ1 ≥ σ2
+    let V1 = v1, V2 = v2, U1 = u1, U2 = u2;
+    if (s2 > s1) { [s1, s2] = [s2, s1];[V1, V2] = [V2, V1];[U1, U2] = [U2, U1]; }
+    return { s1, s2, V1, V2, U1, U2 };
+  }
+
+  // Build the transform applied to a unit-circle point at stage t (0..3).
+  // Stage 0-1: apply Vᵀ (rotate). 1-2: scale by Σ along axes. 2-3: apply U (rotate).
+  function transformPoint(x: number, y: number, s: ReturnType<typeof svd>, t: number) {
+    // Vᵀ maps v1->e1, v2->e2. Its rotation angle:
+    const angV = Math.atan2(s.V1.y, s.V1.x); // v1 angle; Vᵀ rotates by -angV
+    const angU = Math.atan2(s.U1.y, s.U1.x); // U rotates e1->u1 by +angU
+    let px = x, py = y;
+
+    // Stage 1: rotate by -angV * min(t,1)
+    const f1 = Math.max(0, Math.min(1, t));
+    const r1 = -angV * f1;
+    let c1 = Math.cos(r1), s1r = Math.sin(r1);
+    let nx = px * c1 - py * s1r, ny = px * s1r + py * c1;
+    px = nx; py = ny;
+
+    // Stage 2: scale toward (σ1, σ2) along axes
+    const f2 = Math.max(0, Math.min(1, t - 1));
+    const sxk = 1 + (s.s1 - 1) * f2;
+    const syk = 1 + (s.s2 - 1) * f2;
+    px *= sxk; py *= syk;
+
+    // Stage 3: rotate by +angU * f3
+    const f3 = Math.max(0, Math.min(1, t - 2));
+    const r3 = angU * f3;
+    const c3 = Math.cos(r3), s3 = Math.sin(r3);
+    nx = px * c3 - py * s3; ny = px * s3 + py * c3;
+    return { x: nx, y: ny };
+  }
+
+  function arrow(x: number, y: number, color: string, label: string, w = 3) {
+    const p = toPx(x, y);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(p.px, p.py); ctx.stroke();
+    const ang = Math.atan2(p.py - O.y, p.px - O.x);
+    ctx.beginPath();
+    ctx.moveTo(p.px, p.py);
+    ctx.lineTo(p.px - 12 * Math.cos(ang - 0.4), p.py - 12 * Math.sin(ang - 0.4));
+    ctx.lineTo(p.px - 12 * Math.cos(ang + 0.4), p.py - 12 * Math.sin(ang + 0.4));
+    ctx.closePath(); ctx.fill();
+    if (label) {
+      ctx.font = "600 14px 'JetBrains Mono', monospace";
+      ctx.fillText(label, p.px + 7, p.py - 7);
+    }
+  }
+
+  function draw() {
+    const grid = css('--border') || '#262a32';
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    const amber = '#f59e0b';
+    ctx.clearRect(0, 0, W, H);
+    const s = svd();
+    const t = view.t;
+
+    // grid
+    ctx.strokeStyle = grid;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 1;
+    for (let i = -3; i <= 3; i++) {
+      const a = toPx(i, -3), b = toPx(i, 3), c = toPx(-3, i), e = toPx(3, i);
+      ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(c.px, c.py); ctx.lineTo(e.px, e.py); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // faint original unit circle
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.arc(O.x, O.y, U, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // transformed shape at current stage
+    ctx.fillStyle = 'rgba(94,234,212,0.12)';
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 96; i++) {
+      const a = (i / 96) * Math.PI * 2;
+      const q = transformPoint(Math.cos(a), Math.sin(a), s, t);
+      const p = toPx(q.x, q.y);
+      i === 0 ? ctx.moveTo(p.px, p.py) : ctx.lineTo(p.px, p.py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // the two tracked singular directions, transformed with the shape
+    const t1 = transformPoint(s.V1.x, s.V1.y, s, t);
+    const t2 = transformPoint(s.V2.x, s.V2.y, s, t);
+    arrow(t1.x, t1.y, accent, t < 0.5 ? 'v₁' : 'σ₁');
+    arrow(t2.x, t2.y, amber, t < 0.5 ? 'v₂' : 'σ₂');
+
+    // stage caption
+    ctx.fillStyle = css('--text-faint') || '#6b7280';
+    ctx.font = "13px 'JetBrains Mono', monospace";
+    const stage = t <= 1 ? 'Vᵀ  ·  rotate' : t <= 2 ? 'Σ  ·  stretch by σ₁, σ₂' : 'U  ·  rotate';
+    ctx.fillText(stage, 18, 28);
+
+    // matrix + readouts
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+      (document.getElementById('m-' + k) as HTMLElement).textContent = M[k].toFixed(2);
+    });
+    const det = M.a * M.d - M.b * M.c;
+    (document.getElementById('sv') as HTMLElement).textContent = `${s.s1.toFixed(2)}, ${s.s2.toFixed(2)}`;
+    (document.getElementById('cond') as HTMLElement).textContent = s.s2 > 1e-4 ? (s.s1 / s.s2).toFixed(2) : '∞';
+    (document.getElementById('det') as HTMLElement).textContent = det.toFixed(3);
+    (document.getElementById('rank') as HTMLElement).textContent = s.s2 > 1e-3 ? '2' : s.s1 > 1e-3 ? '1' : '0';
+  }
+
+  function setT(t: number) {
+    view.t = t;
+    (document.getElementById('t') as HTMLInputElement).value = String(Math.round(t * 100));
+    const el = document.getElementById('tval') as HTMLElement;
+    el.textContent = t >= 2.99 ? 'whole' : t <= 1 ? 'Vᵀ' : t <= 2 ? 'Σ' : 'U';
+  }
+
+  function sync() {
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      (document.getElementById(k) as HTMLInputElement).value = String(M[k]);
+    });
+  }
+
+  (['a', 'b', 'c', 'd'] as const).forEach((k) => {
+    const el = document.getElementById(k) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      M[k] = +el.value;
+      (document.getElementById(k + 'val') as HTMLElement).textContent = M[k].toFixed(2);
+      draw();
+    });
+  });
+
+  document.getElementById('t')!.addEventListener('input', (e) => {
+    setT(+(e.target as HTMLInputElement).value / 100);
+    draw();
+  });
+
+  let raf = 0;
+  document.getElementById('animate')!.addEventListener('click', () => {
+    cancelAnimationFrame(raf);
+    const start = performance.now();
+    const dur = 2600;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / dur);
+      setT(p * 3);
+      draw();
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  });
+
+  document.getElementById('presets')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    const [a, b, c, d] = btn.dataset.m!.split(',').map(Number);
+    Object.assign(M, { a, b, c, d });
+    sync();
+    setT(3);
+    draw();
+  });
+
+  setT(3);
+  sync();
+  draw();
+</script>
+
+<style>
+  #svd { touch-action: none; }
+</style>

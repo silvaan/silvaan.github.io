@@ -1,0 +1,275 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Curl"
+  description="Curl measures how much a vector field twists a tiny region. In 2D it is a signed number: drop in a little paddle wheel and positive curl spins it counterclockwise, negative curl clockwise, zero curl leaves it still, no matter how the flow itself is shaped."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="curl" width="900" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Vector field</label>
+        <div class="seg" id="field">
+          <button data-f="rotation" class="active">Rotation</button>
+          <button data-f="shear">Shear</button>
+          <button data-f="radial">Radial</button>
+          <button data-f="vortices">Vortices</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset wheel</button>
+      </div>
+
+      <div class="control">
+        <label>Strength <b id="strength-val">1.00</b></label>
+        <input id="strength" type="range" min="-150" max="150" value="100" />
+      </div>
+      <div class="control">
+        <label>Flow speed <b id="speed-val">1.0×</b></label>
+        <input id="speed" type="range" min="0" max="200" value="100" />
+      </div>
+      <div class="control">
+        <label>Loop radius ε <b id="radius-val">0.19</b></label>
+        <input id="radius" type="range" min="10" max="36" value="19" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>(∇ × F)_z at probe</span><b id="value">+2.00</b></div>
+        <div class="row"><span>Circulation ÷ area</span><b id="circulation">+2.00</b></div>
+        <div class="row"><span>Angular speed ω = ½ curl</span><b id="omega">1.00 rad/s</b></div>
+        <div class="row"><span>Wheel rotation</span><b id="direction">counterclockwise</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the paddle wheel anywhere in the field. The edge marks show flow
+        pushing along (teal) or against (amber) the loop. Curl is local rotation,
+        not whether the arrows travel on curved paths.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      In rigid <b>Rotation</b> the paddle turns at half the curl: <b>ω = ½ ∇ × F</b>.
+      Flip the strength and both the spin and the sign reverse.
+    </li>
+    <li>
+      Pick <b>Shear</b>: every arrow points horizontally, yet the layers slide
+      past each other at different speeds, so the wheel still turns. A field
+      needn't look swirly to have curl.
+    </li>
+    <li>
+      Pick <b>Radial</b>: flow streams straight outward along rays, clearly not
+      circulating, and the paddle <b>does not spin</b>. This field has divergence
+      but <b>zero curl</b>, the mirror image of the source in the divergence demo.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const canvas = document.getElementById('curl') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const state = { field: 'rotation', strength: 1, speed: 1, radius: 0.19, running: true, px: 0, py: 0, angle: 0 };
+  let last = 0, drag = false;
+  const UNIT = 190;
+  const sx = (x: number) => W / 2 + x * UNIT;
+  const sy = (y: number) => H / 2 - y * UNIT;
+
+  function vec(x: number, y: number) {
+    const s = state.strength;
+    if (state.field === 'rotation') return { x: -s * y, y: s * x };
+    if (state.field === 'shear') return { x: s * y, y: 0 };
+    if (state.field === 'radial') return { x: s * x, y: s * y };
+    const eps = 0.09;
+    const vortex = (cx: number, cy: number, k: number) => {
+      const dx = x - cx, dy = y - cy, r = dx * dx + dy * dy + eps;
+      return { x: (-k * dy) / r, y: (k * dx) / r };
+    };
+    const p = vortex(-0.72, 0, s), q = vortex(0.72, 0, -s);
+    return { x: (p.x + q.x) * 0.38, y: (p.y + q.y) * 0.38 };
+  }
+  function curl(x: number, y: number) {
+    const s = state.strength;
+    if (state.field === 'rotation') return 2 * s;
+    if (state.field === 'shear') return -s;
+    if (state.field === 'radial') return 0;
+    const h = 0.008;
+    return (vec(x + h, y).y - vec(x - h, y).y) / (2 * h) - (vec(x, y + h).x - vec(x, y - h).x) / (2 * h);
+  }
+  function circulationPerArea() {
+    let sum = 0;
+    const N = 120, r = state.radius, ds = (2 * Math.PI * r) / N;
+    for (let i = 0; i < N; i++) {
+      const a = ((i + 0.5) / N) * Math.PI * 2, tx = -Math.sin(a), ty = Math.cos(a);
+      const v = vec(state.px + Math.cos(a) * r, state.py + Math.sin(a) * r);
+      sum += (v.x * tx + v.y * ty) * ds;
+    }
+    return sum / (Math.PI * r * r);
+  }
+
+  function drawArrow(x: number, y: number) {
+    const v = vec(x, y);
+    const m = Math.hypot(v.x, v.y);
+    if (m < 1e-4) return;
+    const scale = Math.min(27, m * 15) / m;
+    const ax = sx(x), ay = sy(y), bx = ax + v.x * scale, by = ay - v.y * scale;
+    const t = Math.min(1, m / 2.2);
+    ctx.strokeStyle = css('--accent') || '#7c8cff';
+    ctx.globalAlpha = 0.3 + 0.4 * t;
+    ctx.lineWidth = 1.3 + 1.2 * t;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    const a = Math.atan2(by - ay, bx - ax);
+    const hs = 5 + 2 * t;
+    ctx.fillStyle = css('--accent') || '#7c8cff';
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - hs * Math.cos(a - 0.5), by - hs * Math.sin(a - 0.5));
+    ctx.lineTo(bx - hs * Math.cos(a + 0.5), by - hs * Math.sin(a + 0.5));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const faint = css('--text-faint') || '#6b7280';
+    const accent = css('--accent') || '#7c8cff';
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = `rgba(${ink()},0.06)`;
+    ctx.lineWidth = 1;
+    for (let gx = W / 2; gx < W; gx += 48) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gx = W / 2 - 48; gx > 0; gx -= 48) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gy = H / 2; gy < H; gy += 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+    for (let gy = H / 2 - 48; gy > 0; gy -= 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+
+    for (let y = -1.15; y <= 1.15; y += 0.29)
+      for (let x = -2.05; x <= 2.05; x += 0.3) drawArrow(x, y);
+
+    const cx = sx(state.px), cy = sy(state.py), r = state.radius * UNIT;
+
+    // circulation loop
+    ctx.fillStyle = 'rgba(94,234,212,0.1)';
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // tangential-flow marks around the loop
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const x = state.px + Math.cos(a) * state.radius, y = state.py + Math.sin(a) * state.radius;
+      const tx = -Math.sin(a), ty = Math.cos(a);
+      const v = vec(x, y);
+      const along = v.x * tx + v.y * ty;
+      const len = Math.max(-14, Math.min(14, along * 9));
+      ctx.strokeStyle = along >= 0 ? 'rgba(94,234,212,0.9)' : 'rgba(245,158,11,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), sy(y));
+      ctx.lineTo(sx(x) + tx * len, sy(y) - ty * len);
+      ctx.stroke();
+    }
+
+    // paddle wheel
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-state.angle);
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = i % 2 ? teal : accent;
+      ctx.fillRect(-5, -r + 5, 10, r - 10);
+    }
+    ctx.fillStyle = `rgba(${ink()},1)`;
+    ctx.beginPath();
+    ctx.arc(0, 0, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('curl = circulation per unit area in the tiny-loop limit', 16, H - 16);
+
+    // readouts
+    const c = curl(state.px, state.py);
+    const ce = circulationPerArea();
+    const om = c / 2;
+    (document.getElementById('value') as HTMLElement).textContent = (c >= 0 ? '+' : '') + c.toFixed(2);
+    (document.getElementById('circulation') as HTMLElement).textContent = (ce >= 0 ? '+' : '') + ce.toFixed(2);
+    (document.getElementById('omega') as HTMLElement).textContent = Math.abs(om).toFixed(2) + ' rad/s';
+    const d = document.getElementById('direction') as HTMLElement;
+    d.textContent = Math.abs(c) < 0.02 ? 'not rotating' : c > 0 ? 'counterclockwise' : 'clockwise';
+    d.style.color = Math.abs(c) < 0.02 ? faint : c > 0 ? teal : '#f59e0b';
+  }
+
+  function loop(t: number) {
+    if (!last) last = t;
+    const dt = Math.min(0.04, (t - last) / 1000);
+    last = t;
+    if (state.running) state.angle += (curl(state.px, state.py) / 2) * dt * state.speed;
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function pointer(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    state.px = Math.max(-1.95, Math.min(1.95, (((e.clientX - r.left) / r.width) * W - W / 2) / UNIT));
+    state.py = Math.max(-1.1, Math.min(1.1, -(((e.clientY - r.top) / r.height) * H - H / 2) / UNIT));
+  }
+  canvas.addEventListener('pointerdown', (e) => { drag = true; canvas.setPointerCapture(e.pointerId); pointer(e); });
+  canvas.addEventListener('pointermove', (e) => drag && pointer(e));
+  canvas.addEventListener('pointerup', () => (drag = false));
+  canvas.addEventListener('pointercancel', () => (drag = false));
+
+  document.getElementById('field')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#field button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.field = b.dataset.f!;
+  });
+  document.getElementById('strength')!.addEventListener('input', (e) => {
+    state.strength = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('strength-val') as HTMLElement).textContent = state.strength.toFixed(2);
+  });
+  document.getElementById('speed')!.addEventListener('input', (e) => {
+    state.speed = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('speed-val') as HTMLElement).textContent = state.speed.toFixed(1) + '×';
+  });
+  document.getElementById('radius')!.addEventListener('input', (e) => {
+    state.radius = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('radius-val') as HTMLElement).textContent = state.radius.toFixed(2);
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => { state.running = !state.running; runBtn.textContent = state.running ? 'Pause' : 'Run'; });
+  document.getElementById('reset')!.addEventListener('click', () => { state.angle = 0; state.px = 0; state.py = 0; });
+
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #curl {
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>

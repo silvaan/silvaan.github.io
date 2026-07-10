@@ -1,0 +1,293 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Divergence"
+  description="Divergence measures the net flow out of an infinitesimal region. Drop a tiny material patch into the flow: positive divergence makes it swell, negative divergence squeezes it, and zero divergence keeps its area fixed even as the flow stretches and shears it."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="div" width="900" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Vector field</label>
+        <div class="seg" id="field">
+          <button data-f="source" class="active">Source</button>
+          <button data-f="sink">Sink</button>
+          <button data-f="saddle">Saddle</button>
+          <button data-f="wave">Variable</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset patch</button>
+      </div>
+
+      <div class="control">
+        <label>Strength <b id="strength-val">1.00</b></label>
+        <input id="strength" type="range" min="-150" max="150" value="100" />
+      </div>
+      <div class="control">
+        <label>Flow speed <b id="speed-val">1.0×</b></label>
+        <input id="speed" type="range" min="0" max="200" value="100" />
+      </div>
+      <div class="control">
+        <label>Patch radius ε <b id="radius-val">0.18</b></label>
+        <input id="radius" type="range" min="8" max="35" value="18" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>∇ · F at probe</span><b id="value">+2.00</b></div>
+        <div class="row"><span>Flux ÷ area</span><b id="flux">+2.00</b></div>
+        <div class="row"><span>Patch area</span><b id="area">1.00×</b></div>
+        <div class="row"><span>Local behavior</span><b id="behavior">expanding</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the ring to move the probe. The teal blob is a small material patch
+        carried along by the flow, not a bundle of field arrows. Its area change
+        is the divergence.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      At a <b>source</b> more flow leaves the patch than enters, so its area
+      grows and <b>∇ · F &gt; 0</b>. Flip the strength negative and the very same
+      field becomes a sink that swallows the patch.
+    </li>
+    <li>
+      Pick <b>Saddle</b>. The patch stretches one way and squeezes the other, yet
+      its <b>area stays constant</b>: violent deformation can still have zero
+      divergence (incompressible flow).
+    </li>
+    <li>
+      In the <b>Variable</b> field, drag the probe around. Divergence is
+      <b>local</b>: one field can have expanding, incompressible and contracting
+      regions all at once. The little edge marks show flow leaving (teal) or
+      entering (amber) the patch boundary.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const canvas = document.getElementById('div') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const state = { field: 'source', strength: 1, speed: 1, radius: 0.18, running: true, px: 0, py: 0, time: 0 };
+  let last = 0, drag = false;
+  const UNIT = 190;
+  const sx = (x: number) => W / 2 + x * UNIT;
+  const sy = (y: number) => H / 2 - y * UNIT;
+
+  function vec(x: number, y: number) {
+    const s = state.strength;
+    if (state.field === 'source') return { x: s * x, y: s * y };
+    if (state.field === 'sink') return { x: -s * x, y: -s * y };
+    if (state.field === 'saddle') return { x: s * x, y: -s * y };
+    return { x: s * Math.sin(x * 1.5), y: s * Math.sin(y * 1.5) };
+  }
+  function divergence(x: number, y: number) {
+    const s = state.strength;
+    if (state.field === 'source') return 2 * s;
+    if (state.field === 'sink') return -2 * s;
+    if (state.field === 'saddle') return 0;
+    return 1.5 * s * (Math.cos(x * 1.5) + Math.cos(y * 1.5));
+  }
+  function fluxPerArea() {
+    let flux = 0;
+    const N = 96, r = state.radius, ds = (2 * Math.PI * r) / N;
+    for (let i = 0; i < N; i++) {
+      const a = ((i + 0.5) / N) * Math.PI * 2, nx = Math.cos(a), ny = Math.sin(a);
+      const v = vec(state.px + nx * r, state.py + ny * r);
+      flux += (v.x * nx + v.y * ny) * ds;
+    }
+    return flux / (Math.PI * r * r);
+  }
+
+  // background field arrow, magnitude-mapped like the other sims
+  function drawArrow(x: number, y: number) {
+    const v = vec(x, y);
+    const m = Math.hypot(v.x, v.y);
+    if (m < 1e-4) return;
+    const scale = Math.min(26, m * 13) / m;
+    const ax = sx(x), ay = sy(y), bx = ax + v.x * scale, by = ay - v.y * scale;
+    const t = Math.min(1, m / 2.2);
+    ctx.strokeStyle = css('--accent') || '#7c8cff';
+    ctx.globalAlpha = 0.3 + 0.4 * t;
+    ctx.lineWidth = 1.3 + 1.2 * t;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    const a = Math.atan2(by - ay, bx - ax);
+    const hs = 5 + 2 * t;
+    ctx.fillStyle = css('--accent') || '#7c8cff';
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - hs * Math.cos(a - 0.5), by - hs * Math.sin(a - 0.5));
+    ctx.lineTo(bx - hs * Math.cos(a + 0.5), by - hs * Math.sin(a + 0.5));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // advect a boundary point of the patch through the flow for `state.time`
+  function evolvedPoint(a: number, r: number) {
+    let x = state.px + Math.cos(a) * r, y = state.py + Math.sin(a) * r;
+    const steps = 22, dt = (state.time / steps) * 0.34;
+    for (let i = 0; i < steps; i++) {
+      const v = vec(x, y);
+      x += v.x * dt;
+      y += v.y * dt;
+    }
+    return { x, y };
+  }
+
+  function draw() {
+    const faint = css('--text-faint') || '#6b7280';
+    const teal = css('--accent-2') || '#5eead4';
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = `rgba(${ink()},0.06)`;
+    ctx.lineWidth = 1;
+    for (let gx = W / 2; gx < W; gx += 48) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gx = W / 2 - 48; gx > 0; gx -= 48) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gy = H / 2; gy < H; gy += 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+    for (let gy = H / 2 - 48; gy > 0; gy -= 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+
+    for (let y = -1.15; y <= 1.15; y += 0.29)
+      for (let x = -2.05; x <= 2.05; x += 0.3) drawArrow(x, y);
+
+    // material patch (advected blob)
+    const baseR = state.radius;
+    const pts = [];
+    for (let i = 0; i < 48; i++) pts.push(evolvedPoint((i / 48) * Math.PI * 2, baseR));
+    ctx.fillStyle = 'rgba(94,234,212,0.14)';
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))));
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = teal;
+    pts.filter((_, i) => i % 3 === 0).forEach((p) => {
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // outward-flux marks on the probe circle
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2, nx = Math.cos(a), ny = Math.sin(a);
+      const x = state.px + nx * baseR, y = state.py + ny * baseR;
+      const v = vec(x, y);
+      const out = v.x * nx + v.y * ny;
+      const len = Math.max(-16, Math.min(16, out * 9));
+      ctx.strokeStyle = out >= 0 ? 'rgba(94,234,212,0.85)' : 'rgba(245,158,11,0.85)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), sy(y));
+      ctx.lineTo(sx(x) + nx * len, sy(y) - ny * len);
+      ctx.stroke();
+    }
+
+    // probe ring
+    ctx.strokeStyle = `rgba(${ink()},0.9)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(sx(state.px), sy(state.py), baseR * UNIT, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('∇ · F is the patch’s instantaneous rate of area change', 16, H - 16);
+
+    // readouts
+    const d = divergence(state.px, state.py);
+    const fe = fluxPerArea();
+    let poly = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      poly += p.x * q.y - q.x * p.y;
+    }
+    const factor = Math.abs(poly / 2) / (Math.PI * baseR * baseR);
+    (document.getElementById('value') as HTMLElement).textContent = (d >= 0 ? '+' : '') + d.toFixed(2);
+    (document.getElementById('flux') as HTMLElement).textContent = (fe >= 0 ? '+' : '') + fe.toFixed(2);
+    (document.getElementById('area') as HTMLElement).textContent = factor.toFixed(2) + '×';
+    const b = document.getElementById('behavior') as HTMLElement;
+    b.textContent = Math.abs(d) < 0.03 ? 'area preserving' : d > 0 ? 'expanding' : 'contracting';
+    b.style.color = Math.abs(d) < 0.03 ? faint : d > 0 ? teal : '#f59e0b';
+  }
+
+  function loop(t: number) {
+    if (!last) last = t;
+    const dt = Math.min(0.04, (t - last) / 1000);
+    last = t;
+    if (state.running) {
+      state.time += dt * state.speed;
+      if (state.time > 1.35) state.time = 0;
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function pointer(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    state.px = Math.max(-1.95, Math.min(1.95, (((e.clientX - r.left) / r.width) * W - W / 2) / UNIT));
+    state.py = Math.max(-1.1, Math.min(1.1, -(((e.clientY - r.top) / r.height) * H - H / 2) / UNIT));
+    state.time = 0;
+  }
+  canvas.addEventListener('pointerdown', (e) => { drag = true; canvas.setPointerCapture(e.pointerId); pointer(e); });
+  canvas.addEventListener('pointermove', (e) => drag && pointer(e));
+  canvas.addEventListener('pointerup', () => (drag = false));
+  canvas.addEventListener('pointercancel', () => (drag = false));
+
+  document.getElementById('field')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#field button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.field = b.dataset.f!;
+    state.time = 0;
+  });
+  document.getElementById('strength')!.addEventListener('input', (e) => {
+    state.strength = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('strength-val') as HTMLElement).textContent = state.strength.toFixed(2);
+    state.time = 0;
+  });
+  document.getElementById('speed')!.addEventListener('input', (e) => {
+    state.speed = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('speed-val') as HTMLElement).textContent = state.speed.toFixed(1) + '×';
+  });
+  document.getElementById('radius')!.addEventListener('input', (e) => {
+    state.radius = +(e.target as HTMLInputElement).value / 100;
+    (document.getElementById('radius-val') as HTMLElement).textContent = state.radius.toFixed(2);
+    state.time = 0;
+  });
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => { state.running = !state.running; runBtn.textContent = state.running ? 'Pause' : 'Run'; });
+  document.getElementById('reset')!.addEventListener('click', () => { state.time = 0; state.px = 0; state.py = 0; });
+
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #div {
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>
