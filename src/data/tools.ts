@@ -301,7 +301,7 @@ export const AREAS: Area[] = [
   {
     slug: 'generative-ai',
     title: 'Generative AI',
-    description: 'How models learn to produce new text, one token at a time.',
+    description: 'How models learn the shape of data and generate new samples from it.',
     icon: 'M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4z M18.5 13.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z',
     simulators: [
       {
@@ -316,7 +316,7 @@ export const AREAS: Area[] = [
         slug: 'autoregressive',
         title: 'Autoregressive Models',
         description:
-          'Predict the next character from the text so far, sample it, append, repeat. The same next-token loop that powers large language models.',
+          'Predict the next word from the text so far, sample it, append, repeat, with a temperature knob. The same next-token loop that powers large language models.',
         href: '/simulations/generative-ai/autoregressive',
         status: 'live',
       },

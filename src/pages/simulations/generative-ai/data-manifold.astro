@@ -1,0 +1,307 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="generative-ai"
+  title="The Data Manifold"
+  description="An image is a single point in a space with one dimension per pixel value, a space of staggering size. Yet real images p(x) concentrate near a thin, structured sheet: the data manifold. Step off it and coherent pictures dissolve into noise almost at once."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="manifold" class="mf-canvas" width="900" height="540"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Image resolution</label>
+        <div class="seg" id="resolution">
+          <button data-n="8">8 × 8</button>
+          <button data-n="16" class="active">16 × 16</button>
+          <button data-n="32">32 × 32</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Move along the manifold <b id="along-val">42%</b></label>
+        <input type="range" id="along" min="0" max="100" value="42" />
+      </div>
+
+      <div class="control">
+        <label>Step off the manifold <b id="distance-val">0.00</b></label>
+        <input type="range" id="distance" min="-100" max="100" value="0" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="sample-real">Sample p(x)</button>
+        <button class="btn ghost" id="sample-space">Random pixels</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Pixel-space dimensions</span><b id="dims">768</b></div>
+        <div class="row"><span>Relative density p(x)</span><b id="density">100%</b></div>
+        <div class="row"><span>Region</span><b id="region">realistic</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit the space, scroll to zoom. The glowing ribbon is the
+        manifold; the dot is your current image, previewed on the right.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Nudge <b>Step off the manifold</b> just a little. The <b>density collapses</b>
+      and the tidy picture crumbles into static: almost every possible array of
+      pixel values looks like nothing at all.
+    </li>
+    <li>
+      Move <b>along</b> the ribbon instead. Many pixels change at once, yet the
+      image stays coherent. Those correlated changes are exactly why the real-image
+      region is <b>low-dimensional</b> compared with the ambient pixel space.
+    </li>
+    <li>
+      Raise the resolution 8 × 8 → 32 × 32. The picture barely changes, but the
+      ambient space jumps from <b>192 to 3,072 dimensions</b>. Real photos live in
+      millions of dimensions; <b>Random pixels</b> essentially never lands near the
+      data by chance, which is precisely why generative models must learn p(x).
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const canvas = document.getElementById('manifold') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const state = { t: 0.42, d: 0, n: 16, random: false };
+  const plot = { x: 34, y: 48, w: 530, h: 444 };
+  const camera = { yaw: -0.62, pitch: 0.3, distance: 8.5 };
+  let dragging = false;
+  let lastPointer = { x: 0, y: 0 };
+
+  type V3 = { x: number; y: number; z: number };
+  function curve3(t: number): V3 {
+    const a = (t - 0.5) * Math.PI * 2.25;
+    return { x: (t - 0.5) * 2.5, y: 0.62 * Math.sin(a), z: 0.62 * Math.cos(a) };
+  }
+  function normal3(t: number): V3 {
+    const a = (t - 0.5) * Math.PI * 2.25;
+    return { x: 0, y: Math.cos(a), z: -Math.sin(a) };
+  }
+  function rotate(v: V3): V3 {
+    const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+    const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+    const x = v.x * cy - v.z * sy, z1 = v.x * sy + v.z * cy;
+    return { x, y: v.y * cp - z1 * sp, z: v.y * sp + z1 * cp };
+  }
+  function project(v: V3) {
+    const r = rotate(v);
+    const depth = Math.max(0.7, camera.distance + r.z), scale = 390 / depth;
+    return { x: plot.x + plot.w / 2 + r.x * scale, y: plot.y + plot.h / 2 - r.y * scale, z: r.z, visible: camera.distance + r.z > 0.5 };
+  }
+
+  const density = () => (state.random ? 0 : Math.exp(-10 * state.d * state.d));
+
+  function noise(x: number, y: number, seed = 0) {
+    const v = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
+  function structuredPixel(x: number, y: number, n: number) {
+    const u = (x + 0.5) / n, v = (y + 0.5) / n;
+    const phase = state.t * Math.PI * 2;
+    const horizon = 0.5 + 0.08 * Math.sin(phase);
+    const sunX = 0.2 + state.t * 0.62;
+    const sunY = 0.22 + 0.05 * Math.cos(phase * 1.4);
+    const sun = Math.hypot(u - sunX, v - sunY) < 0.11;
+    const mountain = horizon - 0.17 * Math.abs(Math.sin(u * 8 + phase)) - 0.05 * Math.sin(u * 19 - phase);
+    if (sun) return [255, 202, 92];
+    if (v < mountain) {
+      const glow = Math.max(0, 1 - Math.hypot(u - sunX, v - sunY) * 1.5);
+      return [58 + 78 * glow, 80 + 72 * glow, 126 + 80 * glow];
+    }
+    if (v < horizon + 0.13) return [44 + 25 * u, 72 + 20 * u, 91 + 18 * u];
+    const water = 0.5 + 0.5 * Math.sin(y * 2.4 + x * 0.8 + phase * 2);
+    return [22 + 18 * water, 67 + 35 * water, 83 + 43 * water];
+  }
+
+  function pixel(x: number, y: number) {
+    if (state.random) return [noise(x, y, 1), noise(x, y, 2), noise(x, y, 3)].map((v) => v * 255);
+    const base = structuredPixel(x, y, state.n);
+    const mix = Math.min(1, Math.abs(state.d) * 1.25);
+    return base.map((v, c) => v * (1 - mix) + noise(x, y, c + Math.round(state.d * 97)) * 255 * mix);
+  }
+
+  function drawPreview() {
+    const px = 610, py = 118, size = 238;
+    const cell = size / state.n;
+    // neutral frame that works on either theme
+    ctx.strokeStyle = `rgba(${ink()},0.4)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px - 6, py - 6, size + 12, size + 12);
+    for (let y = 0; y < state.n; y++)
+      for (let x = 0; x < state.n; x++) {
+        const c = pixel(x, y).map(Math.round);
+        ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+        ctx.fillRect(px + x * cell, py + y * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+    ctx.fillStyle = `rgba(${ink()},0.9)`;
+    ctx.font = "600 14px 'JetBrains Mono', monospace";
+    ctx.fillText('x = one point in pixel space', px, py - 24);
+    ctx.fillStyle = css('--text-faint') || '#6b7280';
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText(`${state.n} × ${state.n} × 3 values`, px, py + size + 24);
+    ctx.fillText(state.random ? 'uniform random sample' : `distance to manifold: ${Math.abs(state.d).toFixed(2)}`, px, py + size + 44);
+  }
+
+  function draw() {
+    const accent = css('--accent') || '#7c8cff';
+    const teal = css('--accent-2') || '#5eead4';
+    const faint = css('--text-faint') || '#6b7280';
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.fillStyle = `rgba(${ink()},0.02)`;
+    ctx.fillRect(plot.x, plot.y, plot.w, plot.h);
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('PIXEL SPACE · DRAG TO ORBIT · SCROLL TO ZOOM', plot.x, 28);
+
+    // ambient pixel space: nested boxes fading outward to suggest no boundary
+    for (const size of [2.5, 5, 9]) {
+      const corners: V3[] = [];
+      for (const x of [-size, size]) for (const y of [-size, size]) for (const z of [-size, size]) corners.push({ x, y, z });
+      const a = size === 2.5 ? 0.16 : size === 5 ? 0.08 : 0.03;
+      ctx.strokeStyle = `rgba(${ink()},${a})`;
+      ctx.lineWidth = 1;
+      for (let i = 0; i < corners.length; i++)
+        for (let j = i + 1; j < corners.length; j++) {
+          const c0 = corners[i], c1 = corners[j];
+          const diffs = +(c0.x !== c1.x) + +(c0.y !== c1.y) + +(c0.z !== c1.z);
+          if (diffs !== 1) continue;
+          const p = project(c0), q = project(c1);
+          if (!p.visible || !q.visible) continue;
+          ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+        }
+    }
+
+    // faint random points: arbitrary pixel arrays filling the ambient space
+    const cloud: ReturnType<typeof project>[] = [];
+    for (let i = 0; i < 850; i++) {
+      const p = project({ x: (noise(i, 2, 4) - 0.5) * 18, y: (noise(i, 3, 5) - 0.5) * 18, z: (noise(i, 7, 6) - 0.5) * 18 });
+      if (p.visible && p.x > plot.x && p.x < plot.x + plot.w && p.y > plot.y && p.y < plot.y + plot.h) cloud.push(p);
+    }
+    cloud.sort((a, b) => b.z - a.z).forEach((p) => {
+      ctx.fillStyle = `rgba(${ink()},${0.08 + (p.z + 1.5) * 0.018})`;
+      ctx.fillRect(p.x, p.y, 1.5, 1.5);
+    });
+
+    // the thin twisted ribbon: the high-density data manifold
+    const strips: { p: ReturnType<typeof project>[]; z: number }[] = [];
+    for (let i = 0; i < 72; i++) {
+      const t0 = i / 72, t1 = (i + 1) / 72, c0 = curve3(t0), c1 = curve3(t1), n0 = normal3(t0), n1 = normal3(t1), w = 0.105;
+      const p = [
+        project({ x: c0.x + n0.x * w, y: c0.y + n0.y * w, z: c0.z + n0.z * w }),
+        project({ x: c1.x + n1.x * w, y: c1.y + n1.y * w, z: c1.z + n1.z * w }),
+        project({ x: c1.x - n1.x * w, y: c1.y - n1.y * w, z: c1.z - n1.z * w }),
+        project({ x: c0.x - n0.x * w, y: c0.y - n0.y * w, z: c0.z - n0.z * w }),
+      ];
+      strips.push({ p, z: p.reduce((s, q) => s + q.z, 0) / 4 });
+    }
+    strips.sort((a, b) => b.z - a.z).forEach((s) => {
+      ctx.beginPath();
+      s.p.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(94,234,212,0.34)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(94,234,212,0.65)';
+      ctx.stroke();
+    });
+
+    // current image: on the ribbon, pushed off by distance d
+    const c = curve3(state.t), n = normal3(state.t);
+    const base = project(c);
+    let q = project({ x: c.x + n.x * state.d * 1.15, y: c.y + n.y * state.d * 1.15, z: c.z + n.z * state.d * 1.15 });
+    if (state.random) q = project({ x: 1.18, y: 0.94, z: -0.98 });
+    ctx.setLineDash([4, 5]);
+    ctx.strokeStyle = `rgba(${ink()},0.35)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = state.random ? '#f59e0b' : accent;
+    ctx.beginPath(); ctx.arc(q.x, q.y, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.75)`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = teal;
+    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    ctx.fillText('thin manifold · high p(x)', plot.x + 18, plot.y + plot.h - 18);
+    ctx.fillStyle = faint;
+    ctx.fillText('almost all of pixel space · noise', plot.x + 242, plot.y + plot.h - 18);
+    drawPreview();
+
+    const den = density();
+    (document.getElementById('dims') as HTMLElement).textContent = (state.n * state.n * 3).toLocaleString();
+    (document.getElementById('density') as HTMLElement).textContent = den < 0.0001 ? '≈ 0%' : `${(den * 100).toFixed(den < 0.1 ? 2 : 0)}%`;
+    const region = document.getElementById('region') as HTMLElement;
+    region.textContent = state.random || den < 0.01 ? 'noise' : den < 0.45 ? 'unlikely' : 'realistic';
+    region.style.color = state.random || den < 0.01 ? '#f59e0b' : den < 0.45 ? '#facc15' : teal;
+  }
+
+  function sync() {
+    (document.getElementById('along') as HTMLInputElement).value = String(Math.round(state.t * 100));
+    (document.getElementById('distance') as HTMLInputElement).value = String(Math.round(state.d * 100));
+    (document.getElementById('along-val') as HTMLElement).textContent = `${Math.round(state.t * 100)}%`;
+    (document.getElementById('distance-val') as HTMLElement).textContent = Math.abs(state.d).toFixed(2);
+    draw();
+  }
+
+  canvas.addEventListener('pointerdown', (e) => { dragging = true; lastPointer = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastPointer.x, dy = e.clientY - lastPointer.y;
+    camera.yaw += dx * 0.009;
+    camera.pitch = Math.max(-1.15, Math.min(1.15, camera.pitch + dy * 0.009));
+    lastPointer = { x: e.clientX, y: e.clientY };
+    draw();
+  });
+  canvas.addEventListener('pointerup', () => (dragging = false));
+  canvas.addEventListener('pointercancel', () => (dragging = false));
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    camera.distance = Math.max(3, Math.min(20, camera.distance + e.deltaY * 0.008));
+    draw();
+  }, { passive: false });
+
+  document.getElementById('along')!.addEventListener('input', (e) => { state.t = +(e.target as HTMLInputElement).value / 100; state.random = false; sync(); });
+  document.getElementById('distance')!.addEventListener('input', (e) => { state.d = +(e.target as HTMLInputElement).value / 100; state.random = false; sync(); });
+  document.getElementById('resolution')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#resolution button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.n = +b.dataset.n!;
+    draw();
+  });
+  document.getElementById('sample-real')!.addEventListener('click', () => { state.t = Math.random(); state.d = (Math.random() - 0.5) * 0.08; state.random = false; sync(); });
+  document.getElementById('sample-space')!.addEventListener('click', () => { state.random = true; draw(); });
+  document.getElementById('reset')!.addEventListener('click', () => { state.t = 0.42; state.d = 0; state.random = false; Object.assign(camera, { yaw: -0.62, pitch: 0.3, distance: 8.5 }); sync(); });
+
+  sync();
+</script>
+
+<style>
+  .mf-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .mf-canvas:active {
+    cursor: grabbing;
+  }
+</style>
