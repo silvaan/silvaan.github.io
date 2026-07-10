@@ -47,12 +47,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span>Clock rate √(1−rₛ/r)</span><b id="dilOut">0.707</b></div>
         <div class="row"><span>Ruler stretch 1/√(1−rₛ/r)</span><b id="stretchOut">1.414</b></div>
         <div class="row"><span>1 s here = distant</span><b id="farOut">1.41 s</b></div>
+        <div class="row"><span>Real distance from horizon</span><b id="realOut">— m</b></div>
+        <div class="row"><span>…yet coordinate r − rₛ</span><b id="coordOut">—</b></div>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
         Drag to orbit, scroll to zoom. The bright ring is the event horizon
-        (r = rₛ); the white ring is your probe. Colour runs red (slow clocks,
-        near) to teal (normal, far).
+        (r = rₛ); the white ring is your probe. The bar at the bottom lays equal
+        real metres onto the flat coordinate-r axis. Colour runs red (slow
+        clocks, near) to teal (normal, far).
       </p>
     </div>
   </div>
@@ -64,10 +67,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       Right at the horizon it <b>freezes</b>: time stops for a distant onlooker.
     </li>
     <li>
-      The ruler marks are spaced by equal <b>proper distance</b> (real meters),
-      yet they <b>crowd together</b> in coordinate r near the throat. A meter of
-      space near the mass spans less r: radial distance is stretched by
-      <b>1/√(1 − rₛ/r)</b>, the steepness of the funnel.
+      The blocks on the bottom bar are all <b>identical real meters</b>, but
+      placed by their r coordinate they <b>pile up near the horizon</b>: loads of
+      real metres squeeze into a tiny change of r. A ruler you hold is always
+      one metre, what grows is the <b>real distance packed into each step of r</b>,
+      stretched by <b>1/√(1 − rₛ/r)</b>. Watch the readouts: "real distance from
+      horizon" races ahead of "coordinate r − rₛ".
     </li>
     <li>
       Both effects blow up together at <b>r = rₛ</b> (clocks stop, the funnel
@@ -159,6 +164,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
+  // proper (real) radial distance from the horizon out to r
+  function properDist(r: number) {
+    if (r <= state.rs) return 0;
+    const steps = 500;
+    const step = (r - state.rs) / steps;
+    let acc = 0;
+    for (let i = 0; i < steps; i++) {
+      const rm = state.rs + (i + 0.5) * step;
+      acc += step / Math.sqrt(Math.max(1e-6, 1 - state.rs / rm));
+    }
+    return acc;
+  }
+
   function ringPath(r: number) {
     ctx.beginPath();
     const N = 64;
@@ -241,28 +259,81 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
+  const RULER_A = '#7c8cff';
+  const RULER_B = '#2dd4bf';
+
   function drawRuler() {
-    // rods of equal proper length laid radially; alternate colour so the
-    // coordinate crowding near the throat is obvious
+    // identical proper-length rods laid along the funnel (real space)
     for (let i = 0; i < rulerTicks.length - 1; i++) {
       const rA = rulerTicks[i], rB = rulerTicks[i + 1];
       ctx.beginPath();
-      const seg = 6;
+      const seg = 8;
       for (let j = 0; j <= seg; j++) {
         const r = rA + ((rB - rA) * j) / seg;
         const p = projRP(r, RULER_PHI);
         j === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
       }
-      ctx.strokeStyle = i % 2 === 0 ? '#7c8cff' : dilColor(0.9);
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = i % 2 === 0 ? RULER_A : RULER_B;
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'butt';
       ctx.stroke();
-      // tick
-      const pt = projRP(rA, RULER_PHI);
-      ctx.fillStyle = `rgba(${ink()},0.9)`;
-      ctx.beginPath();
-      ctx.arc(pt.sx, pt.sy, 2.4, 0, TAU);
-      ctx.fill();
     }
+    drawRulerInset();
+  }
+
+  // Flat "coordinate map": the SAME identical 1-metre rods, but placed by their
+  // r coordinate. Near the horizon a real metre spans little r, so the blocks
+  // pile up there: that crowding is the radial stretching, made explicit.
+  function drawRulerInset() {
+    const x0 = 44, x1 = W - 26, yB = H - 40;
+    const rA = state.rs, rB = RMAX;
+    const xOf = (r: number) => x0 + ((r - rA) / (rB - rA)) * (x1 - x0);
+
+    ctx.fillStyle = isLight() ? 'rgba(255,255,255,0.82)' : 'rgba(8,9,13,0.72)';
+    ctx.fillRect(x0 - 16, yB - 40, x1 - x0 + 34, 66);
+
+    ctx.fillStyle = css('--text-faint') || '#8b93a5';
+    ctx.font = "11px 'JetBrains Mono', monospace";
+    ctx.fillText('each block = 1 real metre · they crowd into little r near the mass', x0, yB - 26);
+
+    // metre blocks (equal real length, unequal r footprint)
+    for (let i = 0; i < rulerTicks.length - 1; i++) {
+      const a = xOf(rulerTicks[i]);
+      const b = xOf(rulerTicks[i + 1]);
+      ctx.fillStyle = i % 2 === 0 ? RULER_A : RULER_B;
+      ctx.fillRect(a, yB - 16, Math.max(0.7, b - a - 0.7), 15);
+    }
+
+    // coordinate axis + even integer ticks
+    ctx.strokeStyle = `rgba(${ink()},0.45)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, yB);
+    ctx.lineTo(x1, yB);
+    ctx.stroke();
+    ctx.fillStyle = css('--text-faint') || '#8b93a5';
+    ctx.font = "10px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    for (let r = Math.ceil(rA + 1e-6); r <= rB; r++) {
+      const x = xOf(r);
+      ctx.beginPath();
+      ctx.moveTo(x, yB);
+      ctx.lineTo(x, yB + 5);
+      ctx.stroke();
+      ctx.fillText(String(r), x, yB + 16);
+    }
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillText('rₛ', xOf(rA), yB + 16);
+    ctx.textAlign = 'left';
+
+    // probe marker
+    const px = Math.max(x0, Math.min(x1, xOf(state.probe)));
+    ctx.strokeStyle = `rgba(${ink()},0.95)`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(px, yB - 20);
+    ctx.lineTo(px, yB + 3);
+    ctx.stroke();
   }
 
   function drawProbe() {
@@ -286,6 +357,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     (document.getElementById('dilOut') as HTMLElement).textContent = d.toFixed(3);
     (document.getElementById('stretchOut') as HTMLElement).textContent = (1 / Math.max(1e-3, d)).toFixed(3);
     (document.getElementById('farOut') as HTMLElement).textContent = `${(1 / Math.max(1e-3, d)).toFixed(2)} s`;
+    (document.getElementById('realOut') as HTMLElement).textContent = `${properDist(state.probe).toFixed(2)} m`;
+    (document.getElementById('coordOut') as HTMLElement).textContent = (state.probe - state.rs).toFixed(2);
   }
 
   let last = 0;
