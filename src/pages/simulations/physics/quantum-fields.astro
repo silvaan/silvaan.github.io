@@ -1,0 +1,505 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Quantum Fields"
+  description="A field fills all of space, and splitting it into waves turns it into a grid of independent oscillators, one per momentum. Quantise each oscillator and its energy comes in steps. Those steps are the particles. One mass slider then decides how heavy they are, how far their influence reaches, and how fast they can move."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="qf" width="900" height="660"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Empty the field</button>
+      </div>
+
+      <div class="control">
+        <label>Mass m <b id="mval">1.00</b></label>
+        <input type="range" id="m" min="0" max="4" step="0.05" value="1" />
+      </div>
+
+      <div class="control">
+        <label>Time rate <b id="spval">1.0×</b></label>
+        <input type="range" id="sp" min="0" max="200" value="100" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="zp" /> Include the zero-point ½ (the vacuum)</label>
+
+      <div class="readout">
+        <div class="row"><span>Particles N</span><b id="nq">0</b></div>
+        <div class="row"><span>Their energy Σ n ω</span><b id="en">0.00</b></div>
+        <div class="row"><span>Total momentum |P|</span><b id="mom">0.00</b></div>
+        <div class="row"><span>Rest energy of one (gap)</span><b id="gap">—</b></div>
+        <div class="row"><span>Reach of the field 1/m</span><b id="range">—</b></div>
+        <div class="row"><span>Last mode: speed |k|/ω</span><b id="vg">—</b></div>
+        <div class="row"><span>Field size √⟨φ²⟩</span><b id="rms">0.00</b></div>
+        <div class="row"><span>Vacuum energy Σ ω/2</span><b id="vac">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Click a cell in momentum space to add one quantum to that mode.
+        Shift-click removes one. The cell you pick is the particle's momentum,
+        so cells far from the centre are fast, short-wavelength particles and
+        opposite cells travel opposite ways.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Click one cell off to the side. A plane wave appears in the field, running
+      in exactly the direction you picked. Now click the cell on the opposite
+      side of centre: same wavelength, opposite direction. The momentum grid is
+      not a bookkeeping device, it is a map of which way the particle is going.
+    </li>
+    <li>
+      Click the same cell over and over. The energy readout goes up by
+      <b>exactly ω each time</b>, never by half a step. The field amplitude grows
+      as √n, not linearly. That indivisible step is the whole reason we call it a
+      particle: the field cannot be excited by less.
+    </li>
+    <li>
+      Pull the <b>mass</b> to zero and watch the dispersion curve fall onto the
+      light cone ω = |k|. The cheapest mode now costs nothing. Raise m and the
+      whole curve lifts off the origin: it now costs energy m just to have one
+      particle sitting still with no momentum at all. That gap is E = mc².
+    </li>
+    <li>
+      Watch the correlation panel as you move the mass. At m = 0 the field's
+      influence trails off slowly, forever. Give it mass and the curve turns into
+      a straight line on the log axis whose <b>slope is m</b>, dying at a
+      distance 1/m. This is why electromagnetism reaches across the galaxy while
+      the nuclear force stops at the edge of a proton: the photon is massless and
+      the pion is not.
+    </li>
+    <li>
+      Compare the speed readout for a cell near the centre and one far out. As
+      long as the field has mass it is always <b>below</b> 1, creeping up toward
+      the speed of light only for short wavelengths where the mass stops
+      mattering. Set m = 0 and every mode reads exactly 1: a massless particle
+      has no choice but to travel at c. (The crests you see drifting are the
+      phase velocity, which runs faster than light and carries no signal. The
+      readout is the group velocity, the one that moves energy.)
+    </li>
+    <li>
+      Now tick the <b>zero-point ½</b>. Every occupation number is still zero,
+      the field has no particles in it whatsoever, and it will not hold still.
+      Notice too that a single quantum is nearly invisible against that shimmer:
+      you find particles by looking at the modes, not at the field. That is what
+      a particle detector is really doing.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  // ħ = c = 1. The box is 2π wide so momenta are integers, k = (nx, ny).
+  const K = 6, NK = 2 * K + 1;   // modes per axis, nx from -6..6
+  const NM = NK * NK;            // 169 independent oscillators
+  const GRID = 64;               // field render resolution
+  const BOX = 2 * Math.PI;
+  const WFLOOR = 0.25;           // keeps the k = 0, m = 0 mode from blowing up
+
+  const state = { m: 1, rate: 1, running: true, zp: false, t: 0 };
+  const occ = new Int32Array(NM);        // occupation number of each mode
+  const phase = new Float64Array(NM);    // random phase of each oscillator
+  const omega = new Float64Array(NM);
+  const kx = new Float64Array(NM), ky = new Float64Array(NM), kmag = new Float64Array(NM);
+  let lastMode = -1, hoverMode = -1;
+
+  for (let j = 0; j < NK; j++)
+    for (let i = 0; i < NK; i++) {
+      const d = j * NK + i;
+      kx[d] = i - K;
+      ky[d] = j - K;
+      kmag[d] = Math.hypot(kx[d], ky[d]);
+      phase[d] = Math.random() * 2 * Math.PI;
+    }
+  function computeOmega() {
+    for (let d = 0; d < NM; d++)
+      omega[d] = Math.max(WFLOOR, Math.sqrt(kmag[d] * kmag[d] + state.m * state.m));
+  }
+
+  // --- exact 2D propagator, G(r) ∝ K₀(m r) --------------------------------
+  // Abramowitz & Stegun 9.8.1 / 9.8.5 / 9.8.6, good to ~1e-5 relative.
+  function I0(x: number) {
+    const u = (x / 3.75) ** 2;
+    return 1 + 3.5156229 * u + 3.0899424 * u ** 2 + 1.2067492 * u ** 3 +
+      0.2659732 * u ** 4 + 0.0360768 * u ** 5 + 0.0045813 * u ** 6;
+  }
+  function K0(x: number) {
+    if (x <= 2) {
+      const t = (x / 2) ** 2;
+      return -Math.log(x / 2) * I0(x) - 0.57721566 + 0.42278420 * t +
+        0.23069756 * t ** 2 + 0.03488590 * t ** 3 + 0.00262698 * t ** 4 +
+        0.00010750 * t ** 5 + 0.0000074 * t ** 6;
+    }
+    const t = 2 / x;
+    return (Math.exp(-x) / Math.sqrt(x)) * (1.25331414 - 0.07832358 * t +
+      0.02189568 * t ** 2 - 0.01062446 * t ** 3 + 0.00587872 * t ** 4 -
+      0.00251540 * t ** 5 + 0.00053208 * t ** 6);
+  }
+
+  // --- canvas --------------------------------------------------------------
+  const canvas = document.getElementById('qf') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => {});
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const ACC = [124, 140, 255], WARM = [245, 158, 11];
+  const ACCs = '#7c8cff', WARMs = '#f59e0b';
+
+  const FIELD = { x: 30, y: 64, s: 380 };
+  const MODES = { x: 470, y: 64, s: 380 };
+  const DISP = { x: 30, y: 528, w: 380, h: 104 };
+  const CORR = { x: 470, y: 528, w: 380, h: 104 };
+  const CELL = MODES.s / NK;
+
+  const off = document.createElement('canvas');
+  off.width = GRID;
+  off.height = GRID;
+  const offCtx = off.getContext('2d')!;
+  const img = offCtx.createImageData(GRID, GRID);
+
+  // e^{i n x} sampled on the render grid, shared by both axes
+  const cosT = new Float64Array(NK * GRID), sinT = new Float64Array(NK * GRID);
+  for (let n = 0; n < NK; n++)
+    for (let g = 0; g < GRID; g++) {
+      const v = (n - K) * ((g / GRID) * BOX);
+      cosT[n * GRID + g] = Math.cos(v);
+      sinT[n * GRID + g] = Math.sin(v);
+    }
+  const Cre = new Float64Array(NM), Cim = new Float64Array(NM);
+  const Sre = new Float64Array(NK * GRID), Sim = new Float64Array(NK * GRID);
+  const phi = new Float64Array(GRID * GRID);
+  let fieldRms = 0;
+
+  function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 12) {
+    ctx.fillStyle = `rgba(${ink()},${alpha})`;
+    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  /**
+   * φ(x,y) = Re Σ_k A_k e^{i(k·x + θ_k − ω_k t)}, done as two 1D passes so the
+   * cost is O(NK·GRID·NK + GRID²·NK) instead of O(GRID²·NK²).
+   */
+  function computeField() {
+    const half = state.zp ? 0.5 : 0;
+    for (let d = 0; d < NM; d++) {
+      const A = Math.sqrt((occ[d] + half) / omega[d]);
+      const a = phase[d] - omega[d] * state.t;
+      Cre[d] = A * Math.cos(a);
+      Cim[d] = A * Math.sin(a);
+    }
+    for (let i = 0; i < NK; i++)
+      for (let gy = 0; gy < GRID; gy++) {
+        let re = 0, im = 0;
+        for (let j = 0; j < NK; j++) {
+          const d = j * NK + i;
+          const cy = cosT[j * GRID + gy], sy = sinT[j * GRID + gy];
+          re += Cre[d] * cy - Cim[d] * sy;
+          im += Cre[d] * sy + Cim[d] * cy;
+        }
+        Sre[i * GRID + gy] = re;
+        Sim[i * GRID + gy] = im;
+      }
+    let sum2 = 0;
+    for (let gy = 0; gy < GRID; gy++)
+      for (let gx = 0; gx < GRID; gx++) {
+        let f = 0;
+        for (let i = 0; i < NK; i++)
+          f += Sre[i * GRID + gy] * cosT[i * GRID + gx] - Sim[i * GRID + gy] * sinT[i * GRID + gx];
+        phi[gy * GRID + gx] = f;
+        sum2 += f * f;
+      }
+    fieldRms = Math.sqrt(sum2 / (GRID * GRID));
+  }
+
+  function drawField() {
+    // Fixed display gain per mode, so adding a quantum visibly brightens the
+    // picture instead of being normalised away.
+    const scale = state.zp ? 5 : 1.5;
+    const px = img.data;
+    for (let p = 0; p < GRID * GRID; p++) {
+      const t = Math.tanh(phi[p] / scale);
+      const c = t < 0 ? ACC : WARM;
+      px[p * 4] = c[0];
+      px[p * 4 + 1] = c[1];
+      px[p * 4 + 2] = c[2];
+      px[p * 4 + 3] = Math.min(255, Math.abs(t) * 255) | 0;
+    }
+    offCtx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, FIELD.x, FIELD.y, FIELD.s, FIELD.s);
+    ctx.strokeStyle = `rgba(${ink()},0.22)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(FIELD.x, FIELD.y, FIELD.s, FIELD.s);
+    label('THE FIELD  φ(x, y)', FIELD.x, FIELD.y - 12, 0.5);
+    label('one snapshot in space', FIELD.x + FIELD.s, FIELD.y - 12, 0.3, 'right');
+  }
+
+  function drawModes() {
+    label('MOMENTUM SPACE  each cell is one oscillator', MODES.x, MODES.y - 12, 0.5);
+    label('click to add a quantum', MODES.x + MODES.s, MODES.y - 12, 0.3, 'right');
+    for (let d = 0; d < NM; d++) {
+      const cx = MODES.x + (kx[d] + K) * CELL;
+      const cy = MODES.y + (K - ky[d]) * CELL; // +ky drawn upward
+      const n = occ[d];
+      ctx.fillStyle = n > 0
+        ? `rgba(${ACC[0]},${ACC[1]},${ACC[2]},${Math.min(0.95, 0.3 + 0.16 * n)})`
+        : `rgba(${ink()},0.05)`;
+      ctx.fillRect(cx + 1, cy + 1, CELL - 2, CELL - 2);
+      if (n > 0) {
+        ctx.fillStyle = 'rgba(10,11,14,0.9)';
+        ctx.font = '600 12px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(n), cx + CELL / 2, cy + CELL / 2);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'left';
+      }
+      if (d === hoverMode) {
+        ctx.strokeStyle = `rgba(${ink()},0.55)`;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(cx + 1, cy + 1, CELL - 2, CELL - 2);
+      }
+    }
+    // axes through k = 0
+    ctx.strokeStyle = `rgba(${ink()},0.28)`;
+    ctx.lineWidth = 1;
+    const mid = MODES.x + K * CELL + CELL / 2, midY = MODES.y + K * CELL + CELL / 2;
+    ctx.beginPath();
+    ctx.moveTo(mid, MODES.y);
+    ctx.lineTo(mid, MODES.y + MODES.s);
+    ctx.moveTo(MODES.x, midY);
+    ctx.lineTo(MODES.x + MODES.s, midY);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(${ink()},0.22)`;
+    ctx.strokeRect(MODES.x, MODES.y, MODES.s, MODES.s);
+    label('kx →', MODES.x + MODES.s - 4, midY - 6, 0.35, 'right', 11);
+    label('ky ↑', mid + 6, MODES.y + 12, 0.35, 'left', 11);
+    label('k = 0, a particle at rest', mid + 6, midY + 14, 0.3, 'left', 10);
+  }
+
+  function drawDispersion() {
+    const KMAX = 8.6, WMAX = 10;
+    const X = (k: number) => DISP.x + (k / KMAX) * DISP.w;
+    const Y = (w: number) => DISP.y + DISP.h - (w / WMAX) * DISP.h;
+    label('DISPERSION  ω(k) = √(k² + m²)', DISP.x, DISP.y - 12, 0.5);
+
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(DISP.x, DISP.y + DISP.h);
+    ctx.lineTo(DISP.x + DISP.w, DISP.y + DISP.h);
+    ctx.moveTo(DISP.x, DISP.y);
+    ctx.lineTo(DISP.x, DISP.y + DISP.h);
+    ctx.stroke();
+
+    // light cone ω = k, the massless limit
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = `rgba(${ink()},0.3)`;
+    ctx.beginPath();
+    ctx.moveTo(X(0), Y(0));
+    ctx.lineTo(X(WMAX), Y(WMAX));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = WARMs;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const k = (KMAX * i) / 120;
+      const w = Math.sqrt(k * k + state.m * state.m);
+      i ? ctx.lineTo(X(k), Y(w)) : ctx.moveTo(X(k), Y(w));
+    }
+    ctx.stroke();
+
+    // occupied modes sit on the curve
+    ctx.fillStyle = ACCs;
+    for (let d = 0; d < NM; d++) {
+      if (!occ[d]) continue;
+      ctx.beginPath();
+      ctx.arc(X(kmag[d]), Y(omega[d]), 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // the gap
+    if (state.m > 0.05) {
+      ctx.strokeStyle = `rgba(${ink()},0.5)`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(X(0), Y(0));
+      ctx.lineTo(X(0), Y(state.m));
+      ctx.stroke();
+      label(`gap = m = ${state.m.toFixed(2)}`, X(0) + 8, Y(state.m) - 4, 0.6, 'left', 11);
+    } else {
+      label('no gap: massless', X(0) + 8, Y(0) - 8, 0.6, 'left', 11);
+    }
+    label('k', DISP.x + DISP.w, DISP.y + DISP.h + 15, 0.35, 'right', 11);
+    label('ω', DISP.x - 6, DISP.y + 8, 0.35, 'right', 11);
+  }
+
+  function drawCorrelator() {
+    label('REACH  ⟨φ(r) φ(0)⟩ ∝ K₀(m r), log scale', CORR.x, CORR.y - 12, 0.5);
+    const RMAX = 6, DECADES = 4;
+    const meff = Math.max(0.02, state.m);
+    const g0 = K0(meff * 0.15);
+    const X = (r: number) => CORR.x + (r / RMAX) * CORR.w;
+    const Y = (g: number) => {
+      const l = Math.log10(Math.max(1e-12, g / g0));
+      return CORR.y + Math.min(CORR.h, (-l / DECADES) * CORR.h);
+    };
+
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(CORR.x, CORR.y + CORR.h);
+    ctx.lineTo(CORR.x + CORR.w, CORR.y + CORR.h);
+    ctx.moveTo(CORR.x, CORR.y);
+    ctx.lineTo(CORR.x, CORR.y + CORR.h);
+    ctx.stroke();
+
+    ctx.strokeStyle = ACCs;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 160; i++) {
+      const r = 0.15 + ((RMAX - 0.15) * i) / 160;
+      const y = Y(K0(meff * r));
+      i ? ctx.lineTo(X(r), y) : ctx.moveTo(X(r), y);
+    }
+    ctx.stroke();
+
+    // the range 1/m
+    if (state.m > 0.05 && 1 / state.m < RMAX) {
+      const r = 1 / state.m;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = WARMs;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(X(r), CORR.y);
+      ctx.lineTo(X(r), CORR.y + CORR.h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = WARMs;
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillText(`1/m = ${r.toFixed(2)}`, X(r) + 5, CORR.y + 12);
+    } else if (state.m <= 0.05) {
+      label('massless: no range at all, it never stops', CORR.x + 10, CORR.y + 16, 0.5, 'left', 11);
+    }
+    label('distance r', CORR.x + CORR.w, CORR.y + CORR.h + 15, 0.35, 'right', 11);
+    label('correlation', CORR.x + 4, CORR.y + CORR.h + 15, 0.35, 'left', 11);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawField();
+    drawModes();
+    drawDispersion();
+    drawCorrelator();
+  }
+
+  // --- readouts ------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  function updateReadout() {
+    let N = 0, E = 0, px = 0, py = 0, vac = 0;
+    for (let d = 0; d < NM; d++) {
+      N += occ[d];
+      E += occ[d] * omega[d];
+      px += occ[d] * kx[d];
+      py += occ[d] * ky[d];
+      vac += omega[d] / 2;
+    }
+    el('nq').textContent = String(N);
+    el('en').textContent = E.toFixed(2);
+    el('mom').textContent = Math.hypot(px, py).toFixed(2);
+    el('gap').textContent = state.m < 0.05 ? '0 (massless)' : state.m.toFixed(2);
+    el('range').textContent = state.m < 0.05 ? 'unlimited' : (1 / state.m).toFixed(2);
+    el('vg').textContent =
+      lastMode < 0 ? '—' : `${(kmag[lastMode] / omega[lastMode]).toFixed(3)} c`;
+    el('rms').textContent = fieldRms.toFixed(2);
+    el('vac').textContent = `${vac.toFixed(0)} (set by the grid)`;
+  }
+
+  // --- loop ----------------------------------------------------------------
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (state.running) state.t += dt * state.rate;
+    computeField();
+    draw();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- interaction ---------------------------------------------------------
+  function modeAt(e: PointerEvent | MouseEvent) {
+    const r = canvas.getBoundingClientRect();
+    const sx = ((e.clientX - r.left) / r.width) * W;
+    const sy = ((e.clientY - r.top) / r.height) * H;
+    if (sx < MODES.x || sx > MODES.x + MODES.s || sy < MODES.y || sy > MODES.y + MODES.s) return -1;
+    const i = Math.floor((sx - MODES.x) / CELL);
+    const j = K - Math.floor((sy - MODES.y) / CELL) + K; // screen y is flipped
+    if (i < 0 || i >= NK || j < 0 || j >= NK) return -1;
+    return j * NK + i;
+  }
+  canvas.addEventListener('mousemove', (e) => (hoverMode = modeAt(e)));
+  canvas.addEventListener('mouseleave', () => (hoverMode = -1));
+  canvas.addEventListener('click', (e) => {
+    const d = modeAt(e);
+    if (d < 0) return;
+    if (e.shiftKey) occ[d] = Math.max(0, occ[d] - 1);
+    else occ[d]++;
+    lastMode = d;
+  });
+  canvas.addEventListener('contextmenu', (e) => {
+    const d = modeAt(e);
+    if (d < 0) return;
+    e.preventDefault();
+    occ[d] = Math.max(0, occ[d] - 1);
+    lastMode = d;
+  });
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('reset').addEventListener('click', () => {
+    occ.fill(0);
+    lastMode = -1;
+    for (let d = 0; d < NM; d++) phase[d] = Math.random() * 2 * Math.PI;
+  });
+
+  const mEl = el('m') as HTMLInputElement;
+  mEl.addEventListener('input', () => {
+    state.m = +mEl.value;
+    el('mval').textContent = state.m.toFixed(2);
+    computeOmega();
+  });
+  const spEl = el('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.rate = +spEl.value / 100;
+    el('spval').textContent = `${state.rate.toFixed(1)}×`;
+  });
+  const zpEl = el('zp') as HTMLInputElement;
+  zpEl.addEventListener('change', () => (state.zp = zpEl.checked));
+
+  computeOmega();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  #qf {
+    touch-action: none;
+  }
+</style>

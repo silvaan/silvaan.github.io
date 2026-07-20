@@ -41,6 +41,30 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'sum-rule',
+        title: 'The Sum Rule',
+        description:
+          'Add two functions and their graphs stack. Stack the heights and you stack the growths, so the slopes simply add, with no leftover term anywhere.',
+        href: '/simulations/calculus/sum-rule',
+        status: 'live',
+      },
+      {
+        slug: 'product-rule',
+        title: 'The Product Rule',
+        description:
+          'A product is the area of a rectangle. Growing it adds two strips and one small corner, and only the corner is small enough to vanish in the limit.',
+        href: '/simulations/calculus/product-rule',
+        status: 'live',
+      },
+      {
+        slug: 'chain-rule',
+        title: 'The Chain Rule',
+        description:
+          'Each stage stretches a small step by its own factor, so stretching twice multiplies the factors. Watch why f′ has to be read at g(x) and nowhere else.',
+        href: '/simulations/calculus/chain-rule',
+        status: 'live',
+      },
+      {
         slug: 'taylor-series',
         title: 'Taylor Series',
         description:
@@ -57,6 +81,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'laplace-transform',
+        title: 'Laplace Transform',
+        description:
+          'Plot |F(s)| as a landscape over the complex plane: poles become spikes, the region of convergence a half-plane, and the Fourier transform the slice above the imaginary axis.',
+        href: '/simulations/calculus/laplace-transform',
+        status: 'live',
+      },
+      {
         slug: 'scalar-fields',
         title: 'Scalar Fields & Gradients',
         description:
@@ -66,7 +98,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'tangent-plane',
-        title: 'Tangent Plane & Directional Derivative',
+        title: 'Tangent Plane',
         description:
           'Ride a point over a 3D surface with its tangent plane attached, and watch the slope change with direction, steepest along the gradient.',
         href: '/simulations/calculus/tangent-plane',
@@ -106,7 +138,7 @@ export const AREAS: Area[] = [
     simulators: [
       {
         slug: 'linear-transformation',
-        title: '2D Linear Transformations',
+        title: 'Linear Transformations',
         description:
           'Drag the matrix entries and see how the plane, grid and basis vectors deform.',
         href: '/simulations/linear-algebra/linear-transformation',
@@ -122,7 +154,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'span',
-        title: 'Span & Linear Combinations',
+        title: 'Span',
         description:
           'Drag two vectors and see everywhere their scaled sums can reach, the whole plane, or a single line when they line up.',
         href: '/simulations/linear-algebra/span',
@@ -154,7 +186,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'random-walk',
-        title: 'Random Walk & Diffusion',
+        title: 'Random Walk',
         description:
           'Thousands of aimless walkers spread from a point into a Gaussian whose width grows like the square root of time, the particle view of diffusion.',
         href: '/simulations/statistics/random-walk',
@@ -162,7 +194,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'monte-carlo',
-        title: 'Monte Carlo Estimation of π',
+        title: 'Monte Carlo',
         description:
           'Throw random darts at a square with a circle inside and count the hits. The fraction inside estimates π, converging slowly as 1/√n.',
         href: '/simulations/statistics/monte-carlo',
@@ -210,7 +242,7 @@ export const AREAS: Area[] = [
     simulators: [
       {
         slug: 'kmeans',
-        title: 'k-Means Clustering',
+        title: 'k-Means',
         description:
           'Assign points to the nearest center, move each center to its mean, repeat. Watch clusters snap into place, and sometimes into the wrong place.',
         href: '/simulations/machine-learning/kmeans',
@@ -234,7 +266,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'overfitting',
-        title: 'Overfitting & Regularization',
+        title: 'Overfitting',
         description:
           'Raise a polynomial’s degree until it threads every training point yet fails on new data, then tame it with regularization.',
         href: '/simulations/machine-learning/overfitting',
@@ -266,7 +298,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'optimizers',
-        title: 'Optimizer Showdown',
+        title: 'Optimizers',
         description:
           'Race SGD, Momentum, NAG, RMSProp and Adam down a 3D loss surface and watch how differently they descend.',
         href: '/simulations/deep-learning/optimizers',
@@ -274,7 +306,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'optimizers-3d',
-        title: 'Optimizers in a 3D Field',
+        title: 'Optimizers in 3D',
         description:
           'Same optimizer race, but the loss is a volumetric density cloud and the balls move freely through 3D space toward the densest cores.',
         href: '/simulations/deep-learning/optimizers-3d',
@@ -282,7 +314,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'neural-net',
-        title: 'Neural Network Playground',
+        title: 'Neural Networks',
         description:
           'Train a small neural network to separate two classes of dots and watch its decision boundary bend and fold in real time.',
         href: '/simulations/deep-learning/neural-net',
@@ -338,10 +370,18 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'em-waves',
-        title: 'Electromagnetic Waves in 3D',
+        title: 'Electromagnetic Waves',
         description:
           'Drag charges through space and watch retarded E and B fields ripple outward. Build a dipole antenna and tune the medium to change wave speed and impedance.',
         href: '/simulations/physics/em-waves',
+        status: 'live',
+      },
+      {
+        slug: 'entropy',
+        title: 'Entropy',
+        description:
+          'Count the arrangements behind what you can see. Entropy is a census, S = k ln Ω, and that counting alone is enough to make time run one way.',
+        href: '/simulations/physics/entropy',
         status: 'live',
       },
       {
@@ -361,6 +401,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'phonons',
+        title: 'Phonons',
+        description:
+          'Every mass obeys Hooke’s law and pulls only on its neighbours. Out comes a pulse travelling at a speed nobody wrote down, and a shortest possible wavelength that no continuous material would have.',
+        href: '/simulations/physics/phonons',
+        status: 'live',
+      },
+      {
         slug: 'wave-interference',
         title: 'Wave Interference',
         description:
@@ -376,6 +424,17 @@ export const AREAS: Area[] = [
         href: '/simulations/physics/schrodinger',
         status: 'live',
       },
+      // Hidden from the listings for now. The page itself still exists at
+      // src/pages/simulations/physics/quantum-fields.astro; re-add this entry
+      // to bring it back.
+      // {
+      //   slug: 'quantum-fields',
+      //   title: 'Quantum Fields',
+      //   description:
+      //     'Split a field into waves and it becomes a grid of oscillators, one per momentum. Quantise them and the energy comes in steps: those steps are the particles, and one mass slider sets their weight, their reach and their speed.',
+      //   href: '/simulations/physics/quantum-fields',
+      //   status: 'live',
+      // },
       {
         slug: 'special-relativity',
         title: 'Special Relativity',
@@ -385,8 +444,16 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'four-vectors',
+        title: 'Four-Vectors',
+        description:
+          'One arrow in spacetime, read by many observers. Boost and both shadows change while the length refuses to: proper time, the speed of light, the rest mass.',
+        href: '/simulations/physics/four-vectors',
+        status: 'live',
+      },
+      {
         slug: 'schwarzschild',
-        title: 'General Relativity: Schwarzschild',
+        title: 'General Relativity',
         description:
           'Fall down the curved-space funnel of a black hole. Clocks run slow deep in the well and a proper meter swallows less coordinate distance near the horizon.',
         href: '/simulations/physics/schwarzschild',

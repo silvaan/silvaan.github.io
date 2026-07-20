@@ -1,0 +1,399 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Laplace Transform"
+  description="The Laplace transform sends a signal f(t) to a function F(s) of a complex variable. Plot |F(s)| as a landscape over the complex plane and the algebra turns geometric: poles are spikes, the region of convergence is a half-plane, and the Fourier transform is just the slice above the imaginary axis."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="lp" class="lp-canvas" width="640" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Signal f(t), t ≥ 0</label>
+        <div class="seg" id="sig">
+          <button data-s="exp" class="active">e<sup>−at</sup></button>
+          <button data-s="sin">e<sup>−at</sup>sin ωt</button>
+          <button data-s="cos">e<sup>−at</sup>cos ωt</button>
+          <button data-s="ramp">t·e<sup>−at</sup></button>
+        </div>
+      </div>
+
+      <canvas id="ft" class="mini-canvas" width="300" height="110"></canvas>
+
+      <div class="control"><label>Decay a <b id="aval">0.60</b></label><input type="range" id="a" min="-0.8" max="2.5" step="0.05" value="0.6" /></div>
+      <div class="control" id="wctl"><label>Frequency ω <b id="wval">2.50</b></label><input type="range" id="w" min="0.2" max="5" step="0.1" value="2.5" /></div>
+
+      <label class="check"><input type="checkbox" id="roc" checked /> Shade the region of convergence</label>
+      <label class="check"><input type="checkbox" id="slice" checked /> Slice above the imaginary axis</label>
+
+      <div class="readout">
+        <div class="row"><span>F(s)</span><b id="fs">—</b></div>
+        <div class="row"><span>Poles</span><b id="poles">—</b></div>
+        <div class="row"><span>ROC</span><b id="rocv">—</b></div>
+        <div class="row"><span>Fourier transform</span><b id="fourier">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the background to orbit. Height is |F(s)| over the complex plane
+        s = σ + jω, clipped at the top so the poles do not run off to infinity.
+        Red pins mark the poles, the amber curve is the slice at σ = 0.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Lower the <b>decay a</b> towards zero. The pole at s = −a slides right
+      until it sits on the imaginary axis, and the whole landscape lifts near
+      it: a signal that never dies out makes the transform blow up on the axis.
+    </li>
+    <li>
+      Push <b>a</b> negative. The signal now grows, the <b>ROC</b> half-plane
+      retreats to the right of the axis, and the amber slice no longer lives
+      inside it. That is exactly when the Fourier transform stops existing
+      while the Laplace transform is still perfectly fine.
+    </li>
+    <li>
+      Switch to <b>e<sup>−at</sup>sin ωt</b> and raise ω. The single spike
+      splits into a conjugate pair at s = −a ± jω, and the amber slice grows two
+      resonant humps at those frequencies: poles near the axis are exactly what
+      a sharp resonance looks like from the frequency side.
+    </li>
+    <li>
+      Compare <b>e<sup>−at</sup></b> with <b>t·e<sup>−at</sup></b>. Same pole
+      location, but the double pole makes a taller, broader spike: repeated
+      poles are polynomial factors of t in time.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  // --- complex helpers -----------------------------------------------------
+  type C = { re: number; im: number };
+  const cmul = (p: C, q: C): C => ({ re: p.re * q.re - p.im * q.im, im: p.re * q.im + p.im * q.re });
+  const cdiv = (p: C, q: C): C => {
+    const d = q.re * q.re + q.im * q.im || 1e-12;
+    return { re: (p.re * q.re + p.im * q.im) / d, im: (p.im * q.re - p.re * q.im) / d };
+  };
+  const cabs = (p: C) => Math.hypot(p.re, p.im);
+  const ONE: C = { re: 1, im: 0 };
+
+  const state = { sig: 'exp', a: 0.6, w: 2.5, roc: true, slice: true, yaw: 0.72, pitch: -0.62 };
+
+  // F(s) for each signal, plus the time-domain formula and a pretty label.
+  function transform(s: C): C {
+    const { a, w } = state;
+    const sa: C = { re: s.re + a, im: s.im };
+    if (state.sig === 'exp') return cdiv(ONE, sa);
+    if (state.sig === 'ramp') return cdiv(ONE, cmul(sa, sa));
+    const den: C = { re: cmul(sa, sa).re + w * w, im: cmul(sa, sa).im };
+    return state.sig === 'sin' ? cdiv({ re: w, im: 0 }, den) : cdiv(sa, den);
+  }
+  function signal(t: number) {
+    const { a, w } = state;
+    const e = Math.exp(-a * t);
+    if (state.sig === 'exp') return e;
+    if (state.sig === 'ramp') return t * e;
+    return state.sig === 'sin' ? e * Math.sin(w * t) : e * Math.cos(w * t);
+  }
+  const formula = () => {
+    const a = state.a.toFixed(2), w = state.w.toFixed(1);
+    if (state.sig === 'exp') return `1 / (s + ${a})`;
+    if (state.sig === 'ramp') return `1 / (s + ${a})²`;
+    const d = `(s + ${a})² + ${w}²`;
+    return state.sig === 'sin' ? `${w} / [${d}]` : `(s + ${a}) / [${d}]`;
+  };
+  // Pole locations, and whether they are repeated.
+  const poles = (): { re: number; im: number }[] => {
+    const p = -state.a;
+    if (state.sig === 'exp' || state.sig === 'ramp') return [{ re: p, im: 0 }];
+    return [{ re: p, im: state.w }, { re: p, im: -state.w }];
+  };
+
+  const SIG = 3, OM = 5, CAP = 4; // s-plane extent and the height clip
+  const height = (sigma: number, omega: number) =>
+    Math.min(cabs(transform({ re: sigma, im: omega })), CAP) / CAP;
+
+  // --- projection ----------------------------------------------------------
+  const canvas = document.getElementById('lp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const CX = W / 2, CY = H / 2 + 40, CAM = 3.3, FOCAL = 2.7, SCALE = 245;
+  const BASE = -0.65;
+
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp;
+    const z2 = y * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const s = FOCAL / Math.max(0.05, zc);
+    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, zc };
+  }
+  /** Map (σ, ω, normalised height) into screen space. */
+  const at = (sigma: number, omega: number, h: number) =>
+    project(sigma / SIG, BASE + h * 1.3, omega / OM);
+
+  function turbo(t: number) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [[40, 60, 150], [30, 150, 200], [50, 200, 120], [240, 200, 70], [235, 80, 70]];
+    const seg = t * 4;
+    const i = Math.min(3, Math.floor(seg));
+    const f = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    let r = (a[0] + (b[0] - a[0]) * f) | 0, g = (a[1] + (b[1] - a[1]) * f) | 0, bl = (a[2] + (b[2] - a[2]) * f) | 0;
+    if (isLight()) { r = (r * 0.6) | 0; g = (g * 0.6) | 0; bl = (bl * 0.6) | 0; }
+    return `rgb(${r},${g},${bl})`;
+  }
+
+  // --- drawing -------------------------------------------------------------
+  function drawBase(ink: string) {
+    const line = (s0: number, o0: number, s1: number, o1: number, style: string, w: number, dash: number[] = []) => {
+      const p = at(s0, o0, 0), q = at(s1, o1, 0);
+      if (p.zc <= 0.1 || q.zc <= 0.1) return;
+      ctx.setLineDash(dash);
+      ctx.strokeStyle = style;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(p.sx, p.sy);
+      ctx.lineTo(q.sx, q.sy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+
+    // region of convergence: the half-plane to the right of the rightmost pole
+    if (state.roc) {
+      const edge = Math.max(-SIG, Math.min(SIG, -state.a));
+      const quad = [at(edge, -OM, 0), at(SIG, -OM, 0), at(SIG, OM, 0), at(edge, OM, 0)];
+      if (quad.every((p) => p.zc > 0.1)) {
+        ctx.beginPath();
+        ctx.moveTo(quad[0].sx, quad[0].sy);
+        for (let i = 1; i < 4; i++) ctx.lineTo(quad[i].sx, quad[i].sy);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(124,140,255,${isLight() ? 0.16 : 0.13})`;
+        ctx.fill();
+      }
+      line(edge, -OM, edge, OM, 'rgba(124,140,255,0.75)', 1.6, [5, 4]);
+    }
+
+    // the σ and jω axes on the floor
+    line(-SIG, 0, SIG, 0, `rgba(${ink},0.35)`, 1.2);
+    line(0, -OM, 0, OM, `rgba(${ink},0.35)`, 1.2);
+
+    // floor outline
+    const box = [at(-SIG, -OM, 0), at(SIG, -OM, 0), at(SIG, OM, 0), at(-SIG, OM, 0)];
+    if (box.every((p) => p.zc > 0.1)) {
+      ctx.strokeStyle = `rgba(${ink},0.2)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(box[0].sx, box[0].sy);
+      for (let i = 1; i < 4; i++) ctx.lineTo(box[i].sx, box[i].sy);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    // axis labels
+    ctx.fillStyle = `rgba(${ink},0.6)`;
+    ctx.font = '13px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    const sl = at(SIG + 0.45, 0, 0), ol = at(0, OM + 0.7, 0);
+    if (sl.zc > 0.1) ctx.fillText('σ', sl.sx, sl.sy);
+    if (ol.zc > 0.1) ctx.fillText('jω', ol.sx, ol.sy);
+  }
+
+  function drawSurface() {
+    const M = 44;
+    ctx.globalAlpha = isLight() ? 0.75 : 0.6;
+    ctx.lineWidth = 1;
+    for (const axis of [0, 1])
+      for (let i = 0; i <= M; i++) {
+        let prev: { sx: number; sy: number; zc: number; h: number } | null = null;
+        for (let j = 0; j <= M; j++) {
+          const u = -SIG + (2 * SIG * (axis === 0 ? j : i)) / M;
+          const v = -OM + (2 * OM * (axis === 0 ? i : j)) / M;
+          const h = height(u, v);
+          const p = at(u, v, h);
+          if (prev && prev.zc > 0.1 && p.zc > 0.1) {
+            ctx.strokeStyle = turbo((prev.h + h) / 2);
+            ctx.beginPath();
+            ctx.moveTo(prev.sx, prev.sy);
+            ctx.lineTo(p.sx, p.sy);
+            ctx.stroke();
+          }
+          prev = { ...p, h };
+        }
+      }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawPoles(ink: string) {
+    ctx.strokeStyle = '#ef4444';
+    ctx.fillStyle = '#ef4444';
+    for (const p of poles()) {
+      if (Math.abs(p.re) > SIG || Math.abs(p.im) > OM) continue;
+      const foot = at(p.re, p.im, 0), tip = at(p.re, p.im, 1.06);
+      if (foot.zc <= 0.1 || tip.zc <= 0.1) continue;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(foot.sx, foot.sy);
+      ctx.lineTo(tip.sx, tip.sy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(foot.sx, foot.sy, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    void ink;
+  }
+
+  function drawSlice() {
+    if (!state.slice) return;
+    const N = 260;
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i <= N; i++) {
+      const omega = -OM + (2 * OM * i) / N;
+      const p = at(0, omega, height(0, omega));
+      if (p.zc <= 0.1) { started = false; continue; }
+      started ? ctx.lineTo(p.sx, p.sy) : ((ctx.moveTo(p.sx, p.sy)), (started = true));
+    }
+    ctx.stroke();
+  }
+
+  function draw() {
+    const ink = css('--stage-ink') || '232,233,236';
+    ctx.clearRect(0, 0, W, H);
+    drawBase(ink);
+    drawSurface();
+    drawPoles(ink);
+    drawSlice();
+    drawTime();
+    updateReadout();
+  }
+
+  // --- time-domain inset ---------------------------------------------------
+  const ftCanvas = document.getElementById('ft') as HTMLCanvasElement;
+  const ftSetup = setupCanvas(ftCanvas, () => drawTime());
+  function drawTime() {
+    const c = ftSetup.ctx, w = ftSetup.W, h = ftSetup.H;
+    const ink = getComputedStyle(ftCanvas).getPropertyValue('--stage-ink').trim() || '232,233,236';
+    c.clearRect(0, 0, w, h);
+    const T = 8, pad = 8;
+    const x = (t: number) => pad + ((w - 2 * pad) * t) / T;
+    const y = (v: number) => h / 2 - v * (h / 2 - pad) * 0.85;
+    c.strokeStyle = `rgba(${ink},0.28)`;
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(pad, y(0));
+    c.lineTo(w - pad, y(0));
+    c.stroke();
+
+    c.strokeStyle = '#f59e0b';
+    c.lineWidth = 2;
+    c.beginPath();
+    for (let i = 0; i <= 400; i++) {
+      const t = (T * i) / 400;
+      const v = Math.max(-1.6, Math.min(1.6, signal(t)));
+      i ? c.lineTo(x(t), y(v)) : c.moveTo(x(t), y(v));
+    }
+    c.stroke();
+
+    c.fillStyle = `rgba(${ink},0.5)`;
+    c.font = '11px ui-monospace, monospace';
+    c.fillText('f(t)', pad + 2, pad + 8);
+  }
+
+  function updateReadout() {
+    const set = (id: string, v: string) => ((document.getElementById(id) as HTMLElement).textContent = v);
+    const p = poles();
+    const rep = state.sig === 'ramp';
+    set('fs', formula());
+    set(
+      'poles',
+      p.length === 1
+        ? `s = ${p[0].re.toFixed(2)}${rep ? ' (double)' : ''}`
+        : `s = ${p[0].re.toFixed(2)} ± ${state.w.toFixed(1)}j`
+    );
+    set('rocv', `Re(s) > ${(-state.a).toFixed(2)}`);
+    set('fourier', -state.a < 0 ? 'exists (axis inside ROC)' : 'does not converge');
+  }
+
+  // --- interaction ---------------------------------------------------------
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lx) * 0.01;
+    state.pitch = Math.max(-1.45, Math.min(-0.05, state.pitch + (e.clientY - ly) * 0.01));
+    lx = e.clientX; ly = e.clientY;
+    draw();
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  const wctl = document.getElementById('wctl') as HTMLElement;
+  function syncFreqControl() {
+    const usable = state.sig === 'sin' || state.sig === 'cos';
+    wctl.style.opacity = usable ? '1' : '0.4';
+    (document.getElementById('w') as HTMLInputElement).disabled = !usable;
+  }
+
+  document.getElementById('sig')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#sig button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.sig = btn.dataset.s!;
+    syncFreqControl();
+    draw();
+  });
+
+  const bind = (id: string, key: 'a' | 'w', digits: number) => {
+    const el = document.getElementById(id) as HTMLInputElement;
+    el.addEventListener('input', () => {
+      state[key] = +el.value;
+      (document.getElementById(id + 'val') as HTMLElement).textContent = (+el.value).toFixed(digits);
+      draw();
+    });
+  };
+  bind('a', 'a', 2);
+  bind('w', 'w', 2);
+
+  for (const [id, key] of [['roc', 'roc'], ['slice', 'slice']] as const) {
+    const el = document.getElementById(id) as HTMLInputElement;
+    el.addEventListener('change', () => {
+      (state as any)[key] = el.checked;
+      draw();
+    });
+  }
+
+  syncFreqControl();
+  draw();
+</script>
+
+<style>
+  .lp-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .lp-canvas:active {
+    cursor: grabbing;
+  }
+  .seg button sup {
+    font-size: 0.72em;
+  }
+</style>

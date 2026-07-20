@@ -1,0 +1,580 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Phonons"
+  description="Nothing here knows what a wave is. Every mass obeys Hooke's law and pulls only on its four neighbours. Out of that comes a pulse that travels, at a speed nobody wrote down, and a shortest possible wavelength that no continuous material would ever have."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="ph" class="ph-canvas" width="900" height="660"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Strike again</button>
+      </div>
+
+      <div class="control">
+        <label>Excitation</label>
+        <div class="seg" id="exc">
+          <button data-e="pulse" class="active">Tap</button>
+          <button data-e="wave">Plane wave</button>
+        </div>
+      </div>
+
+      <div class="control" id="lamctl">
+        <label>Wavelength λ <b id="lamval">12.0 a</b></label>
+        <input type="range" id="lam" min="1" max="24" step="1" value="4" />
+        <div class="scale-hint"><span>48a, long</span><span>2a, the limit</span></div>
+      </div>
+
+      <div class="control">
+        <label>Grid <b id="nval">48 × 48</b></label>
+        <input type="range" id="n" min="24" max="80" step="8" value="48" />
+        <div class="scale-hint"><span>coarse</span><span>fine</span></div>
+      </div>
+
+      <div class="control"><label>Spring stiffness k <b id="kval">1.00</b></label><input type="range" id="k" min="0.2" max="4" step="0.05" value="1" /></div>
+      <div class="control"><label>Mass m <b id="mval">1.00</b></label><input type="range" id="m" min="0.2" max="4" step="0.05" value="1" /></div>
+      <div class="control"><label>Time rate <b id="rval">1.0×</b></label><input type="range" id="rate" min="10" max="200" value="100" /></div>
+
+      <label class="check"><input type="checkbox" id="follow" checked /> Follow one mass</label>
+
+      <div class="readout">
+        <div class="row"><span>Sound speed a√(k/m)</span><b id="c">—</b></div>
+        <div class="row"><span>Measured crest speed</span><b id="cmeas">—</b></div>
+        <div class="row"><span>Frequency ω (lattice)</span><b id="w">—</b></div>
+        <div class="row"><span>ω if it were continuous</span><b id="wc">—</b></div>
+        <div class="row"><span>Group velocity</span><b id="vg">—</b></div>
+        <div class="row"><span>Highest ω the grid allows</span><b id="wmax">—</b></div>
+        <div class="row"><span>Followed mass: now</span><b id="un">—</b></div>
+        <div class="row"><span>Followed mass: net drift</span><b id="ud">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit. Each line is one spring, each crossing one mass, and a
+        mass only ever feels its four neighbours. The grid wraps around at the
+        edges, so nothing reflects.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Tap it and watch the ring spread. Now ignore the ring and stare at the
+      single highlighted mass: it bobs up, comes back down, and stops roughly
+      where it began. Its <b>net drift stays near zero</b> while the pulse
+      crosses the whole grid. The wave travels; the matter does not. A wave is a
+      pattern moving through stuff, not stuff moving.
+    </li>
+    <li>
+      Stiffen the springs and the pulse speeds up. Make the masses heavier and it
+      slows down. The measured crest speed tracks <b>a√(k/m)</b> the whole way,
+      and yet no rule in this simulation mentions a speed. Every spring only
+      knows how hard to pull. Sound is what a lattice does, not something added
+      to it.
+    </li>
+    <li>
+      Double k and double m together: nothing changes. Only the <b>ratio</b>
+      matters, which is why stiff light materials carry sound fast (steel, about
+      5 km/s) and soft heavy ones carry it slowly (lead, about 1.2 km/s).
+    </li>
+    <li>
+      Switch to a plane wave with a long wavelength. Its dot sits right on the
+      dashed straight line, the continuum prediction, and it rides at exactly c.
+      Now shorten the wavelength. The lattice curve <b>bends away below the
+      line</b>, and the wave gets slower than sound. The smooth wave equation is
+      only the long-wavelength approximation of something grainy.
+    </li>
+    <li>
+      Push the wavelength slider to its limit, λ = 2a. The wave <b>stops
+      travelling altogether</b>: group velocity zero, just a standing shudder at
+      the highest frequency the grid can carry. There is a ceiling frequency, and
+      it exists purely because matter comes in lumps. In a real crystal that
+      ceiling is a few terahertz, and it is why solids stop conducting sound
+      above it.
+    </li>
+    <li>
+      Try to imagine a wave shorter than 2a. Neighbouring masses are already
+      alternating up, down, up, down. There is nothing left to subdivide, so
+      there is no such wave. Discreteness does not just approximate the continuum
+      badly at short scales, it <b>runs out of scales entirely</b>.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  // Lattice spacing a = 1. Out-of-plane displacement u, so this is the scalar
+  // wave equation on a grid: m ü = k Σ_neighbours (u_nb − u).
+  let N = 48;                                  // masses per side
+  const state = {
+    exc: 'pulse' as 'pulse' | 'wave',
+    n: 4,        // whole wavelengths across the box, so λ = N/n
+    k: 1,
+    m: 1,
+    rate: 1,
+    running: true,
+    follow: true,
+    yaw: 0.62,
+    pitch: -0.58,
+  };
+  let u = new Float64Array(N * N);
+  let v = new Float64Array(N * N);
+  let TRACK = 0;            // the followed mass, ~21% of the grid off centre
+  let rMin = 7, rMax = 20;  // radii between which the crest speed is fitted
+
+  /** Resize every per-site buffer after the grid resolution changes. */
+  function allocate() {
+    u = new Float64Array(N * N);
+    v = new Float64Array(N * N);
+    px = new Float64Array(N * N);
+    py = new Float64Array(N * N);
+    okp = new Uint8Array(N * N);
+    TRACK = (N / 2) * N + (N / 2 + Math.round(N * 0.21));
+    // Fit the crest between these radii: far enough out that the tap has
+    // organised itself, well short of N/2 where the wrap-around wave meets it
+    // head on. Below N = 40 no such window exists and the fit is unusable.
+    rMin = Math.max(4, Math.round(N * 0.18));
+    rMax = Math.round(N * 0.34);
+  }
+
+  const s = () => state.k / state.m;         // only the ratio matters
+  const cSound = () => Math.sqrt(s());
+  const lambda = () => N / state.n;
+  const kWave = () => (2 * Math.PI * state.n) / N;
+  const omegaLattice = () => 2 * Math.sqrt(s()) * Math.abs(Math.sin(kWave() / 2));
+  const omegaMax = () => 2 * Math.sqrt(s());
+  const vGroup = () => Math.sqrt(s()) * Math.cos(kWave() / 2);
+
+  let trace: number[] = [];
+  let driftSum = 0, driftN = 0;
+  // running least squares for the crest speed, r = speed · t
+  let cn = 0, cSt = 0, cSr = 0, cStt = 0, cStr = 0, crestDone = false, crestSpeed = NaN, crestMaxR = 0;
+  let simTime = 0;
+
+  function excite() {
+    u.fill(0);
+    v.fill(0);
+    trace = [];
+    driftSum = 0;
+    driftN = 0;
+    cn = cSt = cSr = cStt = cStr = 0;
+    crestDone = false;
+    crestSpeed = NaN;
+    crestMaxR = 0;
+    simTime = 0;
+    if (state.exc === 'pulse') {
+      // σ = 2.5 keeps the tap dominated by long wavelengths, so its crest
+      // really does travel at the sound speed rather than lagging.
+      const cx = N / 2, cy = N / 2, sig = 2.5;
+      for (let j = 0; j < N; j++)
+        for (let i = 0; i < N; i++) {
+          const dx = i - cx, dy = j - cy;
+          u[j * N + i] = Math.exp(-(dx * dx + dy * dy) / (2 * sig * sig));
+        }
+      // Remove the uniform part. Σu is conserved on a periodic grid, so any
+      // offset would be a permanent lift of the whole sheet, which is not a
+      // wave at all and would show up as a fake drift on the followed mass.
+      let mean = 0;
+      for (let c = 0; c < N * N; c++) mean += u[c];
+      mean /= N * N;
+      for (let c = 0; c < N * N; c++) u[c] -= mean;
+    } else {
+      const kx = kWave(), w = omegaLattice(), A = 0.55;
+      for (let j = 0; j < N; j++)
+        for (let i = 0; i < N; i++) {
+          u[j * N + i] = A * Math.cos(kx * i);
+          v[j * N + i] = A * w * Math.sin(kx * i); // travelling, not standing
+        }
+    }
+  }
+
+  function physics(dtFrame: number) {
+    const sr = s();
+    const dtMax = 0.25 / Math.sqrt(8 * sr); // symplectic Euler stability margin
+    const sub = Math.min(32, Math.max(1, Math.ceil(dtFrame / dtMax)));
+    const dt = dtFrame / sub;
+    for (let step = 0; step < sub; step++) {
+      for (let j = 0; j < N; j++) {
+        const jm = ((j - 1 + N) % N) * N, jp = ((j + 1) % N) * N, j0 = j * N;
+        for (let i = 0; i < N; i++) {
+          const c = j0 + i;
+          const lap = u[j0 + ((i + 1) % N)] + u[j0 + ((i - 1 + N) % N)] + u[jp + i] + u[jm + i] - 4 * u[c];
+          v[c] += sr * lap * dt;
+        }
+      }
+      for (let c = 0; c < N * N; c++) u[c] += v[c] * dt;
+      simTime += dt;
+      trackCrest();
+    }
+  }
+
+  /** Follow the radius of the outgoing crest and fit r = speed · t. */
+  function trackCrest() {
+    if (state.exc !== 'pulse' || crestDone) return;
+    const row = (N / 2) * N, cx = N / 2;
+    let best = 0, peak = 0;
+    for (let d = 2; d < N / 2 - 3; d++) {
+      const a = Math.abs(u[row + cx + d]);
+      if (a > best) { best = a; peak = d; }
+    }
+    // Sub-site position of the crest by parabolic fit, otherwise the integer
+    // site index quantises the fit badly over the short measuring window.
+    let bi = peak;
+    if (peak >= 3 && peak <= N / 2 - 5) {
+      const a = Math.abs(u[row + cx + peak - 1]);
+      const b = Math.abs(u[row + cx + peak]);
+      const c2 = Math.abs(u[row + cx + peak + 1]);
+      const den = a - 2 * b + c2;
+      if (den < -1e-12) bi = peak + (0.5 * (a - c2)) / den;
+    }
+    // Stop once the ring leaves the window. On a periodic grid it wraps back
+    // in, and those return visits would drag the fitted slope towards zero.
+    if (bi > rMax || (cn > 12 && bi < crestMaxR - 2)) { crestDone = cn > 8; return; }
+    // Start past the radius where the tap is still organising itself.
+    if (bi < rMin) return;
+    if (bi > crestMaxR) crestMaxR = bi;
+    cn++;
+    cSt += simTime;
+    cSr += bi;
+    cStt += simTime * simTime;
+    cStr += simTime * bi;
+    if (cn > 8) {
+      const den = cn * cStt - cSt * cSt;
+      if (Math.abs(den) > 1e-9) crestSpeed = (cn * cStr - cSt * cSr) / den;
+    }
+  }
+
+  // --- canvas --------------------------------------------------------------
+  const canvas = document.getElementById('ph') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => {});
+  const css = (v2: string) => getComputedStyle(canvas).getPropertyValue(v2).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const ACC = '#7c8cff', WARM = '#f59e0b';
+
+  const CX = 450, CY = 258, CAM = 3.2, FOCAL = 2.7, SCALE = 232, HEIGHT = 0.34;
+  const DISP = { x: 44, y: 532, w: 366, h: 96 };
+  const TR = { x: 492, y: 532, w: 366, h: 96 };
+
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const x1 = x * cy + z * sy;
+    const z1 = -x * sy + z * cy;
+    const y2 = y * cp - z1 * sp;
+    const z2 = y * sp + z1 * cp;
+    const zc = z2 + CAM;
+    const sc = FOCAL / Math.max(0.05, zc);
+    return { sx: CX + x1 * sc * SCALE, sy: CY - y2 * sc * SCALE, zc };
+  }
+
+  const LEVELS = 9;
+  let px = new Float64Array(N * N), py = new Float64Array(N * N);
+  let okp = new Uint8Array(N * N);
+  const paths: Path2D[] = [];
+
+  function levelColor(l: number) {
+    const t = (l / (LEVELS - 1)) * 2 - 1;
+    const a = Math.abs(t);
+    if (a < 0.12) return `rgba(${ink()},0.16)`;
+    const col = t < 0 ? '124,140,255' : '245,158,11';
+    return `rgba(${col},${(0.28 + 0.62 * a).toFixed(3)})`;
+  }
+  const bucket = (val: number) => {
+    const t = Math.tanh(val / 0.5);
+    return Math.max(0, Math.min(LEVELS - 1, Math.round(((t + 1) / 2) * (LEVELS - 1))));
+  };
+
+  function drawSheet() {
+    for (let j = 0; j < N; j++)
+      for (let i = 0; i < N; i++) {
+        const d = j * N + i;
+        const x = (i / (N - 1)) * 2 - 1;
+        const z = (j / (N - 1)) * 2 - 1;
+        const p = project(x, u[d] * HEIGHT, z);
+        px[d] = p.sx;
+        py[d] = p.sy;
+        okp[d] = p.zc > 0.1 ? 1 : 0;
+      }
+    for (let l = 0; l < LEVELS; l++) paths[l] = new Path2D();
+    // every segment is one spring
+    for (let j = 0; j < N; j++)
+      for (let i = 0; i < N - 1; i++) {
+        const a = j * N + i, b = a + 1;
+        if (!okp[a] || !okp[b]) continue;
+        const p = paths[bucket((u[a] + u[b]) / 2)];
+        p.moveTo(px[a], py[a]);
+        p.lineTo(px[b], py[b]);
+      }
+    for (let i = 0; i < N; i++)
+      for (let j = 0; j < N - 1; j++) {
+        const a = j * N + i, b = a + N;
+        if (!okp[a] || !okp[b]) continue;
+        const p = paths[bucket((u[a] + u[b]) / 2)];
+        p.moveTo(px[a], py[a]);
+        p.lineTo(px[b], py[b]);
+      }
+    ctx.lineWidth = 1;
+    for (let l = 0; l < LEVELS; l++) {
+      ctx.strokeStyle = levelColor(l);
+      ctx.stroke(paths[l]);
+    }
+
+    if (state.follow && okp[TRACK]) {
+      const i = TRACK % N, j = (TRACK / N) | 0;
+      const x = (i / (N - 1)) * 2 - 1, z = (j / (N - 1)) * 2 - 1;
+      const rest = project(x, 0, z);
+      // stem from the rest position up to where the mass actually is
+      ctx.strokeStyle = `rgba(${ink()},0.45)`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(rest.sx, rest.sy);
+      ctx.lineTo(px[TRACK], py[TRACK]);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(${ink()},0.35)`;
+      ctx.beginPath();
+      ctx.arc(rest.sx, rest.sy, 3.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = 'rgba(10,11,14,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(px[TRACK], py[TRACK], 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 12) {
+    ctx.fillStyle = `rgba(${ink()},${alpha})`;
+    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  function drawDispersion() {
+    const wmax = omegaMax();
+    const X = (kk: number) => DISP.x + (kk / Math.PI) * DISP.w;
+    const Y = (w: number) => DISP.y + DISP.h - Math.min(1, w / (wmax * 1.15)) * DISP.h;
+    label('WHICH WAVES THE GRID ALLOWS   ω vs k', DISP.x, DISP.y - 12, 0.5);
+
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(DISP.x, DISP.y + DISP.h);
+    ctx.lineTo(DISP.x + DISP.w, DISP.y + DISP.h);
+    ctx.moveTo(DISP.x, DISP.y);
+    ctx.lineTo(DISP.x, DISP.y + DISP.h);
+    ctx.stroke();
+
+    // what a perfectly continuous sheet would do: ω = c k, a straight line
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = `rgba(${ink()},0.4)`;
+    ctx.beginPath();
+    ctx.moveTo(X(0), Y(0));
+    let done = false;
+    for (let i = 1; i <= 60 && !done; i++) {
+      const kk = (Math.PI * i) / 60, w = cSound() * kk;
+      if (w > wmax * 1.15) done = true;
+      ctx.lineTo(X(kk), Y(w));
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = WARM;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 90; i++) {
+      const kk = (Math.PI * i) / 90;
+      const w = 2 * Math.sqrt(s()) * Math.abs(Math.sin(kk / 2));
+      i ? ctx.lineTo(X(kk), Y(w)) : ctx.moveTo(X(kk), Y(w));
+    }
+    ctx.stroke();
+
+    if (state.exc === 'wave') {
+      ctx.fillStyle = ACC;
+      ctx.beginPath();
+      ctx.arc(X(kWave()), Y(omegaLattice()), 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    label('continuum', X(Math.PI * 0.42), Y(cSound() * Math.PI * 0.42) - 8, 0.4, 'left', 10);
+    label('lattice', X(Math.PI * 0.8), Y(2 * Math.sqrt(s()) * Math.abs(Math.sin(Math.PI * 0.4))) + 14, 0.5, 'left', 10);
+    label('k = π/a', X(Math.PI), DISP.y + DISP.h + 15, 0.4, 'right', 11);
+    label('λ = 2a', X(Math.PI), DISP.y + DISP.h + 27, 0.3, 'right', 10);
+    label('long waves', DISP.x + 2, DISP.y + DISP.h + 15, 0.35, 'left', 11);
+    label(`ω_max = ${wmax.toFixed(2)}`, DISP.x + DISP.w, DISP.y - 12, 0.4, 'right', 11);
+  }
+
+  function drawTrace() {
+    label('THE FOLLOWED MASS, over time', TR.x, TR.y - 12, 0.5);
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(TR.x, TR.y + TR.h / 2);
+    ctx.lineTo(TR.x + TR.w, TR.y + TR.h / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (trace.length > 1) {
+      ctx.strokeStyle = ACC;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < trace.length; i++) {
+        const x = TR.x + (TR.w * i) / (trace.length - 1);
+        const y = TR.y + TR.h / 2 - Math.max(-1, Math.min(1, trace[i])) * (TR.h / 2 - 4);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+    label('rest position', TR.x + 4, TR.y + TR.h / 2 - 5, 0.3, 'left', 10);
+    label('it returns to where it started', TR.x + TR.w, TR.y + TR.h + 15, 0.35, 'right', 11);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawSheet();
+    drawDispersion();
+    drawTrace();
+  }
+
+  // --- readouts ------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  function updateReadout() {
+    el('c').textContent = cSound().toFixed(3);
+    el('cmeas').textContent =
+      state.exc !== 'pulse' ? 'tap mode only'
+      : N < 40 ? 'grid too coarse'
+      : isNaN(crestSpeed) ? 'measuring…'
+      : crestSpeed.toFixed(3);
+    el('w').textContent = state.exc === 'wave' ? omegaLattice().toFixed(3) : '—';
+    el('wc').textContent = state.exc === 'wave' ? (cSound() * kWave()).toFixed(3) : '—';
+    el('vg').textContent = state.exc === 'wave' ? vGroup().toFixed(3) : '—';
+    el('wmax').textContent = omegaMax().toFixed(3);
+    el('un').textContent = u[TRACK].toFixed(3);
+    el('ud').textContent = driftN ? (driftSum / driftN).toFixed(4) : '—';
+  }
+
+  // --- loop ----------------------------------------------------------------
+  function frame() {
+    if (state.running) {
+      physics(0.5 * state.rate);
+      trace.push(u[TRACK]);
+      if (trace.length > 360) trace.shift();
+      driftSum += u[TRACK];
+      driftN++;
+    }
+    draw();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls ------------------------------------------------------------
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true; lx = e.clientX; ly = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lx) * 0.01;
+    state.pitch = Math.max(-1.4, Math.min(-0.06, state.pitch + (e.clientY - ly) * 0.01));
+    lx = e.clientX; ly = e.clientY;
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('reset').addEventListener('click', excite);
+
+  const lamCtl = el('lamctl');
+  function syncLam() {
+    lamCtl.style.opacity = state.exc === 'wave' ? '1' : '0.4';
+    (el('lam') as HTMLInputElement).disabled = state.exc !== 'wave';
+    el('lamval').textContent = `${lambda().toFixed(1)} a`;
+  }
+  el('exc').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#exc button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.exc = btn.dataset.e as 'pulse' | 'wave';
+    syncLam();
+    excite();
+  });
+  (el('lam') as HTMLInputElement).addEventListener('input', (e) => {
+    state.n = +(e.target as HTMLInputElement).value;
+    syncLam();
+    excite();
+  });
+  const nEl = el('n') as HTMLInputElement;
+  const lamEl = el('lam') as HTMLInputElement;
+  function syncGrid() {
+    el('nval').textContent = `${N} × ${N}`;
+    // λ = N/n, so the shortest wave is always 2a but the slider's reach changes
+    lamEl.max = String(N / 2);
+    if (state.n > N / 2) state.n = N / 2;
+    lamEl.value = String(state.n);
+    const hint = lamEl.parentElement!.querySelector('.scale-hint');
+    if (hint) hint.innerHTML = `<span>${N}a, long</span><span>2a, the limit</span>`;
+  }
+  nEl.addEventListener('input', () => {
+    N = +nEl.value;
+    allocate();
+    syncGrid();
+    syncLam();
+    excite();
+  });
+
+  const bind = (id: string, key: 'k' | 'm', after?: () => void) => {
+    const inp = el(id) as HTMLInputElement;
+    inp.addEventListener('input', () => {
+      state[key] = +inp.value;
+      el(id + 'val').textContent = state[key].toFixed(2);
+      after?.();
+    });
+  };
+  bind('k', 'k', excite);
+  bind('m', 'm', excite);
+  (el('rate') as HTMLInputElement).addEventListener('input', (e) => {
+    state.rate = +(e.target as HTMLInputElement).value / 100;
+    el('rval').textContent = `${state.rate.toFixed(1)}×`;
+  });
+  (el('follow') as HTMLInputElement).addEventListener('change', (e) => {
+    state.follow = (e.target as HTMLInputElement).checked;
+  });
+
+  allocate();
+  syncGrid();
+  syncLam();
+  excite();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .ph-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .ph-canvas:active {
+    cursor: grabbing;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+</style>

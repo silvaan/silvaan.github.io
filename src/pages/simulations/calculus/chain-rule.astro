@@ -1,0 +1,457 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="The Chain Rule"
+  description="Push a small step through two machines in a row. The first stretches it, the second stretches what comes out, and stretching twice means multiplying the two factors. That is the chain rule, and it also shows why f′ must be read at g(x): the second machine never sees x at all."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="cr" width="900" height="660"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">▶ Push a step through</button>
+        <button class="btn ghost" id="shrink">Shrink h → 0</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>The composition f(g(x))</label>
+        <div class="seg" id="pair">
+          <button data-p="0" class="active">sin(x²)</button>
+          <button data-p="1">(1.4+sin x)²</button>
+          <button data-p="2">√(1+x²)</button>
+        </div>
+      </div>
+
+      <div class="control"><label>Point x <b id="xval">1.00</b></label><input type="range" id="x" min="0" max="100" value="40" /></div>
+
+      <div class="control">
+        <label>Step h <b id="hval">0.041</b></label>
+        <input type="range" id="h" min="0" max="100" value="35" />
+        <div class="scale-hint"><span>0.3</span><span>0.0009</span></div>
+      </div>
+
+      <div class="readout" id="rows"></div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        The three bars share one scale, so their lengths are directly
+        comparable. Press play and watch how much faster one bar grows than the
+        one above it.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Press <b>Push a step through</b> and watch the three bars extend together.
+      They all start at the same instant and stop at the same instant, so the
+      one that ends up longest is the one that grew <b>fastest</b>. Those growth
+      rates are the derivatives, and you can see them race.
+    </li>
+    <li>
+      The step h goes into g and comes out with length Δu. That length, not h,
+      is what goes into f. Two stretches in a row, so the total is the two
+      factors <b>multiplied</b>, never added.
+    </li>
+    <li>
+      Watch where the dot sits on the second graph: at <b>u = g(x)</b>, not at
+      x. The second machine has no idea what x was, it only ever sees what g
+      handed it. That is why the rule says f′(g(x)), and why writing f′(x) is
+      the classic way to get this wrong.
+    </li>
+    <li>
+      Shrink h. All three bars shrink, the picture rescales, and the
+      <b>ratios hold steady</b>. A derivative is a magnification factor, and a
+      magnification does not care how small the thing being magnified is.
+    </li>
+    <li>
+      On <b>sin(x²)</b> slide x to about 1.25, where the outer factor cos(x²)
+      passes through <b>zero</b>. The bottom bar collapses to nothing even
+      though the middle bar is still stretching hard. A chain is as dead as its
+      deadest link. On <b>(1.4+sin x)²</b> the same happens at x ≈ 1.57, but
+      from the inner stage instead.
+    </li>
+    <li>
+      Push past those points and a factor turns <b>negative</b>: that bar now
+      grows leftward instead of rightward. Two negatives in a row flip twice and
+      the composite comes back positive, exactly as the arithmetic promises.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type Pair = {
+    g: (x: number) => number; dg: (x: number) => number; gl: string;
+    f: (u: number) => number; df: (u: number) => number; fl: string;
+    x0: number; x1: number;
+  };
+  const HMAX = 0.3;
+  const PAIRS: Pair[] = [
+    {
+      g: (x) => x * x, dg: (x) => 2 * x, gl: 'g(x) = x²',
+      f: (u) => Math.sin(u), df: (u) => Math.cos(u), fl: 'f(u) = sin u',
+      x0: 0.3, x1: 2.2,
+    },
+    {
+      g: (x) => 1.4 + Math.sin(x), dg: (x) => Math.cos(x), gl: 'g(x) = 1.4 + sin x',
+      f: (u) => u * u, df: (u) => 2 * u, fl: 'f(u) = u²',
+      x0: 0.2, x1: 4,
+    },
+    {
+      g: (x) => 1 + x * x, dg: (x) => 2 * x, gl: 'g(x) = 1 + x²',
+      f: (u) => Math.sqrt(u), df: (u) => 0.5 / Math.sqrt(u), fl: 'f(u) = √u',
+      x0: 0.2, x1: 2,
+    },
+  ];
+
+  const state = { pi: 0, xs: 40, hs: 35, tau: 1, playing: false, shrinking: false };
+  const P = () => PAIRS[state.pi];
+  const hFull = () => HMAX * Math.pow(10, -state.hs / 40);
+  const hOf = () => hFull() * state.tau;
+  const xOf = () => P().x0 + ((P().x1 - P().x0) * state.xs) / 100;
+
+  const canvas = document.getElementById('cr') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const ACC = '#7c8cff', WARM = '#f59e0b', OUT = '#34d399';
+
+  const GG = { x: 62, y: 154, w: 350, h: 186 };
+  const GF = { x: 496, y: 154, w: 350, h: 186 };
+  const TR = { x: 150, w: 620, y: [452, 536, 620] };
+
+  function tint(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function text(t: string, x: number, y: number, a = 0.55, al: CanvasTextAlign = 'left', size = 12, weight = '') {
+    ctx.fillStyle = `rgba(${ink()},${a})`;
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.textAlign = al;
+    ctx.fillText(t, x, y);
+    ctx.textAlign = 'left';
+  }
+  function runText(parts: [string, string, number][], cx: number, y: number, size: number, weight = '600') {
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`;
+    let total = 0;
+    for (const [s] of parts) total += ctx.measureText(s).width;
+    let x = cx - total / 2;
+    ctx.textAlign = 'left';
+    for (const [s, c, a] of parts) {
+      ctx.fillStyle = c === 'ink' ? `rgba(${ink()},${a})` : tint(c, a);
+      ctx.fillText(s, x, y);
+      x += ctx.measureText(s).width;
+    }
+  }
+
+  function drawHeader() {
+    const p = P(), x = xOf();
+    const gx = p.g(x), outer = p.df(gx), inner = p.dg(x);
+    runText(
+      [['(f∘g)′(x)', 'ink', 0.95], ['  =  ', 'ink', 0.5], ['f′(g(x))', WARM, 1],
+       ['  ×  ', 'ink', 0.5], ['g′(x)', ACC, 1]],
+      W / 2, 42, 22
+    );
+    runText(
+      [[(outer * inner).toFixed(3), OUT, 1], ['  =  ', 'ink', 0.45],
+       [outer.toFixed(3), WARM, 1], ['  ×  ', 'ink', 0.45], [inner.toFixed(3), ACC, 1]],
+      W / 2, 68, 15
+    );
+    runText(
+      [['nudge x and u moves ', 'ink', 0.5], [`${inner.toFixed(2)}×`, ACC, 1], [' as much; nudge u and y moves ', 'ink', 0.5],
+       [`${outer.toFixed(2)}×`, WARM, 1], [' as much; so y moves ', 'ink', 0.5],
+       [`${(outer * inner).toFixed(2)}×`, OUT, 1], [' as much as x', 'ink', 0.5]],
+      W / 2, 100, 13, ''
+    );
+  }
+
+  function drawPanel(
+    box: { x: number; y: number; w: number; h: number },
+    fn: (t: number) => number, t0: number, t1: number,
+    at: number, step: number, color: string, title: string, sub: string,
+    axLabel: string, valLabel: string
+  ) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= 160; i++) {
+      const t = t0 + ((t1 - t0) * i) / 160;
+      const y = fn(t);
+      lo = Math.min(lo, y); hi = Math.max(hi, y);
+    }
+    const pad = (hi - lo) * 0.15 || 1;
+    lo -= pad; hi += pad;
+    const X = (t: number) => box.x + ((t - t0) / (t1 - t0)) * box.w;
+    const Y = (y: number) => box.y + box.h - ((y - lo) / (hi - lo)) * box.h;
+
+    text(title, box.x, box.y - 28, 0.5, 'left', 12, '600');
+    text(sub, box.x, box.y - 12, 0.35);
+    ctx.strokeStyle = `rgba(${ink()},0.2)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+    ctx.strokeStyle = `rgba(${ink()},0.8)`;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (let i = 0; i <= 240; i++) {
+      const t = t0 + ((t1 - t0) * i) / 240;
+      i ? ctx.lineTo(X(t), Y(fn(t))) : ctx.moveTo(X(t), Y(fn(t)));
+    }
+    ctx.stroke();
+
+    const a = at, b = at + step;
+    const ya = fn(a), yb = fn(b);
+    ctx.strokeStyle = tint(color, 0.9);
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(X(a), box.y + box.h - 3);
+    ctx.lineTo(X(b), box.y + box.h - 3);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(box.x + 3, Y(ya));
+    ctx.lineTo(box.x + 3, Y(yb));
+    ctx.stroke();
+    text('in', X(a) - 8, box.y + box.h - 9, 0.45, 'right', 10);
+    text('out', box.x + 10, (Y(ya) + Y(yb)) / 2 + 3, 0.45, 'left', 10);
+
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(${ink()},0.35)`;
+    ctx.beginPath();
+    ctx.moveTo(X(a), Y(ya)); ctx.lineTo(X(a), box.y + box.h);
+    ctx.moveTo(X(a), Y(ya)); ctx.lineTo(box.x, Y(ya));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = tint(color, 1);
+    ctx.beginPath();
+    ctx.arc(X(a), Y(ya), 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `rgba(${ink()},0.7)`;
+    ctx.beginPath();
+    ctx.arc(X(b), Y(yb), 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    text(axLabel, box.x + box.w, box.y + box.h + 16, 0.5, 'right', 11);
+    text(valLabel, X(a), box.y + box.h + 16, 0.85, 'center', 11, '600');
+  }
+
+  /** The step, then what each machine turns it into, all on one scale. */
+  function drawTracks() {
+    const p = P(), x = xOf(), h = hOf();
+    const gx = p.g(x), gxh = p.g(x + h);
+    const du = gxh - gx;
+    const y0 = p.f(gx), y1 = p.f(gxh);
+    const dy = y1 - y0;
+
+    // one shared scale, fixed by the full step so bars do not jump while playing
+    const hF = hFull();
+    const duF = p.g(x + hF) - gx;
+    const dyF = p.f(p.g(x + hF)) - y0;
+    const mx = Math.max(Math.abs(hF), Math.abs(duF), Math.abs(dyF), 1e-12);
+    const S = (TR.w * 0.42) / mx;
+    const cx = TR.x + TR.w * 0.34;
+
+    text('ONE STEP, THROUGH BOTH MACHINES', TR.x - 54, TR.y[0] - 42, 0.5, 'left', 12, '600');
+    text('same scale on all three, so you can compare them by eye', TR.x - 54, TR.y[0] - 26, 0.35);
+
+    const rows = [
+      { y: TR.y[0], d: h, c: `rgba(${ink()},0.85)`, name: 'the step h', sub: 'what you push in' },
+      { y: TR.y[1], d: du, c: ACC, name: 'Δu after g', sub: `g stretched it ${(du / (h || 1e-12)).toFixed(2)}×` },
+      { y: TR.y[2], d: dy, c: OUT, name: 'Δy after f', sub: `f stretched that ${(dy / (du || 1e-12)).toFixed(2)}×` },
+    ];
+    for (const r of rows) {
+      ctx.strokeStyle = `rgba(${ink()},0.18)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(TR.x, r.y);
+      ctx.lineTo(TR.x + TR.w, r.y);
+      ctx.stroke();
+      const x1 = cx + r.d * S;
+      ctx.strokeStyle = r.c;
+      ctx.lineWidth = 12;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(cx, r.y);
+      ctx.lineTo(x1, r.y);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(${ink()},0.6)`;
+      ctx.beginPath();
+      ctx.arc(cx, r.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      text(r.name, TR.x - 14, r.y + 1, 0.75, 'right', 12, '600');
+      text(r.sub, TR.x - 14, r.y + 16, 0.4, 'right', 11);
+      const lbl = `${r.d >= 0 ? '' : '−'}${Math.abs(r.d).toPrecision(3)}`;
+      text(lbl, (cx + x1) / 2, r.y - 13, 0.8, 'center', 12, '600');
+    }
+
+    // carry each end down to the next row
+    const ends = [cx + h * S, cx + du * S, cx + dy * S];
+    for (let i = 0; i < 2; i++) {
+      ctx.strokeStyle = `rgba(${ink()},0.28)`;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(cx, TR.y[i] + 8);
+      ctx.lineTo(cx, TR.y[i + 1] - 8);
+      ctx.moveTo(ends[i], TR.y[i] + 8);
+      ctx.lineTo(ends[i + 1], TR.y[i + 1] - 8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const factor = i === 0 ? du / (h || 1e-12) : dy / (du || 1e-12);
+      const col = i === 0 ? ACC : WARM;
+      ctx.fillStyle = tint(col, 1);
+      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`× ${factor.toFixed(3)}`, TR.x + TR.w + 14, (TR.y[i] + TR.y[i + 1]) / 2 + 5);
+      if (factor < 0) text('flips', TR.x + TR.w + 14, (TR.y[i] + TR.y[i + 1]) / 2 + 20, 0.45, 'left', 10);
+    }
+    ctx.fillStyle = tint(OUT, 1);
+    ctx.font = '600 13px ui-monospace, monospace';
+    ctx.fillText(`total × ${(dy / (h || 1e-12)).toFixed(3)}`, TR.x + TR.w + 14, TR.y[2] + 5);
+    text(`→ ${(p.df(gx) * p.dg(x)).toFixed(3)} as h→0`, TR.x + TR.w + 14, TR.y[2] + 20, 0.45, 'left', 10);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const p = P(), x = xOf(), h = hOf();
+    drawHeader();
+    drawPanel(GG, p.g, p.x0, p.x1 + HMAX, x, h, ACC, 'MACHINE 1', p.gl, 'x', `x=${x.toFixed(2)}`);
+    let ul = Infinity, uh = -Infinity;
+    for (let i = 0; i <= 120; i++) {
+      const t = p.x0 + ((p.x1 + HMAX - p.x0) * i) / 120;
+      const g = p.g(t);
+      ul = Math.min(ul, g); uh = Math.max(uh, g);
+    }
+    const gx = p.g(x);
+    drawPanel(GF, p.f, ul, uh, gx, p.g(x + h) - gx, WARM, 'MACHINE 2', p.fl, 'u', `u=${gx.toFixed(2)}`);
+    // the hand-off between the two machines
+    ctx.strokeStyle = `rgba(${ink()},0.3)`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(GG.x + GG.w + 12, GG.y + GG.h / 2);
+    ctx.lineTo(GF.x - 16, GG.y + GG.h / 2);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(${ink()},0.45)`;
+    ctx.beginPath();
+    ctx.moveTo(GF.x - 8, GG.y + GG.h / 2);
+    ctx.lineTo(GF.x - 18, GG.y + GG.h / 2 - 5);
+    ctx.lineTo(GF.x - 18, GG.y + GG.h / 2 + 5);
+    ctx.closePath();
+    ctx.fill();
+    text('u', (GG.x + GG.w + GF.x) / 2, GG.y + GG.h / 2 - 9, 0.5, 'center', 12, '600');
+    drawTracks();
+    updateRows();
+  }
+
+  const rows = document.getElementById('rows') as HTMLElement;
+  const row = (a: string, b: string) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
+  function updateRows() {
+    const p = P(), x = xOf(), h = hOf();
+    const gx = p.g(x), du = p.g(x + h) - gx;
+    const dy = p.f(gx + du) - p.f(gx);
+    rows.innerHTML =
+      row('u = g(x)', gx.toFixed(4)) +
+      row('Δu / h', h > 1e-12 ? (du / h).toFixed(4) : '—') +
+      row('g′(x)', p.dg(x).toFixed(4)) +
+      row('Δy / Δu', Math.abs(du) > 1e-12 ? (dy / du).toFixed(4) : '—') +
+      row('f′(g(x))', p.df(gx).toFixed(4)) +
+      row('Δy / h', h > 1e-12 ? (dy / h).toFixed(4) : '—') +
+      row('f′(g(x))·g′(x)', (p.df(gx) * p.dg(x)).toFixed(4));
+  }
+
+  // --- controls ------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const runBtn = el('run');
+  let raf = 0, t0 = 0;
+
+  function stopAll() {
+    state.playing = false;
+    state.shrinking = false;
+    runBtn.textContent = '▶ Push a step through';
+    cancelAnimationFrame(raf);
+  }
+  function loop(now: number) {
+    if (state.playing) {
+      const cycle = ((now - t0) / 1000) % 2.1;
+      state.tau = cycle < 1.3 ? 0.03 + 0.97 * (cycle / 1.3) : 1;
+      draw();
+      raf = requestAnimationFrame(loop);
+    } else if (state.shrinking) {
+      if (state.hs >= 100) { stopAll(); return; }
+      setH(Math.min(100, state.hs + 0.6));
+      raf = requestAnimationFrame(loop);
+    }
+  }
+  runBtn.addEventListener('click', () => {
+    if (state.playing) { stopAll(); state.tau = 1; draw(); return; }
+    stopAll();
+    state.playing = true;
+    runBtn.textContent = '❚❚ Stop';
+    t0 = performance.now();
+    raf = requestAnimationFrame(loop);
+  });
+  el('shrink').addEventListener('click', () => {
+    const was = state.shrinking;
+    stopAll();
+    state.tau = 1;
+    if (was) { draw(); return; }
+    if (state.hs >= 100) setH(0);
+    state.shrinking = true;
+    raf = requestAnimationFrame(loop);
+  });
+  el('reset').addEventListener('click', () => {
+    stopAll();
+    state.tau = 1;
+    state.xs = 40;
+    (el('x') as HTMLInputElement).value = '40';
+    el('xval').textContent = xOf().toFixed(2);
+    setH(35);
+  });
+
+  el('pair').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#pair button').forEach((n) => n.classList.remove('active'));
+    b.classList.add('active');
+    state.pi = +b.dataset.p!;
+    el('xval').textContent = xOf().toFixed(2);
+    draw();
+  });
+  const xEl = el('x') as HTMLInputElement, hEl = el('h') as HTMLInputElement;
+  xEl.addEventListener('input', () => {
+    state.xs = +xEl.value;
+    el('xval').textContent = xOf().toFixed(2);
+    draw();
+  });
+  function setH(v: number) {
+    state.hs = v;
+    hEl.value = String(v);
+    const h = hFull();
+    el('hval').textContent = h < 0.01 ? h.toFixed(5) : h.toFixed(3);
+    draw();
+  }
+  hEl.addEventListener('input', () => { state.tau = 1; setH(+hEl.value); });
+
+  el('xval').textContent = xOf().toFixed(2);
+  setH(35);
+</script>
+
+<style>
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  #pair button {
+    font-size: 0.78rem;
+    padding: 5px 9px;
+  }
+</style>

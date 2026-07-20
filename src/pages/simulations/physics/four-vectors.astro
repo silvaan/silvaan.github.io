@@ -1,0 +1,539 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Four-Vectors"
+  description="An arrow in spacetime does not care who is looking at it. Boost to another frame and its shadows on the time and space axes both change, yet one number built from them refuses to move. That stubborn number is the arrow's length, and every four-vector carries one: proper time for a displacement, the speed of light for a four-velocity, the rest mass for a four-momentum."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="fv" width="900" height="660"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">▶ Sweep the observer</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Which four-vector</label>
+        <div class="seg" id="mode">
+          <button data-m="0" class="active">Displacement</button>
+          <button data-m="1">Four-velocity</button>
+          <button data-m="2">Four-momentum</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Observer boost β <b id="bval">0.00</b></label>
+        <input type="range" id="b" min="-88" max="88" value="0" />
+      </div>
+
+      <div class="control" data-for="1">
+        <label>Particle speed β<sub>u</sub> <b id="uval">0.60</b></label>
+        <input type="range" id="u" min="-92" max="92" value="60" />
+      </div>
+
+      <div class="control" data-for="2">
+        <label>Energy E <b id="eval">2.00</b></label>
+        <input type="range" id="e" min="60" max="380" value="200" />
+      </div>
+
+      <div class="control" data-for="2">
+        <label>Rest mass m <b id="mval">1.20</b></label>
+        <input type="range" id="m" min="0" max="300" value="120" />
+        <div class="scale-hint"><span>massless</span><span>at rest</span></div>
+      </div>
+
+      <div class="readout" id="rows"></div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        In <b>Displacement</b> mode you can drag the amber arrowhead anywhere in
+        the diagram. The hollow marker shows where the boosted observer's
+        component pair would land if you plotted it on the lab grid: it slides
+        along the hyperbola and never leaves it.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the boost slider and watch the amber arrow. It <b>never moves</b>.
+      Only the indigo and teal axes swing, so only the shadows the arrow casts
+      on them change. The arrow is the physics, the components are just a
+      reading taken by one observer.
+    </li>
+    <li>
+      The two shadows trade against each other: as one grows the other grows
+      too, yet the invariant bar at the bottom right stays frozen. That is
+      because the length is built with a <b>minus sign</b>, s² = (ct)² − x², and
+      the growth in one term is exactly cancelled by the other.
+    </li>
+    <li>
+      Follow the hollow marker. Every observer in the universe reads a different
+      component pair, and every one of those pairs lands somewhere on the
+      <b>same hyperbola</b>. Rotations in ordinary space move points on a circle,
+      boosts move them on a hyperbola: that single swap is all of special
+      relativity.
+    </li>
+    <li>
+      Push the arrow across the dashed 45° cone. Inside the cone the invariant is
+      <b>positive</b> (timelike, and its square root is the proper time a clock
+      would log). Outside it turns <b>negative</b> (spacelike, a proper length,
+      and no observer can be present at both ends).
+    </li>
+    <li>
+      Switch to <b>Four-velocity</b>. Slide the particle to any speed you like:
+      the arrow stretches and tilts, but its length is pinned at exactly
+      <b>1 (that is, c)</b>. Everything moves through spacetime at the speed of
+      light, and speeding up through space only trades time for space.
+    </li>
+    <li>
+      Switch to <b>Four-momentum</b> and drag the mass to zero. The arrow lies
+      <b>flat on the light cone</b>, the invariant collapses to nothing, and
+      E² − p²c² = 0 becomes E = pc. That is a photon, and it is the same picture
+      as everything else, just with zero length.
+    </li>
+    <li>
+      Keep the mass fixed and raise the energy. The tip climbs the same
+      hyperbola, and the gap between E and pc closes without ever shutting.
+      The rest mass is the arrow's length, and no amount of energy can change it.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  const state = {
+    mode: 0,
+    beta: 0,
+    ubeta: 0.6,
+    E: 2.0,
+    m: 1.2,
+    // draggable tip for displacement mode (lab coords: x, ct)
+    dx: 1.1,
+    dct: 2.6,
+    playing: false,
+  };
+
+  const canvas = document.getElementById('fv') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const ACC = '#7c8cff'; // x' axis, space component
+  const TEAL = '#5eead4'; // ct' axis, time component
+  const WARM = '#f59e0b'; // the four-vector itself
+  const OUT = '#34d399'; // the invariant
+
+  const O = { x: 330, y: 330 };
+  const U = 66;
+  const R = 4.2; // half-extent of the diagram, in units
+  const COL = { x: 646, w: 226 }; // right-hand column
+  const CB = COL.x + COL.w / 2; // baseline centre for signed bars
+  const BAR = 100; // half-length of a full-scale bar
+
+  const toPx = (x: number, ct: number) => ({ px: O.x + x * U, py: O.y - ct * U });
+
+  function tint(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function text(
+    t: string,
+    x: number,
+    y: number,
+    a = 0.55,
+    al: CanvasTextAlign = 'left',
+    size = 12,
+    weight = ''
+  ) {
+    ctx.fillStyle = `rgba(${ink()},${a})`;
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.textAlign = al;
+    ctx.fillText(t, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  // --- the vector, per mode -------------------------------------------------
+  // Everything is returned in lab components (v0 = time part, v1 = space part).
+  type Vec = { v0: number; v1: number; name: string; t0: string; t1: string; inv: string };
+
+  function vec(): Vec {
+    if (state.mode === 1) {
+      const g = 1 / Math.sqrt(1 - state.ubeta * state.ubeta);
+      return { v0: g, v1: g * state.ubeta, name: 'Uᵘ', t0: 'γc', t1: 'γv', inv: 'c' };
+    }
+    if (state.mode === 2) {
+      const m = Math.min(state.m, state.E);
+      const p = Math.sqrt(Math.max(0, state.E * state.E - m * m));
+      return { v0: state.E, v1: p, name: 'Pᵘ', t0: 'E/c', t1: 'p', inv: 'mc' };
+    }
+    return { v0: state.dct, v1: state.dx, name: 'Δsᵘ', t0: 'cΔt', t1: 'Δx', inv: '' };
+  }
+
+  const gamma = () => 1 / Math.sqrt(1 - state.beta * state.beta);
+  /** Components the boosted observer reads. */
+  function primed(v: Vec) {
+    const g = gamma(), b = state.beta;
+    return { p0: g * (v.v0 - b * v.v1), p1: g * (v.v1 - b * v.v0) };
+  }
+
+  // --- diagram --------------------------------------------------------------
+  function clipDiagram() {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(O.x - R * U - 2, O.y - R * U - 2, 2 * R * U + 4, 2 * R * U + 4);
+    ctx.clip();
+  }
+
+  function drawGrid() {
+    ctx.strokeStyle = `rgba(${ink()},0.09)`;
+    ctx.lineWidth = 1;
+    for (let n = -4; n <= 4; n++) {
+      let p = toPx(n, -R), q = toPx(n, R);
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+      p = toPx(-R, n); q = toPx(R, n);
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+    }
+    ctx.strokeStyle = `rgba(${ink()},0.28)`;
+    ctx.lineWidth = 1.4;
+    let p = toPx(-R, 0), q = toPx(R, 0);
+    ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+    p = toPx(0, -R); q = toPx(0, R);
+    ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+  }
+
+  function drawCone() {
+    ctx.strokeStyle = `rgba(${ink()},0.42)`;
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1.5;
+    for (const s of [1, -1]) {
+      const p = toPx(-R, -R * s), q = toPx(R, R * s);
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  /** The curve of every tip sharing this invariant: all observers land on it. */
+  function drawHyperbola(s2: number, v: Vec) {
+    if (Math.abs(s2) < 0.004) return;
+    ctx.strokeStyle = tint(OUT, 0.55);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    const N = 200;
+    for (let i = 0; i <= N; i++) {
+      const t = -R + (2 * R * i) / N;
+      let pt;
+      if (s2 > 0) {
+        const sgn = v.v0 >= 0 ? 1 : -1;
+        pt = toPx(t, sgn * Math.sqrt(s2 + t * t));
+      } else {
+        const sgn = v.v1 >= 0 ? 1 : -1;
+        pt = toPx(sgn * Math.sqrt(-s2 + t * t), t);
+      }
+      i === 0 ? ctx.moveTo(pt.px, pt.py) : ctx.lineTo(pt.px, pt.py);
+    }
+    ctx.stroke();
+  }
+
+  function drawPrimedAxes() {
+    const g = gamma(), b = state.beta;
+    // basis vectors of the boosted frame, written in lab coordinates (x, ct)
+    const et = { x: g * b, ct: g }; // one tick of ct'
+    const ex = { x: g, ct: g * b }; // one tick of x'
+    const axis = (d: { x: number; ct: number }, color: string, label: string) => {
+      const k = R / Math.max(Math.abs(d.x), Math.abs(d.ct));
+      const p = toPx(-d.x * k, -d.ct * k), q = toPx(d.x * k, d.ct * k);
+      ctx.strokeStyle = tint(color, 0.85);
+      ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+      // unit ticks along the axis
+      ctx.fillStyle = tint(color, 0.7);
+      for (let n = 1; n <= 4; n++) {
+        for (const s of [1, -1]) {
+          const t = toPx(s * n * d.x, s * n * d.ct);
+          ctx.beginPath(); ctx.arc(t.px, t.py, 2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      const tip = toPx(d.x * k * 0.92, d.ct * k * 0.92);
+      ctx.fillStyle = tint(color, 1);
+      ctx.font = "600 13px ui-monospace, monospace";
+      ctx.fillText(label, tip.px + 8, tip.py - 4);
+    };
+    axis(et, TEAL, "ct′");
+    axis(ex, ACC, "x′");
+    return { et, ex };
+  }
+
+  function arrow(fx: number, fy: number, tx: number, ty: number, color: string, w = 2.6) {
+    const a = Math.atan2(ty - fy, tx - fx);
+    const len = Math.hypot(tx - fx, ty - fy);
+    if (len < 1) return;
+    const head = Math.min(13, len * 0.4);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy);
+    ctx.lineTo(tx - Math.cos(a) * head * 0.8, ty - Math.sin(a) * head * 0.8);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - Math.cos(a - 0.4) * head, ty - Math.sin(a - 0.4) * head);
+    ctx.lineTo(tx - Math.cos(a + 0.4) * head, ty - Math.sin(a + 0.4) * head);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawDiagram(v: Vec, s2: number) {
+    clipDiagram();
+    drawGrid();
+    drawHyperbola(s2, v);
+    drawCone();
+    const { et, ex } = drawPrimedAxes();
+
+    const tip = toPx(v.v1, v.v0);
+    const { p0, p1 } = primed(v);
+
+    // the parallelogram that reads the components off the boosted axes
+    const A = toPx(p0 * et.x, p0 * et.ct); // foot on the ct′ axis
+    const B = toPx(p1 * ex.x, p1 * ex.ct); // foot on the x′ axis
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = tint(TEAL, 0.65);
+    ctx.beginPath(); ctx.moveTo(tip.px, tip.py); ctx.lineTo(A.px, A.py); ctx.stroke();
+    ctx.strokeStyle = tint(ACC, 0.65);
+    ctx.beginPath(); ctx.moveTo(tip.px, tip.py); ctx.lineTo(B.px, B.py); ctx.stroke();
+    ctx.setLineDash([]);
+    for (const [pt, col] of [[A, TEAL], [B, ACC]] as const) {
+      ctx.fillStyle = tint(col, 1);
+      ctx.beginPath(); ctx.arc(pt.px, pt.py, 4.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // the component pair, replotted on the lab grid: it rides the hyperbola
+    const gh = toPx(p1, p0);
+    ctx.strokeStyle = tint(OUT, 0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(gh.px, gh.py, 6, 0, Math.PI * 2); ctx.stroke();
+
+    // the four-vector, drawn last so it sits on top
+    const org = toPx(0, 0);
+    arrow(org.px, org.py, tip.px, tip.py, tint(WARM, 1), 3);
+    ctx.restore();
+
+    ctx.fillStyle = tint(WARM, 1);
+    ctx.font = "600 14px ui-monospace, monospace";
+    ctx.fillText(v.name, tip.px + 11, tip.py - 9);
+
+    text('x (space) →', O.x + R * U, O.y + 20, 0.4, 'right', 11);
+    text('↑ ct (time)', O.x + 10, O.y - R * U + 4, 0.4, 'left', 11);
+  }
+
+  // --- component bars -------------------------------------------------------
+  function bar(y: number, value: number, scale: number, color: string, label: string) {
+    const w = value * scale;
+    ctx.fillStyle = `rgba(${ink()},0.07)`;
+    ctx.fillRect(CB - BAR, y - 9, BAR * 2, 18);
+    ctx.fillStyle = tint(color, 0.9);
+    ctx.fillRect(CB, y - 9, w, 18);
+    ctx.strokeStyle = `rgba(${ink()},0.3)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(CB, y - 12); ctx.lineTo(CB, y + 12); ctx.stroke();
+    text(label, COL.x, y - 15, 0.45, 'left', 10);
+    text(value.toFixed(3), COL.x + COL.w, y - 15, 0.8, 'right', 11, '600');
+  }
+
+  function drawColumn(v: Vec, s2: number) {
+    const { p0, p1 } = primed(v);
+    const s = Math.sqrt(Math.abs(s2));
+    const mx = Math.max(1.2, Math.abs(v.v0), Math.abs(v.v1), Math.abs(p0), Math.abs(p1), s);
+    const scale = BAR / mx;
+
+    ctx.strokeStyle = `rgba(${ink()},0.12)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(COL.x - 22, 60); ctx.lineTo(COL.x - 22, H - 60); ctx.stroke();
+
+    text('LAB FRAME', COL.x, 84, 0.5, 'left', 11, '600');
+    bar(122, v.v0, scale, TEAL, v.t0 || 'cΔt');
+    bar(168, v.v1, scale, ACC, v.t1 || 'Δx');
+
+    text(`OBSERVER AT β = ${state.beta.toFixed(2)}`, COL.x, 244, 0.5, 'left', 11, '600');
+    bar(282, p0, scale, TEAL, (v.t0 || 'cΔt') + '′');
+    bar(328, p1, scale, ACC, (v.t1 || 'Δx') + '′');
+
+    text('INVARIANT LENGTH', COL.x, 424, 0.5, 'left', 11, '600');
+    ctx.fillStyle = `rgba(${ink()},0.07)`;
+    ctx.fillRect(COL.x, 452, COL.w, 20);
+    ctx.fillStyle = tint(OUT, 0.9);
+    ctx.fillRect(COL.x, 452, Math.min(COL.w, s * scale), 20);
+    text(s2 >= 0 ? s.toFixed(3) : `${s.toFixed(3)} (spacelike)`, COL.x, 446, 0.8, 'left', 11, '600');
+
+    const kind = state.mode === 0
+      ? (s2 > 0.004 ? 'proper time cΔτ' : s2 < -0.004 ? 'proper length' : 'lightlike, zero')
+      : state.mode === 1
+        ? 'always c, for everyone'
+        : 'the rest mass mc';
+    text(kind, COL.x, 490, 0.45, 'left', 11);
+    text('s² = (ct)² − x²', COL.x, 516, 0.5, 'left', 12, '600');
+    text(`= ${(v.v0 * v.v0).toFixed(2)} − ${(v.v1 * v.v1).toFixed(2)} = ${s2.toFixed(3)}`, COL.x, 536, 0.45, 'left', 11);
+    text(`= ${(p0 * p0).toFixed(2)} − ${(p1 * p1).toFixed(2)} = ${(p0 * p0 - p1 * p1).toFixed(3)}`, COL.x, 556, 0.45, 'left', 11);
+    text('same number, different reader', COL.x, 580, 0.4, 'left', 10);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const v = vec();
+    const s2 = v.v0 * v.v0 - v.v1 * v.v1;
+    text('ONE ARROW, MANY READINGS', 40, 42, 0.5, 'left', 12, '600');
+    drawDiagram(v, s2);
+    drawColumn(v, s2);
+    updateRows(v, s2);
+  }
+
+  // --- readouts -------------------------------------------------------------
+  const rows = document.getElementById('rows') as HTMLElement;
+  const row = (a: string, b: string) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
+
+  function updateRows(v: Vec, s2: number) {
+    const { p0, p1 } = primed(v);
+    let html =
+      row('Lorentz factor γ', gamma().toFixed(3)) +
+      row('Lab components', `(${v.v0.toFixed(2)}, ${v.v1.toFixed(2)})`) +
+      row('Boosted components', `(${p0.toFixed(2)}, ${p1.toFixed(2)})`) +
+      row('Invariant s²', s2.toFixed(3));
+    if (state.mode === 0) {
+      html += row(
+        'Character',
+        s2 > 0.004 ? 'timelike' : s2 < -0.004 ? 'spacelike' : 'lightlike'
+      );
+      if (s2 > 0.004) html += row('Proper time cΔτ', Math.sqrt(s2).toFixed(3));
+    } else if (state.mode === 1) {
+      const g = 1 / Math.sqrt(1 - state.ubeta * state.ubeta);
+      html += row('Particle γ', g.toFixed(3)) + row('U·U', s2.toFixed(3) + ' = c²');
+    } else {
+      const m = Math.min(state.m, state.E);
+      const p = Math.sqrt(Math.max(0, state.E * state.E - m * m));
+      html +=
+        row('Momentum p', p.toFixed(3)) +
+        row('Speed p/E', state.E > 0 ? (p / state.E).toFixed(3) : '—') +
+        row('E² − p²', (state.E * state.E - p * p).toFixed(3) + ' = m²');
+    }
+    rows.innerHTML = html;
+  }
+
+  // --- controls -------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const inp = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  function syncVisibility() {
+    document.querySelectorAll<HTMLElement>('[data-for]').forEach((n) => {
+      n.style.display = n.dataset.for === String(state.mode) ? '' : 'none';
+    });
+  }
+
+  el('mode').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#mode button').forEach((n) => n.classList.remove('active'));
+    b.classList.add('active');
+    state.mode = +(b.dataset.m || 0);
+    syncVisibility();
+    draw();
+  });
+
+  inp('b').addEventListener('input', () => {
+    state.beta = +inp('b').value / 100;
+    el('bval').textContent = state.beta.toFixed(2);
+    draw();
+  });
+  inp('u').addEventListener('input', () => {
+    state.ubeta = +inp('u').value / 100;
+    el('uval').textContent = state.ubeta.toFixed(2);
+    draw();
+  });
+  inp('e').addEventListener('input', () => {
+    state.E = +inp('e').value / 100;
+    el('eval').textContent = state.E.toFixed(2);
+    draw();
+  });
+  inp('m').addEventListener('input', () => {
+    state.m = +inp('m').value / 100;
+    el('mval').textContent = state.m.toFixed(2);
+    draw();
+  });
+
+  // sweep the observer so the arrow's stubbornness is impossible to miss
+  const runBtn = el('run');
+  let raf = 0, t0 = 0;
+  function stop() {
+    state.playing = false;
+    runBtn.textContent = '▶ Sweep the observer';
+    cancelAnimationFrame(raf);
+  }
+  function loop(now: number) {
+    if (!state.playing) return;
+    const b = 0.88 * Math.sin((now - t0) / 1400);
+    state.beta = b;
+    inp('b').value = String(Math.round(b * 100));
+    el('bval').textContent = b.toFixed(2);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  runBtn.addEventListener('click', () => {
+    if (state.playing) { stop(); return; }
+    state.playing = true;
+    runBtn.textContent = '❚❚ Stop';
+    t0 = performance.now();
+    raf = requestAnimationFrame(loop);
+  });
+
+  el('reset').addEventListener('click', () => {
+    stop();
+    state.beta = 0; state.ubeta = 0.6; state.E = 2; state.m = 1.2;
+    state.dx = 1.1; state.dct = 2.6;
+    inp('b').value = '0'; el('bval').textContent = '0.00';
+    inp('u').value = '60'; el('uval').textContent = '0.60';
+    inp('e').value = '200'; el('eval').textContent = '2.00';
+    inp('m').value = '120'; el('mval').textContent = '1.20';
+    draw();
+  });
+
+  // --- dragging the displacement arrowhead ---------------------------------
+  let dragging = false;
+  function setTip(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    state.dx = Math.max(-R, Math.min(R, (mx - O.x) / U));
+    state.dct = Math.max(-R, Math.min(R, (O.y - my) / U));
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state.mode !== 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    if (mx > O.x + R * U + 10) return; // clicks on the readout column do nothing
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    setTip(e);
+  });
+  canvas.addEventListener('pointermove', (e) => dragging && setTip(e));
+  const release = () => (dragging = false);
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+
+  syncVisibility();
+  draw();
+</script>
+
+<style>
+  #fv {
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>

@@ -1,0 +1,588 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Entropy"
+  description="A macrostate is what you can see: how many particles are on the left. A microstate is the full detail: which ones. Entropy just counts how many microstates wear the same macrostate, S = k ln Ω, and that counting alone is enough to make time run one way."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="ent" width="900" height="630"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">All left</button>
+      </div>
+
+      <div class="control">
+        <label>Particles N <b id="nval">40</b></label>
+        <input type="range" id="n" min="4" max="200" step="2" value="40" />
+      </div>
+
+      <div class="control">
+        <label>Speed <b id="spval">30/s</b></label>
+        <input type="range" id="sp" min="0" max="100" value="45" />
+        <div class="scale-hint"><span>1 step / 2 s</span><span>5000 / s</span></div>
+      </div>
+
+      <label class="check"><input type="checkbox" id="hist" checked /> Overlay measured visit frequency</label>
+
+      <div>
+        <div class="micro-label" id="microcap">Other arrangements that look the same from outside</div>
+        <canvas id="micro" class="mini-canvas" width="300" height="132"></canvas>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>What you see</span><b id="nl">—</b></div>
+        <div class="row"><span>Ways to arrange it Ω</span><b id="omega">—</b></div>
+        <div class="row"><span>Entropy S/k = ln Ω</span><b id="ent-s">—</b></div>
+        <div class="row"><span>Largest possible S/k</span><b id="smax">—</b></div>
+        <div class="row"><span>Share of all arrangements</span><b id="share">—</b></div>
+        <div class="row"><span>Steps taken</span><b id="steps">0</b></div>
+        <div class="row"><span>Back to all-left after</span><b id="recur">—</b></div>
+        <div class="row"><span>…at the current speed</span><b id="recur-t">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        One step moves a single randomly chosen particle to the other side. The
+        rule has no preferred direction, and no particle knows where it should
+        be. Everything you see comes from counting.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Slow the speed right down to a step every second or two and watch single
+      moves. Each one is a coin flip with no bias at all, yet the pile on the
+      left keeps shrinking. Nothing pushes the particles right; there are just
+      far more ways to be mixed than to be sorted.
+    </li>
+    <li>
+      Compare the two rows above the chart. The <b>microstate</b> strip changes
+      at every single step. The <b>macrostate</b> beside it, just a count, barely
+      moves. Entropy is the size of the gap: how many different strips give the
+      same count.
+    </li>
+    <li>
+      Look at the two curves in the chart. The bars are the <b>entropy</b>
+      S(n) = ln Ω(n), a broad gentle hill. The line is the <b>probability</b>
+      Ω(n)/2<sup>N</sup>, a razor-thin spike. Probability is the exponential of
+      entropy, so a mild bump in S becomes an overwhelming bias in P. That single
+      fact is the second law.
+    </li>
+    <li>
+      Drop N to <b>4 or 6</b>. Entropy now visibly falls as often as it rises,
+      and the system returns to all-left every so often. The second law is not a
+      prohibition, it is a statement about odds, and the odds are only unbeatable
+      when N is large.
+    </li>
+    <li>
+      Raise N back to <b>200</b> and read the recurrence time. Nothing forbids
+      every particle from crowding left again, it simply takes longer than the
+      universe has existed. Irreversibility is about counting, not about the laws
+      of motion.
+    </li>
+    <li>
+      With the overlay on, the measured <b>visit frequency</b> settles onto the
+      Ω(n)/2<sup>N</sup> curve. Time spent in a macrostate is proportional to how
+      many microstates it owns: entropy is a census, and the dynamics just takes
+      it.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  // --- combinatorics -------------------------------------------------------
+  // Ω(n) = C(N, n) runs past 10^59 for N = 200, so everything is done in logs.
+  function lgamma(x: number): number {
+    const g = 7;
+    const c = [
+      0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+      771.32342877765313, -176.61502916214059, 12.507343278686905,
+      -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+    if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+    x -= 1;
+    let a = c[0];
+    const t = x + g + 0.5;
+    for (let i = 1; i < g + 2; i++) a += c[i] / (x + i);
+    return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+  }
+  const lnChoose = (N: number, n: number) =>
+    lgamma(N + 1) - lgamma(n + 1) - lgamma(N - n + 1);
+
+  /** Render a count given only its natural log: exact when small, else 1.2×10^34. */
+  function fromLn(ln: number) {
+    if (ln < 13) return String(Math.round(Math.exp(ln)));
+    const e = ln / Math.LN10;
+    const p = Math.floor(e);
+    const m = Math.pow(10, e - p);
+    return `${m.toFixed(2)}×10^${p}`;
+  }
+
+  // Slider 0..100 maps to steps per second across four decades, so the left
+  // end is slow enough to follow one particle at a time.
+  const stepsPerSecond = (v: number) => 0.5 * Math.pow(10, v / 25);
+
+  // --- state ---------------------------------------------------------------
+  const state = { N: 40, speed: 45, running: true, hist: true };
+  let side: Uint8Array; // 0 = left, 1 = right, per particle
+  let xL: Float64Array, xR: Float64Array, yPos: Float64Array; // resting spots
+  let anim: Float64Array; // 0..1 slide progress after a jump
+  let visits: Float64Array; // how often each macrostate was seen
+  let lnOmega: Float64Array;
+  let trace: number[] = [];
+  let steps = 0;
+  let nLeft = 0;
+  let lastMoved = -1;
+  let lastMovedAge = 99;
+
+  function build() {
+    const N = state.N;
+    side = new Uint8Array(N);
+    xL = new Float64Array(N);
+    xR = new Float64Array(N);
+    yPos = new Float64Array(N);
+    anim = new Float64Array(N);
+    visits = new Float64Array(N + 1);
+    lnOmega = new Float64Array(N + 1);
+    for (let n = 0; n <= N; n++) lnOmega[n] = lnChoose(N, n);
+    for (let i = 0; i < N; i++) {
+      xL[i] = 0.05 + 0.4 * Math.random();
+      xR[i] = 0.55 + 0.4 * Math.random();
+      yPos[i] = 0.06 + 0.88 * Math.random();
+      anim[i] = 1;
+    }
+    reset();
+  }
+  function reset() {
+    side.fill(0);
+    anim.fill(1);
+    visits.fill(0);
+    trace = [];
+    steps = 0;
+    nLeft = state.N;
+    lastMoved = -1;
+    lastMovedAge = 99;
+    visits[nLeft] = 1;
+  }
+
+  /** One Ehrenfest step: pick a particle at random, send it to the other side. */
+  function stepOnce() {
+    const i = (Math.random() * state.N) | 0;
+    side[i] = side[i] ? 0 : 1;
+    nLeft += side[i] ? -1 : 1;
+    anim[i] = 0;
+    lastMoved = i;
+    lastMovedAge = 0;
+    steps++;
+    visits[nLeft]++;
+  }
+
+  // --- canvas --------------------------------------------------------------
+  const canvas = document.getElementById('ent') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const ACC = '#7c8cff', WARM = '#f59e0b';
+
+  const BOX = { x: 24, y: 34, w: W - 48, h: 190 };
+  const STRIP = { x: 24, y: 262, w: W - 48, h: 22 };
+  const CH = { x: 62, y: 348, w: W - 100, h: 132 };
+  const TR = { x: 62, y: 530, w: W - 100, h: 78 };
+
+  function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 12) {
+    ctx.fillStyle = `rgba(${ink()},${alpha})`;
+    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  function drawBox() {
+    const N = state.N;
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(BOX.x, BOX.y, BOX.w, BOX.h);
+
+    const mid = BOX.x + BOX.w / 2;
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = `rgba(${ink()},0.3)`;
+    ctx.beginPath();
+    ctx.moveTo(mid, BOX.y);
+    ctx.lineTo(mid, BOX.y + BOX.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const r = Math.max(3, Math.min(9, 260 / Math.sqrt(N * 40)));
+    const showIds = N <= 12;
+    for (let i = 0; i < N; i++) {
+      const home = side[i] ? xR[i] : xL[i];
+      const from = side[i] ? xL[i] : xR[i];
+      const t = anim[i];
+      const e = t * t * (3 - 2 * t); // smoothstep the slide across the divider
+      const fx = from + (home - from) * e;
+      const px = BOX.x + fx * BOX.w;
+      const py = BOX.y + yPos[i] * BOX.h;
+      // halo on the particle that just moved, so a single step is followable
+      if (i === lastMoved && lastMovedAge < 1) {
+        ctx.strokeStyle = `rgba(${ink()},${0.75 * (1 - lastMovedAge)})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px, py, r + 5 + 6 * lastMovedAge, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.fillStyle = side[i] ? WARM : ACC;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (showIds) {
+        ctx.fillStyle = 'rgba(10,11,14,0.85)';
+        ctx.font = '10px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(i + 1), px, py + 0.5);
+        ctx.textBaseline = 'alphabetic';
+        ctx.textAlign = 'left';
+      }
+    }
+
+    ctx.font = '600 13px ui-monospace, monospace';
+    ctx.fillStyle = ACC;
+    ctx.fillText(`LEFT  ${nLeft}`, BOX.x + 10, BOX.y - 12);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = WARM;
+    ctx.fillText(`${N - nLeft}  RIGHT`, BOX.x + BOX.w - 10, BOX.y - 12);
+    ctx.textAlign = 'left';
+
+    // narration of the move, readable only when the pace is slow
+    if (lastMoved >= 0 && lastMovedAge < 1 && stepsPerSecond(state.speed) < 12) {
+      const dir = side[lastMoved] ? 'left → right' : 'right → left';
+      label(`particle ${lastMoved + 1}:  ${dir}`, BOX.x + BOX.w / 2, BOX.y + BOX.h + 18, 0.5 * (1 - lastMovedAge), 'center');
+    }
+  }
+
+  /** The full detail (which particle is where) next to the count it collapses to. */
+  function drawStrip() {
+    const N = state.N;
+    label('MICROSTATE: which particle is where, one cell each', STRIP.x, STRIP.y - 10, 0.45);
+    ctx.fillStyle = `rgba(${ink()},0.8)`;
+    ctx.font = '600 12px ui-monospace, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`MACROSTATE: ${nLeft} left, ${N - nLeft} right`, STRIP.x + STRIP.w, STRIP.y - 10);
+    ctx.textAlign = 'left';
+
+    const cw = STRIP.w / N;
+    for (let i = 0; i < N; i++) {
+      const x = STRIP.x + i * cw;
+      ctx.fillStyle = side[i] ? WARM : ACC;
+      ctx.globalAlpha = side[i] ? 0.55 : 0.85;
+      ctx.fillRect(x, STRIP.y, Math.max(1, cw - (cw > 4 ? 1.5 : 0)), STRIP.h);
+      ctx.globalAlpha = 1;
+      if (i === lastMoved && lastMovedAge < 1) {
+        ctx.strokeStyle = `rgba(${ink()},${0.9 * (1 - lastMovedAge)})`;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - 1, STRIP.y - 2, Math.max(1, cw - (cw > 4 ? 1.5 : 0)) + 2, STRIP.h + 4);
+      }
+    }
+    label(
+      `${fromLn(lnOmega[nLeft])} different strips give this same count, that count is all an observer sees`,
+      STRIP.x,
+      STRIP.y + STRIP.h + 17,
+      0.4
+    );
+  }
+
+  function drawChart() {
+    const N = state.N;
+    const lnMax = lnOmega[N >> 1];
+    const bw = CH.w / (N + 1);
+
+    // bars: entropy S(n) = ln Ω(n)
+    for (let n = 0; n <= N; n++) {
+      const h = (lnOmega[n] / (lnMax || 1)) * CH.h;
+      const x = CH.x + n * bw;
+      ctx.fillStyle = n === nLeft ? `rgba(${ink()},0.85)` : `rgba(${ink()},0.16)`;
+      ctx.fillRect(x + 0.5, CH.y + CH.h - h, Math.max(1, bw - 1), h);
+    }
+
+    // line: probability P(n) = Ω(n)/2^N, scaled to the panel
+    const lnTot = N * Math.LN2;
+    const pMax = Math.exp(lnMax - lnTot);
+    ctx.strokeStyle = WARM;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let n = 0; n <= N; n++) {
+      const p = Math.exp(lnOmega[n] - lnTot) / pMax;
+      const x = CH.x + (n + 0.5) * bw;
+      const y = CH.y + CH.h - p * CH.h;
+      n ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+
+    // dots: measured share of time in each macrostate, same scaling
+    if (state.hist && steps > 0) {
+      let tot = 0;
+      for (let n = 0; n <= N; n++) tot += visits[n];
+      ctx.fillStyle = ACC;
+      for (let n = 0; n <= N; n++) {
+        if (!visits[n]) continue;
+        const f = visits[n] / tot / pMax;
+        const x = CH.x + (n + 0.5) * bw;
+        const y = CH.y + CH.h - Math.min(1.15, f) * CH.h;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(CH.x, CH.y + CH.h);
+    ctx.lineTo(CH.x + CH.w, CH.y + CH.h);
+    ctx.stroke();
+
+    // "you are here" pointer over the current macrostate
+    const hx = CH.x + (nLeft + 0.5) * bw;
+    const hy = CH.y + CH.h - (lnOmega[nLeft] / (lnMax || 1)) * CH.h;
+    ctx.fillStyle = `rgba(${ink()},0.85)`;
+    ctx.beginPath();
+    ctx.moveTo(hx, hy - 6);
+    ctx.lineTo(hx - 5, hy - 14);
+    ctx.lineTo(hx + 5, hy - 14);
+    ctx.closePath();
+    ctx.fill();
+    label(`now: n = ${nLeft}`, hx, hy - 19, 0.75, 'center', 11);
+
+    label('bars: entropy S(n) = ln Ω(n)', CH.x, CH.y - 14, 0.5);
+    ctx.fillStyle = WARM;
+    ctx.font = '12px ui-monospace, monospace';
+    ctx.fillText('line: probability Ω(n)/2^N', CH.x + 220, CH.y - 14);
+    if (state.hist) {
+      ctx.fillStyle = ACC;
+      ctx.fillText('dots: fraction of time actually spent there', CH.x + 440, CH.y - 14);
+    }
+    label('n = 0', CH.x, CH.y + CH.h + 16, 0.45);
+    label(`n = ${N}`, CH.x + CH.w, CH.y + CH.h + 16, 0.45, 'right');
+    label('all right', CH.x, CH.y + CH.h + 30, 0.3);
+    label('all left', CH.x + CH.w, CH.y + CH.h + 30, 0.3, 'right');
+  }
+
+  function drawTrace() {
+    const sMax = state.N * Math.LN2;
+    ctx.strokeStyle = `rgba(${ink()},0.22)`;
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(TR.x, TR.y);
+    ctx.lineTo(TR.x + TR.w, TR.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (trace.length > 1) {
+      ctx.strokeStyle = ACC;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < trace.length; i++) {
+        const x = TR.x + (TR.w * i) / (trace.length - 1);
+        const y = TR.y + TR.h - (trace[i] / (sMax || 1)) * TR.h;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+    label('S / k over time', TR.x, TR.y - 12, 0.5);
+    label(`S_max = N ln 2 = ${sMax.toFixed(1)}`, TR.x + TR.w, TR.y - 4, 0.4, 'right');
+    label('0', TR.x - 8, TR.y + TR.h, 0.4, 'right');
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawBox();
+    drawStrip();
+    drawChart();
+    drawTrace();
+  }
+
+  // --- microstate sampler (panel inset) ------------------------------------
+  const micro = document.getElementById('micro') as HTMLCanvasElement;
+  const microSetup = setupCanvas(micro, () => drawMicro());
+  let microSamples: Uint8Array[] = [];
+  let microFor = -1;
+  let lastMicro = 0;
+
+  /** A uniform random microstate with exactly `n` particles on the left. */
+  function sampleMicrostate(n: number) {
+    const N = state.N;
+    const arr = new Uint8Array(N);
+    let left = n;
+    for (let i = 0; i < N; i++) {
+      // pick each slot with the exact conditional probability
+      if (Math.random() < left / (N - i)) {
+        arr[i] = 1;
+        left--;
+      }
+    }
+    return arr;
+  }
+  function refreshMicro(force = false) {
+    const now = performance.now();
+    // Redraw only when the macrostate changed, and at most a few times a second.
+    if (!force && (nLeft === microFor || now - lastMicro < 400)) return;
+    lastMicro = now;
+    microFor = nLeft;
+    microSamples = [];
+    for (let k = 0; k < 8; k++) microSamples.push(sampleMicrostate(nLeft));
+    drawMicro();
+  }
+  function drawMicro() {
+    const c = microSetup.ctx, w = microSetup.W, h = microSetup.H;
+    c.clearRect(0, 0, w, h);
+    const N = state.N;
+    const pad = 8;
+    const cw = (w - 2 * pad) / N;
+    const rowH = (h - 2 * pad) / 8;
+    for (let k = 0; k < microSamples.length; k++) {
+      const row = microSamples[k];
+      const y = pad + k * rowH;
+      for (let i = 0; i < N; i++) {
+        const x = pad + i * cw;
+        c.fillStyle = row[i] ? ACC : WARM;
+        c.globalAlpha = row[i] ? 0.85 : 0.35;
+        c.fillRect(x, y, Math.max(1, cw - (cw > 4 ? 1 : 0)), rowH - 2);
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  // --- readouts ------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  /** A duration given by its log10 in seconds, in whatever unit reads best. */
+  function humanTime(log10s: number) {
+    if (log10s < 7.5) {
+      const s = Math.pow(10, log10s);
+      if (s < 90) return `${s.toPrecision(2)} s`;
+      if (s < 5400) return `${(s / 60).toPrecision(2)} min`;
+      if (s < 172800) return `${(s / 3600).toPrecision(2)} hours`;
+      return `${(s / 86400).toPrecision(2)} days`;
+    }
+    const log10y = log10s - Math.log10(3.15576e7);
+    if (log10y < 7) {
+      const y = Math.round(Math.pow(10, log10y));
+      return `${y.toLocaleString()} year${y === 1 ? '' : 's'}`;
+    }
+    const ratio = log10y - Math.log10(1.38e10);
+    return ratio < 1
+      ? `10^${Math.round(log10y)} years`
+      : `10^${Math.round(log10y)} yr, 10^${Math.round(ratio)} × age of universe`;
+  }
+  function updateReadout() {
+    const N = state.N;
+    const lnO = lnOmega[nLeft];
+    el('nl').textContent = `${nLeft} left, ${N - nLeft} right`;
+    el('omega').textContent = fromLn(lnO);
+    el('ent-s').textContent = lnO.toFixed(3);
+    el('smax').textContent = (N * Math.LN2).toFixed(3);
+    const share = Math.exp(lnO - N * Math.LN2);
+    el('share').textContent =
+      share > 0.001 ? `${(share * 100).toFixed(2)}%` : `10^${Math.round(Math.log10(share))}`;
+    el('steps').textContent = steps.toLocaleString();
+    // Mean return time to a state of probability p is 1/p steps, so 2^N here.
+    el('recur').textContent = `${fromLn(N * Math.LN2)} steps`;
+    el('recur-t').textContent = humanTime(N * Math.log10(2) - Math.log10(stepsPerSecond(state.speed)));
+    el('microcap').textContent = `8 of the ${fromLn(lnO)} arrangements that look identical from outside`;
+  }
+
+  // --- loop ----------------------------------------------------------------
+  let last = performance.now();
+  let carry = 0; // fractional steps owed, so speeds below 1/frame still work
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (state.running) {
+      carry += dt * stepsPerSecond(state.speed);
+      const n = Math.min(6000, Math.floor(carry));
+      carry -= n;
+      for (let k = 0; k < n; k++) stepOnce();
+      trace.push(lnOmega[nLeft]);
+      if (trace.length > 420) trace.shift();
+    }
+    for (let i = 0; i < state.N; i++) if (anim[i] < 1) anim[i] = Math.min(1, anim[i] + dt * 4);
+    lastMovedAge = Math.min(99, lastMovedAge + dt * 1.4);
+    draw();
+    refreshMicro();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls ------------------------------------------------------------
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('step').addEventListener('click', () => {
+    state.running = false;
+    runBtn.textContent = 'Run';
+    stepOnce();
+    trace.push(lnOmega[nLeft]);
+    if (trace.length > 420) trace.shift();
+    draw();
+    refreshMicro(true);
+    updateReadout();
+  });
+  el('reset').addEventListener('click', () => {
+    reset();
+    refreshMicro(true);
+  });
+
+  const nEl = el('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    state.N = +nEl.value;
+    el('nval').textContent = nEl.value;
+    build();
+    refreshMicro(true);
+  });
+  const spEl = el('sp') as HTMLInputElement;
+  const showSpeed = () => {
+    const sps = stepsPerSecond(state.speed);
+    el('spval').textContent =
+      sps >= 10 ? `${Math.round(sps)}/s` : sps >= 1 ? `${sps.toFixed(1)}/s` : `1 step / ${(1 / sps).toFixed(1)} s`;
+  };
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value;
+    showSpeed();
+  });
+  const histEl = el('hist') as HTMLInputElement;
+  histEl.addEventListener('change', () => (state.hist = histEl.checked));
+
+  build();
+  showSpeed();
+  refreshMicro(true);
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .micro-label {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    margin-bottom: 7px;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+</style>

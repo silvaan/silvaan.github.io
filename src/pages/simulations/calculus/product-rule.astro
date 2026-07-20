@@ -1,0 +1,443 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="The Product Rule"
+  description="A product is the area of a rectangle with sides u and v. Nudge x and the rectangle's right edge sweeps out one strip while its top edge sweeps out another, leaving a third small square in the corner between them. Two strips plus one doomed corner, and that is the whole rule."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="pr" width="900" height="640"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">▶ Watch it grow</button>
+        <button class="btn ghost" id="shrink">Shrink h → 0</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>The two factors</label>
+        <div class="seg" id="pair">
+          <button data-p="0" class="active">x · x²</button>
+          <button data-p="1">x · (1.5+sin x)</button>
+          <button data-p="2">(0.5+x) · (3−0.6x)</button>
+        </div>
+      </div>
+
+      <div class="control"><label>Point x <b id="xval">1.00</b></label><input type="range" id="x" min="0" max="100" value="40" /></div>
+
+      <div class="control">
+        <label>Step h <b id="hval">0.281</b></label>
+        <input type="range" id="h" min="0" max="100" value="10" />
+        <div class="scale-hint"><span>0.5</span><span>0.0016</span></div>
+      </div>
+
+      <div class="readout" id="rows"></div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        The grey rectangle is u·v right now. Press <b>Watch it grow</b> and its
+        two edges slide outward, painting the new area as they go.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Press <b>Watch it grow</b> and watch the edges move. The right edge slides
+      out and paints a strip of area <b>v·Δu</b>: the old height, times how far
+      it travelled. The top edge slides up and paints <b>u·Δv</b> the same way,
+      across the old width. The little square where they meet belongs to
+      neither, so it is a third piece all of its own.
+    </li>
+    <li>
+      That corner is <b>Δu·Δv</b>, and it is the only piece that dies. Halve h
+      and each strip roughly halves, but the corner <b>quarters</b>, because it
+      is short in two directions at once. Watch the big percentage collapse as
+      you shrink h.
+    </li>
+    <li>
+      So the area gains one strip for each edge, and that is exactly
+      <b>u′v + uv′</b>. Divided by h, the bars on the right show each piece
+      converging: the two strips onto their limits, the corner onto zero.
+    </li>
+    <li>
+      Now you can see why <b>(uv)′ is not u′v′</b>. The product of the two
+      growths is only that doomed corner, the smallest piece on screen. The real
+      growth is in the strips, each one an entire side times a small motion.
+    </li>
+    <li>
+      Notice the strips are usually <b>lopsided</b>. A long side paired with a
+      slow growth can still out-paint a short side growing fast, which is
+      precisely what u′v + uv′ keeps track of.
+    </li>
+    <li>
+      Pick <b>x · (1.5+sin x)</b> and push x past 1.57, the crest of v. Now the
+      top edge slides <b>down</b>: the strip is scraped off rather than painted
+      on, drawn dashed, and the corner flips sign with it. The rule never
+      assumed the pieces were positive.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+
+  type Pair = {
+    u: (x: number) => number; du: (x: number) => number; ul: string;
+    v: (x: number) => number; dv: (x: number) => number; vl: string;
+    x0: number; x1: number;
+  };
+  const HMAX = 0.5;
+  const PAIRS: Pair[] = [
+    { u: (x) => x, du: () => 1, ul: 'x', v: (x) => x * x, dv: (x) => 2 * x, vl: 'x²', x0: 0.25, x1: 2 },
+    { u: (x) => x, du: () => 1, ul: 'x', v: (x) => 1.5 + Math.sin(x), dv: (x) => Math.cos(x), vl: '1.5+sin x', x0: 0.25, x1: 4 },
+    { u: (x) => 0.5 + x, du: () => 1, ul: '0.5+x', v: (x) => 3 - 0.6 * x, dv: () => -0.6, vl: '3−0.6x', x0: 0.25, x1: 2.5 },
+  ];
+
+  const state = { pi: 0, xs: 40, hs: 10, tau: 1, playing: false, shrinking: false };
+  const P = () => PAIRS[state.pi];
+  const hFull = () => HMAX * Math.pow(10, -state.hs / 40);
+  const hOf = () => hFull() * state.tau;
+  const xOf = () => P().x0 + ((P().x1 - P().x0) * state.xs) / 100;
+
+  const canvas = document.getElementById('pr') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const ACC = '#7c8cff', WARM = '#f59e0b', CORNER = '#ef4444';
+
+  const AREA = { x: 62, y: 146, w: 440, h: 440 };
+  const OX = AREA.x, OY = AREA.y + AREA.h;
+  const TERMS = { x: 566, y: 190, w: 292, h: 216 };
+
+  let scale = 1;
+  function computeScale() {
+    const p = P();
+    let mu = 0, mv = 0;
+    for (let i = 0; i <= 200; i++) {
+      const x = p.x0 + ((p.x1 - p.x0) * i) / 200;
+      mu = Math.max(mu, p.u(x + HMAX));
+      mv = Math.max(mv, p.v(x + HMAX), p.v(x));
+    }
+    scale = Math.min(AREA.w / (mu * 1.06), AREA.h / (mv * 1.06));
+  }
+
+  function tint(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function text(t: string, x: number, y: number, a = 0.55, al: CanvasTextAlign = 'left', size = 12, weight = '') {
+    ctx.fillStyle = `rgba(${ink()},${a})`;
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.textAlign = al;
+    ctx.fillText(t, x, y);
+    ctx.textAlign = 'left';
+  }
+  function runText(parts: [string, string, number][], cx: number, y: number, size: number, weight = '600') {
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`;
+    let total = 0;
+    for (const [s] of parts) total += ctx.measureText(s).width;
+    let x = cx - total / 2;
+    ctx.textAlign = 'left';
+    for (const [s, c, a] of parts) {
+      ctx.fillStyle = c === 'ink' ? `rgba(${ink()},${a})` : tint(c, a);
+      ctx.fillText(s, x, y);
+      x += ctx.measureText(s).width;
+    }
+  }
+
+  function drawHeader() {
+    const p = P(), x = xOf(), h = hOf();
+    const u = p.u(x), v = p.v(x);
+    const du = p.u(x + h) - u, dv = p.v(x + h) - v;
+    runText(
+      [['(u·v)′', 'ink', 0.95], ['  =  ', 'ink', 0.5], ['u′v', ACC, 1],
+       ['  +  ', 'ink', 0.5], ['uv′', WARM, 1]],
+      W / 2, 42, 22
+    );
+    runText(
+      [[(p.du(x) * v + u * p.dv(x)).toFixed(3), 'ink', 0.9], ['  =  ', 'ink', 0.45],
+       [`${p.du(x).toFixed(2)}×${v.toFixed(2)}`, ACC, 1], ['  +  ', 'ink', 0.45],
+       [`${u.toFixed(2)}×${p.dv(x).toFixed(2)}`, WARM, 1]],
+      W / 2, 68, 15
+    );
+    // the geometry, said out loud
+    runText(
+      [['the side sweeps ', 'ink', 0.5], [(v * du).toFixed(3), ACC, 1], [', the top sweeps ', 'ink', 0.5],
+       [(u * dv).toFixed(3), WARM, 1], [', plus a corner of only ', 'ink', 0.5],
+       [(du * dv).toFixed(4), CORNER, 1]],
+      W / 2, 100, 13, ''
+    );
+  }
+
+  function valRect(u0: number, u1: number, v0: number, v1: number, color: string, negative: boolean) {
+    const x0 = OX + Math.min(u0, u1) * scale, x1 = OX + Math.max(u0, u1) * scale;
+    const y0 = OY - Math.max(v0, v1) * scale, y1 = OY - Math.min(v0, v1) * scale;
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return { x: x0, y: y0, w: Math.max(w, 0), h: Math.max(h, 0) };
+    ctx.fillStyle = tint(color, negative ? 0.16 : 0.42);
+    ctx.fillRect(x0, y0, w, h);
+    ctx.strokeStyle = tint(color, negative ? 0.75 : 0.95);
+    ctx.lineWidth = 1.4;
+    if (negative) ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
+    ctx.setLineDash([]);
+    return { x: x0, y: y0, w, h };
+  }
+
+  function drawArea() {
+    const p = P(), x = xOf(), h = hOf();
+    const u = p.u(x), v = p.v(x);
+    const du = p.u(x + h) - u, dv = p.v(x + h) - v;
+
+    text('EACH EDGE PAINTS A STRIP AS IT MOVES', AREA.x, AREA.y - 26, 0.5, 'left', 12, '600');
+    text(`u = ${p.ul}   v = ${p.vl}`, AREA.x, AREA.y - 10, 0.35);
+
+    ctx.strokeStyle = `rgba(${ink()},0.28)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(OX, OY - AREA.h);
+    ctx.lineTo(OX, OY);
+    ctx.lineTo(OX + AREA.w, OY);
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(${ink()},0.12)`;
+    ctx.fillRect(OX, OY - v * scale, u * scale, v * scale);
+    ctx.strokeStyle = `rgba(${ink()},0.5)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(OX + 0.5, OY - v * scale + 0.5, u * scale - 1, v * scale - 1);
+    if (u * scale > 62 && v * scale > 30) {
+      text('u · v', OX + (u * scale) / 2, OY - (v * scale) / 2, 0.6, 'center', 16, '600');
+    }
+
+    const rRight = valRect(u, u + du, 0, v, ACC, du < 0);
+    const rTop = valRect(0, u, v, v + dv, WARM, dv < 0);
+    const rCorner = valRect(u, u + du, v, v + dv, CORNER, du * dv < 0);
+
+    // the moving edges themselves, so the sweep reads as motion
+    ctx.strokeStyle = tint(ACC, 1);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(OX + (u + du) * scale, OY);
+    ctx.lineTo(OX + (u + du) * scale, OY - (v + dv) * scale);
+    ctx.stroke();
+    ctx.strokeStyle = tint(WARM, 1);
+    ctx.beginPath();
+    ctx.moveTo(OX, OY - (v + dv) * scale);
+    ctx.lineTo(OX + (u + du) * scale, OY - (v + dv) * scale);
+    ctx.stroke();
+
+    ctx.textBaseline = 'middle';
+    if (rRight.w > 40 && rRight.h > 18) {
+      ctx.fillStyle = tint(ACC, 1);
+      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('v·Δu', rRight.x + rRight.w / 2, rRight.y + rRight.h / 2);
+    }
+    if (rTop.w > 40 && rTop.h > 18) {
+      ctx.fillStyle = tint(WARM, 1);
+      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('u·Δv', rTop.x + rTop.w / 2, rTop.y + rTop.h / 2);
+    }
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+
+    const total = v * du + u * dv + du * dv;
+    const share = total !== 0 ? Math.abs((du * dv) / total) * 100 : 0;
+    const cx = rCorner.x + Math.max(1, rCorner.w) / 2;
+    const cy = rCorner.y + Math.max(1, rCorner.h) / 2;
+    const tx = Math.min(cx + 46, AREA.x + AREA.w - 104);
+    const ty = Math.max(AREA.y + 18, cy - 38);
+    ctx.strokeStyle = tint(CORNER, 0.85);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx + 5, cy - 5);
+    ctx.lineTo(tx - 5, ty + 2);
+    ctx.stroke();
+    ctx.fillStyle = tint(CORNER, 1);
+    ctx.font = '600 13px ui-monospace, monospace';
+    ctx.fillText('Δu·Δv', tx, ty);
+    text('a third piece, and the only one that dies', tx, ty + 15, 0.5, 'left', 10);
+
+    text('u', OX + u * scale, OY + 17, 0.5, 'center', 11);
+    if (Math.abs(du) * scale > 14) text('u+Δu', OX + (u + du) * scale, OY + 31, 0.7, 'center', 11);
+    text('v', OX - 9, OY - v * scale + 4, 0.5, 'right', 11);
+    if (Math.abs(dv) * scale > 14) text('v+Δv', OX - 9, OY - (v + dv) * scale + 4, 0.7, 'right', 11);
+  }
+
+  function drawTerms() {
+    const p = P(), x = xOf(), h = hOf();
+    const u = p.u(x), v = p.v(x);
+    const du = p.u(x + h) - u, dv = p.v(x + h) - v;
+    text('EACH PIECE, DIVIDED BY h', TERMS.x, TERMS.y - 26, 0.5, 'left', 12, '600');
+    text('bar: at this h    line: where it lands', TERMS.x, TERMS.y - 10, 0.35);
+
+    const safe = Math.max(h, 1e-9);
+    const items = [
+      { t: 'v·Δu/h', now: (v * du) / safe, lim: v * p.du(x), c: ACC },
+      { t: 'u·Δv/h', now: (u * dv) / safe, lim: u * p.dv(x), c: WARM },
+      { t: 'Δu·Δv/h', now: (du * dv) / safe, lim: 0, c: CORNER },
+    ];
+    let mx = 0.001;
+    for (const it of items) mx = Math.max(mx, Math.abs(it.now), Math.abs(it.lim));
+    mx *= 1.25;
+
+    const rowH = TERMS.h / items.length;
+    const lblW = 78;
+    const zero = TERMS.x + lblW + (TERMS.w - lblW) / 2;
+    const halfW = (TERMS.w - lblW) / 2 - 6;
+    items.forEach((it, i) => {
+      const cy = TERMS.y + rowH * (i + 0.5);
+      text(it.t, TERMS.x, cy - 4, 0.75, 'left', 12);
+      text(it.now.toFixed(3), TERMS.x, cy + 12, 0.5, 'left', 11);
+      ctx.strokeStyle = `rgba(${ink()},0.18)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(zero, cy - 24);
+      ctx.lineTo(zero, cy + 24);
+      ctx.stroke();
+      const bw = (it.now / mx) * halfW;
+      ctx.fillStyle = tint(it.c, 0.55);
+      ctx.fillRect(Math.min(zero, zero + bw), cy - 13, Math.abs(bw), 26);
+      const lx = zero + (it.lim / mx) * halfW;
+      ctx.strokeStyle = tint(it.c, 1);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(lx, cy - 18);
+      ctx.lineTo(lx, cy + 18);
+      ctx.stroke();
+    });
+
+    const total = v * du + u * dv + du * dv;
+    const share = total !== 0 ? Math.abs((du * dv) / total) * 100 : 0;
+    const by = TERMS.y + TERMS.h + 78;
+    text('THE CORNER IS ONLY', TERMS.x, by - 40, 0.5, 'left', 12, '600');
+    ctx.fillStyle = tint(CORNER, 1);
+    ctx.font = '600 40px ui-monospace, monospace';
+    ctx.fillText(`${share.toFixed(share < 1 ? 2 : 1)}%`, TERMS.x, by + 2);
+    text('of all the new area', TERMS.x + 140, by - 14, 0.45, 'left', 12);
+    text('halve h and it quarters', TERMS.x + 140, by + 2, 0.45, 'left', 12);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawHeader();
+    drawArea();
+    drawTerms();
+    updateRows();
+  }
+
+  const rows = document.getElementById('rows') as HTMLElement;
+  const row = (a: string, b: string) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
+  function updateRows() {
+    const p = P(), x = xOf(), h = hOf();
+    const u = p.u(x), v = p.v(x);
+    const du = p.u(x + h) - u, dv = p.v(x + h) - v;
+    const s1 = v * du, s2 = u * dv, cor = du * dv;
+    rows.innerHTML =
+      row('u, v', `${u.toFixed(3)}, ${v.toFixed(3)}`) +
+      row('Δu, Δv', `${du.toFixed(4)}, ${dv.toFixed(4)}`) +
+      row('side strip v·Δu', s1.toFixed(4)) +
+      row('top strip u·Δv', s2.toFixed(4)) +
+      row('corner Δu·Δv', cor.toFixed(5)) +
+      row('ΔA / h', h > 1e-9 ? ((s1 + s2 + cor) / h).toFixed(4) : '—') +
+      row('u′v + uv′', (p.du(x) * v + u * p.dv(x)).toFixed(4));
+  }
+
+  // --- controls ------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const runBtn = el('run');
+  let raf = 0, t0 = 0;
+
+  function stopAll() {
+    state.playing = false;
+    state.shrinking = false;
+    runBtn.textContent = '▶ Watch it grow';
+    cancelAnimationFrame(raf);
+  }
+  function loop(now: number) {
+    if (state.playing) {
+      const cycle = ((now - t0) / 1000) % 2.1;
+      state.tau = cycle < 1.3 ? 0.03 + 0.97 * (cycle / 1.3) : 1;
+      draw();
+      raf = requestAnimationFrame(loop);
+    } else if (state.shrinking) {
+      if (state.hs >= 100) { stopAll(); return; }
+      setH(Math.min(100, state.hs + 0.6));
+      raf = requestAnimationFrame(loop);
+    }
+  }
+  runBtn.addEventListener('click', () => {
+    if (state.playing) { stopAll(); state.tau = 1; draw(); return; }
+    stopAll();
+    state.playing = true;
+    runBtn.textContent = '❚❚ Stop';
+    t0 = performance.now();
+    raf = requestAnimationFrame(loop);
+  });
+  el('shrink').addEventListener('click', () => {
+    const was = state.shrinking;
+    stopAll();
+    state.tau = 1;
+    if (was) { draw(); return; }
+    if (state.hs >= 100) setH(0);
+    state.shrinking = true;
+    raf = requestAnimationFrame(loop);
+  });
+  el('reset').addEventListener('click', () => {
+    stopAll();
+    state.tau = 1;
+    state.xs = 40;
+    (el('x') as HTMLInputElement).value = '40';
+    el('xval').textContent = xOf().toFixed(2);
+    setH(10);
+  });
+
+  el('pair').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#pair button').forEach((n) => n.classList.remove('active'));
+    b.classList.add('active');
+    state.pi = +b.dataset.p!;
+    computeScale();
+    el('xval').textContent = xOf().toFixed(2);
+    draw();
+  });
+  const xEl = el('x') as HTMLInputElement, hEl = el('h') as HTMLInputElement;
+  xEl.addEventListener('input', () => {
+    state.xs = +xEl.value;
+    el('xval').textContent = xOf().toFixed(2);
+    draw();
+  });
+  function setH(v: number) {
+    state.hs = v;
+    hEl.value = String(v);
+    const h = hFull();
+    el('hval').textContent = h < 0.01 ? h.toFixed(5) : h.toFixed(3);
+    draw();
+  }
+  hEl.addEventListener('input', () => { state.tau = 1; setH(+hEl.value); });
+
+  computeScale();
+  el('xval').textContent = xOf().toFixed(2);
+  setH(10);
+</script>
+
+<style>
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  #pair button {
+    font-size: 0.76rem;
+    padding: 5px 8px;
+  }
+</style>
