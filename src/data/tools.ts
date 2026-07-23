@@ -417,6 +417,38 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'band-theory',
+        title: 'Band Theory',
+        description:
+          'Bring a line of atoms together and every level splits into a band. Which bands are full, and how wide the gap is, decides on its own whether you are holding a metal, a semiconductor or a rock.',
+        href: '/simulations/physics/band-theory',
+        status: 'live',
+      },
+      {
+        slug: 'capacitor',
+        title: 'Capacitor',
+        description:
+          'Every charge is a ball you can count. Drive the source by hand or with AC, and watch electrons get dragged off one plate, round the circuit, onto the other, building the field that finally pushes back.',
+        href: '/simulations/physics/capacitor',
+        status: 'live',
+      },
+      {
+        slug: 'inductor',
+        title: 'Inductor',
+        description:
+          'A flywheel for charge. Shove the source by hand and the electrons will not jump, only ramp, and when you cut them off the collapsing field produces hundreds of times the battery voltage to keep them moving.',
+        href: '/simulations/physics/inductor',
+        status: 'live',
+      },
+      {
+        slug: 'semiconductors',
+        title: 'Diodes & Transistors',
+        description:
+          'Pick a diode or a transistor and watch electrons and holes move through it while you drive the external circuit. A one-way valve, then a valve with a knob, both made of a barrier you can raise and lower.',
+        href: '/simulations/physics/semiconductors',
+        status: 'live',
+      },
+      {
         slug: 'schrodinger',
         title: 'Schrödinger Equation',
         description:

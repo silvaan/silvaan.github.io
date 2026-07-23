@@ -1,0 +1,896 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Band Theory"
+  description="One atom has levels. Bring a line of them close enough to notice each other and every level splits into as many as there are atoms, packed into a band. Which bands are full and how wide the gap is decides, on its own, whether you are holding a metal, a semiconductor or a rock."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="bt" class="bt-canvas" width="1000" height="880"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Atomic spacing a <b id="aval">2.50 Å</b></label>
+        <input type="range" id="a" min="160" max="420" step="2" value="250" />
+        <div class="scale-hint"><span>squeezed</span><span>far apart</span></div>
+      </div>
+
+      <div class="control">
+        <label>Electrons per atom <b id="nval">2</b></label>
+        <input type="range" id="n" min="1" max="4" step="1" value="2" />
+        <div class="scale-hint"><span>1</span><span>4</span></div>
+      </div>
+
+      <div class="control">
+        <label>Temperature <b id="tval">300 K</b></label>
+        <input type="range" id="temp" min="10" max="1500" step="10" value="300" />
+      </div>
+
+      <div class="control">
+        <label>Applied field <b id="fval">0.30</b></label>
+        <input type="range" id="field" min="0" max="100" step="1" value="30" />
+        <div class="scale-hint"><span>none</span><span>strong</span></div>
+      </div>
+
+      <div class="control">
+        <label>Time rate <b id="rateval">1.0×</b></label>
+        <input type="range" id="rate" min="10" max="200" step="5" value="100" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="levels" checked /> Show the individual levels</label>
+
+      <div class="readout">
+        <div class="row"><span id="l1">Verdict</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">Band gap</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">Lower band width</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">Fermi level</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">Free carriers</span><b id="r5">—</b></div>
+        <div class="row"><span id="l6">Drift velocity</span><b id="r6">—</b></div>
+        <div class="row"><span id="l7">Thermal energy kT</span><b id="r7">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        A chain of atoms with one s and one p level each, solved exactly by
+        tight binding. Everything on screen comes out of that one model.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Start with the atoms far apart. Each band collapses to a single sharp
+      level, the level an isolated atom has. Now bring them together. Every
+      level <b>splits into as many levels as there are atoms</b>, because no two
+      electrons may share a state, and the split widens the closer they get.
+      That fan is where a band comes from.
+    </li>
+    <li>
+      Watch the two fans as you squeeze. First they widen, then the gap between
+      them narrows, and at close enough spacing they <b>overlap and the gap is
+      gone</b>. Nothing about the atoms changed. Being an insulator or a metal
+      can be a matter of how far apart you hold the same atoms.
+    </li>
+    <li>
+      Set two electrons per atom and look at the occupied states: the lower band
+      is exactly full. Now turn the field up. The whole sea of occupied states
+      tries to shift, and <b>nothing happens</b>, because a full band shifted is
+      still a full band. For every electron moving one way there is one moving
+      the other. That is what an insulator is, and it is a counting argument,
+      not a strength argument.
+    </li>
+    <li>
+      Change to one electron per atom. The same band is now half full, there is
+      a Fermi surface, and the sea can lean sideways. Watch the drift velocity
+      jump and the electrons in the crystal start moving. Odd electrons per atom
+      and you have a metal, almost for free.
+    </li>
+    <li>
+      Go back to two per atom and set a spacing where the gap is about one
+      electron volt. Now raise the temperature. A few electrons make it across
+      the gap, leaving holes behind, and the conduction climbs steeply because
+      the number of carriers goes as e<sup>−E<sub>g</sub>/2kT</sup>. This is a
+      semiconductor, and this is why heating one makes it conduct better while
+      heating a metal makes it worse.
+    </li>
+    <li>
+      Compare kT against the gap in the readout. At room temperature kT is about
+      0.026 eV, so a 5 eV gap is untouchable and a 1 eV gap is merely very
+      unlikely. The whole difference between a diamond and a chip is that ratio.
+    </li>
+    <li>
+      Look at the density of states. It piles up at the band edges and thins in
+      the middle, and the Fermi-Dirac curve beside it is a soft step whose
+      softness is a few kT wide. The states are what the crystal offers, the
+      curve is what temperature takes up, and everything electrical is the
+      product of the two.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+
+  // ---------------------------------------------------------------------------
+  // A one dimensional chain with one s and one p orbital per atom, nearest
+  // neighbour tight binding. Two bands, one gap, and every number on screen
+  // comes from these few lines.
+  //   E_s(θ) = Es − 2 t_s cos θ      E_p(θ) = Ep + 2 t_p cos θ,  θ = k·a
+  // ---------------------------------------------------------------------------
+
+  const ES = -8.0, EP = -2.5; // isolated atom levels, eV
+  const KB = 8.617333e-5; // eV/K
+  const NK = 220; // k points across the Brillouin zone
+
+  const state = {
+    a: 2.5, // atomic spacing, Å
+    n: 2, // electrons per atom
+    temp: 300,
+    field: 0.3,
+    rate: 1,
+    running: true,
+    levels: true,
+  };
+
+  /** Overlap falls off exponentially with distance: that is the whole story. */
+  const tS = (a = state.a) => 28.4 * Math.exp(-a / 0.7);
+  const tP = (a = state.a) => 1.7 * tS(a);
+  const band1 = (th: number, a = state.a) => ES - 2 * tS(a) * Math.cos(th);
+  const band2 = (th: number, a = state.a) => EP + 2 * tP(a) * Math.cos(th);
+  const gap = (a = state.a) => EP - 2 * tP(a) - (ES + 2 * tS(a));
+  const kT = () => KB * state.temp;
+
+  /** dE/dk turned into a real velocity, in m/s. */
+  const vel1 = (th: number) => state.a * 2 * tS() * Math.sin(th) * 1.519e5;
+  const vel2 = (th: number) => -state.a * 2 * tP() * Math.sin(th) * 1.519e5;
+
+  const fermi = (E: number, EF: number) => 1 / (1 + Math.exp(Math.min(60, (E - EF) / kT())));
+
+  const thetas: number[] = [];
+  for (let i = 0; i < NK; i++) thetas.push(-Math.PI + ((i + 0.5) * 2 * Math.PI) / NK);
+
+  /** Electrons per atom held at this Fermi level, both bands, both spins. */
+  function countAt(EF: number) {
+    let s = 0;
+    for (const th of thetas) s += fermi(band1(th), EF) + fermi(band2(th), EF);
+    return (2 * s) / NK;
+  }
+
+  const bandTop = () => Math.max(ES + 2 * tS(), EP + 2 * tP());
+
+  /** log Σ exp(xᵢ) without overflowing, which is the whole difficulty here. */
+  function logSumExp(xs: number[]) {
+    const m = Math.max(...xs);
+    let s = 0;
+    for (const x of xs) s += Math.exp(x - m);
+    return m + Math.log(s);
+  }
+
+  /**
+   * Where the Fermi level sits when it lands in a gap. Counting electrons
+   * cannot find it: across a wide gap every level in the gap holds exactly the
+   * same number of electrons to within rounding, so a bisection on the count
+   * stops wherever it first loses resolution and reports a Fermi level jammed
+   * against the valence band. Balancing electrons against holes in logs is
+   * well conditioned no matter how wide the gap gets.
+   *   Σ e^(Ev/kT) · e^(−EF/kT) = Σ e^(−Ec/kT) · e^(EF/kT)
+   */
+  function intrinsicLevel(
+    vb: (t: number) => number,
+    cb: (t: number) => number
+  ) {
+    const kt = kT();
+    const lv = logSumExp(thetas.map((t) => vb(t) / kt));
+    const lc = logSumExp(thetas.map((t) => -cb(t) / kt));
+    return 0.5 * kt * (lv - lc);
+  }
+
+  function fermiLevel() {
+    // Every band full: the level belongs in the gap up to the next band, which
+    // this two band model does not have.
+    if (state.n >= 4) return bandTop() + 0.4;
+    let lo = -20, hi = 6;
+    for (let i = 0; i < 60; i++) {
+      const m = 0.5 * (lo + hi);
+      if (countAt(m) < state.n) lo = m;
+      else hi = m;
+    }
+    const bis = 0.5 * (lo + hi);
+    if (inBandAt(bis) || state.n !== 2) return bis;
+    return intrinsicLevel(band1, band2);
+  }
+
+  /** Is there anything to sit in at this energy? That is the whole test. */
+  function inBandAt(e: number) {
+    const m = 1e-3;
+    return (
+      (e > ES - 2 * tS() + m && e < ES + 2 * tS() - m) ||
+      (e > EP - 2 * tP() + m && e < EP + 2 * tP() - m)
+    );
+  }
+
+  // Live quantities, recomputed once a frame.
+  let EF = -6;
+  let shift = 0; // how far the occupied sea has leaned, in θ
+  let vDrift = 0; // m/s, averaged over every occupied state
+  let carriers = 0; // fraction of states that are neither full nor empty
+  let occ1: number[] = [], occ2: number[] = [];
+  let fill1 = 0, fill2 = 0; // mean occupancy of each band
+
+  function recompute() {
+    EF = fermiLevel();
+    occ1 = thetas.map((th) => fermi(band1(th - shift), EF));
+    occ2 = thetas.map((th) => fermi(band2(th - shift), EF));
+    let sum = 0, free = 0;
+    for (let i = 0; i < NK; i++) {
+      sum += occ1[i] * vel1(thetas[i]) + occ2[i] * vel2(thetas[i]);
+      // A state only carries current if it is neither certainly full nor
+      // certainly empty, which is exactly 4f(1−f).
+      const f1 = fermi(band1(thetas[i]), EF), f2 = fermi(band2(thetas[i]), EF);
+      free += 4 * f1 * (1 - f1) + 4 * f2 * (1 - f2);
+    }
+    vDrift = (2 * sum) / (state.n * NK);
+    carriers = free / (2 * NK);
+    fill1 = occ1.reduce((a, b) => a + b, 0) / NK;
+    fill2 = occ2.reduce((a, b) => a + b, 0) / NK;
+  }
+
+  function verdict() {
+    // A metal is a crystal with states at the Fermi level. Counting thermally
+    // active carriers cannot tell a cold metal from an insulator, because a
+    // cold metal has few of those either.
+    if (inBandAt(EF)) return gap() <= 0.02 ? 'metal (bands overlap)' : 'metal (partly filled band)';
+    if (state.n >= 4) return 'insulator (every band full)';
+    if (carriers > 1e-18) return 'semiconductor';
+    return 'insulator';
+  }
+
+  // --- canvas ----------------------------------------------------------------
+
+  const canvas = document.getElementById('bt') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+  const { label, textWidth } = makeText(ctx, inkA);
+
+  const LOWER = '#f9736a'; // the lower band and its electrons
+  const UPPER = '#5b8cff'; // the upper band
+  const ACC = '#7c8cff';
+  const WARM = '#f59e0b';
+  const GREEN = '#34d399';
+
+  const SPLIT = { x: 20, y: 88, w: 468, h: 322 };
+  const CRYS = { x: 512, y: 88, w: 468, h: 322 };
+  const BANDS = { x: 20, y: 462, w: 468, h: 378 };
+  const OCC = { x: 512, y: 462, w: 468, h: 378 };
+
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+  function panel(p: { x: number; y: number; w: number; h: number }, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(p.x, p.y, p.w, p.h, 10);
+    ctx.stroke();
+    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+  }
+  function arrow(x1: number, y1: number, x2: number, y2: number, size = 5) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    const an = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - size * Math.cos(an - 0.4), y2 - size * Math.sin(an - 0.4));
+    ctx.lineTo(x2 - size * Math.cos(an + 0.4), y2 - size * Math.sin(an + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // --- where bands come from -------------------------------------------------
+
+  const A_MIN = 1.6, A_MAX = 4.2;
+
+  function drawSplit() {
+    panel(SPLIT, 'WHERE A BAND COMES FROM');
+    const px = SPLIT.x + 46, py = SPLIT.y + 26, pw = SPLIT.w - 66, ph = SPLIT.h - 74;
+    // energy range wide enough for the widest fan the sliders can reach
+    const eLo = ES - 2 * tS(A_MIN) - 0.6, eHi = EP + 2 * tP(A_MIN) + 0.6;
+    const X = (a: number) => px + ((A_MAX - a) / (A_MAX - A_MIN)) * pw;
+    const Y = (e: number) => py + ph - ((e - eLo) / (eHi - eLo)) * ph;
+
+    ctx.strokeStyle = inkA(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.lineTo(px + pw, py + ph);
+    ctx.stroke();
+
+    // the two fans: each band's top and bottom edge against spacing
+    const fills: [(th: number, a: number) => number, string, number][] = [
+      [band1, LOWER, 0.16],
+      [band2, UPPER, 0.16],
+    ];
+    for (const [fn, col, alpha] of fills) {
+      ctx.beginPath();
+      for (let i = 0; i <= 80; i++) {
+        const a = A_MAX - ((A_MAX - A_MIN) * i) / 80;
+        const e = Math.max(fn(0, a), fn(Math.PI, a));
+        i ? ctx.lineTo(X(a), Y(e)) : ctx.moveTo(X(a), Y(e));
+      }
+      for (let i = 80; i >= 0; i--) {
+        const a = A_MAX - ((A_MAX - A_MIN) * i) / 80;
+        const e = Math.min(fn(0, a), fn(Math.PI, a));
+        ctx.lineTo(X(a), Y(e));
+      }
+      ctx.closePath();
+      ctx.fillStyle = col.replace('#', 'rgba(').length ? col : col;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+
+    // the current spacing, and the discrete levels a short chain really has
+    const xa = X(state.a);
+    ctx.strokeStyle = inkA(0.45);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(xa, py);
+    ctx.lineTo(xa, py + ph);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (state.levels) {
+      const N = 8;
+      ctx.lineWidth = 1.6;
+      for (let m = 1; m <= N; m++) {
+        const c = Math.cos((m * Math.PI) / (N + 1));
+        for (const [e, col] of [
+          [ES - 2 * tS() * c, LOWER],
+          [EP + 2 * tP() * c, UPPER],
+        ] as [number, string][]) {
+          ctx.strokeStyle = col;
+          ctx.beginPath();
+          ctx.moveTo(xa - 13, Y(e));
+          ctx.lineTo(xa + 13, Y(e));
+          ctx.stroke();
+        }
+      }
+      const flip = xa > px + pw * 0.62;
+      label('8 atoms, 8 levels', xa + (flip ? -18 : 18), py + 14, 0.45, flip ? 'right' : 'left', 10);
+    }
+
+    if (gap() > 0.02) {
+      const yTop = Y(EP - 2 * tP()), yBot = Y(ES + 2 * tS());
+      ctx.fillStyle = 'rgba(245,158,11,0.08)';
+      ctx.fillRect(px, yTop, pw, yBot - yTop);
+      label('forbidden', px + pw - 6, (yTop + yBot) / 2 + 4, 0.45, 'right', 10, WARM);
+    }
+
+    label('the isolated atom', px + 4, Y(ES) - 9, 0.4, 'left', 10);
+    label('energy (eV)', px + 4, py - 9, 0.4, 'left', 10);
+    label(`${eHi.toFixed(0)}`, px - 6, py + 5, 0.35, 'right', 9);
+    label(`${eLo.toFixed(0)}`, px - 6, py + ph, 0.35, 'right', 9);
+    label('atoms far apart', px + 2, py + ph + 18, 0.4, 'left', 10);
+    label('squeezed together', px + pw, py + ph + 18, 0.4, 'right', 10);
+    label(`a = ${state.a.toFixed(2)} Å`, xa, py + ph + 34, 0.7, 'center', 11, ACC);
+  }
+
+  // --- the crystal itself ----------------------------------------------------
+
+  type Mover = { x: number; y: number; band: number; ph: number };
+  let movers: Mover[] = [];
+  type Jump = { x: number; y0: number; y1: number; life: number };
+  let jumps: Jump[] = [];
+
+  function buildMovers() {
+    recompute();
+    movers = [];
+    const total = 26;
+    // Share the electrons out the way the occupancies actually do.
+    const up = Math.round((total * fill2) / Math.max(1e-9, fill1 + fill2));
+    for (let i = 0; i < total; i++)
+      movers.push({
+        x: Math.random(),
+        y: Math.random(),
+        band: i < up ? 1 : 0,
+        ph: Math.random() * 6.3,
+      });
+  }
+
+  function crystalGeom() {
+    const y0 = CRYS.y + 108; // upper band lane
+    const y1 = CRYS.y + 220; // lower band lane
+    return { x0: CRYS.x + 34, x1: CRYS.x + CRYS.w - 34, y0, y1 };
+  }
+
+  function stepCrystal(dt: number) {
+    const g = crystalGeom();
+    const wpx = g.x1 - g.x0;
+    // Electrons in the upper band ride the drift; those in the full lower band
+    // are simply stuck, however hard you push.
+    const vpx = Math.max(-260, Math.min(260, vDrift / 4000));
+    for (const m of movers) {
+      const stuck = (m.band === 1 ? fill2 : fill1) > 0.98;
+      if (!stuck) {
+        m.x += (vpx / wpx) * dt;
+        m.x += ((Math.random() - 0.5) * 0.12) * dt;
+        if (m.x > 1) m.x -= 1;
+        if (m.x < 0) m.x += 1;
+      } else {
+        // a full band can still be pushed, it just cannot go anywhere
+        m.x += ((Math.random() - 0.5) * 0.05) * dt;
+        m.x = Math.max(0, Math.min(1, m.x));
+      }
+    }
+    // thermal promotion across the gap, at the rate the statistics allow
+    const rate = 60 * Math.exp(-Math.max(0, gap()) / (2 * kT()));
+    if (Math.random() < rate * dt) {
+      const cand = movers.filter((m) => m.band === 0);
+      if (cand.length > 3) {
+        const m = cand[(Math.random() * cand.length) | 0];
+        m.band = 1;
+        jumps.push({ x: g.x0 + m.x * wpx, y0: g.y1, y1: g.y0, life: 1 });
+      }
+    }
+    // and the way back down
+    if (Math.random() < 0.9 * dt) {
+      const up = movers.filter((m) => m.band === 1);
+      if (up.length > 0) {
+        const m = up[(Math.random() * up.length) | 0];
+        m.band = 0;
+        jumps.push({ x: g.x0 + m.x * wpx, y0: g.y0, y1: g.y1, life: 1 });
+      }
+    }
+    for (let k = jumps.length - 1; k >= 0; k--) {
+      jumps[k].life -= dt * 2;
+      if (jumps[k].life <= 0) jumps.splice(k, 1);
+    }
+  }
+
+  function drawCrystal() {
+    panel(CRYS, 'THE CRYSTAL, AND WHAT MOVES IN IT');
+    const g = crystalGeom();
+    const wpx = g.x1 - g.x0;
+    const nAtoms = Math.max(4, Math.round(wpx / (state.a * 26)));
+
+    // the potential: wells that overlap as the atoms come together
+    ctx.strokeStyle = inkA(0.25);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    const yBase = CRYS.y + 268;
+    for (let i = 0; i <= 300; i++) {
+      const x = g.x0 + (wpx * i) / 300;
+      let v = 0;
+      for (let k = 0; k < nAtoms; k++) {
+        const xa = g.x0 + ((k + 0.5) * wpx) / nAtoms;
+        const d = Math.abs(x - xa) / (wpx / nAtoms);
+        v += 1 / (0.09 + d * d * 3.2);
+      }
+      const y = yBase - Math.min(58, v * 5.2);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    label('the potential the electrons sit in', g.x0, yBase + 22, 0.4, 'left', 10);
+
+    // atoms
+    for (let k = 0; k < nAtoms; k++) {
+      const xa = g.x0 + ((k + 0.5) * wpx) / nAtoms;
+      ctx.strokeStyle = inkA(0.4);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(xa, g.y1 + 44, 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // the two lanes: a band each
+    for (const [y, col, name] of [
+      [g.y0, UPPER, 'upper band: room to move'],
+      [g.y1, LOWER, 'lower band'],
+    ] as [number, string, string][]) {
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = 16;
+      ctx.beginPath();
+      ctx.moveTo(g.x0, y);
+      ctx.lineTo(g.x1, y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      label(name, g.x0, y - 18, 0.45, 'left', 10, col);
+    }
+    const holes = 1 - fill1;
+    const full = holes < 1e-6;
+    label(
+      full
+        ? 'full: nobody has anywhere to go'
+        : holes < 0.01
+          ? 'nearly full, but its holes can move'
+          : 'partly filled: the sea can lean',
+      g.x1,
+      g.y1 - 18,
+      0.45,
+      'right',
+      10,
+      full ? WARM : GREEN
+    );
+
+    for (const m of movers) {
+      const y = (m.band === 1 ? g.y0 : g.y1) + Math.sin(clock * 2 + m.ph) * 2.4;
+      ctx.fillStyle = m.band === 1 ? UPPER : LOWER;
+      ctx.beginPath();
+      ctx.arc(g.x0 + m.x * wpx, y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const j of jumps) {
+      ctx.strokeStyle = `rgba(245,158,11,${Math.max(0, j.life) * 0.8})`;
+      ctx.lineWidth = 1.6;
+      arrow(j.x, j.y0, j.x, j.y1, 5);
+    }
+
+    // which way, and how fast
+    const vpx = Math.max(-90, Math.min(90, vDrift / 12000));
+    ctx.strokeStyle = GREEN;
+    ctx.fillStyle = GREEN;
+    ctx.lineWidth = 2;
+    if (Math.abs(vpx) > 2) {
+      const cx = CRYS.x + CRYS.w / 2;
+      arrow(cx - vpx / 2, CRYS.y + 70, cx + vpx / 2, CRYS.y + 70, 7);
+    }
+    label(
+      Math.abs(vDrift) < 1 ? 'no net motion' : `drift ${(vDrift / 1000).toFixed(1)} km/s`,
+      CRYS.x + CRYS.w / 2,
+      CRYS.y + 52,
+      0.8,
+      'center',
+      13,
+      Math.abs(vDrift) < 1 ? inkA(0.6) : GREEN
+    );
+    label(`${nAtoms} atoms at a = ${state.a.toFixed(2)} Å`, CRYS.x + 14, CRYS.y + 26, 0.5, 'left', 11);
+  }
+
+  // --- E(k) and the occupied sea ---------------------------------------------
+
+  function drawBands() {
+    panel(BANDS, 'ALLOWED ENERGIES  E(k), AND WHO SITS WHERE');
+    const px = BANDS.x + 52, py = BANDS.y + 30, pw = BANDS.w - 76, ph = BANDS.h - 84;
+    const eLo = Math.min(band1(0), band1(Math.PI)) - 0.7;
+    const eHi = Math.max(band2(0), band2(Math.PI)) + 0.7;
+    const X = (th: number) => px + ((th + Math.PI) / (2 * Math.PI)) * pw;
+    const Y = (e: number) => py + ph - ((e - eLo) / (eHi - eLo)) * ph;
+
+    ctx.strokeStyle = inkA(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.lineTo(px + pw, py + ph);
+    ctx.stroke();
+
+    if (gap() > 0.02) {
+      ctx.fillStyle = 'rgba(245,158,11,0.07)';
+      ctx.fillRect(px, Y(EP - 2 * tP()), pw, Y(ES + 2 * tS()) - Y(EP - 2 * tP()));
+      label(`gap ${gap().toFixed(2)} eV`, px + pw - 6, (Y(EP - 2 * tP()) + Y(ES + 2 * tS())) / 2 + 4, 0.6, 'right', 11, WARM);
+    }
+
+    // the bands themselves
+    for (const [fn, col] of [[band1, LOWER], [band2, UPPER]] as [(t: number) => number, string][]) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= 120; i++) {
+        const th = -Math.PI + (2 * Math.PI * i) / 120;
+        i ? ctx.lineTo(X(th), Y(fn(th))) : ctx.moveTo(X(th), Y(fn(th)));
+      }
+      ctx.stroke();
+    }
+
+    // every occupied state, as a dot whose weight is its occupancy
+    for (let i = 0; i < NK; i += 3) {
+      const th = thetas[i];
+      for (const [occ, fn, col] of [
+        [occ1[i] ?? 0, band1, LOWER],
+        [occ2[i] ?? 0, band2, UPPER],
+      ] as [number, (t: number) => number, string][]) {
+        if (occ < 0.02) continue;
+        ctx.globalAlpha = Math.min(1, occ);
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.arc(X(th), Y(fn(th)), 3.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Fermi level
+    ctx.strokeStyle = GREEN;
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(px, Y(EF));
+    ctx.lineTo(px + pw, Y(EF));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label(`E_F ${EF.toFixed(2)} eV`, px + 4, Y(EF) - 6, 0.85, 'left', 11, GREEN);
+
+    // how far the sea has leaned
+    if (Math.abs(shift) > 0.02) {
+      ctx.strokeStyle = ACC;
+      ctx.fillStyle = ACC;
+      ctx.lineWidth = 1.6;
+      const y = py + 12;
+      arrow(X(0) - (shift > 0 ? 0 : 40), y, X(0) + (shift > 0 ? 40 : -40), y, 6);
+      label('the sea leans', X(0) + (shift > 0 ? 48 : -48), y + 4, 0.6, shift > 0 ? 'left' : 'right', 10, ACC);
+    }
+
+    label('−π/a', px, py + ph + 18, 0.4, 'left', 10);
+    label('0', X(0), py + ph + 18, 0.4, 'center', 10);
+    label('+π/a', px + pw, py + ph + 18, 0.4, 'right', 10);
+    label('wavenumber k', px + pw / 2, py + ph + 34, 0.4, 'center', 10);
+    label(`${eHi.toFixed(1)} eV`, px - 6, py + 6, 0.4, 'right', 10);
+    label(`${eLo.toFixed(1)} eV`, px - 6, py + ph, 0.4, 'right', 10);
+  }
+
+  // --- density of states and occupancy ---------------------------------------
+
+  function drawOcc() {
+    panel(OCC, 'HOW MANY STATES, AND HOW MANY ARE TAKEN');
+    const px = OCC.x + 54, py = OCC.y + 30, pw = OCC.w - 150, ph = OCC.h - 118;
+    const eLo = Math.min(band1(0), band1(Math.PI)) - 0.7;
+    const eHi = Math.max(band2(0), band2(Math.PI)) + 0.7;
+    const Y = (e: number) => py + ph - ((e - eLo) / (eHi - eLo)) * ph;
+
+    // histogram the k grid: the pile-ups at the band edges are van Hove peaks
+    const NB = 90;
+    const dos = new Array(NB).fill(0);
+    const bin = (e: number) => Math.floor(((e - eLo) / (eHi - eLo)) * NB);
+    for (const th of thetas) {
+      for (const e of [band1(th), band2(th)]) {
+        const b = bin(e);
+        if (b >= 0 && b < NB) dos[b]++;
+      }
+    }
+    const dmax = Math.max(1, ...dos);
+
+    for (let b = 0; b < NB; b++) {
+      if (!dos[b]) continue;
+      const e = eLo + ((b + 0.5) / NB) * (eHi - eLo);
+      const y = Y(e), h = ph / NB + 1;
+      const wBar = (dos[b] / dmax) * pw;
+      const col = e > (ES + EP) / 2 ? UPPER : LOWER;
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = col;
+      ctx.fillRect(px, y - h / 2, wBar, h);
+      ctx.globalAlpha = 1;
+      // the taken share
+      ctx.fillStyle = col;
+      ctx.fillRect(px, y - h / 2, wBar * fermi(e, EF), h);
+    }
+
+    ctx.strokeStyle = inkA(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.stroke();
+
+    // Fermi-Dirac, drawn against its own axis on the right
+    const fx = px + pw + 26, fw = 62;
+    ctx.strokeStyle = GREEN;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const e = eLo + ((eHi - eLo) * i) / 120;
+      const x = fx + fermi(e, EF) * fw;
+      i ? ctx.lineTo(x, Y(e)) : ctx.moveTo(x, Y(e));
+    }
+    ctx.stroke();
+    ctx.strokeStyle = inkA(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(fx, py);
+    ctx.lineTo(fx, py + ph);
+    ctx.stroke();
+    label('f(E)', fx + fw / 2, py + ph + 18, 0.4, 'center', 10, GREEN);
+    label('1', fx + fw, py + ph + 18, 0.35, 'center', 9);
+    label('0', fx, py + ph + 18, 0.35, 'center', 9);
+
+    ctx.strokeStyle = GREEN;
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(px, Y(EF));
+    ctx.lineTo(fx + fw, Y(EF));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('E_F', px - 6, Y(EF) + 4, 0.85, 'right', 11, GREEN);
+
+    label('density of states', px, py + ph + 18, 0.4, 'left', 10);
+    label(`kT = ${(kT() * 1000).toFixed(1)} meV`, px, py - 10, 0.5, 'left', 11, WARM);
+    label(verdict(), OCC.x + OCC.w / 2, OCC.y + OCC.h - 34, 0.9, 'center', 15, verdictColour());
+    label(
+      carriers > 1e-12
+        ? `free carriers: ${carriers.toExponential(1)} per state`
+        : 'free carriers: none worth counting',
+      OCC.x + OCC.w / 2,
+      OCC.y + OCC.h - 14,
+      0.45,
+      'center',
+      11
+    );
+  }
+
+  function verdictColour() {
+    const v = verdict();
+    return v.startsWith('metal') ? GREEN : v === 'semiconductor' ? WARM : LOWER;
+  }
+
+  // --- readouts --------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, lab: string, val: string) => {
+    el('l' + n).innerHTML = subHtml(lab);
+    el('r' + n).textContent = val;
+  };
+  function updateReadout() {
+    setRow(1, 'Verdict', verdict());
+    setRow(2, 'Band gap E_g', gap() > 0.02 ? gap().toFixed(3) + ' eV' : 'none, they overlap');
+    setRow(3, 'Lower band width', (4 * tS()).toFixed(3) + ' eV');
+    setRow(4, 'Fermi level E_F', EF.toFixed(3) + ' eV');
+    setRow(5, 'Free carriers', carriers > 1e-12 ? carriers.toExponential(2) : '< 1e-12');
+    setRow(6, 'Drift velocity', Math.abs(vDrift) < 1 ? '0 m/s' : (vDrift / 1000).toFixed(2) + ' km/s');
+    setRow(7, 'Thermal energy kT', (kT() * 1000).toFixed(2) + ' meV');
+  }
+
+  // --- loop ------------------------------------------------------------------
+
+  let clock = 0;
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    label('Band Theory', 20, 30, 0.85, 'left', 14);
+    label(
+      `${state.n} electron${state.n === 1 ? '' : 's'} per atom · ${verdict()}`,
+      20,
+      52,
+      0.55,
+      'left',
+      11,
+      verdictColour()
+    );
+    const legend: [string, string][] = [
+      [LOWER, 'lower band'],
+      [UPPER, 'upper band'],
+      [GREEN, 'Fermi level'],
+    ];
+    let x = W - 20;
+    for (let k = legend.length - 1; k >= 0; k--) {
+      const [c, tx] = legend[k];
+      const tw = textWidth(tx, 11);
+      label(tx, x, 30, 0.55, 'right', 11);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(x - tw - 11, 26, 4, 0, Math.PI * 2);
+      ctx.fill();
+      x -= tw + 30;
+    }
+    drawSplit();
+    drawCrystal();
+    drawBands();
+    drawOcc();
+  }
+
+  let last = performance.now();
+  function frame(now: number) {
+    let dt = (now - last) / 1000;
+    last = now;
+    dt = Math.min(0.05, Math.max(0, dt)) * state.rate;
+    if (state.running) {
+      clock += dt;
+      // the sea leans until scattering balances the push
+      shift += ((state.field * 0.55 - shift) * 4) * dt;
+      stepCrystal(dt);
+    }
+    recompute();
+    draw();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls --------------------------------------------------------------
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('reset').addEventListener('click', () => {
+    buildMovers();
+    jumps = [];
+    shift = 0;
+  });
+
+  let ready = false;
+  function bindRange(id: string, apply: (n: number) => void) {
+    const inp = el(id) as HTMLInputElement;
+    const run = () => apply(+inp.value);
+    inp.addEventListener('input', run);
+    run();
+  }
+  bindRange('a', (n) => {
+    state.a = n / 100;
+    el('aval').textContent = `${state.a.toFixed(2)} Å`;
+  });
+  bindRange('n', (n) => {
+    state.n = n;
+    el('nval').textContent = String(n);
+    if (ready) buildMovers();
+  });
+  bindRange('temp', (n) => {
+    state.temp = n;
+    el('tval').textContent = `${n} K`;
+  });
+  bindRange('field', (n) => {
+    state.field = n / 100;
+    el('fval').textContent = state.field.toFixed(2);
+  });
+  bindRange('rate', (n) => {
+    state.rate = n / 100;
+    el('rateval').textContent = `${state.rate.toFixed(1)}×`;
+  });
+  (el('levels') as HTMLInputElement).addEventListener('change', (e) => {
+    state.levels = (e.target as HTMLInputElement).checked;
+  });
+
+  buildMovers();
+  recompute();
+  ready = true;
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .bt-canvas {
+    touch-action: none;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+</style>

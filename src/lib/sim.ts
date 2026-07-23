@@ -57,6 +57,93 @@ export function palette(el: Element) {
     cs.getPropertyValue(name).trim() || fallback;
 }
 
+/**
+ * Canvas text with real subscripts: `"V_CE 2.5 V"` draws V, a small lowered
+ * CE, then the rest. Everything after an underscore up to the next
+ * non-alphanumeric goes down and small, so sims can write `I_C` in a string
+ * and never show a stray underscore.
+ *
+ * `ink(alpha)` supplies the default fill, normally the theme-aware stage ink.
+ */
+export function makeText(
+  ctx: CanvasRenderingContext2D,
+  ink: (alpha: number) => string,
+  scale = 1.22,
+  font = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+) {
+  type Part = { t: string; sub: boolean };
+
+  function parts(text: string): Part[] {
+    const out: Part[] = [];
+    let i = 0,
+      plain = '';
+    while (i < text.length) {
+      if (text[i] === '_' && i + 1 < text.length && /[A-Za-z0-9]/.test(text[i + 1])) {
+        if (plain) out.push({ t: plain, sub: false });
+        plain = '';
+        let j = i + 1;
+        while (j < text.length && /[A-Za-z0-9]/.test(text[j])) j++;
+        out.push({ t: text.slice(i + 1, j), sub: true });
+        i = j;
+      } else plain += text[i++];
+    }
+    if (plain) out.push({ t: plain, sub: false });
+    return out;
+  }
+
+  /** Width the same text would occupy, for laying out legends by hand. */
+  function textWidth(text: string, size: number) {
+    const px = Math.round(size * scale);
+    const sp = Math.round(px * 0.74);
+    let w = 0;
+    for (const p of parts(text)) {
+      ctx.font = `${p.sub ? sp : px}px ${font}`;
+      w += ctx.measureText(p.t).width;
+    }
+    return w;
+  }
+
+  function label(
+    text: string,
+    x: number,
+    y: number,
+    alpha = 0.55,
+    align: CanvasTextAlign = 'left',
+    size = 11,
+    colour?: string
+  ) {
+    const px = Math.round(size * scale);
+    const sp = Math.round(px * 0.74);
+    const ps = parts(text);
+    ctx.fillStyle = colour ?? ink(alpha);
+    ctx.textAlign = 'left';
+    if (ps.length === 1 && !ps[0].sub) {
+      ctx.font = `${px}px ${font}`;
+      const w = align === 'left' ? 0 : ctx.measureText(text).width;
+      ctx.fillText(text, align === 'right' ? x - w : align === 'center' ? x - w / 2 : x, y);
+      return;
+    }
+    let total = 0;
+    for (const p of ps) {
+      ctx.font = `${p.sub ? sp : px}px ${font}`;
+      total += ctx.measureText(p.t).width;
+    }
+    let cx = align === 'right' ? x - total : align === 'center' ? x - total / 2 : x;
+    for (const p of ps) {
+      ctx.font = `${p.sub ? sp : px}px ${font}`;
+      ctx.fillText(p.t, cx, p.sub ? y + Math.round(px * 0.2) : y);
+      cx += ctx.measureText(p.t).width;
+    }
+  }
+
+  return { label, textWidth };
+}
+
+/** Same subscript convention as `makeText`, for HTML panel labels. */
+export function subHtml(text: string) {
+  return text.replace(/([A-Za-zΩβμ])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>');
+}
+
 // ---------------------------------------------------------------------------
 // Stage chrome: fullscreen, keyboard shortcuts, shareable URL state.
 // Called once per sim page from SimLayout.
