@@ -1,0 +1,714 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Green's Theorem"
+  description="Walk the rim of a tiny square and add up how much the field pushes you along. Now tile a whole region with those squares: every inner edge gets walked twice, once each way, and cancels. All that is left is the outer rim, which is Green's theorem."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="green" class="g-canvas" width="1000" height="900"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Field</label>
+        <div class="seg" id="field">
+          <button data-f="rot" class="active">Rotation</button>
+          <button data-f="shear">Shear</button>
+          <button data-f="source">Source</button>
+          <button data-f="eddy">Eddy</button>
+          <button data-f="mixed">Mixed spin</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Cells per side <b id="nval">4</b></label>
+        <input type="range" id="n" min="1" max="14" step="1" value="4" />
+        <div class="scale-hint"><span>one big loop</span><span>many tiny ones</span></div>
+      </div>
+
+      <div class="control">
+        <label>Region size <b id="aval">1.20</b></label>
+        <input type="range" id="size" min="40" max="180" step="2" value="120" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="cancel" checked /> Show the cancelling edges</label>
+      <label class="check"><input type="checkbox" id="fieldarr" checked /> Show the field</label>
+
+      <div class="readout">
+        <div class="row"><span id="l1">Circulation round the rim</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">Sum over the cells</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">Cells</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">Probe: circulation</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">Probe: curl</span><b id="r5">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        <b>Click any cell</b> to make it the probe. Both integrals are computed by
+        brute force from the field, never assumed equal.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Click one cell and look at the enlarged loop. Walk its rim anticlockwise
+      and on each of the four edges ask one question: <b>is the field pushing me
+      forward or holding me back?</b> Green edges help, red edges fight. Add the
+      four and you get the circulation of that little loop.
+    </li>
+    <li>
+      Divide that circulation by the cell's area and you have <b>curl</b>. It is
+      not a mysterious operator, it is the leftover push per unit of area once
+      you have walked all the way round and come back to where you started.
+    </li>
+    <li>
+      Set <b>Cells per side</b> to 1. The probe is the whole region and the two
+      sides of the identity are trivially the same thing. Now raise it and watch
+      the cell sum stay locked to the rim value while the picture becomes a mesh
+      of hundreds of tiny loops.
+    </li>
+    <li>
+      This is the part worth staring at. With <b>Show the cancelling edges</b> on,
+      every interior edge is drawn faint and doubled, with arrows pointing both
+      ways. Two neighbouring cells share that edge, and each walks it in the
+      opposite direction, so its contribution is added once and subtracted once.
+      <b>Every interior edge dies.</b> The bold arrows are the survivors: edges
+      with no neighbour on the far side, which is exactly the outer rim.
+    </li>
+    <li>
+      That is the entire theorem. A sum of a million tiny circulations collapses
+      into one walk around the outside, because everything in the middle was
+      counted twice with opposite signs.
+    </li>
+    <li>
+      Choose <b>Rotation</b>: every cell curls the same amount, so the total is
+      just curl × area, and it grows like the square of the region. Choose
+      <b>Source</b>: the flow spreads violently outward yet no cell curls at all,
+      and the circulation is zero. Spreading is not spinning.
+    </li>
+    <li>
+      Choose <b>Mixed spin</b>. Now the cells disagree with each other: green ones
+      turn anticlockwise, red ones clockwise, and they partly cancel. Only their
+      <b>signed</b> total matches the walk around the rim. Drag the region wider
+      and watch the two numbers fall together as more clockwise cells come inside.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+
+  // ---------------------------------------------------------------------------
+  // Green's theorem, computed rather than asserted. The rim integral is walked
+  // numerically; the area side sums a numerical curl over every cell. Nothing
+  // forces them to agree, and the panel reports both.
+  // ---------------------------------------------------------------------------
+
+  type P = { x: number; y: number };
+  const p2 = (x: number, y: number): P => ({ x, y });
+
+  type Field = 'rot' | 'shear' | 'source' | 'eddy' | 'mixed';
+
+  const state = {
+    field: 'rot' as Field,
+    n: 4,
+    a: 1.2, // region half-size
+    showCancel: true,
+    showField: true,
+    sel: -1,
+  };
+
+  function fieldAt(q: P): P {
+    switch (state.field) {
+      case 'rot': return p2(-q.y * 0.8, q.x * 0.8);
+      case 'shear': return p2(q.y * 0.9, 0);
+      case 'source': return p2(q.x * 0.7, q.y * 0.7);
+      case 'eddy': {
+        // curl varies strongly from place to place, so a coarse grid is
+        // visibly wrong and refining it visibly works
+        const e = Math.exp(-(q.x * q.x + q.y * q.y) * 0.8);
+        return p2(-q.y * 2.2 * e, q.x * 2.2 * e);
+      }
+      case 'mixed':
+        // curl changes sign across the region, so the cells fight each other
+        // and only their signed total matches the rim
+        return p2(0, 0.9 * Math.sin(2.2 * q.x) + 0.35 * q.x);
+    }
+  }
+
+  /** The scalar curl ∂Q/∂x − ∂P/∂y, numerically. */
+  function curl(q: P): number {
+    const h = 1e-3;
+    const dQdx = fieldAt(p2(q.x + h, q.y)).y - fieldAt(p2(q.x - h, q.y)).y;
+    const dPdy = fieldAt(p2(q.x, q.y + h)).x - fieldAt(p2(q.x, q.y - h)).x;
+    return (dQdx - dPdy) / (2 * h);
+  }
+
+  /** Circulation anticlockwise round an axis-aligned square. */
+  function loopCirculation(c: P, h: number, m = 12): number {
+    let total = 0;
+    for (const [from, to] of squareEdges(c, h)) {
+      const dx = (to.x - from.x) / m, dy = (to.y - from.y) / m;
+      for (let i = 0; i < m; i++) {
+        const q = p2(from.x + dx * (i + 0.5), from.y + dy * (i + 0.5));
+        const f = fieldAt(q);
+        total += f.x * dx + f.y * dy;
+      }
+    }
+    return total;
+  }
+  /** The four edges, anticlockwise. */
+  function squareEdges(c: P, h: number): [P, P][] {
+    const A = p2(c.x - h, c.y - h), B = p2(c.x + h, c.y - h);
+    const C = p2(c.x + h, c.y + h), D = p2(c.x - h, c.y + h);
+    return [[A, B], [B, C], [C, D], [D, A]];
+  }
+  /** Circulation contributed by one edge, for the per-edge colouring. */
+  function edgeWork(from: P, to: P, m = 10): number {
+    const dx = (to.x - from.x) / m, dy = (to.y - from.y) / m;
+    let s = 0;
+    for (let i = 0; i < m; i++) {
+      const q = p2(from.x + dx * (i + 0.5), from.y + dy * (i + 0.5));
+      const f = fieldAt(q);
+      s += f.x * dx + f.y * dy;
+    }
+    return s;
+  }
+
+  // --- cells, cached -------------------------------------------------------------
+
+  type Cell = { c: P; curl: number; circ: number };
+  let cells: Cell[] = [];
+  let rimCirc = 0;
+  let cellSum = 0;
+  let convergence: number[] = []; // mismatch, as a fraction of the total absolute spin
+  let absScale = 1;
+  let dirty = true;
+
+  function rebuild() {
+    const { n, a } = state;
+    const h = a / n;
+    cells = [];
+    cellSum = 0;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const c = p2(-a + (2 * i + 1) * h, -a + (2 * j + 1) * h);
+        const k = curl(c);
+        cells.push({ c, curl: k, circ: k * (2 * h) ** 2 });
+        cellSum += k * (2 * h) ** 2;
+      }
+    rimCirc = loopCirculation(p2(0, 0), a, 200);
+
+    // A plain ratio is useless here: clockwise and anticlockwise cells can
+    // cancel until the true total is nearly zero, and dividing by that explodes
+    // even when both sides agree perfectly. So the mismatch is measured against
+    // the total *absolute* spin, which never vanishes for a field that does
+    // anything at all.
+    let denom = 0;
+    const Nf = 26, hf = a / Nf;
+    for (let i = 0; i < Nf; i++)
+      for (let j = 0; j < Nf; j++)
+        denom += Math.abs(curl(p2(-a + (2 * i + 1) * hf, -a + (2 * j + 1) * hf))) * (2 * hf) ** 2;
+    absScale = Math.max(denom, 1e-9);
+
+    convergence = [];
+    for (let N = 1; N <= 14; N++) {
+      const hh = a / N;
+      let s = 0;
+      for (let i = 0; i < N; i++)
+        for (let j = 0; j < N; j++)
+          s += curl(p2(-a + (2 * i + 1) * hh, -a + (2 * j + 1) * hh)) * (2 * hh) ** 2;
+      convergence.push(Math.abs(s - rimCirc) / absScale);
+    }
+    if (state.sel >= cells.length) state.sel = -1;
+    if (state.sel < 0 && cells.length) {
+      // open on an off-centre cell, where the four edges genuinely disagree
+      let best = 0, bd = Infinity;
+      cells.forEach((q, i) => {
+        const d = (q.c.x - a * 0.45) ** 2 + q.c.y ** 2;
+        if (d < bd) { bd = d; best = i; }
+      });
+      state.sel = best;
+    }
+    dirty = false;
+  }
+  const cellHalf = () => state.a / state.n;
+  const probeCell = () => (state.sel >= 0 && state.sel < cells.length ? cells[state.sel] : null);
+
+  // --- canvas -----------------------------------------------------------------------
+
+  const canvas = document.getElementById('green') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (al: number) => `rgba(${inkRGB()},${al})`;
+  const { label } = makeText(ctx, inkA);
+
+  const WITH = '#34d399'; // the field pushes you along this edge
+  const AGAINST = '#ff7a5c'; // it holds you back
+  const ACC = '#7c8cff';
+  const WARN = '#f59e0b';
+  const DIM = '#8a8f9c';
+
+  // Shared by all three theorem simulators, so they read as one family.
+  const SCENE = { x: 20, y: 84, w: 640, h: 600 };
+  const PROBE = { x: 676, y: 84, w: 304, h: 300 };
+  const CANCEL = { x: 676, y: 404, w: 304, h: 280 };
+  const SUM = { x: 20, y: 704, w: 960, h: 176 };
+
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rad);
+    ctx.arcTo(x + w, y + h, x, y + h, rad);
+    ctx.arcTo(x, y + h, x, y, rad);
+    ctx.arcTo(x, y, x + w, y, rad);
+    ctx.closePath();
+  }
+  function panel(pn: { x: number; y: number; w: number; h: number }, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(pn.x, pn.y, pn.w, pn.h, 10);
+    ctx.stroke();
+    label(title, pn.x + 2, pn.y - 9, 0.5, 'left', 11);
+  }
+
+  /**
+   * Everything a panel draws stays inside that panel. Without this, a large
+   * region or a long arrow simply spills across its neighbours.
+   */
+  function clipped(pn: { x: number; y: number; w: number; h: number }, fn: () => void) {
+    ctx.save();
+    rr(pn.x + 1, pn.y + 1, pn.w - 2, pn.h - 2, 10);
+    ctx.clip();
+    fn();
+    ctx.restore();
+  }
+
+  // world → screen, for a given panel and world half-width
+  type Map2 = { cx: number; cy: number; s: number };
+  const SX = (x: number, m: Map2) => m.cx + x * m.s;
+  const SY = (y: number, m: Map2) => m.cy - y * m.s;
+  const sceneMap = (): Map2 => ({
+    cx: SCENE.x + SCENE.w / 2,
+    cy: SCENE.y + SCENE.h / 2,
+    // the corner of the region sits at a√2, so this keeps it inside the panel
+    s: Math.min(SCENE.w, SCENE.h) / 2 / (state.a * 1.5),
+  });
+
+  function arrow2(from: P, to: P, m: Map2, col: string, lw = 2, head = 7) {
+    const x1 = SX(from.x, m), y1 = SY(from.y, m);
+    const x2 = SX(to.x, m), y2 = SY(to.y, m);
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - head * Math.cos(a - 0.4), y2 - head * Math.sin(a - 0.4));
+    ctx.lineTo(x2 - head * Math.cos(a + 0.4), y2 - head * Math.sin(a + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+  /** An arrow drawn at the midpoint of an edge, pointing the way you walk it. */
+  function edgeArrow(from: P, to: P, m: Map2, col: string, lw: number, frac = 0.34) {
+    const mid = p2((from.x + to.x) / 2, (from.y + to.y) / 2);
+    const dx = (to.x - from.x) * frac, dy = (to.y - from.y) * frac;
+    arrow2(p2(mid.x - dx / 2, mid.y - dy / 2), p2(mid.x + dx / 2, mid.y + dy / 2), m, col, lw, lw * 3);
+  }
+
+  // --- the scene --------------------------------------------------------------------
+
+  function drawScene() {
+    panel(SCENE, 'THE REGION, TILED WITH LITTLE LOOPS');
+    const m = sceneMap();
+    const a = state.a;
+    const h = cellHalf();
+
+    clipped(SCENE, () => {
+    if (state.showField) {
+      const G = 17;
+      let maxF = 1e-6;
+      const samples: { q: P; f: P }[] = [];
+      for (let i = 0; i < G; i++)
+        for (let j = 0; j < G; j++) {
+          const q = p2(-a * 1.15 + (2 * a * 1.15 * i) / (G - 1), -a * 1.15 + (2 * a * 1.15 * j) / (G - 1));
+          const f = fieldAt(q);
+          samples.push({ q, f });
+          maxF = Math.max(maxF, Math.hypot(f.x, f.y));
+        }
+      for (const { q, f } of samples) {
+        const L = Math.hypot(f.x, f.y);
+        if (L < 1e-6) continue;
+        const reach = ((a * 0.19) * L) / maxF;
+        arrow2(q, p2(q.x + (f.x / L) * reach, q.y + (f.y / L) * reach), m, inkA(0.2), 1.2, 4);
+      }
+    }
+
+    // every cell rim. Interior edges are drawn faint and doubled: they cancel.
+    ctx.lineWidth = 1;
+    for (const cell of cells) {
+      for (const [A, B] of squareEdges(cell.c, h)) {
+        ctx.strokeStyle = inkA(0.13);
+        ctx.beginPath();
+        ctx.moveTo(SX(A.x, m), SY(A.y, m));
+        ctx.lineTo(SX(B.x, m), SY(B.y, m));
+        ctx.stroke();
+      }
+    }
+
+    if (state.showCancel && state.n > 1) {
+      // one faint pair of opposing arrows on each interior edge
+      const step = state.n > 8 ? 2 : 1;
+      for (let i = 0; i < state.n; i += step)
+        for (let j = 0; j < state.n; j += step) {
+          const c = p2(-a + (2 * i + 1) * h, -a + (2 * j + 1) * h);
+          // the right-hand edge, if it has a neighbour
+          if (i < state.n - 1) {
+            const A = p2(c.x + h, c.y - h * 0.55), B = p2(c.x + h, c.y + h * 0.55);
+            edgeArrow(A, B, m, 'rgba(124,140,255,0.4)', 1.2, 0.8);
+            edgeArrow(B, A, m, 'rgba(255,122,92,0.4)', 1.2, 0.8);
+          }
+          if (j < state.n - 1) {
+            const A = p2(c.x - h * 0.55, c.y + h), B = p2(c.x + h * 0.55, c.y + h);
+            edgeArrow(A, B, m, 'rgba(124,140,255,0.4)', 1.2, 0.8);
+            edgeArrow(B, A, m, 'rgba(255,122,92,0.4)', 1.2, 0.8);
+          }
+        }
+    }
+
+    // cell tint by curl
+    const ref = Math.max(...cells.map((c) => Math.abs(c.curl)), 1e-6);
+    for (const cell of cells) {
+      const t = Math.max(-1, Math.min(1, cell.curl / ref));
+      if (Math.abs(t) < 0.02) continue;
+      ctx.fillStyle = t >= 0 ? `rgba(52,211,153,${Math.abs(t) * 0.22})` : `rgba(255,122,92,${Math.abs(t) * 0.22})`;
+      ctx.fillRect(SX(cell.c.x - h, m), SY(cell.c.y + h, m), 2 * h * m.s, 2 * h * m.s);
+    }
+
+    // the surviving rim: bold, coloured by whether the field helps or fights
+    const rimEdges = squareEdges(p2(0, 0), a);
+    const segs = 9;
+    for (const [A, B] of rimEdges) {
+      for (let i = 0; i < segs; i++) {
+        const t0 = i / segs, t1 = (i + 1) / segs;
+        const s0 = p2(A.x + (B.x - A.x) * t0, A.y + (B.y - A.y) * t0);
+        const s1 = p2(A.x + (B.x - A.x) * t1, A.y + (B.y - A.y) * t1);
+        const w = edgeWork(s0, s1, 3);
+        arrow2(s0, s1, m, w >= 0 ? WITH : AGAINST, 3, 8);
+      }
+    }
+
+    const pc = probeCell();
+    if (pc) {
+      ctx.strokeStyle = WARN;
+      ctx.lineWidth = 2.6;
+      ctx.strokeRect(SX(pc.c.x - h, m), SY(pc.c.y + h, m), 2 * h * m.s, 2 * h * m.s);
+    }
+    });
+
+    label('click a cell to probe it', SCENE.x + 10, SCENE.y + SCENE.h - 14, 0.4, 'left', 11);
+    label(`${state.n}² = ${state.n ** 2} cells`, SCENE.x + SCENE.w - 10, SCENE.y + 22, 0.7, 'right', 12, ACC);
+    label('bold = the surviving rim', SCENE.x + 10, SCENE.y + 22, 0.55, 'left', 11, WITH);
+  }
+
+  // --- the probe loop, enlarged -------------------------------------------------------
+
+  function drawProbe() {
+    panel(PROBE, 'ONE LOOP, ENLARGED');
+    const pc = probeCell();
+    if (!pc) {
+      label('click a cell in the scene', PROBE.x + PROBE.w / 2, PROBE.y + PROBE.h / 2, 0.5, 'center', 12, DIM);
+      return;
+    }
+    const h = cellHalf();
+    // Centre the *chosen cell*, not the world origin. Mapping the origin to the
+    // middle threw the cell hundreds of pixels off-panel, because at this
+    // magnification even a small offset in world space is enormous on screen.
+    const zoom = 88 / h;
+    const m: Map2 = {
+      cx: PROBE.x + PROBE.w / 2 - pc.c.x * zoom,
+      cy: PROBE.y + 128 + pc.c.y * zoom,
+      s: zoom,
+    };
+    const edges = squareEdges(pc.c, h);
+    const works = edges.map(([A, B]) => edgeWork(A, B));
+
+    clipped(PROBE, () => {
+
+    // the field inside the cell, sampled on a small grid
+    for (let i = 0; i < 4; i++)
+      for (let j = 0; j < 4; j++) {
+        const q = p2(pc.c.x - h + ((2 * h) * (i + 0.5)) / 4, pc.c.y - h + ((2 * h) * (j + 0.5)) / 4);
+        const f = fieldAt(q);
+        const L = Math.hypot(f.x, f.y) || 1;
+        const reach = h * 0.42;
+        arrow2(q, p2(q.x + (f.x / L) * reach, q.y + (f.y / L) * reach), m, inkA(0.25), 1.2, 4);
+      }
+
+    // the rim, each edge coloured by whether it helped or fought
+    edges.forEach(([A, B], i) => {
+      const w = works[i];
+      const col = w >= 0 ? WITH : AGAINST;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(SX(A.x, m), SY(A.y, m));
+      ctx.lineTo(SX(B.x, m), SY(B.y, m));
+      ctx.stroke();
+      edgeArrow(A, B, m, col, 3, 0.42);
+    });
+    });
+
+    const circ = works.reduce((s, x) => s + x, 0);
+    const area = (2 * h) ** 2;
+    let y = PROBE.y + 236;
+    const names = ['bottom →', 'right ↑', 'top ←', 'left ↓'];
+    works.forEach((w, i) => {
+      const x = PROBE.x + 16 + (i % 2) * 148;
+      const yy = y + Math.floor(i / 2) * 15;
+      label(`${names[i]} ${w >= 0 ? '+' : ''}${w.toFixed(3)}`, x, yy, 0.6, 'left', 10, w >= 0 ? WITH : AGAINST);
+    });
+    y += 40;
+    label(`∮ = ${circ >= 0 ? '+' : ''}${circ.toFixed(4)}   ÷ area ${area.toFixed(4)}`, PROBE.x + 16, y, 0.6, 'left', 10);
+    label(`curl = ${pc.curl.toFixed(3)}`, PROBE.x + 16, y + 20, 0.9, 'left', 14, WARN);
+  }
+
+  // --- why the interior cancels ----------------------------------------------------------
+
+  function drawCancel() {
+    panel(CANCEL, 'WHY ONLY THE RIM SURVIVES');
+    const m: Map2 = { cx: CANCEL.x + CANCEL.w / 2, cy: CANCEL.y + 96, s: 62 };
+    const u = 0.62;
+
+    clipped(CANCEL, () => {
+    // two cells side by side
+    for (const cx of [-u, u]) {
+      ctx.strokeStyle = inkA(0.3);
+      ctx.lineWidth = 1.6;
+      ctx.strokeRect(SX(cx - u, m), SY(u, m), 2 * u * m.s, 2 * u * m.s);
+    }
+    // the shared edge, highlighted
+    ctx.strokeStyle = WARN;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(SX(0, m), SY(-u, m));
+    ctx.lineTo(SX(0, m), SY(u, m));
+    ctx.stroke();
+
+    // left cell walks it upward, right cell walks it downward
+    edgeArrow(p2(-0.07, -u * 0.8), p2(-0.07, u * 0.8), m, ACC, 2.4, 0.9);
+    edgeArrow(p2(0.07, u * 0.8), p2(0.07, -u * 0.8), m, AGAINST, 2.4, 0.9);
+
+    label('left cell', SX(-u, m), SY(-u, m) + 18, 0.5, 'center', 10);
+    label('right cell', SX(u, m), SY(-u, m) + 18, 0.5, 'center', 10);
+    });
+
+    let y = CANCEL.y + 186;
+    label('the left cell walks this edge up', CANCEL.x + 16, y, 0.75, 'left', 11, ACC);
+    y += 16;
+    label('the right cell walks it back down', CANCEL.x + 16, y, 0.75, 'left', 11, AGAINST);
+    y += 22;
+    label('Same edge, same field, opposite way.', CANCEL.x + 16, y, 0.5, 'left', 10);
+    y += 14;
+    label('It is added once and subtracted once,', CANCEL.x + 16, y, 0.5, 'left', 10);
+    y += 14;
+    label('so every interior edge vanishes. Only', CANCEL.x + 16, y, 0.5, 'left', 10);
+    y += 14;
+    label('edges with no neighbour are left.', CANCEL.x + 16, y, 0.5, 'left', 10);
+  }
+
+  // --- the two sides -----------------------------------------------------------------------
+
+  function drawSum() {
+    panel(SUM, 'THE SUM OF ALL THE LITTLE LOOPS, AND THE ONE BIG WALK');
+    const zero = Math.abs(rimCirc) < 1e-6 && Math.abs(cellSum) < 1e-6;
+    const x0 = SUM.x + 24;
+    const y = SUM.y + 34;
+
+    label('∮ P dx + Q dy   round the rim', x0, y, 0.6, 'left', 12, WITH);
+    label(rimCirc.toFixed(4), x0, y + 30, 0.95, 'left', 22, WITH);
+    label('one walk, all the way round', x0, y + 52, 0.4, 'left', 10);
+
+    const x1 = SUM.x + 350;
+    label(`∬ (∂Q/∂x − ∂P/∂y) dA   over ${state.n ** 2} cells`, x1, y, 0.6, 'left', 12, ACC);
+    label(cellSum.toFixed(4), x1, y + 30, 0.95, 'left', 22, ACC);
+    label('every cell, added up independently', x1, y + 52, 0.4, 'left', 10);
+
+    const gx = SUM.x + 700, gw = 250, gy = SUM.y + 34, gh = 92;
+    const hi = Math.max(1e-6, Math.max(...convergence) * 1.1);
+    const Y = (e: number) => gy + gh - (Math.min(hi, e) / hi) * gh;
+    ctx.strokeStyle = inkA(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gx, gy);
+    ctx.lineTo(gx, gy + gh);
+    ctx.lineTo(gx + gw, gy + gh);
+    ctx.stroke();
+    ctx.strokeStyle = WITH;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(gx, Y(0));
+    ctx.lineTo(gx + gw, Y(0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    {
+      ctx.strokeStyle = ACC;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      convergence.forEach((r, i) => {
+        const x = gx + (i / (convergence.length - 1)) * gw;
+        i ? ctx.lineTo(x, Y(r)) : ctx.moveTo(x, Y(r));
+      });
+      ctx.stroke();
+      const i = state.n - 1;
+      ctx.fillStyle = WARN;
+      ctx.beginPath();
+      ctx.arc(gx + (i / (convergence.length - 1)) * gw, Y(convergence[i]), 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    label('mismatch', gx, gy - 6, 0.5, 'left', 10, ACC);
+    label('0', gx - 6, Y(0) + 3, 0.5, 'right', 9, WITH);
+    label('cells per side  1 → 14', gx, gy + gh + 15, 0.4, 'left', 10);
+
+    if (zero)
+      label('both are zero: nothing in here is spinning', x0, SUM.y + SUM.h - 16, 0.6, 'left', 12, WITH);
+    else {
+      const err = (Math.abs(cellSum - rimCirc) / absScale) * 100;
+      label(
+        `they differ by ${err < 0.05 ? 'less than 0.1' : err.toFixed(1)}% of the total spin in the region`,
+        x0, SUM.y + SUM.h - 16, 0.6, 'left', 12, WITH
+      );
+    }
+  }
+
+  // --- readouts -------------------------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, lab: string, val: string, col?: string) => {
+    el('l' + n).innerHTML = subHtml(lab);
+    const b = el('r' + n);
+    b.textContent = val;
+    if (col) b.style.color = col;
+    else b.style.removeProperty('color');
+  };
+  function updateReadout() {
+    const pc = probeCell();
+    setRow(1, 'Circulation round the rim', rimCirc.toFixed(4), WITH);
+    setRow(2, 'Sum over the cells', cellSum.toFixed(4), ACC);
+    setRow(3, 'Cells', `${state.n}² = ${state.n ** 2}`);
+    setRow(4, 'Probe: circulation', pc ? pc.circ.toExponential(2) : '—');
+    setRow(5, 'Probe: curl', pc ? pc.curl.toFixed(3) : '—', WARN);
+  }
+
+  // --- loop -------------------------------------------------------------------------------------
+
+  function draw() {
+    if (dirty) rebuild();
+    ctx.clearRect(0, 0, W, H);
+    label("Green's Theorem", 20, 30, 0.85, 'left', 15);
+    label('a million tiny walks collapse into one walk around the outside', 20, 54, 0.5, 'left', 11, WITH);
+    drawScene();
+    drawProbe();
+    drawCancel();
+    drawSum();
+    updateReadout();
+  }
+
+  // --- interaction --------------------------------------------------------------------------------
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - r.left) / r.width) * W;
+    const my = ((e.clientY - r.top) / r.height) * H;
+    if (mx < SCENE.x || mx > SCENE.x + SCENE.w || my < SCENE.y || my > SCENE.y + SCENE.h) return;
+    const m = sceneMap();
+    const h = cellHalf();
+    let best = -1;
+    cells.forEach((c, i) => {
+      if (
+        mx >= SX(c.c.x - h, m) && mx <= SX(c.c.x + h, m) &&
+        my >= SY(c.c.y + h, m) && my <= SY(c.c.y - h, m)
+      ) best = i;
+    });
+    if (best >= 0) {
+      state.sel = best;
+      draw();
+    }
+  });
+
+  // --- controls -----------------------------------------------------------------------------------
+
+  function bindRange(id: string, apply: (n: number) => void) {
+    const inp = el(id) as HTMLInputElement;
+    inp.addEventListener('input', () => {
+      apply(+inp.value);
+      dirty = true;
+      draw();
+    });
+    apply(+inp.value);
+  }
+  bindRange('n', (n) => {
+    state.n = n;
+    el('nval').textContent = String(n);
+    state.sel = -1;
+  });
+  bindRange('size', (n) => {
+    state.a = n / 100;
+    el('aval').textContent = state.a.toFixed(2);
+    state.sel = -1;
+  });
+  (el('cancel') as HTMLInputElement).addEventListener('change', (e) => {
+    state.showCancel = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+  (el('fieldarr') as HTMLInputElement).addEventListener('change', (e) => {
+    state.showField = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+  el('field').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#field button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.field = btn.dataset.f as Field;
+    dirty = true;
+    draw();
+  });
+
+  rebuild();
+  draw();
+</script>
+
+<style>
+  .g-canvas {
+    touch-action: none;
+    cursor: pointer;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+</style>

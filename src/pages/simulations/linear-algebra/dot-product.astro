@@ -1,0 +1,715 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="The Dot Product"
+  description="Two ways of saying the same number: multiply the matching components and add, or take one length times the shadow the other casts on it. Watch the second one turn into the first, one axis at a time."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="dp" class="dp-canvas" width="1000" height="880"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Try one</label>
+        <div class="seg" id="preset">
+          <button data-p="tilted" class="active">Tilted</button>
+          <button data-p="perp">At right angles</button>
+          <button data-p="same">Same way</button>
+          <button data-p="back">Opposed</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>vector a</label>
+        <div class="vec">
+          <div><span>x <b id="axval">2.0</b></span><input type="range" id="ax" min="-30" max="30" step="1" value="20" /></div>
+          <div><span>y <b id="ayval">0.6</b></span><input type="range" id="ay" min="-30" max="30" step="1" value="6" /></div>
+          <div><span>z <b id="azval">0.4</b></span><input type="range" id="az" min="-30" max="30" step="1" value="4" /></div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>vector b</label>
+        <div class="vec">
+          <div><span>x <b id="bxval">0.8</b></span><input type="range" id="bx" min="-30" max="30" step="1" value="8" /></div>
+          <div><span>y <b id="byval">1.8</b></span><input type="range" id="by" min="-30" max="30" step="1" value="18" /></div>
+          <div><span>z <b id="bzval">1.2</b></span><input type="range" id="bz" min="-30" max="30" step="1" value="12" /></div>
+        </div>
+      </div>
+
+      <label class="check"><input type="checkbox" id="steps" checked /> Break b into its three axis steps</label>
+      <label class="check"><input type="checkbox" id="spin" /> Spin the scene</label>
+
+      <div class="readout">
+        <div class="row"><span id="l1">a · b</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">from the components</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">from length × shadow</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">length of a</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">length of b</span><b id="r5">—</b></div>
+        <div class="row"><span id="l6">angle between</span><b id="r6">—</b></div>
+        <div class="row"><span id="l7">shadow of b on a</span><b id="r7">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the scene to orbit it. Both numbers are computed independently, so
+        when they agree it is not because one was copied from the other.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Turn the sliders until the two arrows are at right angles. The dot product
+      goes to zero, and it does so from both sides. <b>Perpendicular means the
+      shadow has nothing left</b>, which is the one fact this whole operation
+      exists to detect.
+    </li>
+    <li>
+      Swing b past 90°. The shadow lands on the other side of the origin, so it
+      counts as negative, and the product goes negative with it. The sign is not
+      a convention, it is which way the shadow fell.
+    </li>
+    <li>
+      Now the real question: why does adding a<sub>x</sub>b<sub>x</sub> +
+      a<sub>y</sub>b<sub>y</sub> + a<sub>z</sub>b<sub>z</sub> give a length times
+      a shadow? Turn on the axis steps. b is walked out as three moves, one
+      along each axis, and each move casts <b>its own little shadow</b> on a.
+    </li>
+    <li>
+      Those three shadows lie end to end and add up to the whole shadow, because
+      a shadow of a sum is the sum of the shadows. Multiply each by the length of
+      a and you get exactly the three products in the formula. That is the entire
+      derivation, and it is a picture.
+    </li>
+    <li>
+      The step along x casts a shadow only in proportion to how much a itself
+      points along x, which is a<sub>x</sub>. That is why each term pairs the
+      <b>same</b> coordinate of the two vectors and never mixes them: the axes
+      cast no shadow on one another.
+    </li>
+    <li>
+      Stretch a to twice its length. Every term doubles and so does the total,
+      while the angle and the shadow direction do not move at all. The dot
+      product is blind to everything except length, length and agreement.
+    </li>
+    <li>
+      Set a to a unit vector. Now a · b <b>is</b> the shadow: no scaling, just
+      the amount of b that lies along a. That is why every projection, every
+      component and every "how much of this is in that direction" is written as
+      a dot product.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+
+  // ---------------------------------------------------------------------------
+  // a · b, worked out two independent ways at once: Σ aᵢbᵢ from the sliders, and
+  // |a| times the signed shadow measured off the drawing. The point of the
+  // sim is watching the second turn into the first.
+  // ---------------------------------------------------------------------------
+
+  type Vec = { x: number; y: number; z: number };
+  const add = (p: Vec, q: Vec): Vec => ({ x: p.x + q.x, y: p.y + q.y, z: p.z + q.z });
+  const mul = (p: Vec, s: number): Vec => ({ x: p.x * s, y: p.y * s, z: p.z * s });
+  const dot = (p: Vec, q: Vec) => p.x * q.x + p.y * q.y + p.z * q.z;
+  const len = (p: Vec) => Math.hypot(p.x, p.y, p.z);
+  const unit = (p: Vec): Vec => (len(p) > 1e-9 ? mul(p, 1 / len(p)) : { x: 1, y: 0, z: 0 });
+
+  const state = {
+    a: { x: 2, y: 0.6, z: 0.4 } as Vec,
+    b: { x: 0.8, y: 1.8, z: 1.2 } as Vec,
+    steps: true,
+    spin: false,
+    running: true,
+    zoom: 1,
+    yaw: 0.7,
+    pitch: 0.36,
+  };
+
+  const AX = ['x', 'y', 'z'] as const;
+  const comp = (v: Vec, i: number) => (i === 0 ? v.x : i === 1 ? v.y : v.z);
+  const axisVec = (i: number, s: number): Vec => ({
+    x: i === 0 ? s : 0,
+    y: i === 1 ? s : 0,
+    z: i === 2 ? s : 0,
+  });
+
+  // --- canvas ----------------------------------------------------------------
+
+  const canvas = document.getElementById('dp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (al: number) => `rgba(${inkRGB()},${al})`;
+  const bg = () => cssVar('--stage-bg') || '#0d0e12';
+  const { label, textWidth } = makeText(ctx, inkA);
+
+  const A_COL = '#f59e0b'; // a
+  const B_COL = '#a78bfa'; // b
+  const AXCOL = ['#f472b6', '#22d3ee', '#94a3b8']; // x, y, z, used for anything
+                                                   // that belongs to an axis
+  const SHADOW = '#34d399'; // the projection, and the number it stands for
+  const NEG = '#f9736a';
+
+  const SCENE = { x: 20, y: 86, w: 640, h: 614 };
+  const WHY = { x: 680, y: 86, w: 300, h: 300 };
+  const FLAT = { x: 680, y: 406, w: 300, h: 294 };
+  const NOTE = { x: 20, y: 730, w: 960, h: 130 };
+
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+  function panel(p: { x: number; y: number; w: number; h: number }, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(p.x, p.y, p.w, p.h, 10);
+    ctx.stroke();
+    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+  }
+
+  // --- 3D ---------------------------------------------------------------------
+
+  const CAM = 15, FOCAL = 11.5, SCALE = 150;
+  function project(p: Vec) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const xr = p.x * cy + p.y * sy;
+    const yr = -p.x * sy + p.y * cy;
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const depth = p.z * sp + yr * cp + CAM;
+    const k = (FOCAL * state.zoom) / Math.max(0.4, depth);
+    // The origin sits low and left of centre: both vectors point into the
+    // positive octant, so that is where the room is needed.
+    return {
+      x: SCENE.x + SCENE.w * 0.4 + xr * k * SCALE,
+      y: SCENE.y + SCENE.h * 0.6 + (-p.z * cp + yr * sp) * k * SCALE,
+      d: depth,
+    };
+  }
+  function line3(p: Vec, q: Vec, col: string, lw: number, dash: number[] = []) {
+    const u = project(p), v = project(q);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = lw;
+    ctx.setLineDash(dash);
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y);
+    ctx.lineTo(v.x, v.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  /**
+   * An arrow whose head is worth looking at: the shaft stops short so the head
+   * is a solid triangle rather than a blob on the end of a thick line, and the
+   * head is outlined in the background colour so it stays legible over whatever
+   * it happens to cross.
+   */
+  function arrow3(p: Vec, q: Vec, col: string, lw = 3, head = 15) {
+    const u = project(p), v = project(q);
+    const an = Math.atan2(v.y - u.y, v.x - u.x);
+    const back = { x: v.x - head * 0.82 * Math.cos(an), y: v.y - head * 0.82 * Math.sin(an) };
+    ctx.strokeStyle = col;
+    ctx.lineWidth = lw;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y);
+    ctx.lineTo(back.x, back.y);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(v.x, v.y);
+    ctx.lineTo(v.x - head * Math.cos(an - 0.34), v.y - head * Math.sin(an - 0.34));
+    ctx.lineTo(v.x - head * Math.cos(an + 0.34), v.y - head * Math.sin(an + 0.34));
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = bg();
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  const O: Vec = { x: 0, y: 0, z: 0 };
+
+  /** Some unit vector at right angles to v, for nudging things off a line. */
+  function sideways(v: Vec): Vec {
+    const c: Vec = Math.abs(v.z) < 0.9 * len(v)
+      ? { x: -v.y, y: v.x, z: 0 }
+      : { x: 0, y: -v.z, z: v.y };
+    return unit(c);
+  }
+
+  function drawAxes() {
+    const R = 2.2;
+    for (let i = 0; i < 3; i++) {
+      line3(mul(axisVec(i, 1), -R), axisVec(i, R), inkA(0.13), 1);
+      const t = project(axisVec(i, R + 0.18));
+      label(AX[i], t.x, t.y + 4, 0.45, 'center', 11, AXCOL[i]);
+    }
+    // a faint floor, so depth reads
+    for (let i = -2; i <= 2; i++) {
+      line3({ x: i, y: -2, z: 0 }, { x: i, y: 2, z: 0 }, inkA(0.05), 1);
+      line3({ x: -2, y: i, z: 0 }, { x: 2, y: i, z: 0 }, inkA(0.05), 1);
+    }
+  }
+
+  /** Where b's shadow lands on the line through a. */
+  function shadow() {
+    const a = state.a, b = state.b;
+    const la = len(a);
+    const scalar = la > 1e-9 ? dot(a, b) / la : 0; // signed length of the shadow
+    const foot = mul(unit(a), scalar);
+    return { scalar, foot, la };
+  }
+
+  function drawScene() {
+    panel(SCENE, 'THE TWO VECTORS, AND THE SHADOW ONE CASTS ON THE OTHER');
+    // Long vectors would otherwise run out over the neighbouring panels.
+    ctx.save();
+    rr(SCENE.x + 1, SCENE.y + 1, SCENE.w - 2, SCENE.h - 2, 10);
+    ctx.clip();
+    drawAxes();
+    const { scalar, foot } = shadow();
+
+    // the shadow lives on the line through a, so draw that line faintly
+    line3(mul(unit(state.a), -2.7), mul(unit(state.a), 2.7), inkA(0.12), 1, [4, 4]);
+
+    // b broken into three axis steps, each casting its own shadow. The pieces
+    // are drawn a little to one side of the line through a, so they can be seen
+    // next to the shadow they add up to rather than underneath it.
+    if (state.steps) {
+      const off = mul(sideways(state.a), 0.26);
+      let from: Vec = O;
+      let stack = 0;
+      for (let i = 0; i < 3; i++) {
+        const to = add(from, axisVec(i, comp(state.b, i)));
+        line3(from, to, AXCOL[i], 2.2, [5, 3]);
+        const piece = (comp(state.a, i) * comp(state.b, i)) / Math.max(1e-9, len(state.a));
+        const s0 = add(mul(unit(state.a), stack), off);
+        const s1 = add(mul(unit(state.a), stack + piece), off);
+        line3(s0, s1, AXCOL[i], 6);
+        stack += piece;
+        from = to;
+      }
+      const st = project(add(mul(unit(state.a), stack / 2), mul(off, 2)));
+      label('the three shadows, end to end', st.x, st.y + 24, 0.5, 'center', 11, SHADOW);
+    }
+
+    // the vectors themselves
+    arrow3(O, state.a, A_COL, 3.2, 16);
+    arrow3(O, state.b, B_COL, 3.2, 16);
+    const pa = project(mul(state.a, 1.16)), pb = project(mul(state.b, 1.16));
+    label('a', pa.x + 6, pa.y + 5, 0.95, 'left', 15, A_COL);
+    label('b', pb.x + 6, pb.y + 5, 0.95, 'left', 15, B_COL);
+
+    // the shadow itself, and the drop line that makes it
+    line3(state.b, foot, inkA(0.3), 1.4, [4, 4]);
+    if (Math.abs(scalar) > 1e-6) arrow3(O, foot, scalar >= 0 ? SHADOW : NEG, 5, 15);
+    // clear of both the arrow and the three pieces stacked on the other side
+    const pf = project(add(mul(foot, 0.55), mul(sideways(state.a), -0.34)));
+    label(
+      `shadow ${scalar.toFixed(2)}`,
+      pf.x,
+      pf.y + 4,
+      0.9,
+      'center',
+      12,
+      scalar >= 0 ? SHADOW : NEG
+    );
+
+    ctx.restore();
+    label('drag to orbit, scroll to zoom', SCENE.x + SCENE.w - 12, SCENE.y + 22, 0.4, 'right', 11);
+    label(
+      'the dot product is the length of a times this shadow',
+      SCENE.x + 14,
+      SCENE.y + SCENE.h - 16,
+      0.45,
+      'left',
+      11
+    );
+  }
+
+  // --- why the formula looks like that ----------------------------------------
+
+  function drawWhy() {
+    panel(WHY, 'WHY ONLY MATCHING COMPONENTS');
+    const terms = [0, 1, 2].map((i) => comp(state.a, i) * comp(state.b, i));
+    const total = terms[0] + terms[1] + terms[2];
+    const geo = len(state.a) * len(state.b) * cosTheta();
+    let m = 0.6;
+    for (const t of terms) m = Math.max(m, Math.abs(t));
+    m = Math.max(m, Math.abs(total));
+
+    const x0 = WHY.x + 92, bw = WHY.w - 178;
+    const mid = x0 + bw / 2;
+    const rows: [string, number, string][] = [
+      [`a_x b_x`, terms[0], AXCOL[0]],
+      [`a_y b_y`, terms[1], AXCOL[1]],
+      [`a_z b_z`, terms[2], AXCOL[2]],
+    ];
+    rows.forEach(([name, v, col], k) => {
+      const y = WHY.y + 40 + k * 40;
+      label(name, x0 - 12, y + 13, 0.7, 'right', 12, col);
+      ctx.strokeStyle = inkA(0.12);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(mid, y - 4);
+      ctx.lineTo(mid, y + 22);
+      ctx.stroke();
+      ctx.fillStyle = col;
+      const w = (v / m) * (bw / 2);
+      ctx.fillRect(Math.min(mid, mid + w), y, Math.abs(w), 18);
+      label(v.toFixed(2), WHY.x + WHY.w - 12, y + 13, 0.75, 'right', 11);
+    });
+
+    const ys = WHY.y + 172;
+    ctx.strokeStyle = inkA(0.18);
+    ctx.beginPath();
+    ctx.moveTo(x0 - 60, ys - 12);
+    ctx.lineTo(x0 + bw, ys - 12);
+    ctx.stroke();
+    label('added up', x0 - 12, ys + 13, 0.8, 'right', 12);
+    ctx.fillStyle = inkA(0.55);
+    const wt = (total / m) * (bw / 2);
+    ctx.fillRect(Math.min(mid, mid + wt), ys, Math.abs(wt), 18);
+    label(total.toFixed(3), WHY.x + WHY.w - 12, ys + 13, 0.85, 'right', 12);
+
+    label('|a| |b| cos θ', x0 - 12, ys + 53, 0.8, 'right', 12, SHADOW);
+    ctx.fillStyle = SHADOW;
+    const wg = (geo / m) * (bw / 2);
+    ctx.fillRect(Math.min(mid, mid + wg), ys + 40, Math.abs(wg), 18);
+    label(geo.toFixed(3), WHY.x + WHY.w - 12, ys + 53, 0.85, 'right', 12, SHADOW);
+
+    label(
+      'the same number, computed two ways',
+      WHY.x + WHY.w / 2,
+      WHY.y + WHY.h - 16,
+      0.5,
+      'center',
+      11,
+      SHADOW
+    );
+  }
+
+  function cosTheta() {
+    const la = len(state.a), lb = len(state.b);
+    if (la < 1e-9 || lb < 1e-9) return 0;
+    return Math.max(-1, Math.min(1, dot(state.a, state.b) / (la * lb)));
+  }
+
+  // --- the flat picture -------------------------------------------------------
+
+  /** The same two vectors seen edge on, in the plane they span. */
+  function drawFlat() {
+    panel(FLAT, 'IN THE PLANE THE TWO OF THEM SPAN');
+    const cx = FLAT.x + 66, cy = FLAT.y + FLAT.h - 74;
+    const la = len(state.a), lb = len(state.b);
+    const s = Math.min(150 / Math.max(0.6, la), 120 / Math.max(0.6, lb), 46);
+    const th = Math.acos(cosTheta());
+    const ax = cx + la * s, ay = cy;
+    const bx = cx + lb * s * Math.cos(th), by = cy - lb * s * Math.sin(th);
+
+    // the rectangle whose area is the product
+    const shadowLen = lb * Math.cos(th) * s;
+    ctx.fillStyle = shadowLen >= 0 ? 'rgba(52,211,153,0.16)' : 'rgba(249,115,106,0.16)';
+    ctx.fillRect(Math.min(cx, cx + shadowLen), cy - 26, Math.abs(shadowLen), 26);
+
+    ctx.strokeStyle = inkA(0.25);
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(cx + shadowLen, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const arrowFlat = (x1: number, y1: number, x2: number, y2: number, col: string, lw = 2.6) => {
+      ctx.strokeStyle = col;
+      ctx.fillStyle = col;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      const an = Math.atan2(y2 - y1, x2 - x1);
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - 9 * Math.cos(an - 0.4), y2 - 9 * Math.sin(an - 0.4));
+      ctx.lineTo(x2 - 9 * Math.cos(an + 0.4), y2 - 9 * Math.sin(an + 0.4));
+      ctx.closePath();
+      ctx.fill();
+    };
+    arrowFlat(cx, cy, ax, ay, A_COL);
+    arrowFlat(cx, cy, bx, by, B_COL);
+    if (Math.abs(shadowLen) > 1) arrowFlat(cx, cy, cx + shadowLen, cy, shadowLen >= 0 ? SHADOW : NEG, 5);
+
+    ctx.strokeStyle = inkA(0.3);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 28, -th, 0);
+    ctx.stroke();
+    label(`${((th * 180) / Math.PI).toFixed(0)}°`, cx + 36, cy - 12, 0.6, 'left', 11);
+    label('a', ax + 8, ay + 4, 0.9, 'left', 12, A_COL);
+    label('b', bx + 8, by - 2, 0.9, 'left', 12, B_COL);
+    label('|b| cos θ', cx + shadowLen / 2, cy + 18, 0.7, 'center', 11, shadowLen >= 0 ? SHADOW : NEG);
+    label(
+      'area of this strip = a · b',
+      FLAT.x + FLAT.w / 2,
+      FLAT.y + 26,
+      0.45,
+      'center',
+      11
+    );
+  }
+
+  // --- the arithmetic ---------------------------------------------------------
+
+  function drawNote() {
+    panel(NOTE, 'THE SAME THING, WRITTEN OUT');
+    const a = state.a, b = state.b;
+    const t = [a.x * b.x, a.y * b.y, a.z * b.z];
+    const total = t[0] + t[1] + t[2];
+    const x0 = NOTE.x + 28;
+    label('b is three steps, one per axis:', x0, NOTE.y + 28, 0.5, 'left', 11);
+    let x = x0;
+    for (let i = 0; i < 3; i++) {
+      const piece = `${comp(b, i) >= 0 && i > 0 ? '+ ' : ''}${comp(b, i).toFixed(1)} ${AX[i]}̂`;
+      label(piece, x, NOTE.y + 52, 0.9, 'left', 13, AXCOL[i]);
+      x += textWidth(piece, 14) + 14;
+    }
+    label('each step casts a shadow on a, in proportion to how much a points that way:', x0, NOTE.y + 78, 0.5, 'left', 11);
+    x = x0;
+    for (let i = 0; i < 3; i++) {
+      const piece = `${i > 0 && t[i] >= 0 ? '+ ' : ''}${comp(a, i).toFixed(1)}·${comp(b, i).toFixed(1)}`;
+      label(piece, x, NOTE.y + 102, 0.9, 'left', 13, AXCOL[i]);
+      x += textWidth(piece, 14) + 16;
+    }
+    label(`=  ${total.toFixed(3)}`, x + 6, NOTE.y + 102, 0.95, 'left', 14, SHADOW);
+    label(
+      'no term ever mixes x with y, because a step along one axis casts no shadow on another',
+      x0,
+      NOTE.y + NOTE.h - 14,
+      0.4,
+      'left',
+      10
+    );
+  }
+
+  // --- readouts ----------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, lab: string, val: string) => {
+    el('l' + n).innerHTML = subHtml(lab);
+    el('r' + n).textContent = val;
+  };
+  function updateReadout() {
+    const { scalar, la } = shadow();
+    const d = dot(state.a, state.b);
+    setRow(1, 'a · b', d.toFixed(3));
+    setRow(2, 'from the components', `${(state.a.x * state.b.x).toFixed(2)} + ${(state.a.y * state.b.y).toFixed(2)} + ${(state.a.z * state.b.z).toFixed(2)}`);
+    setRow(3, 'from length × shadow', `${la.toFixed(2)} × ${scalar.toFixed(2)} = ${(la * scalar).toFixed(3)}`);
+    setRow(4, 'length of a', la.toFixed(3));
+    setRow(5, 'length of b', len(state.b).toFixed(3));
+    setRow(6, 'angle between', `${((Math.acos(cosTheta()) * 180) / Math.PI).toFixed(1)}°`);
+    setRow(7, 'shadow of b on a', scalar.toFixed(3));
+  }
+
+  // --- loop ---------------------------------------------------------------------
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    label('The Dot Product', 20, 30, 0.85, 'left', 14);
+    const d = dot(state.a, state.b);
+    label(
+      Math.abs(d) < 0.02
+        ? 'at right angles: the shadow has nothing left, so the product is zero'
+        : d > 0
+          ? 'pointing broadly the same way, so the product is positive'
+          : 'pointing broadly against each other, so the product is negative',
+      20,
+      52,
+      0.5,
+      'left',
+      11,
+      Math.abs(d) < 0.02 ? SHADOW : d > 0 ? SHADOW : NEG
+    );
+    const legend: [string, string][] = [
+      [A_COL, 'a'],
+      [B_COL, 'b'],
+      [SHADOW, 'shadow'],
+    ];
+    let x = W - 20;
+    for (let k = legend.length - 1; k >= 0; k--) {
+      const [c, tx] = legend[k];
+      const tw = textWidth(tx, 11);
+      label(tx, x, 30, 0.55, 'right', 11);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(x - tw - 11, 26, 5, 0, Math.PI * 2);
+      ctx.fill();
+      x -= tw + 30;
+    }
+    drawScene();
+    drawWhy();
+    drawFlat();
+    drawNote();
+  }
+
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    if (state.running && state.spin) state.yaw += dt * 0.28;
+    draw();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls -------------------------------------------------------------------
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+
+  const sliders: [string, 'a' | 'b', 'x' | 'y' | 'z'][] = [
+    ['ax', 'a', 'x'], ['ay', 'a', 'y'], ['az', 'a', 'z'],
+    ['bx', 'b', 'x'], ['by', 'b', 'y'], ['bz', 'b', 'z'],
+  ];
+  function syncSliders() {
+    for (const [id, v, c] of sliders) {
+      (el(id) as HTMLInputElement).value = String(Math.round(state[v][c] * 10));
+      el(id + 'val').textContent = state[v][c].toFixed(1);
+    }
+  }
+  for (const [id, v, c] of sliders) {
+    const inp = el(id) as HTMLInputElement;
+    inp.addEventListener('input', () => {
+      state[v][c] = +inp.value / 10;
+      el(id + 'val').textContent = state[v][c].toFixed(1);
+    });
+    state[v][c] = +inp.value / 10;
+    el(id + 'val').textContent = state[v][c].toFixed(1);
+  }
+  (el('steps') as HTMLInputElement).addEventListener('change', (e) => {
+    state.steps = (e.target as HTMLInputElement).checked;
+  });
+  (el('spin') as HTMLInputElement).addEventListener('change', (e) => {
+    state.spin = (e.target as HTMLInputElement).checked;
+  });
+
+  const PRESETS: Record<string, [Vec, Vec]> = {
+    tilted: [{ x: 2, y: 0.6, z: 0.4 }, { x: 0.8, y: 1.8, z: 1.2 }],
+    perp: [{ x: 2, y: 0, z: 0 }, { x: 0, y: 1.8, z: 0.9 }],
+    same: [{ x: 1.6, y: 1.2, z: 0.6 }, { x: 2.1, y: 1.6, z: 0.8 }],
+    back: [{ x: 2, y: 0.8, z: 0.4 }, { x: -1.6, y: -0.5, z: 0.6 }],
+  };
+  el('preset').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#preset button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const p = PRESETS[btn.dataset.p ?? 'tilted'];
+    state.a = { ...p[0] };
+    state.b = { ...p[1] };
+    syncSliders();
+  });
+  el('reset').addEventListener('click', () => {
+    state.a = { ...PRESETS.tilted[0] };
+    state.b = { ...PRESETS.tilted[1] };
+    state.yaw = 0.7;
+    state.pitch = 0.36;
+    syncSliders();
+  });
+
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    lx = e.clientX;
+    ly = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lx) * 0.01;
+    state.pitch = Math.max(-1.3, Math.min(1.3, state.pitch + (e.clientY - ly) * 0.008));
+    lx = e.clientX;
+    ly = e.clientY;
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  // Wheel zoom over the stage, which needs passive: false to stop the page
+  // itself scrolling away underneath.
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      state.zoom = Math.max(0.4, Math.min(4, state.zoom * Math.exp(-e.deltaY * 0.0016)));
+    },
+    { passive: false }
+  );
+
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .dp-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .dp-canvas:active {
+    cursor: grabbing;
+  }
+  .vec {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .vec span {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .vec b {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .vec input {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+</style>

@@ -69,9 +69,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     </li>
     <li>
       In the <b>Variable</b> field, drag the probe around. Divergence is
-      <b>local</b>: one field can have expanding, incompressible and contracting
-      regions all at once. The little edge marks show flow leaving (teal) or
-      entering (amber) the patch boundary.
+      <b>local</b>: the tinted background shows teal source regions and amber sink
+      regions in the same field. Watch the patch swell or shrink as you drag
+      between them.
     </li>
   </Fragment>
 </SimLayout>
@@ -143,9 +143,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.globalAlpha = 1;
   }
 
-  // advect a boundary point of the patch through the flow for `state.time`
-  function evolvedPoint(a: number, r: number) {
-    let x = state.px + Math.cos(a) * r, y = state.py + Math.sin(a) * r;
+  // advect any point through the flow for `state.time`
+  function advect(x0: number, y0: number) {
+    let x = x0, y = y0;
     const steps = 22, dt = (state.time / steps) * 0.34;
     for (let i = 0; i < steps; i++) {
       const v = vec(x, y);
@@ -154,11 +154,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     return { x, y };
   }
+  const evolvedPoint = (a: number, r: number) =>
+    advect(state.px + Math.cos(a) * r, state.py + Math.sin(a) * r);
+
+  // A faint tint of the whole plane by the sign of the divergence, so the
+  // global structure (where it sources, where it sinks) is visible at a glance.
+  function drawHeatmap() {
+    const cell = 30;
+    let dmax = 1e-6;
+    for (let py = 0; py < H; py += cell)
+      for (let px = 0; px < W; px += cell)
+        dmax = Math.max(dmax, Math.abs(divergence((px + cell / 2 - W / 2) / UNIT, -(py + cell / 2 - H / 2) / UNIT)));
+    for (let py = 0; py < H; py += cell)
+      for (let px = 0; px < W; px += cell) {
+        const x = (px + cell / 2 - W / 2) / UNIT, y = -(py + cell / 2 - H / 2) / UNIT;
+        const d = divergence(x, y);
+        const t = Math.max(-1, Math.min(1, d / dmax));
+        if (Math.abs(t) < 0.04) continue;
+        ctx.fillStyle = t > 0 ? `rgba(94,234,212,${(0.12 * t).toFixed(3)})` : `rgba(245,158,11,${(0.12 * -t).toFixed(3)})`;
+        ctx.fillRect(px, py, cell, cell);
+      }
+  }
 
   function draw() {
     const faint = css('--text-faint') || '#6b7280';
     const teal = css('--accent-2') || '#5eead4';
     ctx.clearRect(0, 0, W, H);
+
+    drawHeatmap();
 
     // grid
     ctx.strokeStyle = `rgba(${ink()},0.06)`;
@@ -168,8 +191,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (let gy = H / 2; gy < H; gy += 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
     for (let gy = H / 2 - 48; gy > 0; gy -= 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
 
-    for (let y = -1.15; y <= 1.15; y += 0.29)
-      for (let x = -2.05; x <= 2.05; x += 0.3) drawArrow(x, y);
+    // fill the whole visible plane with the field, on a fine even lattice
+    const xr = W / 2 / UNIT, yr = H / 2 / UNIT, dxy = 0.2;
+    for (let y = -Math.ceil(yr / dxy) * dxy; y <= yr; y += dxy)
+      for (let x = -Math.ceil(xr / dxy) * dxy; x <= xr; x += dxy) drawArrow(x, y);
 
     // material patch (advected blob)
     const baseR = state.radius;
@@ -183,12 +208,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = teal;
-    pts.filter((_, i) => i % 3 === 0).forEach((p) => {
-      ctx.beginPath();
-      ctx.arc(sx(p.x), sy(p.y), 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
 
     // outward-flux marks on the probe circle
     for (let i = 0; i < 12; i++) {
@@ -212,9 +231,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.arc(sx(state.px), sy(state.py), baseR * UNIT, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.fillStyle = faint;
     ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('∇ · F is the patch’s instantaneous rate of area change', 16, H - 16);
+    ctx.fillStyle = teal;
+    ctx.fillText('■', 16, H - 16);
+    ctx.fillStyle = faint;
+    ctx.fillText(' source region (patch swells)', 24, H - 16);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillText('■', 250, H - 16);
+    ctx.fillStyle = faint;
+    ctx.fillText(' sink region (patch shrinks)', 258, H - 16);
 
     // readouts
     const d = divergence(state.px, state.py);

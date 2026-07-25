@@ -1,0 +1,792 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Gauss's Divergence Theorem"
+  description="Put a tiny box in a flow and count what leaks out of its six walls. Now fill a big region with those boxes: every inner wall is shared by two of them and cancels, so the whole enormous sum collapses onto the outer skin alone. That collapse is the divergence theorem."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="gauss" class="g-canvas" width="1000" height="900"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Field</label>
+        <div class="seg" id="field">
+          <button data-f="source" class="active">Source</button>
+          <button data-f="sink">Sink</button>
+          <button data-f="uniform">Uniform</button>
+          <button data-f="swirl">Swirl</button>
+          <button data-f="blob">Blob source</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Cells per side <b id="nval">3</b></label>
+        <input type="range" id="n" min="1" max="7" step="1" value="3" />
+        <div class="scale-hint"><span>one big box</span><span>many tiny ones</span></div>
+      </div>
+
+      <div class="control">
+        <label>Region size <b id="aval">1.00</b></label>
+        <input type="range" id="size" min="40" max="180" step="2" value="100" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="cells" checked /> Show the cells</label>
+      <label class="check"><input type="checkbox" id="fieldarr" checked /> Show the field</label>
+
+      <div class="readout">
+        <div class="row"><span id="l1">Flux out of the surface</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">Sum over the cells</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">Cells</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">Probe: net flux</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">Probe: divergence</span><b id="r5">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag to orbit. <b>Click any cell</b> to make it the probe. Both integrals
+        are computed by brute force from the field itself, never assumed equal.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Set <b>Cells per side</b> to 1. Now the probe is the whole region, and the
+      six arrows are the total flux: red where the flow leaves, blue where it
+      enters. <b>Divergence is just this number divided by the volume</b>, the
+      leak per unit of room.
+    </li>
+    <li>
+      Click any single cell and look at the enlarged view. A tiny box in a smooth
+      flow is nearly balanced: what pours in one side pours out the other, and
+      only a sliver is left over. That sliver, per unit volume, is what the
+      derivative <b>∇·F</b> measures.
+    </li>
+    <li>
+      Choose <b>Blob source</b> and set the cells back to 1. The sum is now
+      wildly wrong, about four times too big, because one cell measures the
+      divergence at the dead centre and pretends the whole region is like that.
+      Raise <b>Cells per side</b> and watch it fall: 4.2, 1.17, 1.08, 1.01. The
+      surface flux never moves, because the region never changed. It is the
+      chopping up that was crude, and refining it is what converges.
+    </li>
+    <li>
+      The cancellation panel is the whole proof in one picture. Every wall inside
+      the region belongs to two neighbouring cells. Flow crossing it leaves one
+      and enters the other, so it is counted <b>+ once and − once</b> and dies.
+      Only walls with nothing on the far side survive, and those walls are
+      exactly the outer surface.
+    </li>
+    <li>
+      Choose <b>Uniform</b>. Every cell is perfectly balanced, its divergence is
+      zero, and so is the flux out of the region however big you make it.
+      Whatever flows in flows straight out. Nothing is being created inside.
+    </li>
+    <li>
+      Choose <b>Swirl</b>. The field is anything but boring, yet the divergence
+      is still zero everywhere. Spinning is not spreading. This is the field that
+      shows divergence and curl are genuinely different questions.
+    </li>
+    <li>
+      Still on <b>Blob source</b>, drag the <b>region size</b> outward. Once the
+      box is wide enough to contain the whole blob, the flux stops growing: there
+      is nothing left outside to enclose. Both numbers move together the whole
+      way, through every size and every grid, which is precisely what earns this
+      the name theorem rather than coincidence.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+
+  // ---------------------------------------------------------------------------
+  // The divergence theorem, computed rather than asserted. The flux through the
+  // outer surface is found by sampling the six faces; the volume side is found
+  // by summing a numerical divergence over every cell. Nothing forces them to
+  // agree, and the panel simply reports both.
+  // ---------------------------------------------------------------------------
+
+  type V = { x: number; y: number; z: number };
+  const v = (x: number, y: number, z: number): V => ({ x, y, z });
+  const add = (a: V, b: V): V => v(a.x + b.x, a.y + b.y, a.z + b.z);
+  const mul = (a: V, s: number): V => v(a.x * s, a.y * s, a.z * s);
+  const dot = (a: V, b: V) => a.x * b.x + a.y * b.y + a.z * b.z;
+  const len = (a: V) => Math.hypot(a.x, a.y, a.z);
+
+  type Field = 'source' | 'sink' | 'uniform' | 'swirl' | 'blob';
+
+  const state = {
+    field: 'source' as Field,
+    n: 3, // cells per side
+    a: 1.0, // region half-size
+    showCells: true,
+    showField: true,
+    yaw: 0.6,
+    pitch: 0.35,
+    sel: -1, // selected cell index
+  };
+
+  function fieldAt(p: V): V {
+    switch (state.field) {
+      case 'source': return mul(p, 0.6);
+      case 'sink': return mul(p, -0.6);
+      case 'uniform': return v(0, 0, 0.9);
+      case 'swirl': return v(-p.y * 0.9, p.x * 0.9, 0);
+      case 'blob': {
+        // A source packed into a ball rather than spread evenly: its divergence
+        // is strongly curved, which is what makes the coarse grid visibly wrong
+        // and the fine one visibly right.
+        const r2 = p.x * p.x + p.y * p.y + p.z * p.z;
+        return mul(p, 1.6 * Math.exp(-0.9 * r2));
+      }
+    }
+  }
+
+  /** Numerical divergence, so the theorem is never quietly hard-coded. */
+  function divergence(p: V): number {
+    const h = 1e-3;
+    const dx = fieldAt(v(p.x + h, p.y, p.z)).x - fieldAt(v(p.x - h, p.y, p.z)).x;
+    const dy = fieldAt(v(p.x, p.y + h, p.z)).y - fieldAt(v(p.x, p.y - h, p.z)).y;
+    const dz = fieldAt(v(p.x, p.y, p.z + h)).z - fieldAt(v(p.x, p.y, p.z - h)).z;
+    return (dx + dy + dz) / (2 * h);
+  }
+
+  // the six outward face normals of a box
+  const NORMALS: V[] = [
+    v(1, 0, 0), v(-1, 0, 0),
+    v(0, 1, 0), v(0, -1, 0),
+    v(0, 0, 1), v(0, 0, -1),
+  ];
+
+  /** Flux out of an axis-aligned box, sampled face by face. */
+  function boxFlux(c: V, h: number, m = 10): number {
+    let total = 0;
+    const dA = ((2 * h) / m) ** 2;
+    for (const nrm of NORMALS) {
+      // two in-plane axes for this face
+      const u = Math.abs(nrm.x) > 0.5 ? v(0, 1, 0) : v(1, 0, 0);
+      const w = Math.abs(nrm.z) > 0.5 ? v(0, 1, 0) : v(0, 0, 1);
+      const centre = add(c, mul(nrm, h));
+      for (let i = 0; i < m; i++)
+        for (let j = 0; j < m; j++) {
+          const su = ((i + 0.5) / m - 0.5) * 2 * h;
+          const sw = ((j + 0.5) / m - 0.5) * 2 * h;
+          const p = add(centre, add(mul(u, su), mul(w, sw)));
+          total += dot(fieldAt(p), nrm) * dA;
+        }
+    }
+    return total;
+  }
+
+  /** Flux through each of the six faces of a box, for the probe view. */
+  function faceFluxes(c: V, h: number): number[] {
+    return NORMALS.map((nrm) => {
+      const u = Math.abs(nrm.x) > 0.5 ? v(0, 1, 0) : v(1, 0, 0);
+      const w = Math.abs(nrm.z) > 0.5 ? v(0, 1, 0) : v(0, 0, 1);
+      const centre = add(c, mul(nrm, h));
+      const m = 6;
+      const dA = ((2 * h) / m) ** 2;
+      let s = 0;
+      for (let i = 0; i < m; i++)
+        for (let j = 0; j < m; j++) {
+          const su = ((i + 0.5) / m - 0.5) * 2 * h;
+          const sw = ((j + 0.5) / m - 0.5) * 2 * h;
+          s += dot(fieldAt(add(centre, add(mul(u, su), mul(w, sw)))), nrm) * dA;
+        }
+      return s;
+    });
+  }
+
+  // --- the cell decomposition, cached -----------------------------------------
+
+  type Cell = { c: V; div: number; flux: number };
+  let cells: Cell[] = [];
+  let surfaceFlux = 0;
+  let cellSum = 0;
+  let convergence: number[] = []; // mismatch, as a fraction of the total absolute divergence
+  let absScale = 1;
+  let dirty = true;
+
+  function rebuild() {
+    const { n, a } = state;
+    const h = a / n; // cell half-size
+    cells = [];
+    cellSum = 0;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        for (let k = 0; k < n; k++) {
+          const c = v(
+            -a + (2 * i + 1) * h,
+            -a + (2 * j + 1) * h,
+            -a + (2 * k + 1) * h
+          );
+          const d = divergence(c);
+          const vol = (2 * h) ** 3;
+          cells.push({ c, div: d, flux: d * vol });
+          cellSum += d * vol;
+        }
+    surfaceFlux = boxFlux(v(0, 0, 0), a, 12);
+
+    // How the sum closes on the surface flux as the grid gets finer. A plain
+    // ratio is useless here: sources and sinks can cancel until the true total
+    // is nearly zero, and dividing by that explodes even when both sides agree
+    // perfectly well. So the mismatch is measured against the total *absolute*
+    // divergence in the region, which never vanishes for a field that does
+    // anything at all.
+    let denom = 0;
+    const Nf = 9, hf = a / Nf;
+    for (let i = 0; i < Nf; i++)
+      for (let j = 0; j < Nf; j++)
+        for (let k = 0; k < Nf; k++)
+          denom += Math.abs(divergence(v(
+            -a + (2 * i + 1) * hf, -a + (2 * j + 1) * hf, -a + (2 * k + 1) * hf
+          ))) * (2 * hf) ** 3;
+    absScale = Math.max(denom, 1e-9);
+
+    convergence = [];
+    for (let N = 1; N <= 8; N++) {
+      const hh = a / N;
+      let s = 0;
+      for (let i = 0; i < N; i++)
+        for (let j = 0; j < N; j++)
+          for (let k = 0; k < N; k++)
+            s += divergence(v(
+              -a + (2 * i + 1) * hh,
+              -a + (2 * j + 1) * hh,
+              -a + (2 * k + 1) * hh
+            )) * (2 * hh) ** 3;
+      convergence.push(Math.abs(s - surfaceFlux) / absScale);
+    }
+    if (state.sel >= cells.length) state.sel = -1;
+    if (state.sel < 0 && cells.length) {
+      // open on an off-centre cell, where the in/out imbalance actually shows
+      let best = 0, bd = Infinity;
+      cells.forEach((q, i) => {
+        const d = (q.c.x - a * 0.45) ** 2 + q.c.y ** 2 + q.c.z ** 2;
+        if (d < bd) { bd = d; best = i; }
+      });
+      state.sel = best;
+    }
+    dirty = false;
+  }
+
+  const cellHalf = () => state.a / state.n;
+  const probeCell = () => (state.sel >= 0 && state.sel < cells.length ? cells[state.sel] : null);
+
+  // --- canvas ------------------------------------------------------------------
+
+  const canvas = document.getElementById('gauss') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (al: number) => `rgba(${inkRGB()},${al})`;
+  const { label } = makeText(ctx, inkA);
+
+  const OUT = '#ff7a5c'; // flow leaving
+  const IN = '#49b8ff'; // flow entering
+  const ACC = '#7c8cff';
+  const GOOD = '#34d399';
+  const WARN = '#f59e0b';
+  const DIM = '#8a8f9c';
+
+  // Shared by all three theorem simulators, so they read as one family.
+  const SCENE = { x: 20, y: 84, w: 640, h: 600 };
+  const PROBE = { x: 676, y: 84, w: 304, h: 300 };
+  const CANCEL = { x: 676, y: 404, w: 304, h: 280 };
+  const SUM = { x: 20, y: 704, w: 960, h: 176 };
+
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rad);
+    ctx.arcTo(x + w, y + h, x, y + h, rad);
+    ctx.arcTo(x, y + h, x, y, rad);
+    ctx.arcTo(x, y, x + w, y, rad);
+    ctx.closePath();
+  }
+  function panel(p: { x: number; y: number; w: number; h: number }, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(p.x, p.y, p.w, p.h, 10);
+    ctx.stroke();
+    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+  }
+
+  /**
+   * Everything a panel draws stays inside that panel. Without this, a large
+   * region or a long arrow simply spills across its neighbours.
+   */
+  function clipped(p: { x: number; y: number; w: number; h: number }, fn: () => void) {
+    ctx.save();
+    rr(p.x + 1, p.y + 1, p.w - 2, p.h - 2, 10);
+    ctx.clip();
+    fn();
+    ctx.restore();
+  }
+
+  // --- 3D ----------------------------------------------------------------------
+
+  type View = { cx: number; cy: number; scale: number };
+  const CAM = 16, FOCAL = 12;
+  function proj(p: V, view: View) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const xr = p.x * cy + p.y * sy;
+    const yr = -p.x * sy + p.y * cy;
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const sxv = xr;
+    const syv = -p.z * cp + yr * sp;
+    const depth = p.z * sp + yr * cp + CAM;
+    const k = FOCAL / Math.max(0.4, depth);
+    return { x: view.cx + sxv * k * view.scale, y: view.cy + syv * k * view.scale, d: depth };
+  }
+  // The region can be nearly five times bigger at one end of its slider than
+  // the other, so the view reframes to fit rather than overflowing. The corner
+  // of the box sits at a√3, and k ≈ FOCAL/CAM at the centre of the scene.
+  const FIT = (half: number, reach: number) => (half - 34) / (reach * (FOCAL / CAM));
+  const sceneView = (): View => ({
+    cx: SCENE.x + SCENE.w / 2,
+    cy: SCENE.y + SCENE.h / 2 + 8,
+    scale: FIT(Math.min(SCENE.w, SCENE.h) / 2, state.a * 1.732),
+  });
+
+  function line3(a: V, b: V, view: View, col: string, lw: number) {
+    const p = proj(a, view), q = proj(b, view);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+  }
+  function arrow3(from: V, to: V, view: View, col: string, lw = 2, head = 7) {
+    const p = proj(from, view), q = proj(to, view);
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    ctx.beginPath();
+    ctx.moveTo(q.x, q.y);
+    ctx.lineTo(q.x - head * Math.cos(ang - 0.4), q.y - head * Math.sin(ang - 0.4));
+    ctx.lineTo(q.x - head * Math.cos(ang + 0.4), q.y - head * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  const CORNERS: [number, number, number][] = [
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+  ];
+  const EDGES: [number, number][] = [
+    [0, 1], [1, 2], [2, 3], [3, 0],
+    [4, 5], [5, 6], [6, 7], [7, 4],
+    [0, 4], [1, 5], [2, 6], [3, 7],
+  ];
+  function cube(c: V, h: number, view: View, col: string, lw = 1.4) {
+    const pts = CORNERS.map(([sx, sy, sz]) => v(c.x + sx * h, c.y + sy * h, c.z + sz * h));
+    for (const [i, j] of EDGES) line3(pts[i], pts[j], view, col, lw);
+  }
+
+  /** Red where flow leaves, blue where it enters, dimmed toward zero. */
+  function fluxColour(f: number, ref: number) {
+    const t = Math.max(-1, Math.min(1, f / (ref || 1)));
+    const a = 0.25 + Math.abs(t) * 0.75;
+    return t >= 0 ? `rgba(255,122,92,${a})` : `rgba(73,184,255,${a})`;
+  }
+
+  // --- the main scene ----------------------------------------------------------
+
+  function drawScene() {
+    panel(SCENE, 'THE REGION AND THE FLOW');
+    const view = sceneView();
+    const a = state.a;
+
+    clipped(SCENE, () => {
+
+    if (state.showField) {
+      const items: { p: V; f: V; d: number }[] = [];
+      const R = state.a * 1.35;
+      for (let i = 0; i < 5; i++)
+        for (let j = 0; j < 5; j++)
+          for (let k = 0; k < 5; k++) {
+            const p = v(
+              -R + (2 * R * i) / 4,
+              -R + (2 * R * j) / 4,
+              -R + (2 * R * k) / 4
+            );
+            items.push({ p, f: fieldAt(p), d: proj(p, view).d });
+          }
+      items.sort((x, y) => y.d - x.d);
+      let maxF = 1e-6;
+      for (const it of items) maxF = Math.max(maxF, len(it.f));
+      for (const it of items) {
+        const L = len(it.f);
+        if (L < 1e-6) continue;
+        const reach = 0.34 * (L / maxF);
+        const alpha = 0.12 + 0.2 * (1 - Math.min(1, (it.d - CAM + 3) / 6));
+        arrow3(it.p, add(it.p, mul(it.f, reach / L)), view,
+          `rgba(${inkRGB()},${alpha})`, 1.2, 4);
+      }
+    }
+
+    // the cells, tinted by their own divergence
+    if (state.showCells) {
+      const ref = Math.max(...cells.map((c) => Math.abs(c.div)), 1e-6);
+      const order = cells
+        .map((c, i) => ({ i, d: proj(c.c, view).d }))
+        .sort((p, q) => q.d - p.d);
+      const h = cellHalf();
+      for (const { i } of order) {
+        if (i === state.sel) continue;
+        const c = cells[i];
+        const s = proj(c.c, view);
+        const rad = Math.max(2.5, ((h * view.scale * FOCAL) / Math.max(0.4, s.d)) * 0.34);
+        ctx.fillStyle = fluxColour(c.div, ref);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, rad, 0, Math.PI * 2);
+        ctx.fill();
+        if (state.n <= 4) cube(c.c, h * 0.94, view, inkA(0.07), 1);
+      }
+    }
+
+    // the region itself
+    cube(v(0, 0, 0), a, view, inkA(0.4), 2);
+
+    // the selected cell, with its six face arrows
+    const pc = probeCell();
+    if (pc) {
+      const h = cellHalf();
+      cube(pc.c, h, view, WARN, 2.4);
+      const ff = faceFluxes(pc.c, h);
+      const ref = Math.max(...ff.map(Math.abs), 1e-9);
+      NORMALS.forEach((nrm, i) => {
+        const f = ff[i];
+        const base = add(pc.c, mul(nrm, h));
+        const L = (Math.abs(f) / ref) * h * 0.8;
+        const tip = f >= 0 ? add(base, mul(nrm, L)) : add(base, mul(nrm, -L));
+        arrow3(f >= 0 ? base : tip, f >= 0 ? tip : base, view, f >= 0 ? OUT : IN, 2, 6);
+      });
+    }
+    });
+
+    label('drag to orbit · click a cell to probe it', SCENE.x + 10, SCENE.y + SCENE.h - 14, 0.4, 'left', 11);
+    label(`${state.n}³ = ${state.n ** 3} cells`, SCENE.x + SCENE.w - 10, SCENE.y + 22, 0.7, 'right', 12, ACC);
+  }
+
+  // --- the probe, blown up -----------------------------------------------------
+
+  function drawProbe() {
+    panel(PROBE, 'ONE CELL, ENLARGED');
+    const pc = probeCell();
+    if (!pc) {
+      label('click a cell in the scene', PROBE.x + PROBE.w / 2, PROBE.y + PROBE.h / 2, 0.5, 'center', 12, DIM);
+      return;
+    }
+    const view: View = { cx: PROBE.x + PROBE.w / 2, cy: PROBE.y + PROBE.h / 2 + 6, scale: 150 };
+    const h = cellHalf();
+    const ff = faceFluxes(pc.c, h);
+    const ref = Math.max(...ff.map(Math.abs), 1e-9);
+    // drawn at the origin, scaled up to fill the panel
+    const unit = 0.85;
+
+    clipped(PROBE, () => {
+
+    // the flow through the middle, for context
+    const f = fieldAt(pc.c);
+    const L = len(f);
+    if (L > 1e-6) {
+      const dir = mul(f, unit * 1.5 / L);
+      arrow3(mul(dir, -1), dir, view, inkA(0.22), 1.6, 6);
+    }
+
+    cube(v(0, 0, 0), unit, view, inkA(0.45), 2);
+    NORMALS.forEach((nrm, i) => {
+      const fl = ff[i];
+      const base = mul(nrm, unit);
+      const L2 = (Math.abs(fl) / ref) * unit * 0.9 + 0.06;
+      const tip = add(base, mul(nrm, fl >= 0 ? L2 : -L2));
+      arrow3(fl >= 0 ? base : tip, fl >= 0 ? tip : base, view, fl >= 0 ? OUT : IN, 2.6, 8);
+    });
+    });
+
+    const net = ff.reduce((s, x) => s + x, 0);
+    const vol = (2 * h) ** 3;
+    let y = PROBE.y + PROBE.h - 56;
+    label(`out − in  =  ${net >= 0 ? '+' : ''}${net.toExponential(2)}`, PROBE.x + 14, y, 0.85, 'left', 12, net >= 0 ? OUT : IN);
+    y += 18;
+    label(`÷ volume ${vol.toExponential(2)}`, PROBE.x + 14, y, 0.45, 'left', 11);
+    y += 18;
+    label(`∇·F = ${pc.div.toFixed(3)}`, PROBE.x + 14, y, 0.9, 'left', 14, GOOD);
+    label(`${(2 * h).toFixed(3)} across`, PROBE.x + PROBE.w - 12, PROBE.y + 22, 0.35, 'right', 10);
+  }
+
+  // --- why the inside cancels --------------------------------------------------
+
+  function drawCancel() {
+    panel(CANCEL, 'WHY ONLY THE OUTSIDE SURVIVES');
+    const view: View = { cx: CANCEL.x + CANCEL.w / 2, cy: CANCEL.y + 118, scale: 118 };
+    const u = 0.52;
+    const L = v(-u, 0, 0), R = v(u, 0, 0);
+
+    clipped(CANCEL, () => {
+
+    cube(L, u, view, inkA(0.3), 1.6);
+    cube(R, u, view, inkA(0.3), 1.6);
+
+    // the shared wall, drawn twice over
+    const face: V[] = [v(0, -u, -u), v(0, u, -u), v(0, u, u), v(0, -u, u)];
+    ctx.beginPath();
+    face.forEach((p, i) => {
+      const q = proj(p, view);
+      i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(245,158,11,0.16)';
+    ctx.fill();
+    ctx.strokeStyle = WARN;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // out of the left cell, and into the right one: the same wall, opposite signs
+    arrow3(v(-0.1, 0, 0), v(0.62, 0, 0), view, OUT, 2.4, 8);
+    arrow3(v(0.1, 0, 0), v(-0.62, 0, 0), view, IN, 2.4, 8);
+    });
+
+    let y = CANCEL.y + 206;
+    label('+ leaving the left cell', CANCEL.x + 16, y, 0.75, 'left', 11, OUT);
+    y += 16;
+    label('− entering the right cell', CANCEL.x + 16, y, 0.75, 'left', 11, IN);
+    y += 22;
+    label('same wall, same flow, opposite signs.', CANCEL.x + 16, y, 0.5, 'left', 10);
+    y += 14;
+    label('Every inner wall dies in pairs. What is', CANCEL.x + 16, y, 0.5, 'left', 10);
+    y += 14;
+    label('left has nothing on its far side: the skin.', CANCEL.x + 16, y, 0.5, 'left', 10);
+  }
+
+  // --- the two sides of the identity -------------------------------------------
+
+  function drawSum() {
+    panel(SUM, 'THE SUM OF ALL THE LITTLE BOXES, AND THE SKIN OF THE BIG ONE');
+    const zero = Math.abs(surfaceFlux) < 1e-6 && Math.abs(cellSum) < 1e-6;
+    const x0 = SUM.x + 24;
+    let y = SUM.y + 34;
+
+    label('∯ F·n dA   over the outer surface', x0, y, 0.6, 'left', 12, OUT);
+    label(surfaceFlux.toFixed(4), x0, y + 30, 0.95, 'left', 22, OUT);
+    label('one skin, sampled directly', x0, y + 52, 0.4, 'left', 10);
+
+    const x1 = SUM.x + 350;
+    label(`∭ (∇·F) dV   summed over ${state.n ** 3} cells`, x1, y, 0.6, 'left', 12, ACC);
+    label(cellSum.toFixed(4), x1, y + 30, 0.95, 'left', 22, ACC);
+    label('every cell, added up independently', x1, y + 52, 0.4, 'left', 10);
+
+    // the convergence ladder
+    const gx = SUM.x + 700, gw = 250, gy = SUM.y + 34, gh = 92;
+    ctx.strokeStyle = inkA(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gx, gy);
+    ctx.lineTo(gx, gy + gh);
+    ctx.lineTo(gx + gw, gy + gh);
+    ctx.stroke();
+    const hi = Math.max(1e-6, Math.max(...convergence) * 1.1);
+    const Y = (e: number) => gy + gh - (Math.min(hi, e) / hi) * gh;
+    ctx.strokeStyle = GOOD;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(gx, Y(0));
+    ctx.lineTo(gx + gw, Y(0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (convergence.length) {
+      ctx.strokeStyle = ACC;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      convergence.forEach((e, i) => {
+        const x = gx + (i / (convergence.length - 1)) * gw;
+        i ? ctx.lineTo(x, Y(e)) : ctx.moveTo(x, Y(e));
+      });
+      ctx.stroke();
+      const i = state.n - 1;
+      ctx.fillStyle = WARN;
+      ctx.beginPath();
+      ctx.arc(gx + (i / (convergence.length - 1)) * gw, Y(convergence[i]), 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    label('mismatch', gx, gy - 6, 0.5, 'left', 10, ACC);
+    label('0', gx - 6, Y(0) + 3, 0.5, 'right', 9, GOOD);
+    label('cells per side  1 → 8', gx, gy + gh + 15, 0.4, 'left', 10);
+
+    if (zero) {
+      label('both are zero: nothing is created or destroyed inside', x0, SUM.y + SUM.h - 16, 0.6, 'left', 12, GOOD);
+    } else {
+      const err = (Math.abs(cellSum - surfaceFlux) / absScale) * 100;
+      label(
+        `they differ by ${err < 0.05 ? 'less than 0.1' : err.toFixed(1)}% of the total flow, and the gap is only the coarseness of the grid`,
+        x0, SUM.y + SUM.h - 16, 0.6, 'left', 12, GOOD
+      );
+    }
+  }
+
+  // --- readouts -----------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, lab: string, val: string, col?: string) => {
+    el('l' + n).innerHTML = subHtml(lab);
+    const b = el('r' + n);
+    b.textContent = val;
+    if (col) b.style.color = col;
+    else b.style.removeProperty('color');
+  };
+  function updateReadout() {
+    const pc = probeCell();
+    setRow(1, 'Flux out of the surface', surfaceFlux.toFixed(4), OUT);
+    setRow(2, 'Sum over the cells', cellSum.toFixed(4), ACC);
+    setRow(3, 'Cells', `${state.n}³ = ${state.n ** 3}`);
+    setRow(4, 'Probe: net flux', pc ? pc.flux.toExponential(2) : '—');
+    setRow(5, 'Probe: divergence', pc ? pc.div.toFixed(3) : '—', GOOD);
+  }
+
+  // --- loop ---------------------------------------------------------------------
+
+  function draw() {
+    if (dirty) rebuild();
+    ctx.clearRect(0, 0, W, H);
+    label("Gauss's Divergence Theorem", 20, 30, 0.85, 'left', 15);
+    label('what leaks out of the skin equals what every crumb inside produces', 20, 54, 0.5, 'left', 11, GOOD);
+    drawScene();
+    drawProbe();
+    drawCancel();
+    drawSum();
+    updateReadout();
+  }
+
+  // --- interaction ---------------------------------------------------------------
+
+  let dragging = false, lx = 0, ly = 0, moved = 0;
+  function pickCell(mx: number, my: number) {
+    const view = sceneView();
+    let best = -1, bestD = 1e9, bestDepth = 1e9;
+    cells.forEach((c, i) => {
+      const p = proj(c.c, view);
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < 26 && (d < bestD - 6 || (Math.abs(d - bestD) <= 6 && p.d < bestDepth))) {
+        best = i;
+        bestD = d;
+        bestDepth = p.d;
+      }
+    });
+    if (best >= 0) state.sel = best;
+  }
+  function local(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    moved = 0;
+    lx = e.clientX;
+    ly = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lx, dy = e.clientY - ly;
+    moved += Math.abs(dx) + Math.abs(dy);
+    state.yaw += dx * 0.01;
+    state.pitch = Math.max(-1.35, Math.min(1.35, state.pitch + dy * 0.008));
+    lx = e.clientX;
+    ly = e.clientY;
+    draw();
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (dragging && moved < 6) {
+      const p = local(e);
+      if (p.x > SCENE.x && p.x < SCENE.x + SCENE.w && p.y > SCENE.y && p.y < SCENE.y + SCENE.h) {
+        pickCell(p.x, p.y);
+        draw();
+      }
+    }
+    dragging = false;
+  });
+  canvas.addEventListener('pointercancel', () => (dragging = false));
+
+  // --- controls -------------------------------------------------------------------
+
+  function bindRange(id: string, apply: (n: number) => void) {
+    const inp = el(id) as HTMLInputElement;
+    inp.addEventListener('input', () => {
+      apply(+inp.value);
+      dirty = true;
+      draw();
+    });
+    apply(+inp.value);
+  }
+  bindRange('n', (n) => {
+    state.n = n;
+    el('nval').textContent = String(n);
+    state.sel = -1;
+  });
+  bindRange('size', (n) => {
+    state.a = n / 100;
+    el('aval').textContent = state.a.toFixed(2);
+    state.sel = -1;
+  });
+  (el('cells') as HTMLInputElement).addEventListener('change', (e) => {
+    state.showCells = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+  (el('fieldarr') as HTMLInputElement).addEventListener('change', (e) => {
+    state.showField = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+  el('field').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#field button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.field = btn.dataset.f as Field;
+    dirty = true;
+    draw();
+  });
+
+  rebuild();
+  draw();
+</script>
+
+<style>
+  .g-canvas {
+    touch-action: none;
+    cursor: grab;
+  }
+  .g-canvas:active {
+    cursor: grabbing;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+</style>

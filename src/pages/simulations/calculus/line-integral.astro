@@ -1,0 +1,867 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Line Integrals"
+  description="Drag a bead along a curve through a field in three dimensions and add up, step by step, only the part of the field that points the way you are going. Then bend the path and find out whether the total cared."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="li" class="li-canvas" width="1000" height="880"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Restart the bead</button>
+      </div>
+
+      <div class="control">
+        <label>The field</label>
+        <div class="seg" id="field">
+          <button data-f="gravity" class="active">Uniform</button>
+          <button data-f="spring">Central</button>
+          <button data-f="swirl">Swirl</button>
+          <button data-f="hill">Hill</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>The path</label>
+        <div class="seg" id="path">
+          <button data-p="straight" class="active">Straight</button>
+          <button data-p="arc">Detour</button>
+          <button data-p="helix">Helix</button>
+          <button data-p="loop">Closed loop</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>How far it detours <b id="bulgeval">1.20</b></label>
+        <input type="range" id="bulge" min="-200" max="200" step="5" value="120" />
+        <div class="scale-hint"><span>the other way</span><span>up and over</span></div>
+      </div>
+
+      <div class="control">
+        <label>Turns in the helix <b id="turnsval">2</b></label>
+        <input type="range" id="turns" min="1" max="6" step="1" value="2" />
+      </div>
+
+      <div class="control">
+        <label>Bead speed <b id="rateval">1.0×</b></label>
+        <input type="range" id="rate" min="0" max="300" step="5" value="100" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="arrows" checked /> Show the field</label>
+      <label class="check"><input type="checkbox" id="tint" checked /> Tint the path by what it is adding</label>
+
+      <div class="readout">
+        <div class="row"><span id="l1">Collected so far</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">Total along this path</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">Along the straight path</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">Field at the bead</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">Angle to the path</span><b id="r5">—</b></div>
+        <div class="row"><span id="l6">Adding right now</span><b id="r6">—</b></div>
+        <div class="row"><span id="l7">Path length</span><b id="r7">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the scene to orbit it. The integral is summed straight off the
+        curve you see, one small step at a time.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Watch the two arrows at the bead. The field points wherever it points, the
+      path goes wherever it goes, and the only thing that gets added is the
+      <b>shadow of one on the other</b>. When they are at right angles the bead
+      travels a long way and collects nothing at all.
+    </li>
+    <li>
+      The path is tinted by what it is adding: green where the field pushes it
+      along, red where it pushes back. A line integral is not a length and not a
+      size, it is a running <b>account of agreement</b> between two directions.
+    </li>
+    <li>
+      With the uniform field, take the straight path, note the total, then
+      switch to the detour and swing the slider anywhere you like. The bead
+      travels much further, spends time fighting the field, and arrives with
+      <b>exactly the same total</b>. Only the endpoints mattered.
+    </li>
+    <li>
+      That is what conservative means, and the readout shows why: the total is
+      just the potential at the start minus the potential at the end. Everything
+      in between cancels. Gravity does not care which road you took, only how
+      far you climbed.
+    </li>
+    <li>
+      Now switch the field to Swirl and try the same experiment. The detour no
+      longer matches the straight line: the path <b>does</b> matter, so no
+      potential can exist for this field, and there is nothing to call height.
+    </li>
+    <li>
+      Take the closed loop. In the conservative fields the total comes back to
+      zero however you orbit, because you finish where you started. In the swirl
+      it does not, and the leftover is the circulation, which is the curl inside
+      the loop times the area it encloses. That is Stokes' theorem, in one
+      reading.
+    </li>
+    <li>
+      Send the bead round the central field on the helix. It climbs, it falls,
+      it collects and gives back, and the running total wanders wildly before
+      landing exactly where the straight path landed. Watch the running line,
+      not the total, and you can see the cancellation happening.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+
+  // ---------------------------------------------------------------------------
+  // ∫_C F · dr, summed straight off the curve on screen. Everything else on the
+  // page (the running total, the circulation, the potential check) comes out of
+  // that one sum.
+  // ---------------------------------------------------------------------------
+
+  type Vec = { x: number; y: number; z: number };
+  const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
+  const sub = (a: Vec, b: Vec): Vec => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+  const mul = (a: Vec, s: number): Vec => ({ x: a.x * s, y: a.y * s, z: a.z * s });
+  const dot = (a: Vec, b: Vec) => a.x * b.x + a.y * b.y + a.z * b.z;
+  const len = (a: Vec) => Math.hypot(a.x, a.y, a.z);
+
+  const state = {
+    field: 'gravity' as 'gravity' | 'spring' | 'swirl' | 'hill',
+    path: 'straight' as 'straight' | 'arc' | 'helix' | 'loop',
+    bulge: 1.2,
+    turns: 2,
+    rate: 1,
+    running: true,
+    arrows: true,
+    tint: true,
+    zoom: 1,
+    yaw: 0.62,
+    pitch: 0.42,
+  };
+
+  const A: Vec = { x: -1.5, y: -1.4, z: -0.9 };
+  const B: Vec = { x: 1.5, y: 1.4, z: 0.9 };
+  const M = 240; // samples along the path
+
+  /** The field itself, and the potential it comes from where there is one. */
+  function field(p: Vec): Vec {
+    switch (state.field) {
+      case 'spring':
+        return mul(p, -0.7);
+      case 'swirl':
+        return { x: -p.y * 0.8, y: p.x * 0.8, z: 0 };
+      case 'hill': {
+        const r2 = p.x * p.x + p.y * p.y;
+        const e = Math.exp(-r2 / 2);
+        // minus the gradient of a bump sitting at the origin
+        return { x: 2 * p.x * e, y: 2 * p.y * e, z: 0 };
+      }
+      default:
+        return { x: 0, y: 0, z: -1 };
+    }
+  }
+  function potential(p: Vec): number | null {
+    switch (state.field) {
+      case 'spring':
+        return 0.35 * (p.x * p.x + p.y * p.y + p.z * p.z);
+      case 'swirl':
+        return null; // there is no such thing, which is the point
+      case 'hill':
+        return 2 * Math.exp(-(p.x * p.x + p.y * p.y) / 2);
+      default:
+        return p.z;
+    }
+  }
+  const conservative = () => state.field !== 'swirl';
+
+  /** Sideways and a little upward, at right angles to the straight line. */
+  function detourDir(): Vec {
+    const d = mul(sub(B, A), 1 / len(sub(B, A)));
+    // d × ẑ, which is horizontal and across the route
+    let perp: Vec = { x: d.y, y: -d.x, z: 0 };
+    const L = len(perp);
+    perp = L > 1e-6 ? mul(perp, 1 / L) : { x: 1, y: 0, z: 0 };
+    const mixed = add(perp, { x: 0, y: 0, z: 0.55 });
+    return mul(mixed, 1 / len(mixed));
+  }
+
+  /** The curve, as a function of t from 0 to 1. */
+  function pathPoint(t: number, kind = state.path): Vec {
+    if (kind === 'loop') {
+      const a = t * Math.PI * 2;
+      return { x: Math.cos(a) * 1.5, y: Math.sin(a) * 1.5, z: 0 };
+    }
+    const base = add(A, mul(sub(B, A), t));
+    if (kind === 'straight') return base;
+    const s = Math.sin(Math.PI * t);
+    // The detour swings sideways as well as up. A purely vertical bulge would
+    // be invisible to any field with no vertical component, which would quietly
+    // ruin the whole point of comparing paths.
+    if (kind === 'arc') return add(base, mul(detourDir(), state.bulge * s));
+    // helix: wind around the straight line, in the two directions across it
+    const dir = mul(sub(B, A), 1 / len(sub(B, A)));
+    let u: Vec = Math.abs(dir.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
+    u = sub(u, mul(dir, dot(u, dir)));
+    u = mul(u, 1 / len(u));
+    const v: Vec = {
+      x: dir.y * u.z - dir.z * u.y,
+      y: dir.z * u.x - dir.x * u.z,
+      z: dir.x * u.y - dir.y * u.x,
+    };
+    const a = 2 * Math.PI * state.turns * t;
+    const r = Math.abs(state.bulge) * s;
+    return add(base, add(mul(u, Math.cos(a) * r), mul(v, Math.sin(a) * r)));
+  }
+
+  /**
+   * Walk the curve in small steps and add F · Δr each time. The running total
+   * is kept so the plot can show the sum being built rather than just its end.
+   */
+  function integrate(kind = state.path) {
+    const pts: Vec[] = [];
+    for (let i = 0; i <= M; i++) pts.push(pathPoint(i / M, kind));
+    const running: number[] = [0];
+    const per: number[] = []; // contribution per unit of t, which is what gets plotted
+    let total = 0, length = 0;
+    for (let i = 0; i < M; i++) {
+      const dr = sub(pts[i + 1], pts[i]);
+      const mid = mul(add(pts[i], pts[i + 1]), 0.5);
+      const d = dot(field(mid), dr);
+      total += d;
+      length += len(dr);
+      running.push(total);
+      per.push(d * M);
+    }
+    return { pts, running, per, total, length };
+  }
+
+  let curve = integrate();
+  let straight = integrate('straight');
+  let tBead = 0;
+
+  function recompute() {
+    curve = integrate();
+    straight = integrate('straight');
+  }
+
+  // --- canvas ----------------------------------------------------------------
+
+  const canvas = document.getElementById('li') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+  const bg = () => cssVar('--stage-bg') || '#0d0e12';
+  const { label, textWidth } = makeText(ctx, inkA);
+
+  const FIELD_COL = '#f59e0b';
+  const PATHC = '#7c8cff';
+  const PLUS = '#34d399';
+  const MINUS = '#f9736a';
+
+  const SCENE = { x: 20, y: 86, w: 660, h: 600 };
+  const RUN = { x: 700, y: 86, w: 280, h: 288 };
+  const DOTP = { x: 700, y: 404, w: 280, h: 282 };
+  const NOTE = { x: 20, y: 716, w: 960, h: 144 };
+
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+  function panel(p: { x: number; y: number; w: number; h: number }, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(p.x, p.y, p.w, p.h, 10);
+    ctx.stroke();
+    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+  }
+
+  // --- 3D ---------------------------------------------------------------------
+
+  // Gentle perspective: enough to read depth, not so much that a cube looks
+  // like a pyramid.
+  const CAM = 16, FOCAL = 12;
+  function project(p: Vec) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const xr = p.x * cy + p.y * sy;
+    const yr = -p.x * sy + p.y * cy;
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const sxv = xr;
+    const syv = -p.z * cp + yr * sp;
+    const depth = p.z * sp + yr * cp + CAM;
+    const k = (FOCAL * state.zoom) / Math.max(0.4, depth);
+    const c = { x: SCENE.x + SCENE.w / 2, y: SCENE.y + SCENE.h / 2 + 10 };
+    const scale = 128;
+    return { x: c.x + sxv * k * scale, y: c.y + syv * k * scale, d: depth };
+  }
+
+  function line3(a: Vec, b: Vec, col: string, lw: number) {
+    const p = project(a), q = project(b);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+  }
+
+  /** An arrow in space, with the head sized in screen pixels. */
+  function arrow3(from: Vec, to: Vec, col: string, lw = 2, head = 7) {
+    const p = project(from), q = project(to);
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    const a = Math.atan2(q.y - p.y, q.x - p.x);
+    ctx.beginPath();
+    ctx.moveTo(q.x, q.y);
+    ctx.lineTo(q.x - head * Math.cos(a - 0.4), q.y - head * Math.sin(a - 0.4));
+    ctx.lineTo(q.x - head * Math.cos(a + 0.4), q.y - head * Math.sin(a + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  const BOX = 2.1;
+  function drawBox() {
+    const c: Vec[] = [];
+    for (const sx of [-1, 1])
+      for (const sy of [-1, 1])
+        for (const sz of [-1, 1]) c.push({ x: sx * BOX, y: sy * BOX, z: sz * BOX });
+    const edges: [number, number][] = [
+      [0, 1], [0, 2], [0, 4], [1, 3], [1, 5], [2, 3], [2, 6],
+      [3, 7], [4, 5], [4, 6], [5, 7], [6, 7],
+    ];
+    for (const [i, j] of edges) line3(c[i], c[j], inkA(0.08), 1);
+    // the axes, so up is unambiguous
+    arrow3({ x: 0, y: 0, z: 0 }, { x: BOX, y: 0, z: 0 }, inkA(0.25), 1.2, 6);
+    arrow3({ x: 0, y: 0, z: 0 }, { x: 0, y: BOX, z: 0 }, inkA(0.25), 1.2, 6);
+    arrow3({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: BOX }, inkA(0.25), 1.2, 6);
+    const px = project({ x: BOX, y: 0, z: 0 }), py = project({ x: 0, y: BOX, z: 0 });
+    const pz = project({ x: 0, y: 0, z: BOX });
+    label('x', px.x + 8, px.y + 4, 0.4, 'left', 11);
+    label('y', py.x + 8, py.y + 4, 0.4, 'left', 11);
+    label('z', pz.x + 8, pz.y + 4, 0.4, 'left', 11);
+  }
+
+  function drawField() {
+    if (!state.arrows) return;
+    const G = 4;
+    const cells: { p: Vec; f: Vec; d: number }[] = [];
+    let fmax = 1e-9;
+    for (let i = 0; i < G; i++)
+      for (let j = 0; j < G; j++)
+        for (let k = 0; k < G; k++) {
+          const p: Vec = {
+            x: -1.55 + (3.1 * i) / (G - 1),
+            y: -1.55 + (3.1 * j) / (G - 1),
+            z: -1.55 + (3.1 * k) / (G - 1),
+          };
+          const f = field(p);
+          fmax = Math.max(fmax, len(f));
+          cells.push({ p, f, d: project(p).d });
+        }
+    cells.sort((a, b) => b.d - a.d); // far ones first
+    for (const c of cells) {
+      const m = len(c.f);
+      if (m < 1e-6) continue;
+      const s = (0.62 * m) / fmax;
+      const fade = Math.max(0.22, Math.min(0.7, 2.6 / c.d));
+      arrow3(c.p, add(c.p, mul(c.f, s / m)), `rgba(245,158,11,${(fade * (0.35 + 0.65 * (m / fmax))).toFixed(3)})`, 1.4, 5);
+    }
+  }
+
+  function drawCurve() {
+    const { pts, per } = curve;
+    let pmax = 1e-9;
+    for (const v of per) pmax = Math.max(pmax, Math.abs(v));
+    for (let i = 0; i < M; i++) {
+      let col = PATHC;
+      if (state.tint) {
+        const f = Math.max(-1, Math.min(1, per[i] / pmax));
+        col = f >= 0
+          ? `rgba(52,211,153,${(0.35 + 0.65 * f).toFixed(3)})`
+          : `rgba(249,115,106,${(0.35 + 0.65 * -f).toFixed(3)})`;
+      }
+      line3(pts[i], pts[i + 1], col, 3.4);
+    }
+    // the ends
+    for (const [p, name] of [[pts[0], 'A'], [pts[M], 'B']] as [Vec, string][]) {
+      const q = project(p);
+      ctx.fillStyle = inkA(0.85);
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      label(name, q.x + 10, q.y + 5, 0.8, 'left', 12);
+    }
+  }
+
+  function beadState() {
+    const i = Math.max(0, Math.min(M - 1, Math.floor(tBead * M)));
+    const p = curve.pts[i];
+    const dr = sub(curve.pts[i + 1], curve.pts[i]);
+    const T = len(dr) > 1e-9 ? mul(dr, 1 / len(dr)) : { x: 1, y: 0, z: 0 };
+    const F = field(p);
+    return { i, p, T, F, mag: len(F), along: dot(F, T) };
+  }
+
+  function drawBead() {
+    const { p, T, F, along } = beadState();
+    const q = project(p);
+    // the field there, and the direction of travel
+    arrow3(p, add(p, mul(F, 0.85 / Math.max(0.35, len(F)) * Math.min(1.4, len(F)))), FIELD_COL, 2.6, 9);
+    arrow3(p, add(p, mul(T, 0.75)), PATHC, 2.6, 9);
+    // and the shadow of one on the other, which is the only part that counts
+    if (Math.abs(along) > 1e-4) {
+      arrow3(p, add(p, mul(T, along * 0.75 / Math.max(0.35, len(F)) * Math.min(1.4, len(F)))),
+        along > 0 ? PLUS : MINUS, 5, 10);
+    }
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = inkA(0.6);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    label('F', project(add(p, mul(F, 1.05 / Math.max(0.35, len(F))))).x + 8, project(add(p, mul(F, 1.05 / Math.max(0.35, len(F))))).y, 0.9, 'left', 12, FIELD_COL);
+    label('dr', project(add(p, mul(T, 0.95))).x + 8, project(add(p, mul(T, 0.95))).y, 0.9, 'left', 12, PATHC);
+  }
+
+  function drawScene() {
+    panel(SCENE, 'THE FIELD, THE PATH, AND WHAT THEY AGREE ON');
+    drawBox();
+    drawField();
+    drawCurve();
+    drawBead();
+    label('drag to orbit, scroll to zoom', SCENE.x + SCENE.w - 12, SCENE.y + 22, 0.4, 'right', 11);
+    label(fieldName(), SCENE.x + 14, SCENE.y + 24, 0.85, 'left', 13, FIELD_COL);
+    label(
+      conservative() ? 'conservative: it comes from a potential' : 'not conservative: no potential exists',
+      SCENE.x + 14,
+      SCENE.y + 42,
+      0.55,
+      'left',
+      11,
+      conservative() ? PLUS : MINUS
+    );
+    if (state.tint)
+      label(
+        'green where the field pushes you along, red where it pushes back',
+        SCENE.x + 14,
+        SCENE.y + SCENE.h - 16,
+        0.42,
+        'left',
+        11
+      );
+  }
+
+  function fieldName() {
+    switch (state.field) {
+      case 'spring': return 'central pull, F = −k r';
+      case 'swirl': return 'swirl, F = ω × r';
+      case 'hill': return 'the slope of a hill';
+      default: return 'uniform pull, F = −ẑ';
+    }
+  }
+
+  // --- the running total ------------------------------------------------------
+
+  function drawRunning() {
+    panel(RUN, 'THE SUM BEING BUILT');
+    const px = RUN.x + 54, py = RUN.y + 26, pw = RUN.w - 74, ph = RUN.h - 74;
+    const { running, per } = curve;
+    let lo = 0, hi = 0;
+    for (const v of running) {
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+    const pad = Math.max(0.4, (hi - lo) * 0.15);
+    lo -= pad;
+    hi += pad;
+    const X = (t: number) => px + t * pw;
+    const Y = (v: number) => py + ph - ((v - lo) / (hi - lo)) * ph;
+
+    ctx.strokeStyle = inkA(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.lineTo(px + pw, py + ph);
+    ctx.stroke();
+    ctx.strokeStyle = inkA(0.12);
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(px, Y(0));
+    ctx.lineTo(px + pw, Y(0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('0', px - 6, Y(0) + 4, 0.35, 'right', 10);
+
+    // what is being added at each moment, as a band around zero
+    let pmax = 1e-9;
+    for (const v of per) pmax = Math.max(pmax, Math.abs(v));
+    for (let i = 0; i < M; i++) {
+      const h = (per[i] / pmax) * (ph * 0.16);
+      ctx.fillStyle = per[i] >= 0 ? 'rgba(52,211,153,0.35)' : 'rgba(249,115,106,0.35)';
+      ctx.fillRect(X(i / M), Y(0) - Math.max(0, h), Math.max(1, pw / M + 0.6), Math.abs(h));
+    }
+
+    ctx.strokeStyle = PATHC;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    running.forEach((v, i) => (i ? ctx.lineTo(X(i / M), Y(v)) : ctx.moveTo(X(0), Y(v))));
+    ctx.stroke();
+
+    // where the bead has got to
+    const i = Math.max(0, Math.min(M, Math.round(tBead * M)));
+    ctx.strokeStyle = inkA(0.35);
+    ctx.beginPath();
+    ctx.moveTo(X(i / M), py);
+    ctx.lineTo(X(i / M), py + ph);
+    ctx.stroke();
+    ctx.fillStyle = PATHC;
+    ctx.beginPath();
+    ctx.arc(X(i / M), Y(running[i]), 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    label('running total', px + 6, py + 14, 0.8, 'left', 11, PATHC);
+    label('adding', px + 6, Y(0) - 24, 0.6, 'left', 10, PLUS);
+    label('taking away', px + 6, Y(0) + 32, 0.6, 'left', 10, MINUS);
+    label('start', px, py + ph + 16, 0.35, 'left', 10);
+    label('end', px + pw, py + ph + 16, 0.35, 'right', 10);
+  }
+
+  // --- the dot product itself -------------------------------------------------
+
+  function drawDot() {
+    panel(DOTP, 'WHY ONLY PART OF IT COUNTS');
+    const { F, T, mag, along } = beadState();
+    const cx = DOTP.x + DOTP.w / 2, cy = DOTP.y + 108;
+    const R = 74;
+    // a flat picture of the same two vectors, drawn in their own plane
+    const ang = Math.acos(Math.max(-1, Math.min(1, mag > 1e-9 ? along / mag : 0)));
+    ctx.strokeStyle = inkA(0.12);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const tip = { x: cx + R, y: cy };
+    ctx.strokeStyle = PATHC;
+    ctx.fillStyle = PATHC;
+    ctx.lineWidth = 2.4;
+    arrowFlat(cx, cy, tip.x, tip.y, 8);
+    label('dr', tip.x + 8, tip.y + 4, 0.9, 'left', 11, PATHC);
+
+    const fx = cx + Math.cos(-ang) * R, fy = cy + Math.sin(-ang) * R;
+    ctx.strokeStyle = FIELD_COL;
+    ctx.fillStyle = FIELD_COL;
+    arrowFlat(cx, cy, fx, fy, 8);
+    label('F', fx + 8, fy + 2, 0.9, 'left', 11, FIELD_COL);
+
+    // the shadow
+    const sx = cx + Math.cos(-ang) * R * Math.cos(-ang);
+    ctx.strokeStyle = inkA(0.3);
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(fx, fy);
+    ctx.lineTo(sx, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const shadow = R * Math.cos(ang);
+    ctx.strokeStyle = shadow >= 0 ? PLUS : MINUS;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + 16);
+    ctx.lineTo(cx + shadow, cy + 16);
+    ctx.stroke();
+    label(
+      'this shadow is all that counts',
+      cx,
+      cy + 40,
+      0.6,
+      'center',
+      11,
+      shadow >= 0 ? PLUS : MINUS
+    );
+
+    const deg = (ang * 180) / Math.PI;
+    label(`|F| = ${mag.toFixed(2)}`, DOTP.x + 18, DOTP.y + DOTP.h - 62, 0.6, 'left', 12, FIELD_COL);
+    label(`angle = ${deg.toFixed(0)}°`, DOTP.x + 18, DOTP.y + DOTP.h - 42, 0.6, 'left', 12);
+    label(
+      `F · dr̂ = ${along.toFixed(3)}`,
+      DOTP.x + 18,
+      DOTP.y + DOTP.h - 22,
+      0.85,
+      'left',
+      13,
+      along >= 0 ? PLUS : MINUS
+    );
+    if (deg > 84 && deg < 96)
+      label('at right angles: nothing is collected', DOTP.x + DOTP.w - 18, DOTP.y + DOTP.h - 22, 0.6, 'right', 10);
+  }
+
+  function arrowFlat(x1: number, y1: number, x2: number, y2: number, head = 7) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - head * Math.cos(a - 0.4), y2 - head * Math.sin(a - 0.4));
+    ctx.lineTo(x2 - head * Math.cos(a + 0.4), y2 - head * Math.sin(a + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // --- the verdict strip ------------------------------------------------------
+
+  function drawNote() {
+    panel(NOTE, state.path === 'loop' ? 'ROUND A CLOSED LOOP' : 'DOES THE ROAD MATTER?');
+    const x0 = NOTE.x + 28;
+    if (state.path === 'loop') {
+      const circ = curve.total;
+      // Stokes, for this flat loop: curl · area
+      const curlZ = state.field === 'swirl' ? 1.6 : 0;
+      const area = Math.PI * 1.5 * 1.5;
+      label('the bead comes back to where it started', x0, NOTE.y + 34, 0.6, 'left', 13);
+      label('so every step of height is undone', x0, NOTE.y + 56, 0.45, 'left', 11);
+      label('what it collected going round', NOTE.x + 380, NOTE.y + 34, 0.6, 'left', 13, PATHC);
+      label(circ.toFixed(3), NOTE.x + 380, NOTE.y + 66, 0.9, 'left', 20, Math.abs(circ) < 0.02 ? PLUS : MINUS);
+      label('curl inside × area enclosed', NOTE.x + 680, NOTE.y + 34, 0.6, 'left', 13, FIELD_COL);
+      label((curlZ * area).toFixed(3), NOTE.x + 680, NOTE.y + 66, 0.9, 'left', 20, FIELD_COL);
+      label(
+        Math.abs(circ) < 0.02
+          ? 'zero, and it had to be: in a conservative field a round trip collects nothing'
+          : 'not zero, and it matches the curl times the area: that is Stokes',
+        x0,
+        NOTE.y + NOTE.h - 22,
+        0.5,
+        'left',
+        11,
+        Math.abs(circ) < 0.02 ? PLUS : FIELD_COL
+      );
+      return;
+    }
+    const dif = curve.total - straight.total;
+    label('along the path you chose', x0, NOTE.y + 34, 0.6, 'left', 13, PATHC);
+    label(curve.total.toFixed(3), x0, NOTE.y + 66, 0.9, 'left', 20, PATHC);
+    label('along the straight line', NOTE.x + 300, NOTE.y + 34, 0.6, 'left', 13);
+    label(straight.total.toFixed(3), NOTE.x + 300, NOTE.y + 66, 0.9, 'left', 20);
+    const V0 = potential(A), V1 = potential(B);
+    if (V0 !== null && V1 !== null) {
+      label('potential at A minus at B', NOTE.x + 600, NOTE.y + 34, 0.6, 'left', 13, PLUS);
+      label((V0 - V1).toFixed(3), NOTE.x + 600, NOTE.y + 66, 0.9, 'left', 20, PLUS);
+    } else {
+      label('potential at A minus at B', NOTE.x + 600, NOTE.y + 34, 0.6, 'left', 13, MINUS);
+      label('there is none', NOTE.x + 600, NOTE.y + 66, 0.8, 'left', 15, MINUS);
+    }
+    label(
+      Math.abs(dif) < 0.02
+        ? 'the same, however long the detour: only the two ends mattered'
+        : `different by ${dif.toFixed(3)}: in this field the road you take is part of the answer`,
+      x0,
+      NOTE.y + NOTE.h - 22,
+      0.5,
+      'left',
+      11,
+      Math.abs(dif) < 0.02 ? PLUS : MINUS
+    );
+  }
+
+  // --- readouts ---------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, lab: string, val: string) => {
+    el('l' + n).innerHTML = subHtml(lab);
+    el('r' + n).textContent = val;
+  };
+  function updateReadout() {
+    const b = beadState();
+    const i = Math.max(0, Math.min(M, Math.round(tBead * M)));
+    setRow(1, 'Collected so far', curve.running[i].toFixed(3));
+    setRow(2, 'Total along this path', curve.total.toFixed(3));
+    setRow(3, 'Along the straight path', state.path === 'loop' ? 'n/a, it is a loop' : straight.total.toFixed(3));
+    setRow(4, 'Field at the bead |F|', b.mag.toFixed(3));
+    setRow(5, 'Angle to the path', `${((Math.acos(Math.max(-1, Math.min(1, b.mag > 1e-9 ? b.along / b.mag : 0))) * 180) / Math.PI).toFixed(0)}°`);
+    setRow(6, 'Adding right now', b.along.toFixed(3));
+    setRow(7, 'Path length', curve.length.toFixed(2));
+  }
+
+  // --- loop -------------------------------------------------------------------
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    label('Line Integrals', 20, 30, 0.85, 'left', 14);
+    label('∫ F · dr, added up one step at a time', 20, 52, 0.5, 'left', 11, PATHC);
+    const legend: [string, string][] = [
+      [FIELD_COL, 'the field F'],
+      [PLUS, 'adding'],
+      [MINUS, 'taking away'],
+    ];
+    let x = W - 20;
+    for (let k = legend.length - 1; k >= 0; k--) {
+      const [c, tx] = legend[k];
+      const tw = textWidth(tx, 11);
+      label(tx, x, 30, 0.55, 'right', 11);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(x - tw - 11, 26, 5, 0, Math.PI * 2);
+      ctx.fill();
+      x -= tw + 30;
+    }
+    drawScene();
+    drawRunning();
+    drawDot();
+    drawNote();
+  }
+
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    if (state.running) {
+      tBead += dt * 0.22 * state.rate;
+      if (tBead > 1) tBead -= 1;
+    }
+    draw();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls ----------------------------------------------------------------
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('reset').addEventListener('click', () => (tBead = 0));
+
+  function bindRange(id: string, apply: (n: number) => void) {
+    const inp = el(id) as HTMLInputElement;
+    const run = () => {
+      apply(+inp.value);
+      recompute();
+    };
+    inp.addEventListener('input', run);
+    apply(+inp.value);
+  }
+  bindRange('bulge', (n) => {
+    state.bulge = n / 100;
+    el('bulgeval').textContent = state.bulge.toFixed(2);
+  });
+  bindRange('turns', (n) => {
+    state.turns = n;
+    el('turnsval').textContent = String(n);
+  });
+  bindRange('rate', (n) => {
+    state.rate = n / 100;
+    el('rateval').textContent = `${state.rate.toFixed(1)}×`;
+  });
+  (el('arrows') as HTMLInputElement).addEventListener('change', (e) => {
+    state.arrows = (e.target as HTMLInputElement).checked;
+  });
+  (el('tint') as HTMLInputElement).addEventListener('change', (e) => {
+    state.tint = (e.target as HTMLInputElement).checked;
+  });
+  el('field').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#field button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.field = btn.dataset.f as typeof state.field;
+    recompute();
+  });
+  el('path').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#path button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.path = btn.dataset.p as typeof state.path;
+    tBead = 0;
+    recompute();
+  });
+
+  let dragging = false, lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    lx = e.clientX;
+    ly = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    state.yaw += (e.clientX - lx) * 0.01;
+    state.pitch = Math.max(-1.3, Math.min(1.3, state.pitch + (e.clientY - ly) * 0.008));
+    lx = e.clientX;
+    ly = e.clientY;
+  });
+  const stop = () => (dragging = false);
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  // Wheel zoom over the stage, which needs passive: false to stop the page
+  // itself scrolling away underneath.
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      state.zoom = Math.max(0.4, Math.min(4, state.zoom * Math.exp(-e.deltaY * 0.0016)));
+    },
+    { passive: false }
+  );
+
+  recompute();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .li-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .li-canvas:active {
+    cursor: grabbing;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+</style>

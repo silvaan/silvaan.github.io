@@ -35,8 +35,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Top: every walker as a dot, all starting at the centre. Bottom: the
-        histogram of their positions, with the predicted Gaussian overlaid.
+        Top: time runs downward from the shared start. A few walkers are traced
+        so you can see the jagged paths, and the curved cone is the ±√t spread.
+        Bottom: the histogram right now, with the predicted bell.
       </p>
     </div>
   </div>
@@ -64,27 +65,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const NMAX = 6000;
   const pos = new Float32Array(NMAX);
-  const lane = new Float32Array(NMAX); // fixed vertical position per walker
-  for (let i = 0; i < NMAX; i++) lane[i] = Math.random();
 
   const state = { n: 2000, speed: 4, steps: 0, playing: true };
+
+  // A handful of walkers whose whole path is remembered and drawn, so the crowd
+  // statistics have visible individuals behind them.
+  const TRACE = 5;
+  const TRACE_COL = ['#f59e0b', '#7c8cff', '#5eead4', '#f472b6', '#e879f9'];
+  let trails: number[][] = [];
+  const MAXROWS = 3000; // cap the stored history
 
   const canvas = document.getElementById('walk') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
-  const TOP = { y0: 28, y1: 196 };
-  const BOT = { y0: 236, y1: 430 };
+  const TOP = { y0: 28, y1: 210 };
+  const BOT = { y0: 250, y1: 430 };
   const PADX = 30;
   const BINS = 81;
 
   function reset() {
     pos.fill(0);
     state.steps = 0;
+    trails = Array.from({ length: TRACE }, () => [0]);
   }
 
   function step() {
     for (let i = 0; i < state.n; i++) pos[i] += Math.random() < 0.5 ? -1 : 1;
+    for (let k = 0; k < TRACE; k++) if (trails[k].length < MAXROWS) trails[k].push(pos[k]);
     state.steps++;
   }
 
@@ -108,6 +116,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const sd = stdOf();
     const R = Math.max(12, 4 * Math.max(sd, Math.sqrt(state.steps)));
     const mapX = (x: number) => PADX + ((x + R) / (2 * R)) * (W - 2 * PADX);
+    const steps = Math.max(1, state.steps);
+    // time axis: t = 0 (the shared start) at the top, now at the bottom
+    const yOfT = (t: number) => TOP.y0 + (t / steps) * (TOP.y1 - TOP.y0);
 
     // centre line
     ctx.strokeStyle = grid;
@@ -117,13 +128,55 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.lineTo(mapX(0), BOT.y1);
     ctx.stroke();
 
-    // walker dots
-    ctx.fillStyle = `rgba(${ink},0.5)`;
-    for (let i = 0; i < state.n; i++) {
-      const x = mapX(pos[i]);
-      const y = TOP.y0 + lane[i] * (TOP.y1 - TOP.y0);
-      ctx.fillRect(x, y, 1.6, 1.6);
+    // the ±√t and ±2√t envelope: the whole point is that these curve, so
+    // reaching twice as far takes four times as long.
+    for (const [k, alpha] of [[1, 0.5], [2, 0.22]] as [number, number][]) {
+      for (const sgn of [-1, 1]) {
+        ctx.strokeStyle = `rgba(${ink},${alpha})`;
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let t = 0; t <= steps; t += Math.max(1, steps / 120)) {
+          const X = mapX(sgn * k * Math.sqrt(t));
+          t === 0 ? ctx.moveTo(X, yOfT(0)) : ctx.lineTo(X, yOfT(t));
+        }
+        ctx.stroke();
+      }
     }
+    ctx.setLineDash([]);
+    ctx.fillStyle = faint;
+    ctx.font = "11px 'JetBrains Mono', monospace";
+    ctx.fillText('+√t', mapX(Math.sqrt(steps)) + 3, TOP.y1 - 3);
+    ctx.fillText('+2√t', mapX(2 * Math.sqrt(steps)) + 3, TOP.y1 - 18);
+
+    // a light dusting of all walkers at the current time, along the bottom edge
+    ctx.fillStyle = `rgba(${ink},0.4)`;
+    for (let i = TRACE; i < state.n; i++) ctx.fillRect(mapX(pos[i]), TOP.y1 - 1, 1.5, 2.5);
+
+    // the traced walkers' full jagged paths from the start down to now
+    for (let k = 0; k < TRACE; k++) {
+      const tr = trails[k];
+      ctx.strokeStyle = TRACE_COL[k];
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      const stride = Math.max(1, Math.floor(tr.length / (TOP.y1 - TOP.y0)));
+      for (let t = 0; t < tr.length; t += stride) {
+        const X = mapX(tr[t]), Y = yOfT(t);
+        t === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+      }
+      ctx.lineTo(mapX(tr[tr.length - 1]), yOfT(tr.length - 1));
+      ctx.stroke();
+      // a dot at the head
+      ctx.fillStyle = TRACE_COL[k];
+      ctx.beginPath();
+      ctx.arc(mapX(tr[tr.length - 1]), TOP.y1 - 1, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = faint;
+    ctx.fillText('start', mapX(0) + 5, TOP.y0 + 11);
+    ctx.fillText('now →', PADX, TOP.y1 + 14);
 
     // histogram
     const bins = new Float64Array(BINS);

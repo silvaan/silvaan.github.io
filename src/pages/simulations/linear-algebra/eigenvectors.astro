@@ -33,10 +33,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         </div>
       </div>
 
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="morph">Apply A to the grid ▶</button>
+      </div>
+      <div class="control">
+        <label>Transform amount <b id="tval">applied</b></label>
+        <input type="range" id="t" min="0" max="100" step="1" value="100" />
+        <div class="scale-hint"><span>identity</span><span>full A</span></div>
+      </div>
+
       <div class="control">
         <label>Input angle <b id="thval">0°</b></label>
         <input type="range" id="th" min="0" max="360" step="1" value="0" />
       </div>
+
+      <label class="check"><input type="checkbox" id="showgrid" checked /> Show the warped grid</label>
 
       <div class="readout">
         <div class="row"><span>Eigenvalues</span><b id="eigval">—</b></div>
@@ -69,7 +80,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   import { setupCanvas } from '../../../lib/sim';
 
   const M = { a: 2, b: 1, c: 1, d: 2 };
-  const state = { theta: 0 };
+  const state = { theta: 0, t: 1, animating: false, showgrid: true };
 
   const canvas = document.getElementById('eigen') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -78,10 +89,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
   const toPx = (x: number, y: number) => ({ px: O.x + x * UNIT, py: O.y - y * UNIT });
-  const apply = (x: number, y: number) => ({
-    x: M.a * x + M.b * y,
-    y: M.c * x + M.d * y,
-  });
+  // The morph matrix A_t = (1−t)·I + t·A. It shares eigenvectors with A, so the
+  // eigen-lines stay fixed as the grid warps, which is the whole point.
+  const applyT = (x: number, y: number) => {
+    const t = state.t;
+    const a = 1 - t + t * M.a, b = t * M.b, c = t * M.c, d = 1 - t + t * M.d;
+    return { x: a * x + b * y, y: c * x + d * y };
+  };
+  const apply = (x: number, y: number) => ({ x: M.a * x + M.b * y, y: M.c * x + M.d * y });
 
   type Eig = { l: number; v: [number, number] };
   function eigen(): Eig[] {
@@ -133,13 +148,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const accent = css('--accent') || '#7c8cff';
     ctx.clearRect(0, 0, W, H);
 
-    // grid
+    const R = 5;
+    // the original grid, kept faint as a reference frame
     ctx.strokeStyle = grid;
     ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.6;
+    ctx.globalAlpha = 0.35;
     for (let i = -4; i <= 4; i++) {
-      const a = toPx(i, -4), b = toPx(i, 4);
-      const c = toPx(-4, i), e = toPx(4, i);
+      const a = toPx(i, -R), b = toPx(i, R);
+      const c = toPx(-R, i), e = toPx(R, i);
       ctx.beginPath();
       ctx.moveTo(a.px, a.py);
       ctx.lineTo(b.px, b.py);
@@ -149,6 +165,28 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     ctx.globalAlpha = 1;
 
+    // the warped grid: the image of the coordinate lines under A_t. Every
+    // straight line stays straight, so we only need its two endpoints.
+    if (state.showgrid && state.t > 0.01) {
+      const warp = (x: number, y: number) => {
+        const q = applyT(x, y);
+        return toPx(q.x, q.y);
+      };
+      const gline = (x0: number, y0: number, x1: number, y1: number, main: boolean) => {
+        ctx.strokeStyle = main ? 'rgba(251,191,36,0.9)' : 'rgba(251,191,36,0.4)';
+        ctx.lineWidth = main ? 2.4 : 1.2;
+        const p = warp(x0, y0), q = warp(x1, y1);
+        ctx.beginPath();
+        ctx.moveTo(p.px, p.py);
+        ctx.lineTo(q.px, q.py);
+        ctx.stroke();
+      };
+      for (let i = -R; i <= R; i++) {
+        gline(i, -R, i, R, i === 0); // image of the vertical line x = i
+        gline(-R, i, R, i, i === 0); // image of the horizontal line y = i
+      }
+    }
+
     // unit circle of inputs
     ctx.strokeStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.32)`;
     ctx.setLineDash([4, 5]);
@@ -157,38 +195,44 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // image ellipse: A applied to the unit circle
-    ctx.strokeStyle = 'rgba(251,191,36,0.35)';
-    ctx.lineWidth = 1.4;
+    // image ellipse: A_t applied to the unit circle
+    ctx.strokeStyle = 'rgba(251,191,36,0.5)';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
     for (let i = 0; i <= 120; i++) {
       const t = (i / 120) * Math.PI * 2;
-      const q = apply(Math.cos(t), Math.sin(t));
+      const q = applyT(Math.cos(t), Math.sin(t));
       const p = toPx(q.x, q.y);
       i === 0 ? ctx.moveTo(p.px, p.py) : ctx.lineTo(p.px, p.py);
     }
     ctx.stroke();
 
-    // eigen-directions (real)
+    // eigen-directions (real): the lines the warp cannot rotate. Every gridline
+    // parallel to one of these just slides along itself as A is applied.
     const eigs = eigen();
     for (const eg of eigs) {
       const [vx, vy] = eg.v;
-      const p1 = toPx(vx * 4.5, vy * 4.5);
-      const p2 = toPx(-vx * 4.5, -vy * 4.5);
-      ctx.strokeStyle = 'rgba(94,234,212,0.55)';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([7, 5]);
+      const p1 = toPx(vx * R, vy * R);
+      const p2 = toPx(-vx * R, -vy * R);
+      ctx.strokeStyle = 'rgba(94,234,212,0.85)';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(p1.px, p1.py);
       ctx.lineTo(p2.px, p2.py);
       ctx.stroke();
-      ctx.setLineDash([]);
+      // where a unit vector on this line lands: scaled by the morphed eigenvalue
+      const lt = 1 - state.t + state.t * eg.l;
+      const q = toPx(vx * lt, vy * lt);
+      ctx.fillStyle = '#5eead4';
+      ctx.beginPath();
+      ctx.arc(q.px, q.py, 4.5, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    // input v and output Av
+    // input v and output A_t v
     const vx = Math.cos(state.theta);
     const vy = Math.sin(state.theta);
-    const av = apply(vx, vy);
+    const av = applyT(vx, vy);
     const avMag = Math.hypot(av.x, av.y);
 
     drawArrow(av.x, av.y, '#fbbf24', 3, 'Av');
@@ -247,6 +291,42 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     draw();
   });
 
+  const tEl = document.getElementById('t') as HTMLInputElement;
+  const tvalEl = document.getElementById('tval') as HTMLElement;
+  function setT(t: number) {
+    state.t = Math.max(0, Math.min(1, t));
+    tEl.value = String(Math.round(state.t * 100));
+    tvalEl.textContent = state.t < 0.01 ? 'identity' : state.t > 0.99 ? 'applied' : state.t.toFixed(2);
+  }
+  tEl.addEventListener('input', () => {
+    state.animating = false;
+    setT(+tEl.value / 100);
+    draw();
+  });
+  const morphBtn = document.getElementById('morph') as HTMLButtonElement;
+  morphBtn.addEventListener('click', () => {
+    // restart the morph from the identity
+    setT(0);
+    state.animating = true;
+  });
+  (document.getElementById('showgrid') as HTMLInputElement).addEventListener('change', (e) => {
+    state.showgrid = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    if (state.animating) {
+      setT(state.t + dt * 0.55);
+      if (state.t >= 1) state.animating = false;
+      draw();
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
   const thEl = document.getElementById('th') as HTMLInputElement;
   function setTheta(deg: number) {
     state.theta = (deg * Math.PI) / 180;
@@ -290,5 +370,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
   #eigen:active {
     cursor: grabbing;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
   }
 </style>

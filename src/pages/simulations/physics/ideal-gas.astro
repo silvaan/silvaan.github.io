@@ -1,0 +1,935 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Ideal Gas"
+  description="A few hundred molecules bouncing in a box, and nothing else. Pressure is the drumming of their impacts, temperature is how fast they are, and PV = NkT is not a law you have to be told, it is what the counting adds up to."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="gas" class="gas-canvas" width="1000" height="880"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Walls</label>
+        <div class="seg" id="walls">
+          <button data-w="bath" class="active">Held at T</button>
+          <button data-w="insulated">Insulated</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Molecules N <b id="nval">300</b></label>
+        <input type="range" id="n" min="20" max="600" step="10" value="300" />
+      </div>
+
+      <div class="control">
+        <label>Wall temperature <b id="tval">300 K</b></label>
+        <input type="range" id="temp" min="50" max="1200" step="10" value="300" />
+        <div class="scale-hint"><span>cold</span><span>hot</span></div>
+      </div>
+
+      <div class="control">
+        <label>Piston position <b id="vol">27000 nm³</b></label>
+        <input type="range" id="piston" min="30" max="100" step="1" value="100" />
+        <div class="scale-hint"><span>squeezed</span><span>roomy</span></div>
+      </div>
+
+      <div class="control">
+        <label>Time rate <b id="rateval">1.0×</b></label>
+        <input type="range" id="rate" min="10" max="300" step="5" value="100" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="trail" /> Trace one molecule</label>
+      <label class="check"><input type="checkbox" id="hits" checked /> Flash every wall hit</label>
+
+      <div class="readout">
+        <div class="row"><span id="l1">Pressure, measured</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">Pressure, from NkT/V</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">Temperature</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">Volume</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">Root mean square speed</span><b id="r5">—</b></div>
+        <div class="row"><span id="l6">PV / NkT</span><b id="r6">—</b></div>
+        <div class="row"><span id="l7">Wall hits</span><b id="r7">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        A flat gas in a slab 10 nm thick, so every molecule has two directions to
+        move in rather than three. Everything else is exactly the real thing.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Watch a single wall. Each flash is one molecule turning round, and each one
+      delivers a tiny kick. <b>Pressure is nothing but those kicks added up</b>,
+      and the measured number next to the box is literally the running total of
+      momentum delivered, divided by the area and the time.
+    </li>
+    <li>
+      The measured pressure and NkT/V agree to a few percent, and they were
+      never made to. One is counted from impacts, the other is the gas law. Add
+      molecules and both climb together, because twice as many molecules means
+      twice as many kicks per second. The few percent left over has a name, and
+      it is the next thing to look at.
+    </li>
+    <li>
+      Push the piston in with the walls held at a temperature. The molecules keep
+      the same speeds but hit a smaller box more often, so the pressure rises as
+      1/V. Boyle's law is a bookkeeping statement about how often something
+      bounces.
+    </li>
+    <li>
+      Now set the walls to Insulated and push the piston in quickly. The gas
+      <b>heats up with nothing heating it</b>. Look closely at the moving wall:
+      a molecule bouncing off an advancing piston comes back faster, exactly like
+      a ball off a swung bat. That is all adiabatic heating has ever been.
+    </li>
+    <li>
+      Pull the piston back out while insulated and the gas cools, for the mirror
+      reason. On the P-V plot the path is steeper than the isotherm through the
+      same point, which is the whole content of PV<sup>γ</sup> = constant.
+    </li>
+    <li>
+      Start every molecule at the same speed with Reset, then watch the speed
+      histogram. Collisions alone, with no rule about distributions anywhere in
+      the code, smear it into the <b>Maxwell-Boltzmann</b> curve drawn over it,
+      and it stays there. Equilibrium is not imposed, it is what shuffling does.
+    </li>
+    <li>
+      Raise the wall temperature and watch the histogram slide right and flatten.
+      There is no such thing as the speed of a molecule at 500 K, only a spread,
+      and the tail of that spread is what boils, evaporates and reacts.
+    </li>
+    <li>
+      Crowd the box: raise N and squeeze the piston at the same time. PV/NkT
+      creeps above one and keeps climbing. Nothing broke, the law did: a real
+      molecule takes up room, so the space left for the others is less than the
+      volume you measured. That correction is the <b>b</b> in van der Waals, and
+      it is the first thing that stops a gas from being ideal.
+    </li>
+    <li>
+      Turn on the trace and follow one molecule for a while. It goes nowhere in
+      particular, at hundreds of metres per second, changing direction constantly.
+      The gas is calm because a few hundred of these average out, not because
+      anything in it is calm.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+
+  // ---------------------------------------------------------------------------
+  // Hard disks in a box, nothing more. Nitrogen mass, real speeds, nanometre
+  // box: the numbers on screen are the numbers a real gas would give.
+  // ---------------------------------------------------------------------------
+
+  const KB = 1.380649e-23; // J/K
+  const MASS = 4.65e-26; // kg, one N2 molecule
+  const DEPTH = 10e-9; // the slab is this thick, which turns area into volume
+  const BOX_W = 60e-9, BOX_H = 45e-9; // metres
+  const RADIUS = 0.28e-9; // real collision size, dilute enough to stay ideal
+  // The piston follows the slider live, but its velocity is ramped rather than
+  // switched, so the gas never sees a discontinuity. Above roughly a third of
+  // the molecular speed the compression stops being quasi-static and starts
+  // being a shock, which the scene says out loud when it happens.
+  const PISTON_MAX = 260; // m/s
+  const PISTON_CHASE = 40e-12; // seconds of gas time to close the gap
+  const PISTON_SMOOTH = 1.6e-12; // how long the velocity takes to change
+
+  const state = {
+    n: 300,
+    temp: 300, // wall temperature, K
+    piston: 1, // fraction of the box the piston leaves
+    walls: 'bath' as 'bath' | 'insulated',
+    rate: 1,
+    running: true,
+    trail: false,
+    hits: true,
+  };
+
+  type P = { x: number; y: number; vx: number; vy: number };
+  let parts: P[] = [];
+  let pistonX = BOX_W; // metres
+  let pistonV = 0; // metres per second, from the slider being dragged
+  let impulse = 0; // momentum delivered to the walls since the last window
+  let window_ = 0; // seconds that impulse has been accumulating over
+  let pressure = 0; // Pa, from the impacts
+  let pFast = 0; // a quick average, for while the piston is moving
+  let cumImp = 0, cumT = 0; // the long average, which is what a gauge reads
+  let hitCount = 0;
+  let simTime = 0;
+  type Flash = { x: number; y: number; life: number };
+  let flashes: Flash[] = [];
+  let trail: { x: number; y: number }[] = [];
+  type PVPoint = { v: number; p: number };
+  let pvPath: PVPoint[] = [];
+  // Where the gas was when the piston last stood still: the curves in the P-V
+  // panel are drawn through this, so a moving path can be compared with them.
+  let ref = { v: 0, p: 0, T: 300 };
+
+  const volume = () => pistonX * BOX_H * DEPTH; // m³
+  const area = () => pistonX * BOX_H;
+
+  /** Temperature straight from the molecules: in 2D, mean KE = kT. */
+  function temperature() {
+    if (!parts.length) return 0;
+    let s = 0;
+    for (const p of parts) s += p.vx * p.vx + p.vy * p.vy;
+    return (MASS * (s / parts.length)) / (2 * KB);
+  }
+  const vThermal = (T: number) => Math.sqrt((2 * KB * T) / MASS);
+
+  function build() {
+    parts = [];
+    pistonX = BOX_W * state.piston;
+    // Everyone starts with the same speed, so the spread that appears later
+    // can only have come from the collisions.
+    const v0 = vThermal(state.temp);
+    for (let i = 0; i < state.n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      parts.push({
+        x: RADIUS + Math.random() * (pistonX - 2 * RADIUS),
+        y: RADIUS + Math.random() * (BOX_H - 2 * RADIUS),
+        vx: Math.cos(a) * v0,
+        vy: Math.sin(a) * v0,
+      });
+    }
+    impulse = 0;
+    window_ = 0;
+    pressure = 0;
+    pFast = 0;
+    cumImp = 0;
+    cumT = 0;
+    hitCount = 0;
+    simTime = 0;
+    flashes = [];
+    trail = [];
+    pvPath = [];
+  }
+
+  function flash(x: number, y: number) {
+    if (!state.hits) return;
+    flashes.push({ x, y, life: 1 });
+    if (flashes.length > 60) flashes.shift();
+  }
+
+  /** A standard normal, for the tangential kick a hot wall gives. */
+  function gauss() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  /**
+   * A wall in a heat bath forgets what hit it and hands back a fresh molecule
+   * drawn from the wall's own temperature. The normal component has to be
+   * flux weighted (fast molecules leave more often, p ∝ v e^(−mv²/2kT)) while
+   * the tangential one is plain Gaussian. Getting that weighting wrong makes
+   * the wall quietly cool or heat the gas it is supposed to be holding steady.
+   */
+  function wallBounce(p: P, axis: 'x' | 'y', sign: number) {
+    if (state.walls === 'bath') {
+      const vp = Math.sqrt((KB * state.temp) / MASS); // kT/m, one dimension
+      const vn = vp * Math.sqrt(-2 * Math.log(1 - Math.random() * 0.999999));
+      const vt = vp * gauss();
+      if (axis === 'x') {
+        p.vx = sign * vn;
+        p.vy = vt;
+      } else {
+        p.vy = sign * vn;
+        p.vx = vt;
+      }
+    } else {
+      if (axis === 'x') p.vx = sign * Math.abs(p.vx);
+      else p.vy = sign * Math.abs(p.vy);
+    }
+  }
+
+  function step(dt: number) {
+    // Follow the slider, but through a rate limit and then a velocity ramp, so
+    // however fast the slider is thrown the wall itself always accelerates
+    // smoothly and no molecule is ever teleported through it.
+    const targetPiston = BOX_W * state.piston;
+    const desired = Math.max(
+      -PISTON_MAX,
+      Math.min(PISTON_MAX, (targetPiston - pistonX) / PISTON_CHASE)
+    );
+    pistonV += (desired - pistonV) * Math.min(1, dt / PISTON_SMOOTH);
+    // Snap the last fraction of a nanometre so the wall genuinely comes to rest
+    // and the long pressure average has something steady to average over.
+    if (Math.abs(targetPiston - pistonX) < 5e-11) {
+      pistonX = targetPiston;
+      pistonV = 0;
+    }
+    let stepMove = pistonV * dt;
+    // never overshoot the slider
+    const gap = targetPiston - pistonX;
+    if (Math.abs(stepMove) > Math.abs(gap)) {
+      stepMove = gap;
+      pistonV = dt > 0 ? gap / dt : 0;
+    }
+    pistonX += stepMove;
+    // keep every molecule on the gas side of the wall, however fast it moved
+    for (const p of parts) if (p.x > pistonX - RADIUS) p.x = pistonX - RADIUS;
+
+    for (const p of parts) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      // Every bounce below books the momentum actually handed to the wall,
+      // m|Δv|, rather than assuming a mirror reflection. With a thermostat the
+      // molecule leaves at a different speed than it arrived, and assuming
+      // otherwise inflates the measured pressure by half.
+      if (p.x < RADIUS) {
+        p.x = RADIUS;
+        const before = p.vx;
+        wallBounce(p, 'x', 1);
+        impulse += MASS * Math.abs(p.vx - before);
+        hitCount++;
+        flash(0, p.y);
+      } else if (p.x > pistonX - RADIUS) {
+        p.x = pistonX - RADIUS;
+        const before = p.vx;
+        const u = pistonV;
+        // Bouncing off a moving wall: reflect in the wall's own frame, which
+        // is exactly why squeezing a gas heats it.
+        if (state.walls === 'insulated') p.vx = 2 * u - p.vx;
+        else {
+          wallBounce(p, 'x', -1);
+          p.vx += u;
+        }
+        impulse += MASS * Math.abs(p.vx - before);
+        hitCount++;
+        flash(pistonX, p.y);
+      }
+      if (p.y < RADIUS) {
+        p.y = RADIUS;
+        const before = p.vy;
+        wallBounce(p, 'y', 1);
+        impulse += MASS * Math.abs(p.vy - before);
+        hitCount++;
+        flash(p.x, 0);
+      } else if (p.y > BOX_H - RADIUS) {
+        p.y = BOX_H - RADIUS;
+        const before = p.vy;
+        wallBounce(p, 'y', -1);
+        impulse += MASS * Math.abs(p.vy - before);
+        hitCount++;
+        flash(p.x, BOX_H);
+      }
+    }
+
+    collide();
+
+    window_ += dt;
+    simTime += dt;
+    if (Math.abs(pistonV) < 1e-6 && pressure > 0) ref = { v: volume(), p: pressure, T: temperature() };
+    if (state.trail && parts.length) {
+      trail.push({ x: parts[0].x, y: parts[0].y });
+      if (trail.length > 900) trail.shift();
+    }
+    for (let k = flashes.length - 1; k >= 0; k--) {
+      flashes[k].life -= dt * 4e12;
+      if (flashes[k].life <= 0) flashes.splice(k, 1);
+    }
+  }
+
+  /** Elastic hard-disk collisions, found with a grid so N can be large. */
+  function collide() {
+    const cell = RADIUS * 3;
+    const cols = Math.max(1, Math.ceil(pistonX / cell));
+    const rows = Math.max(1, Math.ceil(BOX_H / cell));
+    const grid: number[][] = new Array(cols * rows);
+    for (let i = 0; i < parts.length; i++) {
+      const c = Math.min(cols - 1, Math.max(0, Math.floor(parts[i].x / cell)));
+      const r = Math.min(rows - 1, Math.max(0, Math.floor(parts[i].y / cell)));
+      const k = r * cols + c;
+      (grid[k] ||= []).push(i);
+    }
+    const d2 = (2 * RADIUS) * (2 * RADIUS);
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        const here = grid[r * cols + c];
+        if (!here) continue;
+        for (let dr = 0; dr <= 1; dr++)
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc < 0) continue;
+            const rr = r + dr, cc = c + dc;
+            if (rr >= rows || cc < 0 || cc >= cols) continue;
+            const there = grid[rr * cols + cc];
+            if (!there) continue;
+            for (const i of here)
+              for (const j of there) {
+                if (j <= i) continue;
+                const a = parts[i], b = parts[j];
+                const dx = b.x - a.x, dy = b.y - a.y;
+                const dist2 = dx * dx + dy * dy;
+                if (dist2 > d2 || dist2 === 0) continue;
+                const dist = Math.sqrt(dist2);
+                const nx = dx / dist, ny = dy / dist;
+                const dvx = b.vx - a.vx, dvy = b.vy - a.vy;
+                const rel = dvx * nx + dvy * ny;
+                if (rel > 0) continue; // already separating
+                // equal masses: they simply swap the normal component
+                a.vx += rel * nx;
+                a.vy += rel * ny;
+                b.vx -= rel * nx;
+                b.vy -= rel * ny;
+                const push = (2 * RADIUS - dist) / 2;
+                a.x -= nx * push;
+                a.y -= ny * push;
+                b.x += nx * push;
+                b.y += ny * push;
+              }
+          }
+      }
+  }
+
+  // --- formatting ------------------------------------------------------------
+
+  function eng(x: number, unit: string, digits = 2): string {
+    const a = Math.abs(x);
+    if (a === 0) return `0 ${unit}`;
+    const steps: [number, string][] = [
+      [1e-24, 'y'], [1e-21, 'z'], [1e-18, 'a'], [1e-15, 'f'],
+      [1e-12, 'p'], [1e-9, 'n'], [1e-6, 'µ'], [1e-3, 'm'],
+      [1, ''], [1e3, 'k'], [1e6, 'M'], [1e9, 'G'],
+    ];
+    let pick = steps[0];
+    for (const s of steps) if (a >= s[0]) pick = s;
+    return `${(x / pick[0]).toFixed(digits)} ${pick[1]}${unit}`;
+  }
+  const nm3 = (v: number) => `${(v * 1e27).toFixed(0)} nm³`;
+
+  // --- canvas ----------------------------------------------------------------
+
+  const canvas = document.getElementById('gas') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+  const bg = () => cssVar('--stage-bg') || '#0d0e12';
+  const { label, textWidth } = makeText(ctx, inkA);
+
+  const COOL = '#5b8cff';
+  const HOT = '#f9736a';
+  const ACC = '#7c8cff';
+  const WARM = '#f59e0b';
+  const GREEN = '#34d399';
+  const BAD_RED = '#ef4444';
+
+  const BOX = { x: 20, y: 86, w: 640, h: 560 };
+  const HIST = { x: 680, y: 86, w: 300, h: 280 };
+  const PV = { x: 680, y: 406, w: 300, h: 240 };
+  const NOTE = { x: 20, y: 686, w: 960, h: 174 };
+
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+  function panel(p: { x: number; y: number; w: number; h: number }, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(p.x, p.y, p.w, p.h, 10);
+    ctx.stroke();
+    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+  }
+  function arrow(x1: number, y1: number, x2: number, y2: number, size = 5) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - size * Math.cos(a - 0.4), y2 - size * Math.sin(a - 0.4));
+    ctx.lineTo(x2 - size * Math.cos(a + 0.4), y2 - size * Math.sin(a + 0.4));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // --- the box ---------------------------------------------------------------
+
+  const inner = () => ({
+    x: BOX.x + 46,
+    y: BOX.y + 54,
+    w: BOX.w - 92,
+    h: BOX.h - 130,
+  });
+  const SX = (x: number) => inner().x + (x / BOX_W) * inner().w;
+  const SY = (y: number) => inner().y + (y / BOX_H) * inner().h;
+
+  function speedColour(v: number, vref: number) {
+    const f = Math.max(0, Math.min(1, (v / (vref * 1.35)) ** 1.6));
+    const r = Math.round(91 + f * (249 - 91));
+    const g = Math.round(140 + f * (115 - 140));
+    const b = Math.round(255 + f * (106 - 255));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function drawBox() {
+    panel(BOX, 'THE GAS ITSELF');
+    const b = inner();
+    const px = SX(pistonX);
+    const T = temperature();
+    const vref = vThermal(state.temp);
+
+    ctx.fillStyle = inkA(0.03);
+    ctx.fillRect(b.x, b.y, px - b.x, b.h);
+    ctx.strokeStyle = inkA(0.28);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px, b.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.lineTo(b.x, b.y + b.h);
+    ctx.lineTo(px, b.y + b.h);
+    ctx.stroke();
+
+    // the piston, with a handle so it reads as the thing you are pushing
+    ctx.fillStyle = inkA(0.32);
+    rr(px, b.y - 6, 16, b.h + 12, 3);
+    ctx.fill();
+    ctx.fillStyle = inkA(0.18);
+    ctx.fillRect(px + 16, b.y + b.h / 2 - 5, 26, 10);
+    if (Math.abs(pistonV) > 1) {
+      ctx.strokeStyle = WARM;
+      ctx.fillStyle = WARM;
+      ctx.lineWidth = 2;
+      const dir = Math.sign(pistonV);
+      arrow(px + 52, b.y + b.h / 2, px + 52 + dir * 30, b.y + b.h / 2, 7);
+      const vrms = Math.sqrt((2 * KB * temperature()) / MASS);
+      // Past roughly the sound speed a squeeze piles up into a shock rather
+      // than compressing the gas evenly.
+      const shock = Math.abs(pistonV) > 0.45 * vrms;
+      const cap = shock ? 'too fast: shock' : pistonV < 0 ? 'squeezing' : 'expanding';
+      const room = BOX.x + BOX.w - 12 - (px + 24);
+      const fits = textWidth(cap, 12) < room;
+      label(cap, fits ? px + 24 : px - 14, b.y + b.h / 2 - 12, 0.85, fits ? 'left' : 'right', 12, shock ? BAD_RED : WARM);
+    }
+
+    if (state.trail && trail.length > 1) {
+      ctx.strokeStyle = inkA(0.28);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      trail.forEach((p, k) => (k ? ctx.lineTo(SX(p.x), SY(p.y)) : ctx.moveTo(SX(p.x), SY(p.y))));
+      ctx.stroke();
+    }
+
+    const rpx = Math.max(3, (RADIUS / BOX_W) * b.w);
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const v = Math.hypot(p.vx, p.vy);
+      ctx.fillStyle = speedColour(v, vref);
+      ctx.beginPath();
+      ctx.arc(SX(p.x), SY(p.y), rpx, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (state.trail && parts.length) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(SX(parts[0].x), SY(parts[0].y), rpx + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    for (const f of flashes) {
+      const a = Math.max(0, f.life);
+      ctx.strokeStyle = `rgba(245,158,11,${a * 0.9})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(SX(f.x), SY(f.y), 3 + (1 - a) * 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    label(`T = ${T.toFixed(0)} K`, b.x, b.y - 16, 0.85, 'left', 14, HOT);
+    label(`P = ${eng(pressure, 'Pa', 2)}`, b.x + 190, b.y - 16, 0.85, 'left', 14, WARM);
+    label(`V = ${nm3(volume())}`, b.x + 400, b.y - 16, 0.85, 'left', 14, ACC);
+
+    // the pressure gauge: impacts turning into a number
+    const gy = b.y + b.h + 30;
+    const pmax = Math.max(1e5, pressure * 1.4);
+    label('pressure', b.x, gy + 12, 0.5, 'left', 11);
+    ctx.fillStyle = inkA(0.07);
+    rr(b.x + 90, gy, b.w - 90, 16, 4);
+    ctx.fill();
+    ctx.fillStyle = WARM;
+    rr(b.x + 90, gy, Math.max(2, (pressure / pmax) * (b.w - 90)), 16, 4);
+    ctx.fill();
+    label(eng(pressure, 'Pa', 2), b.x + b.w - 8, gy + 12, 0.8, 'right', 11);
+  }
+
+  // --- speed histogram -------------------------------------------------------
+
+  function drawHist() {
+    panel(HIST, 'HOW FAST THEY ARE');
+    const px = HIST.x + 40, py = HIST.y + 26, pw = HIST.w - 58, ph = HIST.h - 66;
+    const T = Math.max(1, temperature());
+    const vmax = vThermal(Math.max(state.temp, T)) * 2.6;
+    const NB = 26;
+    const bins = new Array(NB).fill(0);
+    for (const p of parts) {
+      const v = Math.hypot(p.vx, p.vy);
+      const k = Math.floor((v / vmax) * NB);
+      if (k >= 0 && k < NB) bins[k]++;
+    }
+    const top = Math.max(1, ...bins);
+    for (let k = 0; k < NB; k++) {
+      const x = px + (k * pw) / NB;
+      const h = (bins[k] / top) * ph;
+      ctx.fillStyle = speedColour(((k + 0.5) / NB) * vmax, vThermal(state.temp));
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(x + 1, py + ph - h, pw / NB - 2, h);
+      ctx.globalAlpha = 1;
+    }
+    // Maxwell-Boltzmann in two dimensions: f(v) ∝ v exp(−mv²/2kT)
+    ctx.strokeStyle = GREEN;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let fmax = 0;
+    const f = (v: number) => v * Math.exp((-MASS * v * v) / (2 * KB * T));
+    for (let k = 0; k <= 120; k++) fmax = Math.max(fmax, f((k / 120) * vmax));
+    for (let k = 0; k <= 120; k++) {
+      const v = (k / 120) * vmax;
+      const y = py + ph - (f(v) / fmax) * ph * (top / Math.max(top, 1));
+      k ? ctx.lineTo(px + (v / vmax) * pw, y) : ctx.moveTo(px + (v / vmax) * pw, y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = inkA(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.lineTo(px + pw, py + ph);
+    ctx.stroke();
+    label('0', px, py + ph + 16, 0.35, 'center', 10);
+    label(`${(vmax).toFixed(0)} m/s`, px + pw, py + ph + 16, 0.35, 'right', 10);
+    label('Maxwell-Boltzmann', px + pw, py + 12, 0.8, 'right', 10, GREEN);
+    label('nobody wrote this curve into the code', px, HIST.y + HIST.h - 14, 0.4, 'left', 10);
+  }
+
+  // --- P-V diagram -----------------------------------------------------------
+
+  function drawPV() {
+    panel(PV, 'WHERE THE GAS IS, ON A P-V PLOT');
+    const px = PV.x + 54, py = PV.y + 22, pw = PV.w - 74, ph = PV.h - 62;
+    const vmin = BOX_W * 0.28 * BOX_H * DEPTH, vmax = BOX_W * BOX_H * DEPTH * 1.06;
+    const N = parts.length;
+    const pAt = (v: number, T: number) => (N * KB * T) / v;
+    const pmax = Math.max(pAt(vmin, Math.max(state.temp, temperature())) * 0.75, 1e5);
+    const X = (v: number) => px + ((v - vmin) / (vmax - vmin)) * pw;
+    const Y = (p: number) => py + ph - Math.min(1, p / pmax) * ph;
+
+    ctx.strokeStyle = inkA(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.lineTo(px + pw, py + ph);
+    ctx.stroke();
+
+    // a few isotherms for scale
+    for (const T of [150, 300, 600, 1000]) {
+      ctx.strokeStyle = inkA(0.14);
+      ctx.beginPath();
+      for (let k = 0; k <= 60; k++) {
+        const v = vmin + ((vmax - vmin) * k) / 60;
+        k ? ctx.lineTo(X(v), Y(pAt(v, T))) : ctx.moveTo(X(v), Y(pAt(v, T)));
+      }
+      ctx.stroke();
+    }
+
+    // From where the piston last rested: the isotherm you would follow with the
+    // walls held at a temperature, and the adiabat you would follow insulated.
+    // In two dimensions γ = 2.
+    const v0 = ref.v > 0 ? ref.v : volume(), p0 = ref.p > 0 ? ref.p : pressure;
+    for (const [gamma, col] of [[1, 'rgba(124,140,255,0.6)'], [2, 'rgba(245,158,11,0.6)']] as [number, string][]) {
+      ctx.strokeStyle = col;
+      ctx.setLineDash(gamma === 2 ? [5, 4] : [2, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let k = 0; k <= 60; k++) {
+        const v = vmin + ((vmax - vmin) * k) / 60;
+        const p = p0 * Math.pow(v0 / v, gamma);
+        k ? ctx.lineTo(X(v), Y(p)) : ctx.moveTo(X(v), Y(p));
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    if (pvPath.length > 1) {
+      ctx.strokeStyle = GREEN;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      pvPath.forEach((q, k) => (k ? ctx.lineTo(X(q.v), Y(q.p)) : ctx.moveTo(X(q.v), Y(q.p))));
+      ctx.stroke();
+    }
+    ctx.fillStyle = GREEN;
+    ctx.beginPath();
+    ctx.arc(X(volume()), Y(pressure), 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    label('V', px + pw, py + ph + 16, 0.4, 'right', 10);
+    label('P', px - 8, py + 8, 0.4, 'right', 10);
+    label('isotherm from here', px + 6, py + 12, 0.55, 'left', 10, ACC);
+    label('adiabat from here', px + 6, py + 26, 0.55, 'left', 10, WARM);
+    label('the path you take', px + 6, py + 40, 0.55, 'left', 10, GREEN);
+  }
+
+  // --- the explainer strip ---------------------------------------------------
+
+  function drawNote() {
+    panel(NOTE, 'WHAT PRESSURE ACTUALLY IS');
+    const T = temperature();
+    const N = parts.length;
+    const pLaw = (N * KB * T) / volume();
+    const x0 = NOTE.x + 28;
+
+    label('one molecule hits a wall', x0, NOTE.y + 34, 0.6, 'left', 13, HOT);
+    label('it turns round, so its momentum changes by 2mv', x0, NOTE.y + 56, 0.45, 'left', 11);
+    label('add every hit over a while, divide by area and time', x0, NOTE.y + 78, 0.45, 'left', 11);
+    label(`${hitCount.toLocaleString()} hits counted so far`, x0, NOTE.y + 100, 0.55, 'left', 11, WARM);
+
+    const mx = NOTE.x + 400;
+    label('measured from the impacts', mx, NOTE.y + 34, 0.6, 'left', 13, WARM);
+    label(eng(pressure, 'Pa', 3), mx, NOTE.y + 62, 0.9, 'left', 16, WARM);
+    label('what the gas law says', mx, NOTE.y + 96, 0.6, 'left', 13, ACC);
+    label(eng(pLaw, 'Pa', 3), mx, NOTE.y + 124, 0.9, 'left', 16, ACC);
+
+    const ratio = pLaw > 0 ? pressure / pLaw : 0;
+    const rx = NOTE.x + 700;
+    label('P V / N k T', rx, NOTE.y + 34, 0.6, 'left', 13, GREEN);
+    label(ratio.toFixed(3), rx, NOTE.y + 68, 0.95, 'left', 22, GREEN);
+    label('nothing forces these to agree,', rx, NOTE.y + 96, 0.42, 'left', 11);
+    label('one is counted and one is derived', rx, NOTE.y + 112, 0.42, 'left', 11);
+    // Only worth naming once the gas has settled: while the piston is moving
+    // the gauge is chasing a moving target and the gap means nothing.
+    if (Math.abs(pistonV) > 1)
+      label('the piston is moving, let it settle', rx, NOTE.y + 132, 0.5, 'left', 11, WARM);
+    else if (ratio > 1.02)
+      label(
+        `the extra ${((ratio - 1) * 100).toFixed(0)}% is the room the molecules themselves take up`,
+        rx,
+        NOTE.y + 132,
+        0.5,
+        'left',
+        11,
+        WARM
+      );
+
+    label(
+      `each molecule carries kT on average: at ${T.toFixed(0)} K that is ${eng(KB * T, 'J', 1)}, or ${(((KB * T) / 1.602e-19) * 1000).toFixed(1)} meV`,
+      x0,
+      NOTE.y + NOTE.h - 18,
+      0.4,
+      'left',
+      11
+    );
+  }
+
+  // --- readouts --------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, lab: string, val: string) => {
+    el('l' + n).innerHTML = subHtml(lab);
+    el('r' + n).textContent = val;
+  };
+  function updateReadout() {
+    const T = temperature();
+    const N = parts.length;
+    const pLaw = (N * KB * T) / volume();
+    setRow(1, 'Pressure, measured', eng(pressure, 'Pa', 2));
+    setRow(2, 'Pressure, from NkT/V', eng(pLaw, 'Pa', 2));
+    setRow(3, 'Temperature', `${T.toFixed(1)} K`);
+    setRow(4, 'Volume', nm3(volume()));
+    setRow(5, 'Speed v_rms', `${Math.sqrt((2 * KB * T) / MASS).toFixed(0)} m/s`);
+    setRow(6, 'PV / NkT', pLaw > 0 ? (pressure / pLaw).toFixed(3) : '—');
+    setRow(7, 'Wall hits', hitCount.toLocaleString());
+  }
+
+  // --- loop ------------------------------------------------------------------
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    label('Ideal Gas', 20, 30, 0.85, 'left', 14);
+    label(
+      state.walls === 'bath'
+        ? 'the walls hold the temperature, so squeezing is isothermal'
+        : 'insulated: the only way in or out for energy is the piston',
+      20,
+      52,
+      0.5,
+      'left',
+      11,
+      GREEN
+    );
+    const legend: [string, string][] = [
+      [COOL, 'slow'],
+      [HOT, 'fast'],
+      [WARM, 'wall hit'],
+    ];
+    let x = W - 20;
+    for (let k = legend.length - 1; k >= 0; k--) {
+      const [c, tx] = legend[k];
+      const tw = textWidth(tx, 11);
+      label(tx, x, 30, 0.55, 'right', 11);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(x - tw - 11, 26, 5, 0, Math.PI * 2);
+      ctx.fill();
+      x -= tw + 30;
+    }
+    drawBox();
+    drawHist();
+    drawPV();
+    drawNote();
+  }
+
+  let last = performance.now();
+  let pvClock = 0;
+  function frame(now: number) {
+    let dtReal = (now - last) / 1000;
+    last = now;
+    dtReal = Math.min(0.05, Math.max(0, dtReal));
+    if (state.running) {
+      // Molecules cross the box in about a tenth of a nanosecond, so gas time
+      // runs at roughly 30 ps per second of screen time.
+      const dt = 8e-14 * state.rate;
+      const steps = Math.min(12, Math.max(1, Math.round(dtReal / 0.004)));
+      for (let s = 0; s < steps; s++) step(dt);
+      // Pressure is the impulse rate over the wall area. A handful of hits per
+      // frame is a very noisy number, so it is averaged over about a second of
+      // watching: that is what a real gauge does too.
+      if (window_ > 0) {
+        const wallLen = 2 * (pistonX + BOX_H) * DEPTH;
+        const rate = impulse / (window_ * wallLen);
+        pFast = pFast === 0 ? rate : pFast * 0.96 + rate * 0.04;
+        // A few hundred hits is a noisy sample. Once the piston is still, the
+        // average runs over everything since it stopped, which is what a real
+        // gauge does and what makes PV/NkT settle down.
+        if (Math.abs(pistonV) > 1e-6) {
+          cumImp = 0;
+          cumT = 0;
+          pressure = pFast;
+        } else {
+          cumImp += impulse;
+          cumT += window_;
+          pressure = cumT > 0 ? cumImp / (cumT * wallLen) : pFast;
+        }
+        impulse = 0;
+        window_ = 0;
+      }
+      pvClock += dtReal;
+      if (pvClock > 0.08) {
+        pvClock = 0;
+        pvPath.push({ v: volume(), p: pressure });
+        if (pvPath.length > 260) pvPath.shift();
+      }
+    }
+    draw();
+    updateReadout();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls --------------------------------------------------------------
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('reset').addEventListener('click', build);
+
+  function bindRange(id: string, apply: (n: number) => void, rebuild = false) {
+    const inp = el(id) as HTMLInputElement;
+    const run = () => {
+      apply(+inp.value);
+      if (rebuild) build();
+    };
+    inp.addEventListener('input', run);
+    apply(+inp.value);
+  }
+  bindRange('n', (n) => {
+    state.n = n;
+    el('nval').textContent = String(n);
+  }, true);
+  bindRange('temp', (n) => {
+    state.temp = n;
+    el('tval').textContent = `${n} K`;
+    cumImp = 0;
+    cumT = 0;
+  });
+  bindRange('piston', (n) => {
+    state.piston = n / 100;
+    el('vol').textContent = nm3(BOX_W * state.piston * BOX_H * DEPTH);
+  });
+  bindRange('rate', (n) => {
+    state.rate = n / 100;
+    el('rateval').textContent = `${state.rate.toFixed(1)}×`;
+  });
+  (el('trail') as HTMLInputElement).addEventListener('change', (e) => {
+    state.trail = (e.target as HTMLInputElement).checked;
+    trail = [];
+  });
+  (el('hits') as HTMLInputElement).addEventListener('change', (e) => {
+    state.hits = (e.target as HTMLInputElement).checked;
+  });
+  el('walls').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#walls button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.walls = btn.dataset.w as 'bath' | 'insulated';
+    pvPath = [];
+    cumImp = 0;
+    cumT = 0;
+  });
+
+  build();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .gas-canvas {
+    touch-action: none;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
+</style>

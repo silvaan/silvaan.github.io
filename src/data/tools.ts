@@ -113,6 +113,38 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'line-integral',
+        title: 'Line Integrals',
+        description:
+          'Ride a bead along a curve through a field in 3D and add up only the part of the field that points your way. Bend the path and find out whether the total cared, which is the whole difference between a conservative field and a swirling one.',
+        href: '/simulations/calculus/line-integral',
+        status: 'live',
+      },
+      {
+        slug: 'green-theorem',
+        title: "Green's Theorem",
+        description:
+          'Walk the rim of a tiny square and add up how much the field pushes you along. Tile a whole region with those squares and every inner edge gets walked twice, once each way, and cancels. All that survives is the outer rim.',
+        href: '/simulations/calculus/green-theorem',
+        status: 'live',
+      },
+      {
+        slug: 'stokes-theorem',
+        title: "Stokes' Theorem",
+        description:
+          'Tile a surface in space with tiny loops and add up the spin of each. The interior edges cancel in pairs and the whole sum falls onto the curve around the edge. Then bend the surface into a dome: the answer refuses to move.',
+        href: '/simulations/calculus/stokes-theorem',
+        status: 'live',
+      },
+      {
+        slug: 'gauss-theorem',
+        title: "Gauss's Divergence Theorem",
+        description:
+          'Put a tiny box in a flow and count what leaks out of its six walls. Fill a region with those boxes and every inner wall is shared by two of them, so the enormous sum collapses onto the outer skin alone.',
+        href: '/simulations/calculus/gauss-theorem',
+        status: 'live',
+      },
+      {
         slug: 'divergence',
         title: 'Divergence',
         description:
@@ -150,6 +182,22 @@ export const AREAS: Area[] = [
         description:
           'Spin a vector around the circle and watch where the matrix sends it. When the input and output line up, you have found an eigenvector.',
         href: '/simulations/linear-algebra/eigenvectors',
+        status: 'live',
+      },
+      {
+        slug: 'dot-product',
+        title: 'The Dot Product',
+        description:
+          'One length times the shadow the other casts on it, and the component formula falling out of that picture: break one vector into its three axis steps and add up the shadow each one casts.',
+        href: '/simulations/linear-algebra/dot-product',
+        status: 'live',
+      },
+      {
+        slug: 'cross-product',
+        title: 'The Cross Product',
+        description:
+          'Two vectors span a patch of area. Its size is the length of the answer and its tilt is the direction, and every component of the formula is the signed area of that patch\u2019s shadow on one of the walls.',
+        href: '/simulations/linear-algebra/cross-product',
         status: 'live',
       },
       {
@@ -417,6 +465,22 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'ideal-gas',
+        title: 'Ideal Gas',
+        description:
+          'A few hundred molecules bouncing in a box, and nothing else. Pressure is the drumming of their impacts, temperature is how fast they are, and PV = NkT is what the counting adds up to.',
+        href: '/simulations/physics/ideal-gas',
+        status: 'live',
+      },
+      {
+        slug: 'stationary-action',
+        title: 'Stationary Action',
+        description:
+          'Bend the path a particle takes between two fixed events and watch its action get worse. The path is painted with its own Lagrangian, the shaded area under L is the action, and rolling that downhill is Newton in disguise.',
+        href: '/simulations/physics/stationary-action',
+        status: 'live',
+      },
+      {
         slug: 'band-theory',
         title: 'Band Theory',
         description:
@@ -425,35 +489,27 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'capacitor',
-        title: 'Capacitor',
-        description:
-          'Every charge is a ball you can count. Drive the source by hand or with AC, and watch electrons get dragged off one plate, round the circuit, onto the other, building the field that finally pushes back.',
-        href: '/simulations/physics/capacitor',
-        status: 'live',
-      },
-      {
-        slug: 'inductor',
-        title: 'Inductor',
-        description:
-          'A flywheel for charge. Shove the source by hand and the electrons will not jump, only ramp, and when you cut them off the collapsing field produces hundreds of times the battery voltage to keep them moving.',
-        href: '/simulations/physics/inductor',
-        status: 'live',
-      },
-      {
-        slug: 'semiconductors',
-        title: 'Diodes & Transistors',
-        description:
-          'Pick a diode or a transistor and watch electrons and holes move through it while you drive the external circuit. A one-way valve, then a valve with a knob, both made of a barrier you can raise and lower.',
-        href: '/simulations/physics/semiconductors',
-        status: 'live',
-      },
-      {
         slug: 'schrodinger',
         title: 'Schrödinger Equation',
         description:
           'Launch a quantum wave packet at a barrier taller than its energy and watch part of it tunnel through, the wave nature of matter in action.',
         href: '/simulations/physics/schrodinger',
+        status: 'live',
+      },
+      {
+        slug: 'fission',
+        title: 'Nuclear Fission',
+        description:
+          'One neutron splits one nucleus and two more fly out. Turn the enrichment, the size and the control rods and watch the chain die, hold steady, or run away, the same knobs that separate a warm reactor from Chernobyl and from Hiroshima.',
+        href: '/simulations/physics/fission',
+        status: 'live',
+      },
+      {
+        slug: 'fusion',
+        title: 'Nuclear Fusion',
+        description:
+          'Slam light nuclei together hard enough to tunnel through their own repulsion. Crank the temperature, the density and the confinement and chase the one line every star and every reactor has to cross: power out beating power lost.',
+        href: '/simulations/physics/fusion',
         status: 'live',
       },
       // Hidden from the listings for now. The page itself still exists at
@@ -489,6 +545,39 @@ export const AREAS: Area[] = [
         description:
           'Fall down the curved-space funnel of a black hole. Clocks run slow deep in the well and a proper meter swallows less coordinate distance near the horizon.',
         href: '/simulations/physics/schwarzschild',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'electronics',
+    title: 'Electronics',
+    description:
+      'The components a circuit is built from, opened up: charge, fields and carriers doing the work.',
+    icon: 'M6 6h12v12H6z M9 3v3 M15 3v3 M9 18v3 M15 18v3 M3 9h3 M3 15h3 M18 9h3 M18 15h3',
+    simulators: [
+      {
+        slug: 'semiconductors',
+        title: 'Diodes & Transistors',
+        description:
+          'Pick a diode or a transistor and watch electrons and holes move through it while you drive the external circuit. A one-way valve, then a valve with a knob, both made of a barrier you can raise and lower.',
+        href: '/simulations/electronics/semiconductors',
+        status: 'live',
+      },
+      {
+        slug: 'capacitor',
+        title: 'Capacitor',
+        description:
+          'Every charge is a ball you can count. Drive the source by hand or with AC, and watch electrons get dragged off one plate, round the circuit, onto the other, building the field that finally pushes back.',
+        href: '/simulations/electronics/capacitor',
+        status: 'live',
+      },
+      {
+        slug: 'inductor',
+        title: 'Inductor',
+        description:
+          'A flywheel for charge. Shove the source by hand and the electrons will not jump, only ramp, and when you cut them off the collapsing field produces hundreds of times the battery voltage to keep them moving.',
+        href: '/simulations/electronics/inductor',
         status: 'live',
       },
     ],

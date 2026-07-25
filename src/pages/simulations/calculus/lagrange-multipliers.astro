@@ -5,14 +5,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Lagrange Multipliers"
-  description="To optimize something under a constraint, walk along the constraint until you can't climb any higher without leaving it. That happens exactly where the objective's contour is tangent to the constraint, where the two gradients line up."
+  description="Stand the objective up as a hill and the constraint becomes a fence winding across it. Walk the fence to its highest point. There the ground below is tangent to a contour line, which is exactly the statement that the two gradients line up."
 >
   <div class="sim">
     <div class="sim-stage">
-      <canvas id="lag" width="600" height="600"></canvas>
+      <canvas id="lag" class="lag-canvas" width="1000" height="720"></canvas>
     </div>
 
     <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="snap">Walk to the top</button>
+      </div>
+
       <div class="control">
         <label>Objective f(x, y)</label>
         <div class="seg" id="obj">
@@ -22,235 +27,536 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         </div>
       </div>
 
-      <button class="btn" id="snap">Snap to maximum</button>
+      <div class="control">
+        <label>Where on the fence <b id="thval">40°</b></label>
+        <input type="range" id="theta" min="0" max="360" step="1" value="40" />
+      </div>
+
+      <label class="check"><input type="checkbox" id="wall" checked /> Show the constraint wall</label>
+      <label class="check"><input type="checkbox" id="spin" /> Spin the scene</label>
 
       <div class="readout">
-        <div class="row"><span>f at point</span><b id="fval">—</b></div>
-        <div class="row"><span>∠(∇f, ∇g)</span><b id="ang">—</b></div>
-        <div class="row"><span>Multiplier λ</span><b id="lam">—</b></div>
+        <div class="row"><span id="l1">Height f here</span><b id="r1">—</b></div>
+        <div class="row"><span id="l2">Slope along the fence</span><b id="r2">—</b></div>
+        <div class="row"><span id="l3">∠(∇f, ∇g)</span><b id="r3">—</b></div>
+        <div class="row"><span id="l4">Multiplier λ</span><b id="r4">—</b></div>
+        <div class="row"><span id="l5">Verdict</span><b id="r5">—</b></div>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        The circle is the constraint g = x² + y² − 1 = 0. Drag the point around
-        it. The amber curve is the objective's contour through the point; ∇f is
-        indigo, ∇g is teal.
+        Drag to orbit, scroll to zoom. The hill is f, the amber loop is f along
+        the constraint circle, and the ball rolls to wherever the slope along the
+        fence is zero.
       </p>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Drag the point. Where the amber contour <b>crosses</b> the circle you can
-      still slide along the constraint to a higher contour, so it is not
-      optimal. The gradients point in different directions there.
+      The fence is the constraint circle lifted onto the hill, so its height is
+      the objective. Optimizing under a constraint is just <b>finding the highest
+      point of that fence</b>, and the flat spots are where walking along it
+      stops changing your height.
     </li>
     <li>
-      Slide to where the contour is <b>tangent</b> to the circle. Now ∇f and ∇g
-      are <b>parallel</b> (the angle hits 0°), and you cannot improve without
-      leaving the constraint. That is the maximum.
+      Watch the slope-along-the-fence readout as you drag. Where the contour on
+      the ground <b>crosses</b> the circle the slope is nonzero, so you can still
+      climb. At the top it passes through <b>zero</b>: the contour there is
+      tangent to the circle.
     </li>
     <li>
-      Tangency means <b>∇f = λ∇g</b> for some number λ, the Lagrange multiplier.
-      It measures how hard the constraint is pushing back on the objective.
+      Tangent contours mean the two ground gradients point the same way, so
+      <b>∇f = λ∇g</b>. The angle between them hits 0° exactly when the slope
+      along the fence hits 0. That is the whole method in one picture.
+    </li>
+    <li>
+      The multiplier λ is how steeply the peak height would rise if you let the
+      circle grow. Switch objectives: x · y gives four flat spots, two peaks and
+      two dips, and the fence has a top and a bottom to match.
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
 
-  type Obj = { f: (x: number, y: number) => number; g: (x: number, y: number) => [number, number] };
+  type Obj = {
+    f: (x: number, y: number) => number;
+    grad: (x: number, y: number) => [number, number];
+  };
   const OBJ: Record<string, Obj> = {
-    sum: { f: (x, y) => x + y, g: () => [1, 1] },
-    prod: { f: (x, y) => x * y, g: (x, y) => [y, x] },
-    tilt: { f: (x, y) => 2 * x + y, g: () => [2, 1] },
+    sum: { f: (x, y) => x + y, grad: () => [1, 1] },
+    prod: { f: (x, y) => x * y, grad: (x, y) => [y, x] },
+    tilt: { f: (x, y) => 2 * x + y, grad: () => [2, 1] },
   };
 
-  const state = { obj: 'sum', theta: 0.7 };
+  const state = {
+    obj: 'sum',
+    theta: (40 * Math.PI) / 180,
+    wall: true,
+    spin: false,
+    running: true,
+    yaw: 0.7,
+    pitch: 0.62,
+    zoom: 1,
+  };
 
   const canvas = document.getElementById('lag') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
-  const O = { x: W / 2, y: H / 2 };
-  const U = 150;
-  const DOM = 1.9;
-  const toPx = (x: number, y: number) => ({ px: O.x + x * U, py: O.y - y * U });
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+  const bg = () => cssVar('--stage-bg') || '#0d0e12';
+  const { label } = makeText(ctx, inkA);
 
-  function marchingContour(level: number, color: string, width: number) {
-    const Ncol = 90;
-    const f = OBJ[state.obj].f;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
+  const GRADF = '#a78bfa'; // ∇f
+  const GRADG = '#22d3ee'; // ∇g
+  const FENCE = '#f59e0b';
+  const BALL = '#34d399';
+
+  const f = (x: number, y: number) => OBJ[state.obj].f(x, y);
+  const ZS = 0.62; // how tall the hill stands
+  const DOM = 1.55;
+
+  const SCENE = { x: 20, y: 76, w: 660, h: 636 };
+  const SIDE = { x: 700, y: 76, w: 280, h: 636 };
+
+  // --- 3D --------------------------------------------------------------------
+
+  const CAM = 6.4, FOCAL = 5.2, SCALE = 150;
+  function project(x: number, y: number, z: number) {
+    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+    const xr = x * cy + y * sy;
+    const yr = -x * sy + y * cy;
+    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    const depth = z * sp + yr * cp + CAM;
+    const k = (FOCAL * state.zoom) / Math.max(0.4, depth);
+    return {
+      x: SCENE.x + SCENE.w / 2 + xr * k * SCALE,
+      y: SCENE.y + SCENE.h / 2 + 40 + (-z * cp + yr * sp) * k * SCALE,
+      d: depth,
+    };
+  }
+
+  /** A blue-to-amber ramp by height, so the hill reads without a legend. */
+  function heightColour(z: number, a: number) {
+    const t = Math.max(0, Math.min(1, (z + 1.2) / 2.4));
+    const r = Math.round(60 + t * 200);
+    const g = Math.round(120 + t * 60);
+    const b = Math.round(210 - t * 180);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function drawSurface() {
+    const N = 24;
+    const at = (i: number, j: number) => {
+      const x = -DOM + (2 * DOM * i) / N, y = -DOM + (2 * DOM * j) / N;
+      return { x, y, z: f(x, y) * ZS };
+    };
+    // faint mesh, lines fading with depth so the far side recedes
+    const seg = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => {
+      const p = project(a.x, a.y, a.z), q = project(b.x, b.y, b.z);
+      const zmid = (a.z + b.z) / 2;
+      const fade = Math.max(0.08, Math.min(0.5, 1.4 / ((p.d + q.d) / 2)));
+      ctx.strokeStyle = heightColour(zmid, fade);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+    };
+    for (let i = 0; i <= N; i++)
+      for (let j = 0; j < N; j++) {
+        seg(at(i, j), at(i, j + 1));
+        seg(at(j, i), at(j + 1, i));
+      }
+  }
+
+  const gpt = (th: number) => {
+    const x = Math.cos(th), y = Math.sin(th);
+    return { x, y, z: f(x, y) * ZS };
+  };
+
+  function drawGround() {
+    // the constraint circle on the floor
+    ctx.strokeStyle = inkA(0.3);
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    const step = (2 * DOM) / Ncol;
-    for (let i = 0; i < Ncol; i++)
-      for (let j = 0; j < Ncol; j++) {
-        const x0 = -DOM + i * step, y0 = -DOM + j * step;
-        const x1 = x0 + step, y1 = y0 + step;
-        const v = [f(x0, y0) - level, f(x1, y0) - level, f(x1, y1) - level, f(x0, y1) - level];
-        const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-        const pts: { px: number; py: number }[] = [];
+    for (let i = 0; i <= 90; i++) {
+      const a = (i / 90) * Math.PI * 2;
+      const p = project(Math.cos(a), Math.sin(a), 0);
+      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    // a few objective contours on the floor, dashed
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1;
+    const levels = state.obj === 'prod' ? [-1, -0.5, 0.5, 1] : [-2, -1, 0, 1, 2];
+    for (const lv of levels) marchContour(lv);
+    ctx.setLineDash([]);
+  }
+
+  /** Marching squares for a floor contour of f at level lv, projected in 3D. */
+  function marchContour(lv: number) {
+    const Ng = 60, step = (2 * DOM) / Ng;
+    ctx.strokeStyle = inkA(0.16);
+    ctx.beginPath();
+    for (let i = 0; i < Ng; i++)
+      for (let j = 0; j < Ng; j++) {
+        const x0 = -DOM + i * step, y0 = -DOM + j * step, x1 = x0 + step, y1 = y0 + step;
+        const v = [f(x0, y0) - lv, f(x1, y0) - lv, f(x1, y1) - lv, f(x0, y1) - lv];
+        const c = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        const pts: { x: number; y: number }[] = [];
         for (let e = 0; e < 4; e++) {
           const a = v[e], b = v[(e + 1) % 4];
-          if ((a < 0 && b >= 0) || (a >= 0 && b < 0)) {
+          if ((a < 0) !== (b < 0)) {
             const t = a / (a - b);
-            const [ax, ay] = corners[e];
-            const [bx, by] = corners[(e + 1) % 4];
-            pts.push(toPx(ax + (bx - ax) * t, ay + (by - ay) * t));
+            const [ax, ay] = c[e], [bx, by] = c[(e + 1) % 4];
+            pts.push(project(ax + (bx - ax) * t, ay + (by - ay) * t, 0));
           }
         }
         if (pts.length === 2) {
-          ctx.moveTo(pts[0].px, pts[0].py);
-          ctx.lineTo(pts[1].px, pts[1].py);
+          ctx.moveTo(pts[0].x, pts[0].y);
+          ctx.lineTo(pts[1].x, pts[1].y);
         }
       }
     ctx.stroke();
   }
 
-  function arrow(x: number, y: number, dx: number, dy: number, color: string, label: string) {
-    const m = Math.hypot(dx, dy) || 1;
-    const L = 0.6;
-    const a = toPx(x, y);
-    const b = toPx(x + (dx / m) * L, y + (dy / m) * L);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
+  function drawFence() {
+    // the wall from floor circle up to the lifted curve
+    if (state.wall) {
+      for (let i = 0; i < 96; i++) {
+        const a = (i / 96) * Math.PI * 2;
+        const g = gpt(a);
+        const lo = project(g.x, g.y, 0), hi = project(g.x, g.y, g.z);
+        ctx.strokeStyle = `rgba(245,158,11,0.09)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(lo.x, lo.y);
+        ctx.lineTo(hi.x, hi.y);
+        ctx.stroke();
+      }
+    }
+    // the fence top: f along the constraint, the loop we are optimizing
+    ctx.strokeStyle = FENCE;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(a.px, a.py);
-    ctx.lineTo(b.px, b.py);
+    for (let i = 0; i <= 160; i++) {
+      const g = gpt((i / 160) * Math.PI * 2);
+      const p = project(g.x, g.y, g.z);
+      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    }
     ctx.stroke();
-    const ang = Math.atan2(b.py - a.py, b.px - a.px);
+  }
+
+  function arrowGround(x: number, y: number, dx: number, dy: number, col: string, name: string, labelDy = 4) {
+    const m = Math.hypot(dx, dy) || 1;
+    const L = 0.62;
+    const a = project(x, y, 0);
+    const b = project(x + (dx / m) * L, y + (dy / m) * L, 0);
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(b.px, b.py);
-    ctx.lineTo(b.px - 11 * Math.cos(ang - 0.4), b.py - 11 * Math.sin(ang - 0.4));
-    ctx.lineTo(b.px - 11 * Math.cos(ang + 0.4), b.py - 11 * Math.sin(ang + 0.4));
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    const an = Math.atan2(b.y - a.y, b.x - a.x);
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x - 12 * Math.cos(an - 0.4), b.y - 12 * Math.sin(an - 0.4));
+    ctx.lineTo(b.x - 12 * Math.cos(an + 0.4), b.y - 12 * Math.sin(an + 0.4));
     ctx.closePath();
     ctx.fill();
-    ctx.font = "600 14px 'JetBrains Mono', monospace";
-    ctx.fillText(label, b.px + 6, b.py - 4);
+    label(name, b.x + 6, b.y + labelDy, 0.95, 'left', 13, col);
   }
 
-  function draw() {
-    const grid = css('--border') || '#262a32';
-    const accent = css('--accent') || '#7c8cff';
-    const teal = css('--accent-2') || '#5eead4';
-    const faint = css('--text-faint') || '#6b7280';
-    const ink = css('--stage-ink') || '232,233,236';
-    const f = OBJ[state.obj].f;
-    ctx.clearRect(0, 0, W, H);
+  // --- the current point ------------------------------------------------------
 
-    // faint objective heatmap
-    const light = css('--stage-light') === '1';
-    const GG = 60;
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i <= GG; i++)
-      for (let j = 0; j <= GG; j++) {
-        const val = f(-DOM + (2 * DOM * i) / GG, -DOM + (2 * DOM * j) / GG);
-        lo = Math.min(lo, val); hi = Math.max(hi, val);
-      }
-    const cell = W / GG;
-    for (let i = 0; i < GG; i++)
-      for (let j = 0; j < GG; j++) {
-        const val = f(-DOM + (2 * DOM * (i + 0.5)) / GG, -DOM + (2 * DOM * (j + 0.5)) / GG);
-        const t = (val - lo) / (hi - lo || 1);
-        const a = (light ? 0.14 : 0.18) * t + 0.02;
-        ctx.fillStyle = `rgba(124,140,255,${a})`;
-        ctx.fillRect(i * cell, H - (j + 1) * cell, cell + 1, cell + 1);
-      }
+  function slopeAlong(th: number) {
+    // d/dθ f(cosθ, sinθ) = ∇f · (−sinθ, cosθ)
+    const g = OBJ[state.obj].grad(Math.cos(th), Math.sin(th));
+    return g[0] * -Math.sin(th) + g[1] * Math.cos(th);
+  }
 
-    // faint contour levels
-    for (let n = -4; n <= 4; n++) marchingContour(n * (state.obj === 'prod' ? 0.5 : 1), grid, 1);
+  function drawPoint() {
+    const th = state.theta;
+    const x = Math.cos(th), y = Math.sin(th);
+    const g = gpt(th);
 
-    // constraint circle
-    ctx.strokeStyle = `rgba(${ink},0.7)`;
-    ctx.lineWidth = 2.4;
+    // ground gradients: ∇f and ∇g (radial), the tangency test
+    const gf = OBJ[state.obj].grad(x, y);
+    arrowGround(x, y, gf[0], gf[1], GRADF, '∇f', -8);
+    arrowGround(x, y, x, y, GRADG, '∇g', 16);
+
+    // drop line from the fence down to the floor
+    const lo = project(x, y, 0), hi = project(x, y, g.z);
+    ctx.strokeStyle = inkA(0.4);
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
-    ctx.arc(O.x, O.y, U, 0, Math.PI * 2);
+    ctx.moveTo(lo.x, lo.y);
+    ctx.lineTo(hi.x, hi.y);
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    // current level contour (through the point)
-    const px = Math.cos(state.theta), py = Math.sin(state.theta);
-    const level = f(px, py);
-    marchingContour(level, '#f59e0b', 2.4);
-
-    // gradients
-    const gf = OBJ[state.obj].g(px, py);
-    arrow(px, py, gf[0], gf[1], accent, '∇f');
-    arrow(px, py, px, py, teal, '∇g'); // grad of x²+y² is (2x,2y) ∝ (x,y)
-
-    // point
-    const pp = toPx(px, py);
-    ctx.fillStyle = `rgba(${ink},1)`;
-    ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
+    // the ball on the fence
+    ctx.fillStyle = BALL;
+    ctx.strokeStyle = bg();
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(pp.px, pp.py, 7, 0, Math.PI * 2);
+    ctx.arc(hi.x, hi.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // its shadow
+    ctx.fillStyle = inkA(0.4);
+    ctx.beginPath();
+    ctx.arc(lo.x, lo.y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // --- the height-along-the-fence curve --------------------------------------
+
+  function drawSide() {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(SIDE.x, SIDE.y, SIDE.w, SIDE.h);
+    label('HEIGHT ALONG THE FENCE', SIDE.x + 2, SIDE.y - 9, 0.5, 'left', 11);
+
+    const px = SIDE.x + 40, py = SIDE.y + 40, pw = SIDE.w - 62, ph = SIDE.h - 160;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= 200; i++) {
+      const v = f(Math.cos((i / 200) * Math.PI * 2), Math.sin((i / 200) * Math.PI * 2));
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+    const pad = 0.2 * (hi - lo || 1);
+    lo -= pad;
+    hi += pad;
+    const X = (th: number) => px + (th / (Math.PI * 2)) * pw;
+    const Y = (v: number) => py + ph - ((v - lo) / (hi - lo)) * ph;
+
+    ctx.strokeStyle = inkA(0.18);
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px, py + ph);
+    ctx.lineTo(px + pw, py + ph);
+    ctx.stroke();
+
+    // zero-height line
+    if (lo < 0 && hi > 0) {
+      ctx.strokeStyle = inkA(0.12);
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(px, Y(0));
+      ctx.lineTo(px + pw, Y(0));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.strokeStyle = FENCE;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 200; i++) {
+      const th = (i / 200) * Math.PI * 2;
+      const v = f(Math.cos(th), Math.sin(th));
+      i ? ctx.lineTo(X(th), Y(v)) : ctx.moveTo(X(th), Y(v));
+    }
+    ctx.stroke();
+
+    // mark the peaks and dips: where the slope changes sign
+    for (let i = 0; i < 360; i++) {
+      const a = (i / 360) * Math.PI * 2, b = ((i + 1) / 360) * Math.PI * 2;
+      if (slopeAlong(a) >= 0 !== slopeAlong(b) >= 0) {
+        const th = (a + b) / 2, v = f(Math.cos(th), Math.sin(th));
+        const up = slopeAlong(a) > 0;
+        ctx.fillStyle = up ? BALL : GRADF;
+        ctx.beginPath();
+        ctx.arc(X(th), Y(v), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // the current point
+    const th = state.theta, v = f(Math.cos(th), Math.sin(th));
+    ctx.strokeStyle = inkA(0.35);
+    ctx.beginPath();
+    ctx.moveTo(X(th), py);
+    ctx.lineTo(X(th), py + ph);
+    ctx.stroke();
+    ctx.fillStyle = BALL;
+    ctx.strokeStyle = bg();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(X(th), Y(v), 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // readouts
-    const gg: [number, number] = [px, py]; // direction of ∇g
-    const dot = gf[0] * gg[0] + gf[1] * gg[1];
-    const ang = (Math.atan2(Math.abs(gf[0] * gg[1] - gf[1] * gg[0]), dot) * 180) / Math.PI;
-    const aligned = Math.min(ang, 180 - ang) < 2.5;
-    const gmag2 = 4 * (px * px + py * py); // |∇g|² with ∇g=(2x,2y)
-    const lam = (gf[0] * 2 * px + gf[1] * 2 * py) / (gmag2 || 1);
-    (document.getElementById('fval') as HTMLElement).textContent = level.toFixed(3);
-    (document.getElementById('ang') as HTMLElement).textContent = Math.min(ang, 180 - ang).toFixed(1) + '°' + (aligned ? '  ✓ optimal' : '');
-    (document.getElementById('lam') as HTMLElement).textContent = lam.toFixed(3);
-    void faint;
+    label('0°', px, py + ph + 15, 0.4, 'left', 10);
+    label('θ, once around', px + pw / 2, py + ph + 15, 0.4, 'center', 10);
+    label('360°', px + pw, py + ph + 15, 0.4, 'right', 10);
+
+    label('flat spots are the answer:', SIDE.x + 16, SIDE.y + SIDE.h - 52, 0.5, 'left', 11);
+    label('green = a peak, purple = a dip', SIDE.x + 16, SIDE.y + SIDE.h - 34, 0.45, 'left', 11);
+    label('the slope there is exactly zero', SIDE.x + 16, SIDE.y + SIDE.h - 16, 0.4, 'left', 10);
   }
 
-  function setTheta(t: number) {
-    state.theta = t;
+  // --- readouts ---------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setRow = (n: number, val: string, col?: string) => {
+    const b = el('r' + n);
+    b.textContent = val;
+    if (col) b.style.color = col;
+    else b.style.removeProperty('color');
+  };
+  function updateReadout() {
+    const th = state.theta, x = Math.cos(th), y = Math.sin(th);
+    const gf = OBJ[state.obj].grad(x, y);
+    const slope = slopeAlong(th);
+    const dotv = gf[0] * x + gf[1] * y;
+    const crossv = gf[0] * y - gf[1] * x;
+    const ang = (Math.atan2(Math.abs(crossv), dotv) * 180) / Math.PI;
+    const aligned = Math.min(ang, 180 - ang);
+    const lam = (gf[0] * x + gf[1] * y) / 2; // ∇f·∇g / |∇g|², with ∇g=(2x,2y), |∇g|²=4
+    setRow(1, f(x, y).toFixed(3));
+    setRow(2, slope.toFixed(3), Math.abs(slope) < 0.02 ? BALL : undefined);
+    setRow(3, aligned.toFixed(1) + '°');
+    setRow(4, lam.toFixed(3));
+    const optimal = Math.abs(slope) < 0.02;
+    setRow(5, optimal ? (slope, dotv > 0 ? 'at a peak ✓' : 'at a dip') : 'can still climb', optimal ? BALL : inkA(0.6));
+  }
+
+  // --- loop -------------------------------------------------------------------
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    label('Lagrange Multipliers', 20, 30, 0.85, 'left', 14);
+    label('walk the fence to its highest point', 20, 52, 0.5, 'left', 11, FENCE);
+    const legend: [string, string][] = [
+      [FENCE, 'the fence f|g'],
+      [GRADF, '∇f'],
+      [GRADG, '∇g'],
+    ];
+    let lx = W - 20;
+    for (let k = legend.length - 1; k >= 0; k--) {
+      const [c, t] = legend[k];
+      ctx.font = '13px ui-monospace, monospace';
+      const tw = ctx.measureText(t).width;
+      label(t, lx, 30, 0.6, 'right', 11);
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(lx - tw - 11, 26, 5, 0, Math.PI * 2);
+      ctx.fill();
+      lx -= tw + 30;
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(SCENE.x, SCENE.y, SCENE.w, SCENE.h);
+    ctx.clip();
+    drawSurface();
+    drawGround();
+    drawFence();
+    drawPoint();
+    ctx.restore();
+    drawSide();
+    updateReadout();
+  }
+
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    if (state.running && state.spin) state.yaw += dt * 0.3;
     draw();
+    requestAnimationFrame(frame);
   }
 
-  let dragging = false;
-  function fromPointer(e: PointerEvent) {
-    const rect = canvas.getBoundingClientRect();
-    const mx = ((e.clientX - rect.left) / rect.width) * W - O.x;
-    const my = -(((e.clientY - rect.top) / rect.height) * H - O.y);
-    setTheta(Math.atan2(my, mx));
-  }
+  // --- controls ---------------------------------------------------------------
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('snap').addEventListener('click', () => {
+    let bestT = 0, bestV = -Infinity;
+    for (let i = 0; i < 3600; i++) {
+      const t = (i / 3600) * Math.PI * 2, v = f(Math.cos(t), Math.sin(t));
+      if (v > bestV) { bestV = v; bestT = t; }
+    }
+    state.theta = bestT;
+    (el('theta') as HTMLInputElement).value = String(Math.round((bestT * 180) / Math.PI));
+    el('thval').textContent = `${Math.round((bestT * 180) / Math.PI)}°`;
+  });
+  const thEl = el('theta') as HTMLInputElement;
+  thEl.addEventListener('input', () => {
+    state.theta = (+thEl.value * Math.PI) / 180;
+    el('thval').textContent = `${thEl.value}°`;
+  });
+  el('obj').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#obj button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.obj = b.dataset.o!;
+  });
+  (el('wall') as HTMLInputElement).addEventListener('change', (e) => {
+    state.wall = (e.target as HTMLInputElement).checked;
+  });
+  (el('spin') as HTMLInputElement).addEventListener('change', (e) => {
+    state.spin = (e.target as HTMLInputElement).checked;
+  });
+
+  let dragging = false, lx = 0, ly = 0;
   canvas.addEventListener('pointerdown', (e) => {
     dragging = true;
+    lx = e.clientX;
+    ly = e.clientY;
     canvas.setPointerCapture(e.pointerId);
-    fromPointer(e);
   });
-  canvas.addEventListener('pointermove', (e) => dragging && fromPointer(e));
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    // Fully free orbit: yaw and pitch both unbounded, so top-down and
+    // bottom-up views are reachable.
+    state.yaw += (e.clientX - lx) * 0.01;
+    state.pitch += (e.clientY - ly) * 0.01;
+    lx = e.clientX;
+    ly = e.clientY;
+  });
   const stop = () => (dragging = false);
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      state.zoom = Math.max(0.5, Math.min(3, state.zoom * Math.exp(-e.deltaY * 0.0016)));
+    },
+    { passive: false }
+  );
 
-  document.getElementById('obj')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#obj button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.obj = btn.dataset.o!;
-    draw();
-  });
-  document.getElementById('snap')!.addEventListener('click', () => {
-    const f = OBJ[state.obj].f;
-    let bestT = 0, bestV = -Infinity;
-    for (let i = 0; i < 2000; i++) {
-      const t = (i / 2000) * Math.PI * 2;
-      const val = f(Math.cos(t), Math.sin(t));
-      if (val > bestV) { bestV = val; bestT = t; }
-    }
-    setTheta(bestT);
-  });
-
-  draw();
+  requestAnimationFrame(frame);
 </script>
 
 <style>
-  #lag {
+  .lag-canvas {
     cursor: grab;
     touch-action: none;
   }
-  #lag:active {
+  .lag-canvas:active {
     cursor: grabbing;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .check input {
+    accent-color: var(--accent);
   }
 </style>

@@ -120,6 +120,28 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     return sum / (Math.PI * r * r);
   }
 
+  // Tint the plane by the sign of the curl: teal where the flow spins one way,
+  // amber the other, so the rotational structure reads at a glance.
+  function drawHeatmap() {
+    const cell = 30;
+    let cmax = 1e-6;
+    const g: number[] = [];
+    for (let py = 0; py < H; py += cell)
+      for (let px = 0; px < W; px += cell) {
+        const c = curl((px + cell / 2 - W / 2) / UNIT, -(py + cell / 2 - H / 2) / UNIT);
+        g.push(c);
+        cmax = Math.max(cmax, Math.abs(c));
+      }
+    let k = 0;
+    for (let py = 0; py < H; py += cell)
+      for (let px = 0; px < W; px += cell) {
+        const t = Math.max(-1, Math.min(1, g[k++] / cmax));
+        if (Math.abs(t) < 0.04) continue;
+        ctx.fillStyle = t > 0 ? `rgba(94,234,212,${(0.13 * t).toFixed(3)})` : `rgba(245,158,11,${(0.13 * -t).toFixed(3)})`;
+        ctx.fillRect(px, py, cell, cell);
+      }
+  }
+
   function drawArrow(x: number, y: number) {
     const v = vec(x, y);
     const m = Math.hypot(v.x, v.y);
@@ -153,6 +175,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const accent = css('--accent') || '#7c8cff';
     ctx.clearRect(0, 0, W, H);
 
+    drawHeatmap();
+
     // grid
     ctx.strokeStyle = `rgba(${ink()},0.06)`;
     ctx.lineWidth = 1;
@@ -161,8 +185,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (let gy = H / 2; gy < H; gy += 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
     for (let gy = H / 2 - 48; gy > 0; gy -= 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
 
-    for (let y = -1.15; y <= 1.15; y += 0.29)
-      for (let x = -2.05; x <= 2.05; x += 0.3) drawArrow(x, y);
+    // fill the whole visible plane with the field, on a fine even lattice
+    const xr = W / 2 / UNIT, yr = H / 2 / UNIT, dxy = 0.2;
+    for (let y = -Math.ceil(yr / dxy) * dxy; y <= yr; y += dxy)
+      for (let x = -Math.ceil(xr / dxy) * dxy; x <= xr; x += dxy) drawArrow(x, y);
 
     const cx = sx(state.px), cy = sy(state.py), r = state.radius * UNIT;
 
@@ -206,9 +232,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.fill();
     ctx.restore();
 
-    ctx.fillStyle = faint;
     ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('curl = circulation per unit area in the tiny-loop limit', 16, H - 16);
+    ctx.fillStyle = teal;
+    ctx.fillText('■', 16, H - 16);
+    ctx.fillStyle = faint;
+    ctx.fillText(' spins counterclockwise', 24, H - 16);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillText('■', 220, H - 16);
+    ctx.fillStyle = faint;
+    ctx.fillText(' spins clockwise', 228, H - 16);
 
     // readouts
     const c = curl(state.px, state.py);
@@ -226,7 +258,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     if (!last) last = t;
     const dt = Math.min(0.04, (t - last) / 1000);
     last = t;
-    if (state.running) state.angle += (curl(state.px, state.py) / 2) * dt * state.speed;
+    if (state.running) {
+      state.angle += (curl(state.px, state.py) / 2) * dt * state.speed;
+    }
     draw();
     requestAnimationFrame(loop);
   }
