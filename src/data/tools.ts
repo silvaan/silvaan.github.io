@@ -124,7 +124,7 @@ export const AREAS: Area[] = [
         slug: 'green-theorem',
         title: "Green's Theorem",
         description:
-          'Walk the rim of a tiny square and add up how much the field pushes you along. Tile a whole region with those squares and every inner edge gets walked twice, once each way, and cancels. All that survives is the outer rim.',
+          'Chop a wobbly region into little squares and click any one to open it up. Each square carries its own spin, every shared edge is walked twice in opposite directions, and when they cancel only the rim is left.',
         href: '/simulations/calculus/green-theorem',
         status: 'live',
       },
@@ -132,7 +132,7 @@ export const AREAS: Area[] = [
         slug: 'stokes-theorem',
         title: "Stokes' Theorem",
         description:
-          'Tile a surface in space with tiny loops and add up the spin of each. The interior edges cancel in pairs and the whole sum falls onto the curve around the edge. Then bend the surface into a dome: the answer refuses to move.',
+          'Tile a surface with little loops, click one to see its own spin, and watch every shared edge cancel in pairs until only the boundary curve is left. Then bend the surface into a dome, a bowl or a crumple: the answer refuses to move.',
         href: '/simulations/calculus/stokes-theorem',
         status: 'live',
       },
@@ -140,7 +140,7 @@ export const AREAS: Area[] = [
         slug: 'gauss-theorem',
         title: "Gauss's Divergence Theorem",
         description:
-          'Put a tiny box in a flow and count what leaks out of its six walls. Fill a region with those boxes and every inner wall is shared by two of them, so the enormous sum collapses onto the outer skin alone.',
+          'Fill a lumpy region with little boxes, cut it open and click one to count what leaks out of its walls. Every inner wall is shared by two boxes and cancels, so the whole sum collapses onto the outer skin alone.',
         href: '/simulations/calculus/gauss-theorem',
         status: 'live',
       },
@@ -321,6 +321,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'curse-of-dimensionality',
+        title: 'The Curse of Dimensionality',
+        description:
+          'Add axes and space stops behaving: data thins out until every point is alone, a ball keeps its volume in a paper-thin crust, near and far collapse into the same distance, and any two directions you pick meet at 90°.',
+        href: '/simulations/machine-learning/curse-of-dimensionality',
+        status: 'live',
+      },
+      {
         slug: 'activations',
         title: 'Activation Functions',
         description:
@@ -366,6 +374,14 @@ export const AREAS: Area[] = [
         description:
           'Train a small neural network to separate two classes of dots and watch its decision boundary bend and fold in real time.',
         href: '/simulations/deep-learning/neural-net',
+        status: 'live',
+      },
+      {
+        slug: 'cosine-similarity',
+        title: 'Embeddings & Cosine Similarity',
+        description:
+          'Every word is an arrow, and meaning is the direction it points. Drag a query around and watch which word it lines up with, then see why the raw dot product prefers long vectors and the cosine does not.',
+        href: '/simulations/deep-learning/cosine-similarity',
         status: 'live',
       },
       {

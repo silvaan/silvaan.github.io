@@ -1,0 +1,1075 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="The Curse of Dimensionality"
+  description="Space stops behaving as soon as you add axes. Data spreads out until every point is alone, a ball abandons its middle for a paper-thin crust, every distance becomes the same distance, and any two directions you pick are almost certainly at right angles. Five different curses, one slider."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="cod" width="900" height="462"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Which curse</label>
+        <div class="seg vert" id="mode">
+          <button data-m="sparsity" class="active">Empty space</button>
+          <button data-m="shell">Volume in the crust</button>
+          <button data-m="distance">All distances equal</button>
+          <button data-m="angles">Everything orthogonal</button>
+          <button data-m="corners">Nothing but corners</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Dimensions d <b id="dval">2</b></label>
+        <input type="range" id="d" min="1" max="120" value="2" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Sweep d</button>
+        <button class="btn ghost" id="step">+1</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control" data-for="sparsity">
+        <label>Fraction of data to capture <b id="fracval">10%</b></label>
+        <input type="range" id="frac" min="1" max="50" value="10" />
+      </div>
+
+      <div class="control" data-for="shell">
+        <label>Crust thickness <b id="epsval">5%</b></label>
+        <input type="range" id="eps" min="1" max="40" value="5" />
+      </div>
+
+      <div class="control" data-for="sparsity shell distance angles">
+        <label>Sample points n <b id="nval">600</b></label>
+        <input type="range" id="n" min="100" max="1200" step="50" value="600" />
+      </div>
+
+      <div class="readout" id="readout"></div>
+
+      <p class="note" id="note"></p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      <b>Empty space.</b> Cut every axis into 10 bins and the number of cells is
+      10<sup>d</sup>. At d = 20 that is a hundred billion billion boxes, and your
+      600 points sit in 600 of them. The 2D picture still looks nicely filled,
+      which is the trap: <b>every low-dimensional projection lies</b> about how
+      crowded the real space is.
+    </li>
+    <li>
+      Watch the curve on the right. To gather 10% of the data you must span
+      <b>63% of every axis at d = 5</b> and <b>89% at d = 20</b>. A "local"
+      neighbourhood stops being local, so anything built on neighbours (k-NN,
+      kernels, histograms) quietly stops being local too.
+    </li>
+    <li>
+      <b>Volume in the crust.</b> Drag d up and watch the dots evacuate the middle
+      of the ball. The outer 5% shell holds under 10% of a 2D disc but over
+      <b>99% of a 100D ball</b>. Nothing moved: it is just that volume scales like
+      r<sup>d</sup>, so almost all of it is near the surface.
+    </li>
+    <li>
+      <b>All distances equal.</b> The cloud around the query point collapses into a
+      thin ring: by d = 60 the spread of the distances is only a few percent of
+      their mean, and it keeps shrinking like 1/√d. Nearest and farthest stop
+      being meaningfully different, which is why exact nearest-neighbour search
+      loses its grip in high dimensions.
+    </li>
+    <li>
+      <b>Everything orthogonal.</b> Two random directions have cos θ with mean 0
+      and standard deviation <b>1/√d</b>. By d = 100 nearly every pair sits within
+      a few degrees of 90°. High-dimensional space is roomy enough for enormous
+      numbers of almost-orthogonal directions, which is exactly what makes random
+      projections and superposition in embeddings work.
+    </li>
+    <li>
+      <b>Nothing but corners.</b> The ball inscribed in a cube touches all 2d faces
+      yet fills <b>1 part in 10<sup>28</sup> of it at d = 50</b>. All the volume
+      hides in the 2<sup>d</sup> corners, and the cube's half-diagonal is √d while
+      its inradius stays 1: the box is really a spiky sea urchin, not a box.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+
+  const canvas = document.getElementById('cod') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(v).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { label } = makeText(ctx, ink);
+
+  const AMBER = '#f59e0b';
+  const accent = () => css('--accent', '#7c8cff');
+  const teal = () => css('--accent-2', '#5eead4');
+
+  // ---------------------------------------------------------------------------
+  // Random bank. Every sample is drawn once per seed and stored column-wise, so
+  // raising d only appends coordinates to vectors that already exist. The
+  // pictures then evolve continuously as the slider moves instead of reshuffling.
+  // ---------------------------------------------------------------------------
+  const DMAX = 120;
+  const NMAX = 1200;
+
+  function mulberry32(seed: number) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildBank(seed: number) {
+    const r = mulberry32(seed);
+    const gauss = () => {
+      const u = Math.max(1e-12, r());
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r());
+    };
+    const nrm = new Float32Array(2 * NMAX * DMAX); // vector pairs, for angles
+    for (let i = 0; i < nrm.length; i++) nrm[i] = gauss();
+    const uni = new Float32Array(NMAX * DMAX); // points in the unit cube
+    for (let i = 0; i < uni.length; i++) uni[i] = r();
+    const q = new Float32Array(DMAX); // the query point
+    for (let i = 0; i < DMAX; i++) q[i] = r();
+    const u1 = new Float64Array(NMAX); // one uniform per point, for ball radii
+    const ang = new Float64Array(NMAX); // display angle, no maths attached
+    for (let i = 0; i < NMAX; i++) {
+      u1[i] = r();
+      ang[i] = r() * Math.PI * 2;
+    }
+    return { nrm, uni, q, u1, ang };
+  }
+
+  let bank = buildBank(7);
+
+  // --- the five quantities the pictures are built from -----------------------
+  const ballRadii = (d: number, n: number) => {
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) out[i] = Math.pow(bank.u1[i], 1 / d);
+    return out;
+  };
+
+  const cosPairs = (d: number, n: number) => {
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let ab = 0,
+        aa = 0,
+        bb = 0;
+      const oa = 2 * i * DMAX,
+        ob = (2 * i + 1) * DMAX;
+      for (let j = 0; j < d; j++) {
+        const a = bank.nrm[oa + j],
+          b = bank.nrm[ob + j];
+        ab += a * b;
+        aa += a * a;
+        bb += b * b;
+      }
+      out[i] = ab / Math.sqrt(aa * bb);
+    }
+    return out;
+  };
+
+  const queryDistances = (d: number, n: number) => {
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let s = 0;
+      for (let j = 0; j < d; j++) {
+        const t = bank.uni[i * DMAX + j] - bank.q[j];
+        s += t * t;
+      }
+      out[i] = Math.sqrt(s);
+    }
+    return out;
+  };
+
+  /** How many of the 10^d grid cells the n points actually land in. */
+  const occupiedCells = (d: number, n: number) => {
+    const seen = new Set<string>();
+    for (let i = 0; i < n; i++) {
+      let key = '';
+      for (let j = 0; j < d; j++)
+        key += String.fromCharCode(48 + ((bank.uni[i * DMAX + j] * 10) | 0));
+      seen.add(key);
+    }
+    return seen.size;
+  };
+
+  // Volume of the unit ball, in logs: ln V_d = (d/2) ln π − ln Γ(d/2 + 1).
+  function lgamma(x: number): number {
+    const c = [
+      0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+      771.32342877765313, -176.61502916214059, 12.507343278686905,
+      -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+    if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+    x -= 1;
+    let a = c[0];
+    const t = x + 7.5;
+    for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+    return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+  }
+  /** log10 of ball volume ÷ enclosing cube volume, for a radius-1 ball. */
+  const log10BallOverCube = (d: number) =>
+    ((d / 2) * Math.log(Math.PI) - lgamma(d / 2 + 1)) / Math.LN10 -
+    d * Math.log10(2);
+
+  // --- state -----------------------------------------------------------------
+  const state = {
+    mode: 'sparsity',
+    d: 2,
+    n: 600,
+    frac: 10,
+    eps: 5,
+    playing: false,
+  };
+
+  let cache: any = null;
+  let cacheKey = '';
+  function data() {
+    const key = `${state.mode}|${state.d}|${state.n}`;
+    if (key === cacheKey && cache) return cache;
+    const d = state.d,
+      n = state.n;
+    let val: any = {};
+    if (state.mode === 'sparsity') val = { occ: occupiedCells(d, n) };
+    else if (state.mode === 'shell') val = { r: ballRadii(d, n) };
+    else if (state.mode === 'distance') val = { dist: queryDistances(d, n) };
+    else if (state.mode === 'angles') val = { cos: cosPairs(d, n) };
+    cacheKey = key;
+    cache = val;
+    return val;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drawing scaffolding: a square picture on the left, a chart on the right and
+  // two caption lines underneath, shared by all five modes.
+  // ---------------------------------------------------------------------------
+  const pic = { x: 32, y: 66, w: 344, h: 344 };
+  const chart = { x: 468, y: 86, w: 396, h: 288 };
+  const dom = { x: [0, 1], y: [0, 1] };
+  const mx = (v: number) =>
+    chart.x + ((v - dom.x[0]) / (dom.x[1] - dom.x[0])) * chart.w;
+  const my = (v: number) =>
+    chart.y + chart.h - ((v - dom.y[0]) / (dom.y[1] - dom.y[0])) * chart.h;
+
+  type Tick = { v: number; t: string };
+  function chartFrame(
+    xd: [number, number],
+    yd: [number, number],
+    xTicks: Tick[],
+    yTicks: Tick[],
+    xTitle: string,
+    yTitle: string
+  ) {
+    dom.x = xd;
+    dom.y = yd;
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(chart.x, chart.y, chart.w, chart.h);
+    for (const t of yTicks) {
+      const y = my(t.v);
+      ctx.strokeStyle = ink(0.07);
+      ctx.beginPath();
+      ctx.moveTo(chart.x, y);
+      ctx.lineTo(chart.x + chart.w, y);
+      ctx.stroke();
+      label(t.t, chart.x - 8, y + 4, 0.45, 'right', 10.5);
+    }
+    for (const t of xTicks) {
+      const x = mx(t.v);
+      ctx.strokeStyle = ink(0.16);
+      ctx.beginPath();
+      ctx.moveTo(x, chart.y + chart.h);
+      ctx.lineTo(x, chart.y + chart.h + 5);
+      ctx.stroke();
+      label(t.t, x, chart.y + chart.h + 20, 0.45, 'center', 10.5);
+    }
+    label(yTitle, chart.x, chart.y - 12, 0.42, 'left', 10.5);
+    label(xTitle, chart.x + chart.w, chart.y + chart.h + 38, 0.42, 'right', 10.5);
+  }
+
+  const dTicks: Tick[] = [
+    { v: 1, t: '1' },
+    { v: 20, t: '20' },
+    { v: 40, t: '40' },
+    { v: 60, t: '60' },
+    { v: 80, t: '80' },
+    { v: 100, t: '100' },
+    { v: 120, t: '120' },
+  ];
+
+  function curve(f: (x: number) => number, x0: number, x1: number, colour: string) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 240; i++) {
+      const x = x0 + ((x1 - x0) * i) / 240;
+      const y = f(x);
+      if (i === 0) ctx.moveTo(mx(x), my(y));
+      else ctx.lineTo(mx(x), my(y));
+    }
+    ctx.stroke();
+  }
+
+  /** Marks the current d on a curve against dimensions. */
+  function dMarker(y: number, text: string) {
+    const x = mx(state.d);
+    ctx.strokeStyle = ink(0.3);
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, chart.y);
+    ctx.lineTo(x, chart.y + chart.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = accent();
+    ctx.beginPath();
+    ctx.arc(x, my(y), 5, 0, Math.PI * 2);
+    ctx.fill();
+    const flip = x > chart.x + chart.w - 90;
+    label(
+      text,
+      flip ? x - 10 : x + 10,
+      Math.max(chart.y + 16, my(y) - 12),
+      0.95,
+      flip ? 'right' : 'left',
+      11,
+      accent()
+    );
+  }
+
+  /** Three readable percentage gridlines for a histogram axis. */
+  function pctTicks(max: number): Tick[] {
+    const step = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5].find((s) => max / s <= 4) ?? 1;
+    const out: Tick[] = [];
+    for (let v = 0; v <= max + 1e-9; v += step)
+      out.push({ v, t: `${Math.round(v * 100)}%` });
+    return out;
+  }
+
+  function histogram(v: ArrayLike<number>, lo: number, hi: number, bins: number) {
+    const counts = new Float64Array(bins);
+    let n = 0;
+    for (let i = 0; i < v.length; i++) {
+      const b = Math.floor(((v[i] - lo) / (hi - lo)) * bins);
+      if (b >= 0 && b < bins) {
+        counts[b]++;
+        n++;
+      }
+    }
+    if (n) for (let i = 0; i < bins; i++) counts[i] /= n;
+    return counts;
+  }
+
+  function drawBars(counts: Float64Array, lo: number, hi: number, colour: string) {
+    const bw = (hi - lo) / counts.length;
+    ctx.fillStyle = colour;
+    for (let i = 0; i < counts.length; i++) {
+      if (counts[i] <= 0) continue;
+      const x0 = mx(lo + i * bw),
+        x1 = mx(lo + (i + 1) * bw);
+      const y = my(counts[i]);
+      ctx.fillRect(x0 + 0.5, y, Math.max(1, x1 - x0 - 1), chart.y + chart.h - y);
+    }
+  }
+
+  function vline(x: number, colour: string, text: string, up = 0) {
+    const px = mx(x);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(px, chart.y + 6);
+    ctx.lineTo(px, chart.y + chart.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (!text) return;
+    const room = chart.x + chart.w - px;
+    label(
+      text,
+      room < 90 ? px - 8 : px,
+      chart.y + 18 + up,
+      0.95,
+      room < 90 ? 'right' : 'center',
+      10.5,
+      colour
+    );
+  }
+
+  const picCentre = () => ({
+    x: pic.x + pic.w / 2,
+    y: pic.y + pic.h / 2,
+    R: pic.w * 0.45,
+  });
+
+  function picCaption(text: string) {
+    label(text, pic.x, pic.y + pic.h + 24, 0.42, 'left', 10.5);
+  }
+
+  // --- number formatting -----------------------------------------------------
+  function fromLog10(l: number) {
+    if (!isFinite(l)) return '—';
+    if (l >= -3 && l < 6) {
+      const v = Math.pow(10, l);
+      return v >= 1000
+        ? Math.round(v).toLocaleString()
+        : String(+v.toPrecision(3));
+    }
+    const p = Math.floor(l);
+    const m = Math.pow(10, l - p);
+    return `${m.toFixed(1)}×10^${p}`;
+  }
+  const pct = (x: number, dp = 1) => `${(100 * x).toFixed(dp)}%`;
+  const sup = (s: string) => s.replace(/\^(-?\d+)/g, '<sup>$1</sup>');
+
+  const readoutEl = document.getElementById('readout') as HTMLElement;
+  const noteEl = document.getElementById('note') as HTMLElement;
+  function setPanel(rows: [string, string][], note: string) {
+    readoutEl.innerHTML = rows
+      .map(([k, v]) => `<div class="row"><span>${k}</span><b>${sup(v)}</b></div>`)
+      .join('');
+    noteEl.innerHTML = note;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode 1: empty space
+  // ---------------------------------------------------------------------------
+  function drawSparsity() {
+    const d = state.d,
+      n = state.n,
+      f = state.frac / 100;
+    const { occ } = data();
+    const cell = pic.w / 10;
+
+    // which of the 100 visible cells the projected points fall into
+    const hit = new Set<number>();
+    const pts: [number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const x = bank.uni[i * DMAX];
+      const y = d >= 2 ? bank.uni[i * DMAX + 1] : 0.5;
+      pts.push([x, y]);
+      hit.add(Math.min(9, (x * 10) | 0) * 10 + Math.min(9, (y * 10) | 0));
+    }
+
+    ctx.fillStyle = `${accent()}22`;
+    for (const k of hit) {
+      const cx = Math.floor(k / 10),
+        cy = k % 10;
+      ctx.fillRect(pic.x + cx * cell, pic.y + pic.h - (cy + 1) * cell, cell, cell);
+    }
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 10; i++) {
+      ctx.beginPath();
+      ctx.moveTo(pic.x + i * cell, pic.y);
+      ctx.lineTo(pic.x + i * cell, pic.y + pic.h);
+      ctx.moveTo(pic.x, pic.y + i * cell);
+      ctx.lineTo(pic.x + pic.w, pic.y + i * cell);
+      ctx.stroke();
+    }
+    ctx.fillStyle = teal();
+    for (const [x, y] of pts) {
+      ctx.beginPath();
+      ctx.arc(pic.x + x * pic.w, pic.y + pic.h - y * pic.h, 1.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    label(
+      `${n} POINTS SEEN THROUGH THEIR FIRST TWO AXES`,
+      pic.x,
+      pic.y - 16,
+      0.5,
+      'left',
+      11
+    );
+    picCaption(
+      `${hit.size} of these 100 cells are hit · in d = ${d} it is ${occ} of ${fromLog10(d)}`
+    );
+
+    chartFrame(
+      [1, DMAX],
+      [0, 1.05],
+      dTicks,
+      [
+        { v: 0, t: '0' },
+        { v: 0.25, t: '25%' },
+        { v: 0.5, t: '50%' },
+        { v: 0.75, t: '75%' },
+        { v: 1, t: '100%' },
+      ],
+      'dimensions d',
+      `SIDE OF THE BOX THAT HOLDS ${state.frac}% OF THE DATA`
+    );
+    ctx.strokeStyle = ink(0.25);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(mx(1), my(1));
+    ctx.lineTo(mx(DMAX), my(1));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('the whole axis', mx(DMAX) - 8, my(1) - 8, 0.4, 'right', 10.5);
+
+    const edge = (dd: number) => Math.pow(f, 1 / dd);
+    curve(edge, 1, DMAX, teal());
+    dMarker(edge(d), `${pct(edge(d), 0)} of each axis`);
+
+    setPanel(
+      [
+        ['Cells, 10 per axis', fromLog10(d)],
+        ['Cells with data in them', String(occ)],
+        ['Share of cells occupied', `1 in ${fromLog10(d - Math.log10(occ))}`],
+        [`Axis span for ${state.frac}%`, pct(edge(d), 1)],
+        ['Points to match d = 1 density', fromLog10(d * Math.log10(n))],
+      ],
+      `A neighbourhood holding ${state.frac}% of the data needs
+       <b>${pct(edge(d), 0)}</b> of every axis at d = ${d}. Past a handful of
+       dimensions, "nearby" means "most of the dataset".`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode 2: volume in the crust
+  // ---------------------------------------------------------------------------
+  function drawShell() {
+    const d = state.d,
+      n = state.n,
+      eps = state.eps / 100;
+    const { r } = data();
+    const c = picCentre();
+
+    ctx.fillStyle = `${AMBER}1f`;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.R, 0, Math.PI * 2);
+    ctx.arc(c.x, c.y, c.R * (1 - eps), 0, Math.PI * 2, true);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `${AMBER}99`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.R * (1 - eps), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = teal();
+    for (let i = 0; i < n; i++) {
+      const rad = r[i] * c.R;
+      ctx.beginPath();
+      ctx.arc(
+        c.x + rad * Math.cos(bank.ang[i]),
+        c.y + rad * Math.sin(bank.ang[i]),
+        1.7,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+
+    label('UNIFORM POINTS INSIDE THE BALL', pic.x, pic.y - 16, 0.5, 'left', 11);
+    label(`outer ${state.eps}%`, c.x, c.y - c.R - 10, 0.75, 'center', 10.5, AMBER);
+    picCaption(
+      'each dot sits at its true distance from the centre, at an arbitrary angle'
+    );
+
+    const bins = 40;
+    const counts = histogram(r, 0, 1, bins);
+    let maxc = 0;
+    for (let i = 0; i < bins; i++) maxc = Math.max(maxc, counts[i]);
+    const top = Math.max(0.06, maxc * 1.2);
+    chartFrame(
+      [0, 1],
+      [0, top],
+      [
+        { v: 0, t: '0' },
+        { v: 0.25, t: '0.25' },
+        { v: 0.5, t: '0.5' },
+        { v: 0.75, t: '0.75' },
+        { v: 1, t: '1' },
+      ],
+      pctTicks(top),
+      'distance from the centre, r',
+      'SHARE OF THE POINTS'
+    );
+    drawBars(counts, 0, 1, `${teal()}66`);
+    // exact bin probabilities: P(r ∈ [a,b]) = b^d − a^d
+    ctx.strokeStyle = teal();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < bins; i++) {
+      const a = i / bins,
+        b = (i + 1) / bins;
+      const p = Math.pow(b, d) - Math.pow(a, d);
+      const x = mx((a + b) / 2);
+      if (i === 0) ctx.moveTo(x, my(p));
+      else ctx.lineTo(x, my(p));
+    }
+    ctx.stroke();
+    vline(Math.pow(0.5, 1 / d), accent(), 'half the volume is past here');
+
+    const inCrust = 1 - Math.pow(1 - eps, d);
+    setPanel(
+      [
+        [`Volume in the outer ${state.eps}%`, pct(inCrust, 2)],
+        ['Radius splitting it in half', Math.pow(0.5, 1 / d).toFixed(4)],
+        ['Mean distance to the centre', (d / (d + 1)).toFixed(4)],
+        ['Volume inside half the radius', `1 in ${fromLog10(d * Math.log10(2))}`],
+      ],
+      `Volume grows like r<sup>d</sup>, so a shell of the last
+       <b>${state.eps}%</b> of the radius carries <b>${pct(inCrust, 1)}</b> of the
+       ball at d = ${d}. The interior is essentially empty.`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode 3: all distances equal
+  // ---------------------------------------------------------------------------
+  function drawDistance() {
+    const d = state.d,
+      n = state.n;
+    const { dist } = data();
+    const c = picCentre();
+    const scale = Math.sqrt(d); // the longest distance possible in the cube
+    let lo = Infinity,
+      hi = 0,
+      sum = 0,
+      sum2 = 0;
+    for (let i = 0; i < n; i++) {
+      const u = dist[i] / scale;
+      lo = Math.min(lo, u);
+      hi = Math.max(hi, u);
+      sum += u;
+      sum2 += u * u;
+    }
+    const mean = sum / n;
+    const sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    for (const f of [0.25, 0.5, 0.75, 1]) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.R * f, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = teal();
+    for (let i = 0; i < n; i++) {
+      const rad = (dist[i] / scale) * c.R;
+      ctx.beginPath();
+      ctx.arc(
+        c.x + rad * Math.cos(bank.ang[i]),
+        c.y + rad * Math.sin(bank.ang[i]),
+        1.7,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+    for (const [v, col] of [
+      [lo, accent()],
+      [hi, AMBER],
+    ] as [number, string][]) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, v * c.R, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = accent();
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    label('DISTANCE FROM ONE QUERY POINT', pic.x, pic.y - 16, 0.5, 'left', 11);
+    label('nearest', c.x, c.y + lo * c.R + 16, 0.9, 'center', 10.5, accent());
+    label('farthest', c.x, c.y - hi * c.R - 8, 0.9, 'center', 10.5, AMBER);
+    picCaption('every dot at its true distance, angle chosen at random');
+
+    const bins = 44;
+    const counts = histogram(
+      Array.from({ length: n }, (_, i) => dist[i] / scale),
+      0,
+      1,
+      bins
+    );
+    let maxc = 0;
+    for (let i = 0; i < bins; i++) maxc = Math.max(maxc, counts[i]);
+    const top = Math.max(0.06, maxc * 1.25);
+    chartFrame(
+      [0, 1],
+      [0, top],
+      [
+        { v: 0, t: '0' },
+        { v: 0.25, t: '0.25' },
+        { v: 0.5, t: '0.5' },
+        { v: 0.75, t: '0.75' },
+        { v: 1, t: '1' },
+      ],
+      pctTicks(top),
+      'distance ÷ √d',
+      'SHARE OF THE POINTS'
+    );
+    drawBars(counts, 0, 1, `${teal()}77`);
+    vline(lo, accent(), '');
+    vline(hi, AMBER, '');
+
+    const contrast = (hi - lo) / lo;
+    setPanel(
+      [
+        ['Nearest neighbour', (lo * scale).toFixed(3)],
+        ['Farthest point', (hi * scale).toFixed(3)],
+        ['(far − near) ÷ near', pct(contrast, 1)],
+        ['Spread ÷ mean', pct(sd / mean, 2)],
+      ],
+      `The farthest of ${n} points is only <b>${pct(contrast, 0)}</b> further away
+       than the nearest at d = ${d}. Distances still exist, but they stop
+       <b>ranking</b> anything.`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode 4: everything orthogonal
+  // ---------------------------------------------------------------------------
+  function drawAngles() {
+    const d = state.d,
+      n = state.n;
+    const { cos } = data();
+    const c = picCentre();
+
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.2);
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y - c.R);
+    ctx.lineTo(c.x, c.y + c.R);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const shown = Math.min(n, 160);
+    ctx.lineWidth = 1;
+    for (let i = 0; i < shown; i++) {
+      const th = Math.acos(Math.max(-1, Math.min(1, cos[i])));
+      const s = bank.ang[i] > Math.PI ? 1 : -1;
+      ctx.strokeStyle = `${teal()}66`;
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(c.x + c.R * Math.cos(th), c.y + s * c.R * Math.sin(th));
+      ctx.stroke();
+    }
+    ctx.strokeStyle = accent();
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y);
+    ctx.lineTo(c.x + c.R, c.y);
+    ctx.stroke();
+
+    label('ANGLE TO ONE FIXED DIRECTION', pic.x, pic.y - 16, 0.5, 'left', 11);
+    label('reference', c.x + c.R, c.y - 10, 0.9, 'right', 10.5, accent());
+    label('90°', c.x + 14, c.y - c.R - 8, 0.45, 'left', 10.5);
+    picCaption('160 random directions, each drawn at its true angle');
+
+    const bins = 36;
+    const theta = Array.from({ length: n }, (_, i) => (Math.acos(cos[i]) * 180) / Math.PI);
+    const counts = histogram(theta, 0, 180, bins);
+    let maxc = 0;
+    for (let i = 0; i < bins; i++) maxc = Math.max(maxc, counts[i]);
+    const top = Math.max(0.08, maxc * 1.25);
+    chartFrame(
+      [0, 180],
+      [0, top],
+      [
+        { v: 0, t: '0°' },
+        { v: 45, t: '45°' },
+        { v: 90, t: '90°' },
+        { v: 135, t: '135°' },
+        { v: 180, t: '180°' },
+      ],
+      pctTicks(top),
+      'angle between two random vectors',
+      'SHARE OF THE PAIRS'
+    );
+    drawBars(counts, 0, 180, `${teal()}66`);
+
+    // theoretical density, ∝ sin^(d−2)θ, normalised to per-bin probability.
+    // Below d = 3 it is flat or degenerate, so there is nothing to draw.
+    if (d >= 3) {
+      const G = 360;
+      const f = new Float64Array(G + 1);
+      let tot = 0;
+      for (let i = 0; i <= G; i++) {
+        const th = (Math.PI * i) / G;
+        f[i] = Math.pow(Math.sin(th), d - 2);
+        tot += f[i];
+      }
+      ctx.strokeStyle = teal();
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= G; i++) {
+        const x = (180 * i) / G;
+        const y = (f[i] / tot) * (G / bins);
+        if (i === 0) ctx.moveTo(mx(x), my(y));
+        else ctx.lineTo(mx(x), my(y));
+      }
+      ctx.stroke();
+    }
+    vline(90, accent(), 'orthogonal');
+
+    let near = 0,
+      absSum = 0;
+    for (let i = 0; i < n; i++) {
+      absSum += Math.abs(cos[i]);
+      if (theta[i] > 80 && theta[i] < 100) near++;
+    }
+    const sdDeg = (180 / Math.PI) * (1 / Math.sqrt(d));
+    setPanel(
+      [
+        ['Mean cos θ', '0 exactly'],
+        ['Spread of cos θ', `±${(1 / Math.sqrt(d)).toFixed(3)}`],
+        ['Mean |cos θ|', (absSum / n).toFixed(3)],
+        ['Typical angle', `90° ± ${sdDeg.toFixed(1)}°`],
+        ['Pairs within 80°–100°', pct(near / n, 1)],
+      ],
+      `cos θ has mean 0 and standard deviation <b>1/√d</b>, so two random
+       directions in ${d} dimensions land <b>${pct(near / n, 0)}</b> of the time
+       within 10° of a right angle.`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode 5: nothing but corners
+  // ---------------------------------------------------------------------------
+  function drawCorners() {
+    const d = state.d;
+    const c = picCentre();
+    const R = c.R;
+
+    // the cube minus the ball: everything left over is corner
+    ctx.beginPath();
+    ctx.rect(c.x - R, c.y - R, 2 * R, 2 * R);
+    ctx.moveTo(c.x + R, c.y);
+    ctx.arc(c.x, c.y, R, 0, Math.PI * 2, true);
+    ctx.fillStyle = `${AMBER}30`;
+    ctx.fill('evenodd');
+
+    ctx.strokeStyle = ink(0.35);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(c.x - R, c.y - R, 2 * R, 2 * R);
+    ctx.strokeStyle = teal();
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, R, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // inradius, always 1, against the half-diagonal, which runs off as √d
+    ctx.strokeStyle = teal();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y);
+    ctx.lineTo(c.x + R, c.y);
+    ctx.stroke();
+    ctx.strokeStyle = accent();
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y);
+    ctx.lineTo(c.x + R, c.y - R);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = accent();
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    label('BALL INSCRIBED IN A CUBE', pic.x, pic.y - 16, 0.5, 'left', 11);
+    label('radius 1', c.x + R / 2, c.y + 18, 0.9, 'center', 11, teal());
+    label(
+      `√d = ${Math.sqrt(d).toFixed(2)}`,
+      c.x + R - 6,
+      c.y - R - 8,
+      0.9,
+      'right',
+      11,
+      accent()
+    );
+    label('corners', c.x - R + 10, c.y + R - 12, 0.9, 'left', 11, AMBER);
+    picCaption('the shaded part of the box lies outside the ball');
+
+    const lo = -95;
+    chartFrame(
+      [1, DMAX],
+      [lo, 2],
+      dTicks,
+      [
+        { v: 0, t: '1' },
+        { v: -20, t: '10^-20' },
+        { v: -40, t: '10^-40' },
+        { v: -60, t: '10^-60' },
+        { v: -80, t: '10^-80' },
+      ],
+      'dimensions d',
+      'BALL VOLUME ÷ CUBE VOLUME'
+    );
+    curve((dd) => Math.max(lo, log10BallOverCube(dd)), 1, DMAX, teal());
+    const ratioLog = log10BallOverCube(d);
+    dMarker(Math.max(lo, ratioLog), `1 in ${fromLog10(-ratioLog)}`);
+
+    setPanel(
+      [
+        ['Ball ÷ cube volume', `1 in ${fromLog10(-ratioLog)}`],
+        [
+          'Cube volume in the corners',
+          ratioLog < -6 ? '99.9999…%' : pct(1 - Math.pow(10, ratioLog), 4),
+        ],
+        ['Number of corners', fromLog10(d * Math.log10(2))],
+        ['Half-diagonal ÷ inradius', `${Math.sqrt(d).toFixed(2)} : 1`],
+      ],
+      `The ball still touches all ${2 * d} faces, yet at d = ${d} it holds
+       <b>1 part in ${fromLog10(-ratioLog).replace(/\^(-?\d+)/, '<sup>$1</sup>')}</b>
+       of the box. Corners run off to distance √d while the faces stay at 1.`
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const titles: Record<string, string> = {
+      sparsity: 'EMPTY SPACE · data thins out faster than you can sample it',
+      shell: 'VOLUME IN THE CRUST · the middle of a ball is a rounding error',
+      distance: 'ALL DISTANCES EQUAL · near and far stop being different',
+      angles: 'EVERYTHING ORTHOGONAL · random directions meet at 90°',
+      corners: 'NOTHING BUT CORNERS · a cube is really a spiky urchin',
+    };
+    label(titles[state.mode], 32, 34, 0.55, 'left', 12);
+    label(`d = ${state.d}`, W - 32, 34, 0.95, 'right', 13, accent());
+
+    if (state.mode === 'sparsity') drawSparsity();
+    else if (state.mode === 'shell') drawShell();
+    else if (state.mode === 'distance') drawDistance();
+    else if (state.mode === 'angles') drawAngles();
+    else drawCorners();
+  }
+
+  // --- controls --------------------------------------------------------------
+  const $ = (id: string) => document.getElementById(id) as HTMLElement;
+  const dSlider = $('d') as HTMLInputElement;
+  const runBtn = $('run');
+
+  function syncContext() {
+    document.querySelectorAll<HTMLElement>('[data-for]').forEach((el) => {
+      el.style.display = el.dataset.for!.split(' ').includes(state.mode)
+        ? ''
+        : 'none';
+    });
+  }
+
+  function sync() {
+    $('dval').textContent = String(state.d);
+    $('nval').textContent = String(state.n);
+    $('fracval').textContent = `${state.frac}%`;
+    $('epsval').textContent = `${state.eps}%`;
+    dSlider.value = String(state.d);
+    draw();
+  }
+
+  $('mode').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document
+      .querySelectorAll('#mode button')
+      .forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.mode = b.dataset.m!;
+    syncContext();
+    sync();
+  });
+  dSlider.addEventListener('input', () => {
+    state.d = +dSlider.value;
+    sync();
+  });
+  $('n').addEventListener('input', (e) => {
+    state.n = +(e.target as HTMLInputElement).value;
+    sync();
+  });
+  $('frac').addEventListener('input', (e) => {
+    state.frac = +(e.target as HTMLInputElement).value;
+    sync();
+  });
+  $('eps').addEventListener('input', (e) => {
+    state.eps = +(e.target as HTMLInputElement).value;
+    sync();
+  });
+  $('step').addEventListener('click', () => {
+    state.d = state.d >= DMAX ? 1 : state.d + 1;
+    sync();
+  });
+  $('reset').addEventListener('click', () => {
+    state.playing = false;
+    runBtn.textContent = 'Sweep d';
+    state.d = 2;
+    bank = buildBank(7);
+    cacheKey = '';
+    sync();
+  });
+  runBtn.addEventListener('click', () => {
+    state.playing = !state.playing;
+    runBtn.textContent = state.playing ? 'Pause' : 'Sweep d';
+    if (state.playing) requestAnimationFrame(tick);
+  });
+
+  let acc = 0;
+  let last = 0;
+  function tick(t: number) {
+    if (!state.playing) return;
+    const dt = last ? Math.min(0.1, (t - last) / 1000) : 0;
+    last = t;
+    acc += dt * 26; // dimensions per second
+    if (acc >= 1) {
+      const step = Math.floor(acc);
+      acc -= step;
+      state.d = state.d + step > DMAX ? 1 : state.d + step;
+      sync();
+    }
+    requestAnimationFrame(tick);
+  }
+
+  syncContext();
+  sync();
+</script>
+
+<style>
+  .seg.vert {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .seg.vert button {
+    text-align: left;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+  .note :global(b) {
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+</style>
