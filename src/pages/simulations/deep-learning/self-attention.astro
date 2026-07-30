@@ -1,0 +1,834 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Self-Attention"
+  description="Self-attention is attention where the queries, the keys and the values all come from the same sentence. Every token asks its own question, every token answers, and the answers become one matrix whose rows each add to one. Switch to the vector view to see the actual columns of numbers and every multiplication that turns them into an output."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="sa" class="sa-canvas" width="900" height="690"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>View</label>
+        <div class="seg" id="view">
+          <button data-v="map" class="active">The sentence</button>
+          <button data-v="vec">The vectors</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Sentence</label>
+        <div class="seg" id="sent">
+          <button data-s="0" class="active">the cat…</button>
+          <button data-s="1">the boy…</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Head</label>
+        <div class="seg" id="head">
+          <button data-h="0" class="active">meaning</button>
+          <button data-h="1">one before</button>
+          <button data-h="2">verb → noun</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Token asking <b id="qval">cat</b></label>
+        <input type="range" id="q" min="0" max="7" value="2" />
+      </div>
+
+      <div class="control">
+        <label>Temperature τ <b id="tval">0.60</b></label>
+        <input type="range" id="temp" min="10" max="200" value="60" />
+      </div>
+
+      <label class="check"
+        ><input type="checkbox" id="causal" /> Causal mask: no looking ahead</label
+      >
+
+      <div class="readout">
+        <div class="row"><span>Looks hardest at</span><b id="best">—</b></div>
+        <div class="row"><span>That weight</span><b id="wmax">—</b></div>
+        <div class="row"><span>Row adds to</span><b id="wsum">—</b></div>
+        <div class="row"><span>Tokens it uses</span><b id="eff">—</b></div>
+      </div>
+
+      <p class="note">
+        Click a token or a row of the matrix to move the question. In the vector
+        view, click a column to expand its dot product term by term.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The word <b>self</b> is the whole point: Q, K and V are three different
+      projections of the <b>same</b> X. Nothing external is being looked up, the
+      sentence is querying itself.
+    </li>
+    <li>
+      Switch to <b>the vectors</b>. Every column is one token: its embedding x on
+      top, the key W<sub>k</sub>x under it, then the dot product with the single
+      query column on the left, then the softmax weight, then the value
+      W<sub>v</sub>x it hands over. The output is those value columns added up in
+      exactly those proportions.
+    </li>
+    <li>
+      Pick the head called <b>one before</b> and look at its rows in the vector
+      view: the meaning dimensions are all <b>zero</b>. That head has chosen to
+      read position and nothing else, and it does it with the same dot product as
+      every other head.
+    </li>
+    <li>
+      Now pick <b>verb → noun</b> and click <b>chased</b>. It reaches back past
+      the determiner to <b>cat</b>. The output column turns noun-coloured, which
+      is what it means to say a verb has pulled its subject into its own vector.
+    </li>
+    <li>
+      Turn on the <b>causal mask</b>. The upper triangle goes dark, every row
+      renormalises over what is left, and the first token is stuck attending
+      only to itself. That is the only difference between an encoder and a
+      decoder here.
+    </li>
+    <li>
+      Every row adds to <b>one</b>, always. Attention never invents magnitude,
+      it only decides how to spend it.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { roundRect } from '../../../lib/theorem';
+
+  type Tok = {
+    t: string;
+    /** hand-made 2d "meaning" direction, in degrees */
+    a: number;
+    /** how noun-like and how verb-like the token is */
+    noun: number;
+    verb: number;
+  };
+
+  const SENTENCES: Tok[][] = [
+    [
+      { t: 'the', a: 190, noun: 0, verb: 0 },
+      { t: 'tired', a: 58, noun: 0.15, verb: 0 },
+      { t: 'cat', a: 100, noun: 1, verb: 0 },
+      { t: 'that', a: 214, noun: 0.1, verb: 0 },
+      { t: 'chased', a: 330, noun: 0, verb: 1 },
+      { t: 'the', a: 190, noun: 0, verb: 0 },
+      { t: 'mouse', a: 112, noun: 1, verb: 0 },
+      { t: 'slept', a: 316, noun: 0, verb: 0.9 },
+    ],
+    [
+      { t: 'the', a: 190, noun: 0, verb: 0 },
+      { t: 'boy', a: 96, noun: 1, verb: 0 },
+      { t: 'who', a: 214, noun: 0.1, verb: 0 },
+      { t: 'fed', a: 332, noun: 0, verb: 1 },
+      { t: 'the', a: 190, noun: 0, verb: 0 },
+      { t: 'dog', a: 108, noun: 1, verb: 0 },
+      { t: 'smiled', a: 318, noun: 0, verb: 0.9 },
+    ],
+  ];
+
+  const HEADS = ['meaning', 'one before', 'verb → noun'];
+  const state = {
+    s: 0,
+    head: 0,
+    q: 2,
+    jf: 2,
+    temp: 0.6,
+    causal: false,
+    view: 'map' as 'map' | 'vec',
+  };
+  const toks = () => SENTENCES[state.s];
+  const n = () => toks().length;
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('sa') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (k: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(k).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { label } = makeText(ctx, ink);
+  const accent = () => css('--accent', '#7c8cff');
+  const rgb = (c: number[], a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+  // ---------------------------------------------------------------------------
+  // One embedding per token, then three projections of it. The embedding holds
+  // two dimensions of meaning, how noun-like and how verb-like the token is, a
+  // rotating position feature, and a constant so a projection can add offsets.
+  // ---------------------------------------------------------------------------
+  const XDIM = ['m_1', 'm_2', 'noun', 'verb', 'cos', 'sin', '1'];
+  const TH = 0.85; // radians of position turn per token
+  const DK = 4;
+
+  function x7(j: number): number[] {
+    const t = toks()[j];
+    return [
+      Math.cos(rad(t.a)),
+      Math.sin(rad(t.a)),
+      t.noun,
+      t.verb,
+      Math.cos(TH * j),
+      Math.sin(TH * j),
+      1,
+    ];
+  }
+
+  const Z = [0, 0, 0, 0, 0, 0, 0];
+  const cT = Math.cos(TH),
+    sT = Math.sin(TH);
+  /** W_q for each head: four rows of seven, applied to x. */
+  const WQ: number[][][] = [
+    [[2.6, 0, 0, 0, 0, 0, 0], [0, 2.6, 0, 0, 0, 0, 0], Z, Z],
+    // a rotation of the position feature by one token: this is how a head says
+    // "the one before me" using nothing but a dot product
+    [Z, Z, [0, 0, 0, 0, 3.4 * cT, 3.4 * sT, 0], [0, 0, 0, 0, -3.4 * sT, 3.4 * cT, 0]],
+    [
+      [0, 0, 0, 3.6, 0, 0, 0],
+      Z,
+      [0, 0, 0, 0, 1.5 * cT, 1.5 * sT, 0],
+      [0, 0, 0, 0, -1.5 * sT, 1.5 * cT, 0],
+    ],
+  ];
+  const WK: number[][][] = [
+    [[2.6, 0, 0, 0, 0, 0, 0], [0, 2.6, 0, 0, 0, 0, 0], Z, Z],
+    [Z, Z, [0, 0, 0, 0, 3.4, 0, 0], [0, 0, 0, 0, 0, 3.4, 0]],
+    [[0, 0, 3.6, 0, 0, 0, 0], Z, [0, 0, 0, 0, 1.5, 0, 0], [0, 0, 0, 0, 0, 1.5, 0]],
+  ];
+  /** W_v: three rows, so a value is a colour. Solved to match the palette. */
+  const WV: number[][] = [
+    [0.05, 0.083, -0.309, 0.354, 0, 0, 0.605],
+    [-0.104, 0.086, 0.338, 0.276, 0, 0, 0.477],
+    [0.616, -0.625, 0.435, -1.921, 0, 0, 1.118],
+  ];
+
+  const mv = (M: number[][], x: number[]) =>
+    M.map((r) => r.reduce((s, w, i) => s + w * x[i], 0));
+  const qv = (i: number) => mv(WQ[state.head], x7(i));
+  const kv = (j: number) => mv(WK[state.head], x7(j));
+  const vv = (j: number) => mv(WV, x7(j));
+  /** the value, as the colour it is */
+  const vcol = (j: number): number[] =>
+    vv(j).map((c) => Math.round(255 * clamp01(c)));
+
+  const dotp = (a: number[], b: number[]) =>
+    a.reduce((s, v, i) => s + v * b[i], 0);
+  /** qᵢ·kⱼ / √dₖ */
+  const score = (i: number, j: number) => dotp(qv(i), kv(j)) / Math.sqrt(DK);
+
+  /** One row of the attention matrix: softmax over the keys it may see. */
+  function row(i: number) {
+    const raw = toks().map((_, j) =>
+      state.causal && j > i ? -Infinity : score(i, j) / Math.max(0.1, state.temp)
+    );
+    const mx = Math.max(...raw);
+    const e = raw.map((v) => (v === -Infinity ? 0 : Math.exp(v - mx)));
+    const sum = e.reduce((a, b) => a + b, 0) || 1;
+    return e.map((v) => v / sum);
+  }
+
+  const outv = (w: number[]) =>
+    [0, 1, 2].map((k) => toks().reduce((s, _t, j) => s + w[j] * vv(j)[k], 0));
+  const outcol = (w: number[]) =>
+    outv(w).map((c) => Math.round(255 * clamp01(c)));
+
+  // --- layout ---------------------------------------------------------------
+  const ROW = { y: 168, h: 34 };
+  const MAT = { x: 128, y: 322, cell: 36 };
+  const CARD = { x: 452, y: 276, w: 424, h: 384 };
+  const tx = (i: number) => 62 + (i * (W - 150)) / (n() - 1);
+  const tw = () => Math.min(94, (W - 150) / n() - 6);
+
+  // --- view 1: the sentence, and what the chosen token looks at -------------
+  function drawSentence(w: number[]) {
+    label('THE SENTENCE ASKING ITSELF', 24, 44, 0.45, 'left', 12);
+    label(
+      `head: ${HEADS[state.head]}${state.causal ? ' · causal' : ''}`,
+      W - 24,
+      44,
+      0.32,
+      'right',
+      11
+    );
+
+    const top = ROW.y - ROW.h / 2;
+    toks().forEach((_t, j) => {
+      if (w[j] < 0.004) return;
+      const x0 = tx(state.q),
+        x1 = tx(j);
+      const lift = Math.min(96, 26 + Math.abs(x1 - x0) * 0.34);
+      ctx.strokeStyle = rgb(vcol(j), 0.25 + 0.6 * w[j]);
+      ctx.lineWidth = 1 + 9 * w[j];
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x0, top);
+      ctx.quadraticCurveTo((x0 + x1) / 2, top - lift, x1, top);
+      ctx.stroke();
+    });
+
+    toks().forEach((t, i) => {
+      const x = tx(i),
+        wd = tw();
+      const sel = i === state.q;
+      ctx.fillStyle = sel ? rgb(vcol(i), 0.2) : ink(0.05);
+      roundRect(ctx, x - wd / 2, ROW.y - ROW.h / 2, wd, ROW.h, 8);
+      ctx.fill();
+      ctx.strokeStyle = sel ? accent() : ink(0.12);
+      ctx.lineWidth = sel ? 2 : 1;
+      ctx.stroke();
+      label(
+        t.t,
+        x,
+        ROW.y + 5,
+        sel ? 1 : 0.7,
+        'center',
+        12,
+        sel ? accent() : rgb(vcol(i), 0.95)
+      );
+      if (w[i] > 0.004) {
+        ctx.fillStyle = rgb(vcol(i), 0.85);
+        ctx.fillRect(x - wd / 2, ROW.y + ROW.h / 2 + 5, wd * w[i], 5);
+        ctx.strokeStyle = ink(0.1);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - wd / 2, ROW.y + ROW.h / 2 + 5, wd, 5);
+      }
+      label(String(i), x, ROW.y + ROW.h / 2 + 26, 0.28, 'center', 10);
+    });
+    label(
+      'the arcs are one row of the matrix: what this token asks of every other',
+      24,
+      ROW.y + ROW.h / 2 + 50,
+      0.32,
+      'left',
+      11
+    );
+  }
+
+  function drawMatrix() {
+    const N = n(),
+      c = MAT.cell;
+    label('EVERY TOKEN, EVERY OTHER TOKEN', 24, MAT.y - 40, 0.45, 'left', 12);
+    label(
+      'rows ask · columns answer · each row adds to 1',
+      24,
+      MAT.y - 22,
+      0.3,
+      'left',
+      11
+    );
+
+    for (let i = 0; i < N; i++) {
+      const w = row(i);
+      for (let j = 0; j < N; j++) {
+        const x = MAT.x + j * c,
+          y = MAT.y + i * c;
+        const dead = state.causal && j > i;
+        ctx.fillStyle = dead ? inv(0.5) : ink(0.05);
+        ctx.fillRect(x, y, c - 2, c - 2);
+        if (!dead && w[j] > 0.003) {
+          ctx.fillStyle = rgb(vcol(j), 0.1 + 0.85 * Math.pow(w[j], 0.7));
+          ctx.fillRect(x, y, c - 2, c - 2);
+        }
+        if (!dead && w[j] > 0.12)
+          label(
+            w[j] >= 0.995 ? '1.0' : w[j].toFixed(2).slice(1),
+            x + (c - 2) / 2,
+            y + (c - 2) / 2 + 4,
+            0.9,
+            'center',
+            9.5,
+            'rgba(12,14,18,0.8)'
+          );
+      }
+      label(
+        toks()[i].t,
+        MAT.x - 8,
+        MAT.y + i * c + c / 2 + 3,
+        i === state.q ? 1 : 0.45,
+        'right',
+        10.5,
+        i === state.q ? accent() : undefined
+      );
+    }
+    ctx.strokeStyle = accent();
+    ctx.lineWidth = 2;
+    ctx.strokeRect(MAT.x - 2, MAT.y + state.q * c - 2, N * c + 2, c);
+    for (let j = 0; j < N; j++) {
+      ctx.save();
+      ctx.translate(MAT.x + j * c + (c - 2) / 2, MAT.y + N * c + 10);
+      ctx.rotate(-Math.PI / 4);
+      label(toks()[j].t, 0, 0, 0.4, 'right', 9.5);
+      ctx.restore();
+    }
+    label('key', MAT.x + N * c + 8, MAT.y + N * c + 12, 0.3, 'left', 10);
+  }
+
+  function drawCard(w: number[]) {
+    const N = n();
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+
+    label(
+      `“${toks()[state.q].t}” ASKS, EVERY TOKEN ANSWERS`,
+      CARD.x + 18,
+      CARD.y + 26,
+      1,
+      'left',
+      11,
+      accent()
+    );
+    label('q·k / √d', CARD.x + 148, CARD.y + 48, 0.35, 'left', 10);
+    label('softmax', CARD.x + 236, CARD.y + 48, 0.35, 'left', 10);
+
+    const y0 = CARD.y + 68;
+    const pitch = Math.min(34, (CARD.h - 150) / N);
+    toks().forEach((t, j) => {
+      const y = y0 + j * pitch;
+      const dead = state.causal && j > state.q;
+      ctx.fillStyle = dead ? ink(0.12) : rgb(vcol(j), 1);
+      roundRect(ctx, CARD.x + 18, y - 8, 9, 9, 3);
+      ctx.fill();
+      label(t.t, CARD.x + 34, y, dead ? 0.25 : 0.8, 'left', 11);
+      label(
+        dead ? '—' : score(state.q, j).toFixed(2),
+        CARD.x + 208,
+        y,
+        dead ? 0.25 : 0.55,
+        'right',
+        10.5
+      );
+      const bx = CARD.x + 236,
+        bw = 118;
+      ctx.fillStyle = ink(0.07);
+      roundRect(ctx, bx, y - 9, bw, 11, 4);
+      ctx.fill();
+      if (!dead && w[j] > 0.002) {
+        ctx.fillStyle = rgb(vcol(j), 0.9);
+        roundRect(ctx, bx, y - 9, Math.max(2, bw * w[j]), 11, 4);
+        ctx.fill();
+      }
+      label(
+        dead ? 'masked' : `${(w[j] * 100).toFixed(1)}%`,
+        bx + bw + 8,
+        y,
+        dead ? 0.25 : 1,
+        'left',
+        10.5,
+        dead ? undefined : rgb(vcol(j), 1)
+      );
+    });
+
+    const oy = y0 + N * pitch + 18;
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 18, oy - 12);
+    ctx.lineTo(CARD.x + CARD.w - 18, oy - 12);
+    ctx.stroke();
+    label(
+      'IT TAKES HOME A BLEND OF THE VALUES',
+      CARD.x + 18,
+      oy + 8,
+      0.45,
+      'left',
+      10.5
+    );
+    label('out_' + state.q, CARD.x + CARD.w - 18, oy + 8, 0.45, 'right', 10.5);
+
+    const barX = CARD.x + 18,
+      barW = CARD.w - 36 - 92;
+    let x = barX;
+    toks().forEach((t, j) => {
+      const seg = barW * w[j];
+      if (seg <= 0.4) return;
+      ctx.fillStyle = rgb(vcol(j), 0.92);
+      ctx.fillRect(x, oy + 20, seg, 34);
+      if (seg > 30)
+        label(t.t, x + seg / 2, oy + 42, 1, 'center', 10, 'rgba(12,14,18,0.85)');
+      x += seg;
+    });
+    ctx.strokeStyle = ink(0.12);
+    ctx.strokeRect(barX, oy + 20, barW, 34);
+    ctx.fillStyle = rgb(outcol(w), 1);
+    roundRect(ctx, barX + barW + 12, oy + 20, 76, 34, 7);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- view 2: the same thing, as columns of numbers -----------------------
+  const VEC = {
+    lbl: 86,
+    qx: 94,
+    qw: 54,
+    x0: 160,
+    w: 636,
+    ox: 806,
+    ow: 70,
+    pitch: 21,
+  };
+  const colX = (j: number) => VEC.x0 + (j * VEC.w) / n();
+  const colW = () => VEC.w / n() - 6;
+
+  /** One cell: a number on a patch whose colour carries its sign and size. */
+  function cell(
+    x: number,
+    y: number,
+    w: number,
+    v: number,
+    mx: number,
+    dim = 1,
+    tint?: number[]
+  ) {
+    const t = Math.min(1, Math.abs(v) / (mx || 1));
+    ctx.fillStyle = tint
+      ? rgb(tint, (0.1 + 0.62 * t) * dim)
+      : v >= 0
+        ? `rgba(52,211,153,${(0.1 + 0.55 * t) * dim})`
+        : `rgba(255,122,92,${(0.1 + 0.55 * t) * dim})`;
+    roundRect(ctx, x, y - VEC.pitch + 5, w, VEC.pitch - 4, 3);
+    ctx.fill();
+    label(
+      Math.abs(v) < 5e-3 ? '0' : v.toFixed(2),
+      x + w / 2,
+      y,
+      0.85 * dim,
+      'center',
+      9.5
+    );
+  }
+
+  function drawVectors(w: number[]) {
+    const N = n(),
+      cw = colW();
+    const i = state.q;
+    let jf = state.jf;
+    if (state.causal && jf > i) jf = i;
+
+    label('EVERY VECTOR, AND EVERY MULTIPLICATION', 24, 44, 0.45, 'left', 12);
+    label(
+      `head: ${HEADS[state.head]}${state.causal ? ' · causal' : ''} · d_k = ${DK} · one column per token`,
+      W - 24,
+      44,
+      0.32,
+      'right',
+      11
+    );
+
+    // the focused column, behind everything else
+    ctx.fillStyle = ink(0.055);
+    roundRect(ctx, colX(jf) - 4, 74, cw + 8, 520, 6);
+    ctx.fill();
+
+    // headers: the tokens, and the one asking
+    let y = 92;
+    label('asking', VEC.lbl, y, 0.4, 'right', 10);
+    ctx.fillStyle = rgb(vcol(i), 0.22);
+    roundRect(ctx, VEC.qx, y - 16, VEC.qw, 21, 5);
+    ctx.fill();
+    ctx.strokeStyle = accent();
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    label(toks()[i].t, VEC.qx + VEC.qw / 2, y, 1, 'center', 10, accent());
+    for (let j = 0; j < N; j++)
+      label(
+        toks()[j].t,
+        colX(j) + cw / 2,
+        y,
+        j === jf ? 1 : 0.6,
+        'center',
+        10.5,
+        rgb(vcol(j), j === jf ? 1 : 0.8)
+      );
+    label('out', VEC.ox + VEC.ow / 2, y, 0.75, 'center', 10.5);
+
+    // x, the embedding every projection starts from
+    y += 26;
+    const xs = toks().map((_t, j) => x7(j));
+    label('x', VEC.lbl, y + 3 * VEC.pitch, 0.75, 'right', 12);
+    label('embedding', VEC.lbl, y + 3 * VEC.pitch + 14, 0.3, 'right', 9);
+    for (let d = 0; d < 7; d++) {
+      const yy = y + d * VEC.pitch;
+      label(XDIM[d], VEC.qx + VEC.qw - 4, yy, 0.32, 'right', 9);
+      for (let j = 0; j < N; j++) cell(colX(j), yy, cw, xs[j][d], 1, 0.55);
+    }
+
+    // k = W_k x for every token, and q = W_q x for the one asking
+    y += 7 * VEC.pitch + 16;
+    const ks = toks().map((_t, j) => kv(j));
+    const q = qv(i);
+    const kmx = Math.max(...ks.flat().map(Math.abs), ...q.map(Math.abs), 0.5);
+    label('k', VEC.lbl, y + 1.5 * VEC.pitch, 0.75, 'right', 12);
+    label('= W_k x', VEC.lbl, y + 1.5 * VEC.pitch + 14, 0.3, 'right', 9);
+    label('q = W_q x', VEC.qx + VEC.qw / 2, y - 22, 0.6, 'center', 9.5, accent());
+    for (let d = 0; d < DK; d++) {
+      const yy = y + d * VEC.pitch;
+      cell(VEC.qx, yy, VEC.qw, q[d], kmx);
+      for (let j = 0; j < N; j++) cell(colX(j), yy, cw, ks[j][d], kmx);
+    }
+
+    // the dot product, the scale, the softmax
+    y += DK * VEC.pitch + 18;
+    const raw = toks().map((_t, j) => dotp(q, ks[j]));
+    const rmx = Math.max(...raw.map(Math.abs), 0.5);
+    label('q·k', VEC.lbl, y, 0.75, 'right', 11);
+    for (let j = 0; j < N; j++) {
+      if (state.causal && j > i) label('—', colX(j) + cw / 2, y, 0.25, 'center', 10);
+      else cell(colX(j), y, cw, raw[j], rmx);
+    }
+    y += VEC.pitch + 3;
+    label('÷ √d_k', VEC.lbl, y, 0.75, 'right', 11);
+    for (let j = 0; j < N; j++) {
+      if (state.causal && j > i)
+        label('masked', colX(j) + cw / 2, y, 0.25, 'center', 9);
+      else cell(colX(j), y, cw, raw[j] / Math.sqrt(DK), rmx / Math.sqrt(DK));
+    }
+    y += VEC.pitch + 3;
+    label('softmax', VEC.lbl, y, 0.75, 'right', 11);
+    label('= A_ij', VEC.lbl, y + 14, 0.3, 'right', 9);
+    for (let j = 0; j < N; j++) {
+      ctx.fillStyle = ink(0.06);
+      roundRect(ctx, colX(j), y - VEC.pitch + 5, cw, VEC.pitch - 4, 3);
+      ctx.fill();
+      if (w[j] > 0.002) {
+        ctx.fillStyle = rgb(vcol(j), 0.85);
+        roundRect(
+          ctx,
+          colX(j),
+          y - VEC.pitch + 5,
+          Math.max(2, cw * w[j]),
+          VEC.pitch - 4,
+          3
+        );
+        ctx.fill();
+      }
+      label(w[j].toFixed(3), colX(j) + cw / 2, y, 0.9, 'center', 9.5);
+    }
+    label('Σ A·v ↓', VEC.ox + VEC.ow / 2, y, 0.4, 'center', 9.5);
+
+    // v = W_v x: three numbers that are a colour, and the blend of them
+    y += VEC.pitch + 18;
+    const vs = toks().map((_t, j) => vv(j));
+    const o = outv(w);
+    const CH = [
+      [255, 96, 96],
+      [96, 235, 128],
+      [116, 152, 255],
+    ];
+    label('v', VEC.lbl, y + VEC.pitch, 0.75, 'right', 12);
+    label('= W_v x', VEC.lbl, y + VEC.pitch + 14, 0.3, 'right', 9);
+    for (let d = 0; d < 3; d++) {
+      const yy = y + d * VEC.pitch;
+      label(['R', 'G', 'B'][d], VEC.qx + VEC.qw - 4, yy, 0.32, 'right', 9);
+      for (let j = 0; j < N; j++) cell(colX(j), yy, cw, vs[j][d], 1, 1, CH[d]);
+      cell(VEC.ox, yy, VEC.ow, o[d], 1, 1, CH[d]);
+    }
+    y += 3 * VEC.pitch - 2;
+    for (let j = 0; j < N; j++) {
+      ctx.fillStyle = rgb(vcol(j), 0.95);
+      roundRect(ctx, colX(j), y, cw, 15, 4);
+      ctx.fill();
+    }
+    ctx.fillStyle = rgb(outcol(w), 1);
+    roundRect(ctx, VEC.ox, y, VEC.ow, 15, 4);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.25);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    label('as a colour', VEC.lbl, y + 12, 0.3, 'right', 9);
+
+    // the dot product of the focused column, written out term by term
+    y += 52;
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(24, y - 20);
+    ctx.lineTo(W - 24, y - 20);
+    ctx.stroke();
+    const kf = ks[jf];
+    const terms = q
+      .map((qd, d) => `(${qd.toFixed(2)})(${kf[d].toFixed(2)})`)
+      .join(' + ');
+    label(
+      `q_${toks()[i].t} · k_${toks()[jf].t} = ${terms} = ${dotp(q, kf).toFixed(3)}`,
+      24,
+      y,
+      0.65,
+      'left',
+      11
+    );
+    label(
+      `÷ √${DK} = ${score(i, jf).toFixed(3)}   →   softmax across the row   →   A = ${w[jf].toFixed(3)},  so “${toks()[jf].t}” contributes ${(w[jf] * 100).toFixed(1)}% of the output`,
+      24,
+      y + 20,
+      0.45,
+      'left',
+      11
+    );
+    label('click a column to expand it here', W - 24, y + 40, 0.3, 'right', 10);
+  }
+
+  function draw() {
+    const w = row(state.q);
+    ctx.clearRect(0, 0, W, H);
+    if (state.view === 'map') {
+      drawSentence(w);
+      drawMatrix();
+      drawCard(w);
+    } else drawVectors(w);
+    sync(w);
+  }
+
+  function sync(w: number[]) {
+    let bi = 0;
+    w.forEach((v, i) => {
+      if (v > w[bi]) bi = i;
+    });
+    const eff = 1 / Math.max(1e-9, w.reduce((s, v) => s + v * v, 0));
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('best', toks()[bi].t);
+    set('wmax', `${(w[bi] * 100).toFixed(1)}%`);
+    set('wsum', w.reduce((s, v) => s + v, 0).toFixed(3));
+    set('eff', `${eff.toFixed(2)} of ${n()}`);
+    set('qval', toks()[state.q].t);
+    set('tval', state.temp.toFixed(2));
+
+    setEq([
+      [
+        ['Q,\\,K,\\,V', accent()],
+        '= X W_q,\\; X W_k,\\; X W_v',
+        '\\quad\\text{all three from the same }X',
+      ],
+      [
+        [
+          `A = \\operatorname{softmax}\\!\\Big(\\dfrac{QK^{\\mathsf T}}{\\sqrt{d_k}}\\Big)`,
+          accent(),
+        ],
+        `\\quad\\text{out}_{${state.q}} = \\sum_j A_{${state.q}j}\\,v_j`,
+        [
+          `\\quad A_{${state.q},${bi}} = ${w[bi].toFixed(2)}\\text{ on “${toks()[bi].t}”}`,
+          `rgb(${vcol(bi).join(',')})`,
+        ],
+        [`\\quad\\text{out}`, `rgb(${outcol(w).join(',')})`],
+      ],
+      [
+        'the queries and the keys decide who listens to whom; the values are what actually moves',
+      ],
+    ]);
+  }
+
+  // --- interaction ---------------------------------------------------------
+  const qEl = () => document.getElementById('q') as HTMLInputElement;
+  function setQ(i: number) {
+    state.q = Math.max(0, Math.min(n() - 1, i));
+    qEl().value = String(state.q);
+    draw();
+  }
+  const nearestCol = (x: number, at: (j: number) => number) => {
+    let b = 0;
+    for (let j = 0; j < n(); j++)
+      if (Math.abs(x - at(j)) < Math.abs(x - at(b))) b = j;
+    return b;
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    if (state.view === 'vec') {
+      if (x > VEC.x0 - 8 && x < VEC.x0 + VEC.w) {
+        state.jf = nearestCol(x, (j) => colX(j) + colW() / 2);
+        draw();
+      }
+      return;
+    }
+    if (Math.abs(y - ROW.y) < 40) setQ(nearestCol(x, tx));
+    else if (
+      x > MAT.x - 90 &&
+      x < MAT.x + n() * MAT.cell &&
+      y > MAT.y &&
+      y < MAT.y + n() * MAT.cell
+    )
+      setQ(Math.floor((y - MAT.y) / MAT.cell));
+  });
+
+  const seg = (id: string, fn: (v: string) => void) =>
+    document.getElementById(id)!.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (!b) return;
+      document
+        .querySelectorAll(`#${id} button`)
+        .forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      fn(Object.values(b.dataset)[0] as string);
+    });
+  seg('view', (v) => {
+    state.view = v as 'map' | 'vec';
+    draw();
+  });
+  seg('sent', (v) => {
+    state.s = +v;
+    qEl().max = String(n() - 1);
+    state.jf = Math.min(state.jf, n() - 1);
+    setQ(Math.min(state.q, n() - 1));
+  });
+  seg('head', (v) => {
+    state.head = +v;
+    draw();
+  });
+  qEl().addEventListener('input', () => setQ(+qEl().value));
+  const tEl = document.getElementById('temp') as HTMLInputElement;
+  tEl.addEventListener('input', () => {
+    state.temp = +tEl.value / 100;
+    draw();
+  });
+  const cEl = document.getElementById('causal') as HTMLInputElement;
+  cEl.addEventListener('change', () => {
+    state.causal = cEl.checked;
+    draw();
+  });
+
+  qEl().max = String(n() - 1);
+  draw();
+</script>
+
+<style>
+  .sa-canvas {
+    cursor: pointer;
+    touch-action: none;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

@@ -9,7 +9,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 >
   <div class="sim">
     <div class="sim-stage">
-      <canvas id="gauss" class="gs-canvas" width="900" height="640"></canvas>
+      <canvas id="gauss" class="gs-canvas" width="900" height="546"></canvas>
     </div>
 
     <div class="sim-panel">
@@ -105,6 +105,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
   import {
     HUE,
     V2,
@@ -122,7 +123,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     vectorArea,
     centroid3,
     gridCells,
-    chainRim,
     tick,
     polyPath,
     roundRect,
@@ -230,7 +230,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   type Wall2 = { a: V2; b: V2; skin: boolean; flux: number };
   type Tile = GridCell & { walls: Wall2[]; flux: number; div: number };
   let tiles: Tile[] = [];
-  let rimLoops: V2[][] = [];
 
   // --- solid boxes ----------------------------------------------------------
   type Wall3 = { quad: V3[]; n: V3; skin: boolean; flux: number };
@@ -255,7 +254,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     cellSum = 0;
     absSum = 0;
     maxDiv = 1e-9;
-    const rimEdges: { a: V2; b: V2 }[] = [];
 
     for (const cell of gridCells(phi2, state.mesh, HALF)) {
       const walls: Wall2[] = cell.edges.map((e) => ({
@@ -265,17 +263,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         flux: leak2(F2, e.a, e.b, 4),
       }));
       let f = 0;
-      for (const w of walls) {
-        f += w.flux;
-        if (w.skin) rimEdges.push({ a: w.a, b: w.b });
-      }
+      for (const w of walls) f += w.flux;
       const div = f / cell.area;
       maxDiv = Math.max(maxDiv, Math.abs(div));
       tiles.push({ ...cell, walls, flux: f, div });
       cellSum += f;
       absSum += Math.abs(f);
     }
-    rimLoops = chainRim(rimEdges);
     // what crosses the real curve, measured on the curve itself
     skinFlux = flux2(F2, LOOP, 2);
     count = tiles.length;
@@ -372,6 +366,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   // --- canvas ---------------------------------------------------------------
+  const setEq = equationBar();
   const canvas = document.getElementById('gauss') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (n: string, f = '') =>
@@ -383,7 +378,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const SC = { cx: 300, cy: 286, s: 186 };
   const CARD = { x: 612, y: 64, w: 268, h: 300 };
-  const cam: Cam = { yaw: -0.7, pitch: 0.36, dist: 5.6, f: 1150, cx: 300, cy: 292 };
+  const cam: Cam = { yaw: -0.7, pitch: -0.36, dist: 5.6, f: 1150, cx: 300, cy: 292 };
   const px = (p: V2) => ({ x: SC.cx + p.x * SC.s, y: SC.cy - p.y * SC.s });
   const P = (p: V3): Proj => project(cam, p);
 
@@ -457,38 +452,41 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
     }
 
+    // the boundary itself, smooth, which is where the left-hand number is taken
     ctx.strokeStyle = accent();
     ctx.lineWidth = 3;
     ctx.lineJoin = 'round';
-    for (const loop of rimLoops) {
-      polyPath(ctx, loop.map(px));
-      ctx.stroke();
-    }
+    polyPath(ctx, LOOP.map(px));
+    ctx.stroke();
 
-    // only the skin carries arrows: it is the only way out of the region
+    // arrows spaced evenly along it: the only way out of the region
+    const STEP = 18;
     let biggest = 1e-9;
-    for (const t of tiles)
-      for (const w of t.walls)
-        if (w.skin) biggest = Math.max(biggest, Math.abs(w.flux));
-    for (const t of tiles)
-      for (const w of t.walls) {
-        if (!w.skin) continue;
-        const a = px(w.a),
-          b = px(w.b);
-        const s = Math.sign(w.flux) || 1;
-        const { x: nx, y: ny } = outward(w.a, w.b);
-        const size = 9 + 17 * Math.min(1, Math.abs(w.flux) / biggest);
-        tick(
-          ctx,
-          (a.x + b.x) / 2 + nx * s * size * 0.5,
-          (a.y + b.y) / 2 + ny * s * size * 0.5,
-          nx * s,
-          ny * s,
-          size,
-          colourFor(w.flux, 0.95),
-          2.2
-        );
-      }
+    const stretch: { a: V2; b: V2; f: number }[] = [];
+    for (let k = 0; k < LOOP.length; k += STEP) {
+      const a = LOOP[k],
+        b = LOOP[(k + STEP) % LOOP.length];
+      const f = leak2(F2, a, b, 4);
+      biggest = Math.max(biggest, Math.abs(f));
+      stretch.push({ a, b, f });
+    }
+    for (const { a, b, f } of stretch) {
+      const pa = px(a),
+        pb = px(b);
+      const s = Math.sign(f) || 1;
+      const { x: nx, y: ny } = outward(a, b);
+      const size = 10 + 16 * Math.min(1, Math.abs(f) / biggest);
+      tick(
+        ctx,
+        (pa.x + pb.x) / 2 + nx * s * size * 0.5,
+        (pa.y + pb.y) / 2 + ny * s * size * 0.5,
+        nx * s,
+        ny * s,
+        size,
+        colourFor(f, 0.95),
+        2.2
+      );
+    }
 
     const sel = selTile();
     if (sel) {
@@ -732,39 +730,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.setLineDash([]);
   }
 
-  function drawStrip() {
-    const y = 556;
-    ctx.strokeStyle = ink(0.1);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(24, y - 26);
-    ctx.lineTo(W - 24, y - 26);
-    ctx.stroke();
-    const g = gap();
-    label('FLOW OUT THROUGH THE SKIN', 24, y, 0.42, 'left', 11);
-    label(fmt(skinFlux), 24, y + 34, 1, 'left', 24, accent());
-    label(g < 5e-4 ? '=' : '≈', 300, y + 30, 0.5, 'center', 22);
-    label(`THE LEAK OF ALL ${count} BOXES, ADDED UP`, 348, y, 0.42, 'left', 11);
-    label(fmt(cellSum), 348, y + 34, 1, 'left', 24, HUE.out);
-    label(
-      state.fade > 0.5
-        ? 'every shared wall left one box, entered the next'
-        : 'measured on the region, not on the boxes',
-      24,
-      y + 62,
-      0.4,
-      'left',
-      11
-    );
-    label(
-      `the boxes miss ${(100 * g).toFixed(2)}% of it, less as they shrink`,
-      W - 24,
-      y + 62,
-      0.4,
-      'right',
-      11
-    );
-  }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
@@ -776,7 +741,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     else drawSolid();
     ctx.restore();
     drawCard();
-    drawStrip();
     label(
       state.view === '2d'
         ? 'click any box · red arrows leave the region, blue arrows enter it'
@@ -791,6 +755,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function sync() {
+    setEq([
+      [
+        ['\\oiint_S\\mathbf{F}\\cdot\\mathbf{n}\\,dA', accent()],
+        '=',
+        ['\\iiint_V(\\nabla\\cdot\\mathbf{F})\\,dV', HUE.out],
+      ],
+      [
+        [`\\text{through the skin }${fmt(skinFlux)}`, accent()],
+        '\\approx',
+        [`\\text{${count} boxes }${fmt(cellSum)}`, HUE.out],
+        `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`,
+      ],
+      [
+        'the flow is measured on the region, not on the boxes · every inner wall is shared by two of them, so what leaves one enters the next and only the skin is left',
+      ],
+    ]);
     const t = selTile(),
       b = selBox();
     const set = (id: string, v: string) =>

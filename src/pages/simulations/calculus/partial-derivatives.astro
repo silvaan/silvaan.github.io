@@ -1,0 +1,796 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Partial Derivatives"
+  description="A surface has no single slope, so you have to say which way you are walking. Freeze y and slide a vertical plane through the surface: what is left is one ordinary curve, and the slope of its tangent line is ∂f/∂x. Freeze x instead and the other plane gives you ∂f/∂y."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="pd" class="pd-canvas" width="900" height="540"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Surface</label>
+        <div class="seg" id="surf">
+          <button data-s="bowl" class="active">Bowl</button>
+          <button data-s="saddle">Saddle</button>
+          <button data-s="twist">Twist</button>
+          <button data-s="hill">Hill</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Which slice</label>
+        <div class="seg" id="slice">
+          <button data-w="x" class="active">∂f/∂x</button>
+          <button data-w="y">∂f/∂y</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Point x <b id="aval">0.80</b></label>
+        <input type="range" id="a" min="-1.5" max="1.5" step="0.05" value="0.8" />
+      </div>
+      <div class="control">
+        <label>Point y <b id="bval">-0.60</b></label>
+        <input type="range" id="b" min="-1.5" max="1.5" step="0.05" value="-0.6" />
+      </div>
+
+      <label class="check"
+        ><input type="checkbox" id="tplane" /> Show the plane the two tangent
+        lines span</label
+      >
+
+      <div class="readout">
+        <div class="row"><span>∂f/∂x</span><b id="rx">—</b></div>
+        <div class="row"><span>∂f/∂y</span><b id="ry">—</b></div>
+        <div class="row"><span>height f(x, y)</span><b id="rf">—</b></div>
+        <div class="row"><span>steepest slope |∇f|</span><b id="rg">—</b></div>
+      </div>
+
+      <p class="note">
+        Drag the scene to orbit, scroll to zoom. Click either slice to select it:
+        the chosen one lights up here and in its equation.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      A curve has one slope; a surface has one for every direction you could
+      walk. The two planes pick the two easiest directions: the amber one holds
+      <b>y</b> still, the blue one holds <b>x</b> still.
+    </li>
+    <li>
+      Inside a plane the surface is just a curve, drawn again in the card on the
+      right. <b>That is the whole trick</b>: a partial derivative is an ordinary
+      derivative of that curve, and the other variable is treated as a constant.
+    </li>
+    <li>
+      Pick <b>Twist</b> (f = 0.8xy). Slide <b>x</b> and ∂f/∂x never moves, but
+      slide <b>y</b> and it changes sign. The slope along x is allowed to depend
+      on where you are in y: that is why the derivative of a surface needs two
+      numbers, not one.
+    </li>
+    <li>
+      On the <b>Saddle</b>, put the point at the centre. Along x the curve bends
+      up, along y it bends down, and both tangent lines are flat at once. Every
+      first derivative vanishes there and the point is still not a minimum.
+    </li>
+    <li>
+      Tick the last box. The two tangent lines are two lines through one point,
+      so they span a plane: the <b>tangent plane</b>. Knowing both partials is
+      enough to know how the surface tilts every other way too.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import {
+    V3,
+    v3,
+    sub,
+    cross,
+    unit,
+    dot,
+    project,
+    orbit,
+    inside,
+    roundRect,
+    type Cam,
+    type Proj,
+  } from '../../../lib/theorem';
+
+  type Which = 'x' | 'y';
+  type Surf = {
+    f: (x: number, y: number) => number;
+    fx: (x: number, y: number) => number;
+    fy: (x: number, y: number) => number;
+    eq: string;
+    ex: string;
+    ey: string;
+  };
+
+  const SURF: Record<string, Surf> = {
+    bowl: {
+      f: (x, y) => 0.5 * x * x + 0.5 * y * y,
+      fx: (x) => x,
+      fy: (_x, y) => y,
+      eq: 'f(x, y) = ½x² + ½y²',
+      ex: '∂f/∂x = x',
+      ey: '∂f/∂y = y',
+    },
+    saddle: {
+      f: (x, y) => 0.5 * x * x - 0.5 * y * y,
+      fx: (x) => x,
+      fy: (_x, y) => -y,
+      eq: 'f(x, y) = ½x² − ½y²',
+      ex: '∂f/∂x = x',
+      ey: '∂f/∂y = −y',
+    },
+    twist: {
+      f: (x, y) => 0.8 * x * y,
+      fx: (_x, y) => 0.8 * y,
+      fy: (x) => 0.8 * x,
+      eq: 'f(x, y) = 0.8xy',
+      ex: '∂f/∂x = 0.8y',
+      ey: '∂f/∂y = 0.8x',
+    },
+    hill: {
+      f: (x, y) => 1.7 * Math.exp(-(x * x + y * y) / 2),
+      fx: (x, y) => -x * 1.7 * Math.exp(-(x * x + y * y) / 2),
+      fy: (x, y) => -y * 1.7 * Math.exp(-(x * x + y * y) / 2),
+      eq: 'f(x, y) = 1.7e^−(x²+y²)/2',
+      ex: '∂f/∂x = −x · f(x, y)',
+      ey: '∂f/∂y = −y · f(x, y)',
+    },
+  };
+
+  const state = {
+    surf: 'bowl',
+    a: 0.8,
+    b: -0.6,
+    which: 'x' as Which,
+    tplane: false,
+  };
+
+  // amber holds y still, blue holds x still
+  const RGB = { x: '245,158,11', y: '56,189,248' };
+  const col = (w: Which, alpha: number) => `rgba(${RGB[w]},${alpha})`;
+  const other = (w: Which): Which => (w === 'x' ? 'y' : 'x');
+
+  const D = 1.6; // the surface is drawn over [−D, D]²
+  const cur = () => SURF[state.surf];
+
+  // The drawn height is (f − mid)·K, so every surface fills the same box. The
+  // same map is applied to the traces and the tangent lines, so a line tangent
+  // to the surface stays tangent on screen; only the printed numbers are raw.
+  let mid = 0,
+    K = 1,
+    ZH = 1.4;
+  // the surface's own full range of heights, shared by the card's graph so a
+  // slice that only shifts up or down still visibly shifts
+  let flo = 0,
+    fhi = 1;
+
+  function calibrate() {
+    const { f } = cur();
+    let lo = Infinity,
+      hi = -Infinity;
+    for (let i = 0; i <= 48; i++)
+      for (let j = 0; j <= 48; j++) {
+        const v = f(-D + (2 * D * i) / 48, -D + (2 * D * j) / 48);
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+    flo = lo;
+    fhi = hi;
+    mid = (lo + hi) / 2;
+    const half = (hi - lo) / 2 || 1;
+    K = Math.max(0.35, Math.min(1.5, 1.15 / half));
+    ZH = half * K + 0.22;
+  }
+
+  const zw = (x: number, y: number) => (cur().f(x, y) - mid) * K;
+  const world = (x: number, y: number): V3 => v3(x, y, zw(x, y));
+
+  // --- canvas ---------------------------------------------------------------
+  const setEq = equationBar();
+  const canvas = document.getElementById('pd') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) =>
+    `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { label, textWidth } = makeText(ctx, ink);
+  const fmt = (v: number) =>
+    (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3).replace('-', '−');
+  const signed = (v: number) => (v >= 0 ? '+' : '') + fmt(v);
+
+  const cam: Cam = {
+    yaw: -0.62,
+    pitch: -0.46,
+    dist: 7.6,
+    f: 660,
+    cx: 300,
+    cy: 262,
+  };
+  const CARD = { x: 616, y: 26, w: 262, h: 486 };
+  const GR = { x: 634, y: 64, w: 226, h: 132 };
+  const px = (p: V3) => project(cam, p);
+  const LIGHT = unit(v3(-0.42, -0.55, 0.72));
+
+  // --- the two slices -------------------------------------------------------
+  /** The curve the plane cuts out of the surface, in world coordinates. */
+  function trace(w: Which, n = 120): V3[] {
+    const out: V3[] = [];
+    for (let i = 0; i <= n; i++) {
+      const t = -D + (2 * D * i) / n;
+      out.push(w === 'x' ? world(t, state.b) : world(state.a, t));
+    }
+    return out;
+  }
+
+  /** Two ends of the tangent line, kept inside the plane's rectangle. */
+  function tangent(w: Which): [V3, V3] {
+    const { a, b } = state;
+    const s = K * (w === 'x' ? cur().fx(a, b) : cur().fy(a, b));
+    const z0 = zw(a, b);
+    const p0 = w === 'x' ? a : b;
+    let lo = -0.95,
+      hi = 0.95;
+    // clip to the box so the line never escapes its own plane
+    lo = Math.max(lo, -D - p0);
+    hi = Math.min(hi, D - p0);
+    if (Math.abs(s) > 1e-6) {
+      const t1 = (ZH - z0) / s,
+        t2 = (-ZH - z0) / s;
+      lo = Math.max(lo, Math.min(t1, t2));
+      hi = Math.min(hi, Math.max(t1, t2));
+    }
+    const at = (t: number): V3 =>
+      w === 'x' ? v3(a + t, b, z0 + s * t) : v3(a, b + t, z0 + s * t);
+    return [at(lo), at(hi)];
+  }
+
+  /** The four corners of a cutting plane, anticlockwise. */
+  function planeCorners(w: Which): V3[] {
+    const { a, b } = state;
+    return w === 'x'
+      ? [v3(-D, b, -ZH), v3(D, b, -ZH), v3(D, b, ZH), v3(-D, b, ZH)]
+      : [v3(a, -D, -ZH), v3(a, D, -ZH), v3(a, D, ZH), v3(a, -D, ZH)];
+  }
+
+  // --- painter's list -------------------------------------------------------
+  type Face = { q: Proj[]; d: number; fill: string; stroke: string };
+  const faces: Face[] = [];
+
+  function pushQuad(pts: V3[], fill: string, stroke: string) {
+    const q = pts.map(px);
+    if (q.some((p) => p.d < 0.4)) return;
+    faces.push({ q, d: q.reduce((s, p) => s + p.d, 0) / q.length, fill, stroke });
+  }
+
+  function surfaceFaces() {
+    const M = 30;
+    const at = (i: number) => -D + (2 * D * i) / M;
+    for (let i = 0; i < M; i++)
+      for (let j = 0; j < M; j++) {
+        const p = [
+          world(at(i), at(j)),
+          world(at(i + 1), at(j)),
+          world(at(i + 1), at(j + 1)),
+          world(at(i), at(j + 1)),
+        ];
+        const n = unit(cross(sub(p[1], p[0]), sub(p[3], p[0])));
+        const lam = Math.abs(dot(n, LIGHT));
+        pushQuad(p, ink(0.07 + 0.3 * lam), ink(0.08));
+      }
+  }
+
+  function planeFaces(w: Which) {
+    const on = state.which === w;
+    const C = 22,
+      R = 10;
+    const [c0, c1, , c3] = planeCorners(w);
+    const u = sub(c1, c0),
+      v = sub(c3, c0);
+    const P = (s: number, t: number): V3 =>
+      v3(c0.x + u.x * s + v.x * t, c0.y + u.y * s + v.y * t, c0.z + u.z * s + v.z * t);
+    for (let i = 0; i < C; i++)
+      for (let j = 0; j < R; j++) {
+        const s0 = i / C,
+          s1 = (i + 1) / C,
+          t0 = j / R,
+          t1 = (j + 1) / R;
+        pushQuad(
+          [P(s0, t0), P(s1, t0), P(s1, t1), P(s0, t1)],
+          col(w, on ? 0.075 : 0.028),
+          'transparent'
+        );
+      }
+  }
+
+  function tangentPlaneFaces() {
+    const { a, b } = state;
+    const z0 = zw(a, b);
+    const sx = K * cur().fx(a, b),
+      sy = K * cur().fy(a, b);
+    const L = 0.8,
+      M = 6;
+    const P = (s: number, t: number): V3 =>
+      v3(a + s, b + t, z0 + sx * s + sy * t);
+    for (let i = 0; i < M; i++)
+      for (let j = 0; j < M; j++) {
+        const s0 = -L + (2 * L * i) / M,
+          s1 = -L + (2 * L * (i + 1)) / M,
+          t0 = -L + (2 * L * j) / M,
+          t1 = -L + (2 * L * (j + 1)) / M;
+        pushQuad([P(s0, t0), P(s1, t0), P(s1, t1), P(s0, t1)], ink(0.14), ink(0.05));
+      }
+  }
+
+  /** The outline of that patch, so it reads as one flat sheet through the point. */
+  function tangentPlaneEdge() {
+    const { a, b } = state;
+    const z0 = zw(a, b);
+    const sx = K * cur().fx(a, b),
+      sy = K * cur().fy(a, b);
+    const L = 0.8;
+    const P = (s: number, t: number): V3 =>
+      v3(a + s, b + t, z0 + sx * s + sy * t);
+    const c = [P(-L, -L), P(L, -L), P(L, L), P(-L, L)];
+    stroke3([...c, c[0]], ink(0.5), 1.4, [6, 5]);
+  }
+
+  function floorFaces() {
+    // one flat tile under everything, so the box has a floor to cast the point onto
+    pushQuad(
+      [v3(-D, -D, -ZH), v3(D, -D, -ZH), v3(D, D, -ZH), v3(-D, D, -ZH)],
+      ink(0.035),
+      'transparent'
+    );
+  }
+
+  // --- scene ----------------------------------------------------------------
+  function stroke3(pts: V3[], colour: string, lw: number, dash: number[] = []) {
+    const q = pts.map(px);
+    if (q.some((p) => p.d < 0.4)) return;
+    ctx.setLineDash(dash);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = lw;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function floorGrid() {
+    for (let i = 0; i <= 8; i++) {
+      const t = -D + (2 * D * i) / 8;
+      const edge = i === 0 || i === 8;
+      stroke3([v3(t, -D, -ZH), v3(t, D, -ZH)], ink(edge ? 0.16 : 0.06), 1);
+      stroke3([v3(-D, t, -ZH), v3(D, t, -ZH)], ink(edge ? 0.16 : 0.06), 1);
+    }
+    const ex = px(v3(D + 0.18, -D, -ZH)),
+      ey = px(v3(-D, D + 0.18, -ZH));
+    label('x', ex.x, ex.y + 4, 0.4, 'center', 12);
+    label('y', ey.x, ey.y + 4, 0.4, 'center', 12);
+  }
+
+  function drawSlice(w: Which) {
+    const on = state.which === w;
+    const tr = trace(w);
+    const [t0, t1] = tangent(w);
+
+    // the plane's own outline, so its extent reads even where it is behind
+    const c = planeCorners(w);
+    stroke3([...c, c[0]], col(w, on ? 0.32 : 0.13), 1);
+
+    // the surface, cut down to a single curve
+    stroke3(tr, col(w, on ? 0.95 : 0.34), on ? 3 : 1.8);
+
+    // the tangent line to that curve: the partial derivative itself
+    if (on) stroke3([t0, t1], col(w, 0.2), 10);
+    stroke3([t0, t1], col(w, on ? 1 : 0.32), on ? 2.8 : 1.4, on ? [] : [5, 5]);
+
+    // a name for the frozen variable, floating at the top of the plane on a
+    // chip of background colour so it stays readable over the surface
+    const q = px(w === 'x' ? v3(D, state.b, ZH) : v3(state.a, D, ZH));
+    if (q.d > 0.4) {
+      const txt = w === 'x' ? `y = ${fmt(state.b)}` : `x = ${fmt(state.a)}`;
+      const tw = textWidth(txt, 11);
+      ctx.fillStyle = inv(0.72);
+      roundRect(ctx, q.x - tw / 2 - 7, q.y - 21, tw + 14, 19, 5);
+      ctx.fill();
+      label(txt, q.x, q.y - 8, 1, 'center', 11, col(w, on ? 1 : 0.5));
+    }
+  }
+
+  function drawPoint() {
+    const { a, b } = state;
+    const p = world(a, b);
+    const q = px(p);
+    if (q.d < 0.4) return;
+    stroke3([v3(a, b, -ZH), p], ink(0.22), 1, [3, 4]);
+    const foot = px(v3(a, b, -ZH));
+    ctx.fillStyle = ink(0.25);
+    ctx.beginPath();
+    ctx.arc(foot.x, foot.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = ink(1);
+    ctx.strokeStyle = inv(0.75);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function drawScene() {
+    faces.length = 0;
+    floorFaces();
+    surfaceFaces();
+    planeFaces('x');
+    planeFaces('y');
+    if (state.tplane) tangentPlaneFaces();
+    faces.sort((a, b) => b.d - a.d);
+    for (const f of faces) {
+      ctx.beginPath();
+      f.q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fillStyle = f.fill;
+      ctx.fill();
+      if (f.stroke !== 'transparent') {
+        ctx.strokeStyle = f.stroke;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+    floorGrid();
+    if (state.tplane) tangentPlaneEdge();
+    drawSlice(other(state.which));
+    drawSlice(state.which);
+    drawPoint();
+  }
+
+  // --- the card: the same slice, flattened ----------------------------------
+  function drawCard() {
+    const w = state.which;
+    const { a, b } = state;
+    const s = w === 'x' ? cur().fx(a, b) : cur().fy(a, b);
+    const held = w === 'x' ? b : a;
+    const p0 = w === 'x' ? a : b;
+
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+
+    label(
+      `INSIDE THE ${w.toUpperCase()} PLANE`,
+      CARD.x + 16,
+      CARD.y + 24,
+      1,
+      'left',
+      11,
+      col(w, 0.9)
+    );
+
+    // the trace as an ordinary one-variable graph
+    const vals: number[] = [];
+    for (let i = 0; i <= 80; i++) {
+      const t = -D + (2 * D * i) / 80;
+      vals.push(w === 'x' ? cur().f(t, b) : cur().f(a, t));
+    }
+    // one window for every slice of this surface, not one per slice: freezing
+    // the other variable somewhere else has to move the curve on screen
+    const pad = (fhi - flo) * 0.12 || 0.5;
+    const lo = flo - pad,
+      hi = fhi + pad;
+    const gx = (t: number) => GR.x + ((t + D) / (2 * D)) * GR.w;
+    const gy = (v: number) => GR.y + GR.h - ((v - lo) / (hi - lo)) * GR.h;
+
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(GR.x, GR.y, GR.w, GR.h);
+    if (lo < 0 && hi > 0) {
+      ctx.strokeStyle = ink(0.14);
+      ctx.beginPath();
+      ctx.moveTo(GR.x, gy(0));
+      ctx.lineTo(GR.x + GR.w, gy(0));
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = ink(0.55);
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      const t = -D + (2 * D * i) / 80;
+      i ? ctx.lineTo(gx(t), gy(v)) : ctx.moveTo(gx(t), gy(v));
+    });
+    ctx.stroke();
+
+    // its tangent, and the rise over run that measures it
+    const v0 = w === 'x' ? cur().f(p0, b) : cur().f(a, p0);
+    const line = (t: number) => v0 + s * (t - p0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(GR.x, GR.y, GR.w, GR.h);
+    ctx.clip();
+    ctx.strokeStyle = col(w, 0.95);
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(gx(-D), gy(line(-D)));
+    ctx.lineTo(gx(D), gy(line(D)));
+    ctx.stroke();
+
+    // the run goes towards the roomier side, so "rise" never falls off the box
+    const run = p0 > 0 ? -0.62 : 0.62;
+    const r1 = Math.max(-D, Math.min(D, p0 + run));
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = ink(0.45);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gx(p0), gy(v0));
+    ctx.lineTo(gx(r1), gy(v0));
+    ctx.lineTo(gx(r1), gy(line(r1)));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // keep "run" clear of the vertical rise, whichever way that one drops
+    const down = line(r1) < v0;
+    label(
+      'run',
+      (gx(p0) + gx(r1)) / 2,
+      gy(v0) + (down ? -7 : 15),
+      0.45,
+      'center',
+      10
+    );
+    label(
+      'rise',
+      gx(r1) + (run > 0 ? 6 : -6),
+      (gy(v0) + gy(line(r1))) / 2 + 3,
+      0.75,
+      run > 0 ? 'left' : 'right',
+      10,
+      col(w, 0.9)
+    );
+    ctx.restore();
+
+    ctx.fillStyle = ink(1);
+    ctx.strokeStyle = inv(0.7);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(gx(p0), gy(v0), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    label(w, GR.x + GR.w, GR.y + GR.h + 15, 0.4, 'right', 11);
+    label('f', GR.x - 4, GR.y + 10, 0.4, 'right', 11);
+
+    label(
+      `${other(w)} is frozen at ${fmt(held)}, so`,
+      CARD.x + 16,
+      GR.y + GR.h + 38,
+      0.5,
+      'left',
+      10.5
+    );
+    label(
+      'one curve, one ordinary slope',
+      CARD.x + 16,
+      GR.y + GR.h + 56,
+      0.5,
+      'left',
+      10.5
+    );
+
+    // the equations, the chosen one lit
+    let y = CARD.y + 290;
+    ctx.strokeStyle = ink(0.1);
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 16, y - 26);
+    ctx.lineTo(CARD.x + CARD.w - 16, y - 26);
+    ctx.stroke();
+
+    label(cur().eq, CARD.x + 16, y, 0.75, 'left', 11.5);
+    y += 34;
+    for (const k of ['x', 'y'] as Which[]) {
+      const on = state.which === k;
+      ctx.fillStyle = col(k, on ? 1 : 0.35);
+      ctx.fillRect(CARD.x + 16, y - 8, 3, 11);
+      label(
+        k === 'x' ? cur().ex : cur().ey,
+        CARD.x + 26,
+        y,
+        1,
+        'left',
+        12,
+        col(k, on ? 1 : 0.38)
+      );
+      y += 26;
+    }
+
+    y += 22;
+    label('AT YOUR POINT', CARD.x + 16, y, 0.42, 'left', 10.5);
+    y += 26;
+    label(
+      w === 'x'
+        ? `∂f/∂x(${fmt(a)}, ${fmt(b)})`
+        : `∂f/∂y(${fmt(a)}, ${fmt(b)})`,
+      CARD.x + 16,
+      y,
+      0.6,
+      'left',
+      11.5
+    );
+    y += 32;
+    label(`= ${signed(s)}`, CARD.x + 16, y, 1, 'left', 22, col(w, 1));
+    label(
+      Math.abs(s) < 5e-4 ? 'flat' : s > 0 ? 'uphill' : 'downhill',
+      CARD.x + CARD.w - 16,
+      y,
+      0.45,
+      'right',
+      10.5
+    );
+    ctx.restore();
+  }
+
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 8, 600, 512);
+    ctx.clip();
+    drawScene();
+    ctx.restore();
+    drawCard();
+    sync();
+  }
+
+  function sync() {
+    const { a, b } = state;
+    const fx = cur().fx(a, b),
+      fy = cur().fy(a, b);
+    const CXC = col('x', 1),
+      CYC = col('y', 1);
+    setEq([
+      [
+        '\\nabla f(x,y)=\\Big(',
+        ['\\frac{\\partial f}{\\partial x}', CXC],
+        ',',
+        ['\\frac{\\partial f}{\\partial y}', CYC],
+        '\\Big)',
+      ],
+      [
+        `\\nabla f(${fmt(a)},${fmt(b)})=\\Big(`,
+        [signed(fx), CXC],
+        ',',
+        [signed(fy), CYC],
+        '\\Big)',
+        `\\quad f = ${fmt(cur().f(a, b))}`,
+      ],
+      [
+        'each one is the slope of the curve its own plane cuts, with the other variable frozen',
+      ],
+    ]);
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('rx', signed(fx));
+    set('ry', signed(fy));
+    set('rf', fmt(cur().f(a, b)));
+    set('rg', fmt(Math.hypot(fx, fy)));
+    set('aval', a.toFixed(2));
+    set('bval', b.toFixed(2));
+  }
+
+  // --- controls -------------------------------------------------------------
+  const $ = (id: string) => document.getElementById(id) as HTMLElement;
+  const segment = (id: string, fn: (v: string) => void) =>
+    $(id).addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('button');
+      if (!btn) return;
+      $(id)
+        .querySelectorAll('button')
+        .forEach((x) => x.classList.remove('active'));
+      btn.classList.add('active');
+      fn(Object.values(btn.dataset)[0] as string);
+    });
+
+  function select(w: Which) {
+    state.which = w;
+    $('slice')
+      .querySelectorAll('button')
+      .forEach((btn) =>
+        btn.classList.toggle('active', (btn as HTMLElement).dataset.w === w)
+      );
+    draw();
+  }
+
+  segment('surf', (s) => {
+    state.surf = s;
+    calibrate();
+    draw();
+  });
+  segment('slice', (w) => {
+    state.which = w as Which;
+    draw();
+  });
+  for (const key of ['a', 'b'] as const)
+    $(key).addEventListener('input', (e) => {
+      state[key] = +(e.target as HTMLInputElement).value;
+      draw();
+    });
+  ($('tplane') as HTMLInputElement).addEventListener('change', (e) => {
+    state.tplane = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+
+  // click a slice to select it: its curve first, then anywhere on its plane
+  function tap(x: number, y: number) {
+    let best: { w: Which; d: number } | null = null;
+    for (const w of ['x', 'y'] as Which[])
+      for (const p of trace(w, 60).map(px)) {
+        if (p.d < 0.4) continue;
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (!best || d < best.d) best = { w, d };
+      }
+    if (best && best.d < 44) return select(best.w);
+
+    let near: { w: Which; d: number } | null = null;
+    for (const w of ['x', 'y'] as Which[]) {
+      const q = planeCorners(w).map(px);
+      if (q.some((p) => p.d < 0.4)) continue;
+      if (!inside(q, x, y)) continue;
+      const d = q.reduce((s, p) => s + p.d, 0) / 4;
+      if (!near || d < near.d) near = { w, d };
+    }
+    if (near) select(near.w);
+  }
+
+  orbit(canvas, cam, draw, { onTap: tap });
+
+  calibrate();
+  draw();
+</script>
+
+<style>
+  .pd-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .pd-canvas:active {
+    cursor: grabbing;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

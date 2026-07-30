@@ -5,16 +5,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="physics"
   title="Wave Equation"
-  description="Where heat diffuses and forgets, a wave remembers. The same second derivative in space now drives an acceleration, not a decay, so a pluck keeps its shape and travels. Drag the string, then watch pulses race and reflect."
+  description="A string is a row of little masses, each one pulled by its two neighbours. A bead that sags below the line joining them gets pulled up, and the harder it sags the harder the pull. Write that one sentence down and you have the wave equation, second difference and all."
 >
   <div class="sim">
     <div class="sim-stage">
-      <canvas id="wave" width="900" height="420"></canvas>
+      <canvas id="wave" class="wave-canvas" width="900" height="620"></canvas>
     </div>
 
     <div class="sim-panel">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="step">One step</button>
         <button class="btn ghost" id="reset">Reset</button>
       </div>
 
@@ -28,6 +29,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <div class="control">
+        <label>Beads on the string <b id="nval">48</b></label>
+        <input type="range" id="n" min="24" max="240" step="4" value="48" />
+        <div class="scale-hint"><span>coarse, dx large</span><span>fine</span></div>
+      </div>
+
+      <div class="control">
+        <label>Bead you are watching <b id="pval">24</b></label>
+        <input type="range" id="pick" min="1" max="46" value="24" />
+      </div>
+
+      <div class="control">
         <label>Boundaries</label>
         <div class="seg" id="bc">
           <button data-b="fixed" class="active">Fixed ends</button>
@@ -36,7 +48,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <div class="control">
-        <label>Wave speed <b id="cval">0.50</b></label>
+        <label>Courant number c <b id="cval">0.50</b></label>
         <input type="range" id="c" min="10" max="98" value="50" />
       </div>
 
@@ -45,65 +57,125 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <input type="range" id="damp" min="0" max="60" value="0" />
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag anywhere on the string to pull it into a new shape, then let go and
-        watch it release.
+      <p class="note">
+        Drag the string itself to pull it into a new shape. Click along the lower
+        strip to move the bead you are watching.
       </p>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Compare with the <b>heat equation</b>: heat smears a bump out and forgets
-      it, but the wave <b>keeps its shape</b> and carries it along. The same
-      curvature term drives an acceleration here, not a decay.
+      Look at the card on the right. The only thing the middle bead can feel is
+      <b>how far it sits below the straight line joining its neighbours</b>. That
+      sag is what the two tensions fail to cancel, and it is the whole force.
     </li>
     <li>
-      Watch a pulse hit the wall. With <b>Fixed ends</b> it reflects
-      <b>upside down</b>; with <b>Free ends</b> it bounces back <b>upright</b>.
+      Sag is exactly half the second difference, so the pull is
+      <b>u(i−1) − 2u(i) + u(i+1)</b>. Divide by dx² and it is the curvature; the
+      wave equation is that sentence written for every bead at once.
     </li>
     <li>
-      Send <b>Two pulses</b> toward each other: they pass straight through,
-      briefly adding up where they overlap. That is <b>superposition</b>.
+      The strip under the string is that pull, bead by bead. It is the
+      <b>acceleration field</b>: teal where the string is being dragged up,
+      orange where it is being dragged down. Notice it is largest exactly at the
+      sharp bends and zero on the straight runs.
     </li>
     <li>
-      Add <b>damping</b> and the energy bleeds away, the string slowly returns
-      to rest, like a real plucked string.
+      Press <b>One step</b> a few times with a bead selected. Its position does
+      not follow the force, its <b>velocity</b> does, and that one extra
+      derivative is why a wave travels instead of just slumping flat like heat.
+    </li>
+    <li>
+      Drag <b>beads on the string</b> down to 24 and watch dx grow. The pulse
+      starts to wobble and trail ripples behind it: a coarse grid cannot carry
+      the short wavelengths, so they travel at the wrong speed.
+    </li>
+    <li>
+      Push the <b>Courant number</b> past 1 and the whole thing detonates. With
+      an explicit step, information may not be allowed to cross more than one dx
+      per tick.
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { arrow, roundRect } from '../../../lib/theorem';
 
-  const N = 240;
+  const state = {
+    shape: 'center',
+    bc: 'fixed',
+    C: 0.5,
+    damp: 0,
+    playing: true,
+    N: 48,
+    pick: 24,
+  };
+  let N = state.N;
   let u = new Float32Array(N);
   let uPrev = new Float32Array(N);
-  const state = { shape: 'center', bc: 'fixed', C: 0.5, damp: 0, playing: true };
 
+  const UP = '#34d399'; // pulled up
+  const DOWN = '#ff7a5c'; // pulled down
+  const setEq = equationBar();
   const canvas = document.getElementById('wave') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
-  const PAD = { l: 20, r: 20, t: 20, b: 20 };
-  const AMP = (H - PAD.t - PAD.b) * 0.42;
-  const midY = H / 2;
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const teal = () => css('--accent-2', '#5eead4');
+  const { label, textWidth } = makeText(ctx, ink);
+  const fmt = (v: number, n = 3) =>
+    (Math.abs(v) < 5e-7 ? 0 : v).toFixed(n).replace('-', '−');
+  const sgn = (v: number) => (v >= 0 ? UP : DOWN);
+  /** "+0.003" or "-0.003", so a sum never reads "+ -0.003". */
+  const signed = (v: number, n = 3) =>
+    (v < 0 ? '-' : '+') + Math.abs(v).toFixed(n);
 
-  function gaussian(center: number, width: number, height: number) {
+  const STR = { x: 34, y: 62, w: W - 68, mid: 170, amp: 96 };
+  const CUR = { x: 34, y: 322, w: 520, h: 104 };
+  const CARD = { x: 586, y: 300, w: 288, h: 296 };
+  const sx = (i: number) => STR.x + (i / (N - 1)) * STR.w;
+  const dxPix = () => STR.w / (N - 1);
+  /** dx in the units where the whole string is one unit long. */
+  const dx = () => 1 / (N - 1);
+
+  /** The second difference at bead i: what the two tensions fail to cancel. */
+  const lap = (i: number) =>
+    i <= 0 || i >= N - 1 ? 0 : u[i - 1] - 2 * u[i] + u[i + 1];
+  const curvature = (i: number) => lap(i) / (dx() * dx());
+  const accel = (i: number) => state.C * state.C * lap(i);
+
+  // --- the string as a row of masses ---------------------------------------
+  function gaussian(centre: number, width: number, height: number) {
     for (let i = 0; i < N; i++) {
-      const d = (i - center) / width;
+      const d = (i - centre) / width;
       u[i] += height * Math.exp(-d * d);
     }
   }
 
   function setShape(shape: string) {
     u = new Float32Array(N);
-    if (shape === 'center') gaussian(N / 2, 16, 1);
-    else if (shape === 'pulse') gaussian(N * 0.25, 10, 1);
+    if (shape === 'center') gaussian((N - 1) / 2, N / 15, 1);
+    else if (shape === 'pulse') gaussian(N * 0.25, N / 24, 1);
     else {
-      gaussian(N * 0.22, 9, 1);
-      gaussian(N * 0.78, 9, -1);
+      gaussian(N * 0.22, N / 27, 1);
+      gaussian(N * 0.78, N / 27, -1);
     }
     uPrev = u.slice(); // start at rest
+  }
+
+  function resize(n: number) {
+    N = n;
+    state.N = n;
+    const p = document.getElementById('pick') as HTMLInputElement;
+    p.max = String(N - 2);
+    state.pick = Math.min(state.pick, N - 2);
+    p.value = String(state.pick);
+    setShape(state.shape);
   }
 
   function applyBC(a: Float32Array) {
@@ -117,72 +189,414 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function step() {
-    const C2 = state.C * state.C;
-    const damp = state.damp;
     const uNext = new Float32Array(N);
-    for (let i = 1; i < N - 1; i++) {
-      const lap = u[i - 1] - 2 * u[i] + u[i + 1];
-      const vel = u[i] - uPrev[i];
-      uNext[i] = u[i] + (1 - damp) * vel + C2 * lap;
-    }
+    for (let i = 1; i < N - 1; i++)
+      uNext[i] = u[i] + (1 - state.damp) * (u[i] - uPrev[i]) + accel(i);
     applyBC(uNext);
     uPrev = u;
     u = uNext;
   }
 
-  function draw() {
-    const teal = css('--accent-2') || '#5eead4';
-    const grid = css('--border-strong') || '#343a45';
-    ctx.clearRect(0, 0, W, H);
+  // --- the string ----------------------------------------------------------
+  function drawString() {
+    const i0 = state.pick;
+    label('THE STRING, AS A ROW OF LITTLE MASSES', STR.x, 44, 0.45, 'left', 12);
+    label(
+      `${N} beads · dx = 1/${N - 1} = ${fmt(dx(), 4)}`,
+      STR.x + STR.w,
+      44,
+      0.32,
+      'right',
+      11
+    );
 
-    // rest line
-    ctx.strokeStyle = grid;
+    ctx.strokeStyle = ink(0.13);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(PAD.l, midY);
-    ctx.lineTo(W - PAD.r, midY);
+    ctx.moveTo(STR.x, STR.mid);
+    ctx.lineTo(STR.x + STR.w, STR.mid);
     ctx.stroke();
 
-    // end supports
-    ctx.fillStyle = css('--text-faint') || '#6b7280';
-    for (const gx of [PAD.l, W - PAD.r]) {
+    // the neighbourhood the card is showing
+    ctx.strokeStyle = ink(0.16);
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1;
+    for (const i of [i0 - 1, i0 + 1]) {
       ctx.beginPath();
-      ctx.arc(gx, midY, 4, 0, Math.PI * 2);
+      ctx.moveTo(sx(i), STR.y + 4);
+      ctx.lineTo(sx(i), 252);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // the string: straight segments between beads, because that is all it is
+    const y = (i: number) => STR.mid - u[i] * STR.amp;
+    ctx.strokeStyle = teal();
+    ctx.lineWidth = 2.4;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) i ? ctx.lineTo(sx(i), y(i)) : ctx.moveTo(sx(i), y(i));
+    ctx.stroke();
+
+    if (dxPix() > 5) {
+      ctx.fillStyle = teal();
+      for (let i = 0; i < N; i++) {
+        ctx.beginPath();
+        ctx.arc(sx(i), y(i), Math.min(3.2, dxPix() * 0.22), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.fillStyle = ink(0.4);
+    for (const gx of [STR.x, STR.x + STR.w]) {
+      ctx.beginPath();
+      ctx.arc(gx, STR.mid, 4, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // string
-    const sx = (i: number) => PAD.l + (i / (N - 1)) * (W - PAD.l - PAD.r);
-    ctx.strokeStyle = teal;
-    ctx.lineWidth = 2.6;
-    ctx.beginPath();
-    for (let i = 0; i < N; i++) {
-      const x = sx(i);
-      const y = midY - u[i] * AMP;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    // the chosen bead, its two neighbours, and the pull it feels
+    const a = accel(i0);
+    for (const i of [i0 - 1, i0 + 1]) {
+      ctx.fillStyle = ink(0.85);
+      ctx.strokeStyle = inv(0.8);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sx(i), y(i), 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
+    const L = Math.min(70, Math.abs(a) * STR.amp * 26 + 8);
+    arrow(ctx, sx(i0), y(i0), sx(i0), y(i0) - Math.sign(a || 1) * L, sgn(a), 3, 9);
+    ctx.fillStyle = sgn(a);
+    ctx.strokeStyle = inv(0.85);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx(i0), y(i0), 5.5, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
+
+    // dx, measured on the two gaps that matter, right under them
+    const by = Math.min(y(i0) + 28, 244);
+    ctx.strokeStyle = ink(0.35);
+    ctx.lineWidth = 1;
+    for (const [p, q] of [
+      [i0 - 1, i0],
+      [i0, i0 + 1],
+    ]) {
+      ctx.beginPath();
+      ctx.moveTo(sx(p), by - 5);
+      ctx.lineTo(sx(p), by);
+      ctx.lineTo(sx(q), by);
+      ctx.lineTo(sx(q), by - 5);
+      ctx.stroke();
+      if (dxPix() > 26) label('dx', (sx(p) + sx(q)) / 2, by + 13, 0.5, 'center', 10.5);
+    }
+    if (dxPix() <= 26)
+      label('dx', sx(i0) + dxPix() + 6, by + 13, 0.5, 'left', 10.5);
+    label(`bead ${i0}`, sx(i0) + 12, y(i0) - L - 8, 1, 'left', 11, sgn(a));
   }
 
+  // --- the pull, bead by bead ----------------------------------------------
+  function drawCurvature() {
+    label(
+      'WHAT EVERY BEAD IS BEING PULLED TOWARDS',
+      CUR.x,
+      CUR.y - 26,
+      0.45,
+      'left',
+      12
+    );
+    label(
+      'teal up · orange down · this is the acceleration',
+      CUR.x,
+      CUR.y - 9,
+      0.3,
+      'left',
+      11
+    );
+
+    let mx = 1e-9;
+    for (let i = 1; i < N - 1; i++) mx = Math.max(mx, Math.abs(accel(i)));
+    const zero = CUR.y + CUR.h / 2;
+    const px = (i: number) => CUR.x + (i / (N - 1)) * CUR.w;
+    const py = (v: number) => zero - (v / mx) * (CUR.h / 2 - 6);
+
+    for (const s of [1, -1]) {
+      ctx.beginPath();
+      ctx.moveTo(px(0), zero);
+      for (let i = 0; i < N; i++) {
+        const v = accel(i);
+        ctx.lineTo(px(i), py(s > 0 ? Math.max(0, v) : Math.min(0, v)));
+      }
+      ctx.lineTo(px(N - 1), zero);
+      ctx.closePath();
+      ctx.fillStyle = s > 0 ? 'rgba(52,211,153,0.34)' : 'rgba(255,122,92,0.34)';
+      ctx.fill();
+    }
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(CUR.x, zero);
+    ctx.lineTo(CUR.x + CUR.w, zero);
+    ctx.stroke();
+
+    const a = accel(state.pick);
+    ctx.strokeStyle = sgn(a);
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px(state.pick), CUR.y - 2);
+    ctx.lineTo(px(state.pick), CUR.y + CUR.h + 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    label('0', CUR.x - 7, zero + 4, 0.35, 'right', 10.5);
+    label(
+      'straight stretches feel nothing at all',
+      CUR.x + CUR.w,
+      CUR.y + CUR.h + 20,
+      0.32,
+      'right',
+      11
+    );
+  }
+
+  // --- one bead, opened up -------------------------------------------------
+  // Drawn with the tilt of the neighbours taken out. A straight stretch pulls a
+  // bead nowhere, so the linear part cannot matter, and once it is gone the only
+  // thing left on screen is the sag that does.
+  function drawCard() {
+    const i0 = state.pick;
+    const uL = u[i0 - 1],
+      uC = u[i0],
+      uR = u[i0 + 1];
+    const midU = (uL + uR) / 2;
+    const sag = midU - uC; // half the second difference, and the whole force
+    const a = accel(i0);
+
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+
+    label(
+      `BEAD ${i0}, WITH ITS TWO NEIGHBOURS`,
+      CARD.x + 16,
+      CARD.y + 24,
+      1,
+      'left',
+      11,
+      sgn(a)
+    );
+
+    const cx = CARD.x + CARD.w / 2,
+      cy = CARD.y + 104;
+    const gap = 78;
+    // the neighbours, levelled; the bead keeps only its sag
+    const ZS = Math.abs(sag) > 1e-9 ? 44 / Math.abs(sag) : 0;
+    const P = [
+      { x: cx - gap, y: cy },
+      { x: cx, y: cy + sag * ZS },
+      { x: cx + gap, y: cy },
+    ];
+    label(
+      `tilt taken out · height × ${ZS > 0 ? Math.round(ZS / STR.amp) : 1}`,
+      CARD.x + 16,
+      CARD.y + 42,
+      0.32,
+      'left',
+      10.5
+    );
+
+    // the line joining the neighbours: where the bead would feel nothing
+    ctx.strokeStyle = ink(0.3);
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(P[0].x, cy);
+    ctx.lineTo(P[2].x, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('mid', P[2].x + 8, cy + 4, 0.4, 'left', 10);
+
+    // the sag: the gap between the bead and that line
+    if (Math.abs(P[1].y - cy) > 1) {
+      ctx.strokeStyle = sgn(sag);
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx, P[1].y);
+      ctx.stroke();
+      label(
+        'sag',
+        cx - 13,
+        cy + (P[1].y - cy) * 0.28 + 4,
+        1,
+        'right',
+        10.5,
+        sgn(sag)
+      );
+    }
+
+    // the two tensions, pulling along the string towards each neighbour
+    for (const k of [0, 2]) {
+      const dxs = P[k].x - P[1].x,
+        dys = P[k].y - P[1].y;
+      const l = Math.hypot(dxs, dys) || 1;
+      arrow(
+        ctx,
+        P[1].x,
+        P[1].y,
+        P[1].x + (dxs / l) * 54,
+        P[1].y + (dys / l) * 54,
+        ink(0.5),
+        2,
+        8
+      );
+    }
+
+    // and what they leave over, in its own lane so the sag bar stays readable
+    if (Math.abs(sag) > 1e-9) {
+      const nx = P[1].x + 30;
+      arrow(ctx, nx, P[1].y, nx, P[1].y - Math.sign(sag) * 44, sgn(sag), 3, 10);
+      label('net pull', nx + 9, P[1].y + 4, 1, 'left', 10.5, sgn(sag));
+    }
+
+    // the string through the three of them
+    ctx.strokeStyle = teal();
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    P.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.stroke();
+    P.forEach((p, i) => {
+      ctx.fillStyle = i === 1 ? sgn(a) : ink(0.85);
+      ctx.strokeStyle = inv(0.85);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, i === 1 ? 5.5 : 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+    label('u_i−1', P[0].x, cy - 13, 0.55, 'center', 10.5);
+    label('u_i+1', P[2].x, cy - 13, 0.55, 'center', 10.5);
+    label(
+      'u_i',
+      P[1].x - 13,
+      P[1].y + 4,
+      0.85,
+      'right',
+      10.5
+    );
+
+    // dx again, so the two views agree
+    const by = CARD.y + 178;
+    ctx.strokeStyle = ink(0.3);
+    ctx.lineWidth = 1;
+    for (const k of [0, 2]) {
+      const x0 = Math.min(P[1].x, P[k].x),
+        x1 = Math.max(P[1].x, P[k].x);
+      ctx.beginPath();
+      ctx.moveTo(x0, by - 5);
+      ctx.lineTo(x0, by);
+      ctx.lineTo(x1, by);
+      ctx.lineTo(x1, by - 5);
+      ctx.stroke();
+      label('dx', (x0 + x1) / 2, by + 14, 0.45, 'center', 10.5);
+    }
+
+    // the arithmetic it all comes down to
+    let y = CARD.y + 222;
+    ctx.strokeStyle = ink(0.1);
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 16, y - 20);
+    ctx.lineTo(CARD.x + CARD.w - 16, y - 20);
+    ctx.stroke();
+    const rowL = CARD.x + 16,
+      rowR = CARD.x + CARD.w - 16;
+    const row = (k: string, v: string, colour?: string) => {
+      label(k, rowL, y, 0.45, 'left', 10.5);
+      label(v, rowR, y, 1, 'right', 11.5, colour ?? ink(0.8));
+      y += 22;
+    };
+    row('sag = mid − u_i', fmt(sag, 4), sgn(sag));
+    row('u_i−1 − 2u_i + u_i+1', fmt(2 * sag, 4), sgn(sag));
+    row('÷ dx² = curvature', fmt(curvature(i0), 2), sgn(sag));
+    row('× c² = acceleration', fmt(a, 5), sgn(a));
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawString();
+    drawCurvature();
+    drawCard();
+    syncEq();
+  }
+
+  function syncEq() {
+    const i0 = state.pick;
+    setEq([
+      [
+        ['\\dfrac{\\partial^2 u}{\\partial t^2}', UP],
+        '= c^2\\,\\dfrac{\\partial^2 u}{\\partial x^2}',
+        '\\quad\\longleftarrow\\quad',
+        [
+          'a_i = c^2\\,\\dfrac{u_{i-1}-2u_i+u_{i+1}}{dx^2}',
+          sgn(accel(i0)),
+        ],
+      ],
+      [
+        `\\text{bead }${i0}:\\quad a_i = ${state.C.toFixed(2)}^2\\times\\dfrac{${fmt(u[i0 - 1], 3)}${signed(-2 * u[i0], 3)}${signed(u[i0 + 1], 3)}}{${fmt(dx(), 4)}^2}`,
+        [`= ${fmt(accel(i0), 5)}`, sgn(accel(i0))],
+      ],
+      [
+        'one bead, its two neighbours and one subtraction: the equation is that, written for all of them at once',
+      ],
+    ]);
+  }
+
+  // --- loop ----------------------------------------------------------------
+  // Steps per frame scale with N so the pulse crosses the screen at the same
+  // pace however coarse the grid is: one step always moves it by c·dx.
+  let sub = 0;
   function loop() {
     if (state.playing) {
-      for (let k = 0; k < 3; k++) step();
+      sub += Math.max(0.5, (3 * N) / 240);
+      while (sub >= 1) {
+        step();
+        sub -= 1;
+      }
     }
     draw();
     requestAnimationFrame(loop);
   }
 
-  // drag to pull the string
-  let dragging = false;
-  function pull(e: PointerEvent) {
-    if (!dragging) return;
-    const rect = canvas.getBoundingClientRect();
-    const fx = ((e.clientX - rect.left) / rect.width) * W;
-    const fy = ((e.clientY - rect.top) / rect.height) * H;
-    const ci = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (N - 1));
-    const target = (midY - fy) / AMP;
+  // --- interaction ---------------------------------------------------------
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * W,
+      y: ((e.clientY - r.top) / r.height) * H,
+    };
+  };
+  const pickEl = () => document.getElementById('pick') as HTMLInputElement;
+  const setPick = (i: number) => {
+    state.pick = Math.max(1, Math.min(N - 2, i));
+    pickEl().value = String(state.pick);
+    (document.getElementById('pval') as HTMLElement).textContent = String(state.pick);
+  };
+
+  let mode: 'none' | 'pull' | 'pick' = 'none';
+  function pull(p: { x: number; y: number }) {
+    const ci = Math.round(((p.x - STR.x) / STR.w) * (N - 1));
+    const target = (STR.mid - p.y) / STR.amp;
+    const wide = Math.max(1.4, N / 20);
     for (let i = 0; i < N; i++) {
-      const d = (i - ci) / 12;
+      const d = (i - ci) / wide;
       const w = Math.exp(-d * d);
       u[i] = u[i] * (1 - w) + target * w;
     }
@@ -190,30 +604,53 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     uPrev = u.slice(); // hold it still until released
   }
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = true;
-    canvas.setPointerCapture(e.pointerId);
-    pull(e);
+    const p = local(e);
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers are fine to ignore */
+    }
+    if (p.y < CUR.y - 40) {
+      mode = 'pull';
+      pull(p);
+    } else if (p.x < CUR.x + CUR.w + 20 && p.y < CUR.y + CUR.h + 30) {
+      mode = 'pick';
+      setPick(Math.round(((p.x - CUR.x) / CUR.w) * (N - 1)));
+    }
   });
-  canvas.addEventListener('pointermove', pull);
-  const drop = () => (dragging = false);
+  canvas.addEventListener('pointermove', (e) => {
+    if (mode === 'none') return;
+    const p = local(e);
+    if (mode === 'pull') pull(p);
+    else setPick(Math.round(((p.x - CUR.x) / CUR.w) * (N - 1)));
+  });
+  const drop = () => (mode = 'none');
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
-  document.getElementById('shape')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#shape button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.shape = btn.dataset.s!;
-    setShape(state.shape);
+  const seg = (id: string, fn: (v: string) => void) =>
+    document.getElementById(id)!.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('button');
+      if (!btn) return;
+      document
+        .querySelectorAll(`#${id} button`)
+        .forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      fn(Object.values(btn.dataset)[0] as string);
+    });
+  seg('shape', (s) => {
+    state.shape = s;
+    setShape(s);
   });
-  document.getElementById('bc')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#bc button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.bc = btn.dataset.b!;
+  seg('bc', (b) => (state.bc = b));
+
+  const nEl = document.getElementById('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    resize(+nEl.value);
+    (document.getElementById('nval') as HTMLElement).textContent = String(N);
+    setPick(state.pick);
   });
+  pickEl().addEventListener('input', () => setPick(+pickEl().value));
 
   const cEl = document.getElementById('c') as HTMLInputElement;
   cEl.addEventListener('input', () => {
@@ -223,7 +660,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const dEl = document.getElementById('damp') as HTMLInputElement;
   dEl.addEventListener('input', () => {
     state.damp = +dEl.value / 10000;
-    (document.getElementById('dval') as HTMLElement).textContent = state.damp.toFixed(3);
+    (document.getElementById('dval') as HTMLElement).textContent =
+      state.damp.toFixed(3);
   });
 
   const runBtn = document.getElementById('run') as HTMLButtonElement;
@@ -231,8 +669,35 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     state.playing = !state.playing;
     runBtn.textContent = state.playing ? 'Pause' : 'Run';
   });
+  document.getElementById('step')!.addEventListener('click', () => {
+    state.playing = false;
+    runBtn.textContent = 'Run';
+    step();
+  });
   document.getElementById('reset')!.addEventListener('click', () => setShape(state.shape));
 
-  setShape('center');
+  void textWidth;
+  resize(state.N);
+  setPick(Math.round(N / 2) - 1);
   requestAnimationFrame(loop);
 </script>
+
+<style>
+  .wave-canvas {
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

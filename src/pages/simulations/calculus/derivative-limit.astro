@@ -5,221 +5,562 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Derivative as a Limit"
-  description="The derivative is the slope of the tangent line, but the tangent is only born in a limit. Shrink the step h toward zero and watch the secant line settle onto the curve."
+  description="Two points on a curve give you one honest slope: rise over run. Slide the second point in and that slope keeps changing, but it changes towards something. Shrink h to nothing and the secant becomes the tangent, and its slope is the derivative."
 >
   <div class="sim">
     <div class="sim-stage">
-      <canvas id="deriv" width="900" height="520"></canvas>
+      <canvas id="dl" class="dl-canvas" width="900" height="500"></canvas>
     </div>
 
     <div class="sim-panel">
       <div class="control">
         <label>Function</label>
         <div class="seg" id="fn">
-          <button data-fn="quad" class="active">x²</button>
-          <button data-fn="sine">sin x</button>
-          <button data-fn="expo">eˣ</button>
-          <button data-fn="cubic">x³</button>
+          <button data-f="quad" class="active">½x²</button>
+          <button data-f="sine">sin x</button>
+          <button data-f="expo">½eˣ</button>
+          <button data-f="cubic">¼x³</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Which line</label>
+        <div class="seg" id="line">
+          <button data-l="sec" class="active">Secant</button>
+          <button data-l="tan">Tangent</button>
         </div>
       </div>
 
       <div class="control">
         <label>Point x₀ <b id="x0val">0.80</b></label>
-        <input type="range" id="x0" min="-3" max="3" step="0.05" value="0.8" />
+        <input type="range" id="x0" min="-2.6" max="2.6" step="0.05" value="0.8" />
       </div>
 
       <div class="control">
         <label>Step h <b id="hval">1.20</b></label>
-        <input type="range" id="h" min="0.02" max="2.5" step="0.02" value="1.2" />
+        <input type="range" id="h" min="0.02" max="2.4" step="0.02" value="1.2" />
       </div>
 
-      <button class="btn" id="run">Animate h → 0</button>
+      <button class="btn" id="run">Shrink h → 0</button>
 
       <div class="readout">
         <div class="row"><span>Secant slope</span><b id="sec">—</b></div>
         <div class="row"><span>Tangent slope f′(x₀)</span><b id="tan">—</b></div>
-        <div class="row"><span>Difference</span><b id="gap">—</b></div>
+        <div class="row"><span>Gap between them</span><b id="gap">—</b></div>
       </div>
+
+      <p class="note">
+        Click either line on the graph to select it. The chosen one lights up and
+        its arithmetic is written out on the right.
+      </p>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      The <b>secant</b> slope is the average rate of change over [x₀, x₀+h]. As
-      <b>h → 0</b> it converges to the <b>tangent</b> slope: the instantaneous
-      rate. That limit is the derivative.
+      The amber <b>secant</b> is the only slope you can measure honestly: two
+      points, a rise and a run. The blue <b>tangent</b> touches at one point, so
+      there is no run to divide by and no slope to measure directly.
     </li>
     <li>
-      Halve h and watch the <b>Difference</b> readout roughly halve too: for
-      these smooth curves the secant approaches the tangent linearly in h.
+      That is what the limit is for. Halve <b>h</b> and watch the <b>gap</b>
+      readout roughly halve too. The secant slope is not reaching the tangent by
+      accident; it is closing in at a steady rate.
     </li>
     <li>
-      Pick <b>eˣ</b>. The tangent slope always equals the curve's own
-      <b>height</b> f(x₀), the property that makes e special.
+      Press <b>Shrink h → 0</b>. The triangle collapses, the two lines become one
+      and the number on the right stops moving. Whatever it settles on is called
+      f′(x₀), and nothing else about the curve was needed to find it.
+    </li>
+    <li>
+      Pick <b>½eˣ</b>. The tangent slope always equals the curve's own height
+      f(x₀), which is the property that singles e out from every other base.
+    </li>
+    <li>
+      Pick <b>sin x</b> and drag x₀ to a crest. The tangent goes flat, the secant
+      does not, and the gap is at its largest: the secant is answering a question
+      about an interval, not about a point.
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
-  type Fn = { f: (x: number) => number; df: (x: number) => number };
-  const FNS: Record<string, Fn> = {
-    quad: { f: (x) => 0.5 * x * x, df: (x) => x },
-    sine: { f: (x) => 1.6 * Math.sin(x), df: (x) => 1.6 * Math.cos(x) },
-    expo: { f: (x) => Math.exp(x), df: (x) => Math.exp(x) },
-    cubic: { f: (x) => 0.25 * x * x * x, df: (x) => 0.75 * x * x },
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { roundRect } from '../../../lib/theorem';
+
+  type Which = 'sec' | 'tan';
+  type Fn = {
+    f: (x: number) => number;
+    df: (x: number) => number;
+    eq: string;
+    dq: string;
   };
 
-  const state = { fn: 'quad', x0: 0.8, h: 1.2 };
+  const FNS: Record<string, Fn> = {
+    quad: { f: (x) => 0.5 * x * x, df: (x) => x, eq: 'f(x) = ½x²', dq: 'f′(x) = x' },
+    sine: {
+      f: (x) => 1.6 * Math.sin(x),
+      df: (x) => 1.6 * Math.cos(x),
+      eq: 'f(x) = 1.6 sin x',
+      dq: 'f′(x) = 1.6 cos x',
+    },
+    expo: {
+      f: (x) => 0.5 * Math.exp(x),
+      df: (x) => 0.5 * Math.exp(x),
+      eq: 'f(x) = ½eˣ',
+      dq: 'f′(x) = ½eˣ',
+    },
+    cubic: {
+      f: (x) => 0.25 * x * x * x,
+      df: (x) => 0.75 * x * x,
+      eq: 'f(x) = ¼x³',
+      dq: 'f′(x) = ¾x²',
+    },
+  };
+
+  const state = { fn: 'quad', x0: 0.8, h: 1.2, which: 'sec' as Which };
   let raf = 0;
 
-  const canvas = document.getElementById('deriv') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const PAD = { l: 46, r: 24, t: 24, b: 40 };
-  const X = { min: -3.4, max: 3.4 };
-  const css = (v: string) =>
-    getComputedStyle(canvas).getPropertyValue(v).trim();
+  // the measured line is amber, the limit it is heading for is blue
+  const RGB = { sec: '245,158,11', tan: '56,189,248' };
+  const col = (w: Which, a: number) => `rgba(${RGB[w]},${a})`;
+  const cur = () => FNS[state.fn];
 
-  function yRange(fn: Fn) {
+  const setEq = equationBar();
+  const canvas = document.getElementById('dl') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { label, textWidth } = makeText(ctx, ink);
+  const fmt = (v: number, n = 3) =>
+    (Math.abs(v) < 5e-4 ? 0 : v).toFixed(n).replace('-', '−');
+  /** "+ 1.20" or "− 1.20", so nothing ever reads "− −1.20". */
+  const pm = (v: number, n = 3) => `${v < 0 ? '−' : '+'} ${fmt(Math.abs(v), n)}`;
+
+  const BOX = { x: 26, y: 26, w: 552, h: 420 };
+  const CARD = { x: 600, y: 26, w: 274, h: 434 };
+  const XR = { min: -3.2, max: 3.2 };
+
+  /** Vertical window, wide enough for the curve and both lines to stay inside. */
+  function yRange() {
+    const { f } = cur();
     let lo = Infinity,
       hi = -Infinity;
     for (let i = 0; i <= 240; i++) {
-      const x = X.min + ((X.max - X.min) * i) / 240;
-      const y = fn.f(x);
-      if (isFinite(y)) {
-        lo = Math.min(lo, y);
-        hi = Math.max(hi, y);
+      const v = f(XR.min + ((XR.max - XR.min) * i) / 240);
+      if (isFinite(v)) {
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
       }
     }
-    const pad = (hi - lo) * 0.12 || 1;
+    const pad = (hi - lo) * 0.14 || 1;
     return { lo: lo - pad, hi: hi + pad };
   }
 
-  function draw() {
-    const fn = FNS[state.fn];
-    const { lo, hi } = yRange(fn);
-    const teal = css('--accent-2') || '#5eead4';
-    const accent = css('--accent') || '#7c8cff';
-    const grid = css('--border') || '#262a32';
-    const faint = css('--text-faint') || '#6b7280';
+  let R = { lo: -1, hi: 1 };
+  const sx = (x: number) =>
+    BOX.x + ((x - XR.min) / (XR.max - XR.min)) * BOX.w;
+  const sy = (y: number) =>
+    BOX.y + BOX.h - ((y - R.lo) / (R.hi - R.lo)) * BOX.h;
 
-    const sx = (x: number) => PAD.l + ((x - X.min) / (X.max - X.min)) * (W - PAD.l - PAD.r);
-    const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+  const slopes = () => {
+    const { f, df } = cur();
+    const y0 = f(state.x0);
+    const y1 = f(state.x0 + state.h);
+    return { y0, y1, sec: (y1 - y0) / state.h, tan: df(state.x0) };
+  };
 
-    ctx.clearRect(0, 0, W, H);
-
-    // grid
-    ctx.strokeStyle = grid;
-    ctx.fillStyle = faint;
+  // --- the graph ------------------------------------------------------------
+  function drawAxes() {
+    ctx.strokeStyle = ink(0.07);
     ctx.lineWidth = 1;
-    ctx.font = "12px 'JetBrains Mono', monospace";
     for (let i = 0; i <= 8; i++) {
-      const xv = X.min + ((X.max - X.min) * i) / 8;
-      const px = sx(xv);
-      ctx.globalAlpha = 0.4;
+      const xv = XR.min + ((XR.max - XR.min) * i) / 8;
       ctx.beginPath();
-      ctx.moveTo(px, PAD.t);
-      ctx.lineTo(px, H - PAD.b);
+      ctx.moveTo(sx(xv), BOX.y);
+      ctx.lineTo(sx(xv), BOX.y + BOX.h);
       ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+      label(xv.toFixed(1), sx(xv), BOX.y + BOX.h + 17, 0.3, 'center', 10.5);
     }
-    if (lo < 0 && hi > 0) {
-      ctx.strokeStyle = css('--border-strong') || '#343a45';
+    if (R.lo < 0 && R.hi > 0) {
+      ctx.strokeStyle = ink(0.16);
       ctx.beginPath();
-      ctx.moveTo(PAD.l, sy(0));
-      ctx.lineTo(W - PAD.r, sy(0));
+      ctx.moveTo(BOX.x, sy(0));
+      ctx.lineTo(BOX.x + BOX.w, sy(0));
       ctx.stroke();
     }
+  }
 
-    // curve
-    ctx.strokeStyle = teal;
-    ctx.lineWidth = 2.4;
+  /** A straight line of the given slope through (x₀, y₀), across the whole box. */
+  function lineEnds(m: number, x0: number, y0: number) {
+    const a = XR.min,
+      b = XR.max;
+    return [
+      { x: sx(a), y: sy(y0 + m * (a - x0)) },
+      { x: sx(b), y: sy(y0 + m * (b - x0)) },
+    ];
+  }
+
+  function drawLine(w: Which) {
+    const { y0, sec, tan } = slopes();
+    const m = w === 'sec' ? sec : tan;
+    const [p, q] = lineEnds(m, state.x0, y0);
+    const on = state.which === w;
+    ctx.save();
     ctx.beginPath();
-    for (let i = 0; i <= 480; i++) {
-      const x = X.min + ((X.max - X.min) * i) / 480;
-      const px = sx(x);
-      const py = sy(fn.f(x));
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    ctx.rect(BOX.x, BOX.y, BOX.w, BOX.h);
+    ctx.clip();
+    if (on) {
+      ctx.strokeStyle = col(w, 0.18);
+      ctx.lineWidth = 9;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(q.x, q.y);
+      ctx.stroke();
     }
-    ctx.stroke();
-
-    const x0 = state.x0;
-    const x1 = state.x0 + state.h;
-    const y0 = fn.f(x0);
-    const y1 = fn.f(x1);
-    const secSlope = (y1 - y0) / state.h;
-    const tanSlope = fn.df(x0);
-
-    // tangent (dashed)
-    ctx.strokeStyle = accent;
-    ctx.setLineDash([6, 5]);
-    ctx.lineWidth = 1.6;
-    const tdx = 3.2;
+    ctx.strokeStyle = col(w, on ? 1 : 0.34);
+    ctx.lineWidth = on ? 2.6 : 1.5;
+    ctx.setLineDash(on ? [] : [6, 5]);
     ctx.beginPath();
-    ctx.moveTo(sx(x0 - tdx), sy(y0 - tanSlope * tdx));
-    ctx.lineTo(sx(x0 + tdx), sy(y0 + tanSlope * tdx));
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.restore();
 
-    // secant (solid) through the two points, extended
-    ctx.strokeStyle = '#fbbf24';
-    ctx.lineWidth = 2;
-    const sdx = 3.4;
+    // a name for the line, riding on it near the right edge of the box. Once
+    // the two lines have all but merged only the chosen one keeps its label.
+    const lx = XR.max - 0.55;
+    const ly = sy(y0 + m * (lx - state.x0));
+    const lyOther = sy(y0 + (w === 'sec' ? tan : sec) * (lx - state.x0));
+    const merged = !on && Math.abs(ly - lyOther) < 20;
+    if (!merged && ly > BOX.y + 16 && ly < BOX.y + BOX.h - 10) {
+      const txt = w === 'sec' ? 'secant' : 'tangent';
+      const tw = textWidth(txt, 11);
+      ctx.fillStyle = inv(0.72);
+      roundRect(ctx, sx(lx) - tw / 2 - 7, ly - 24, tw + 14, 19, 5);
+      ctx.fill();
+      label(txt, sx(lx), ly - 11, 1, 'center', 11, col(w, on ? 1 : 0.5));
+    }
+  }
+
+  function drawTriangle() {
+    const { y0, y1 } = slopes();
+    const x0 = state.x0,
+      x1 = state.x0 + state.h;
+    const on = state.which === 'sec';
+    ctx.save();
     ctx.beginPath();
-    ctx.moveTo(sx(x0 - sdx), sy(y0 - secSlope * sdx));
-    ctx.lineTo(sx(x0 + sdx), sy(y0 + secSlope * sdx));
-    ctx.stroke();
-
-    // the h span, drawn as a slope triangle
-    ctx.strokeStyle = 'rgba(251,191,36,0.5)';
-    ctx.lineWidth = 1;
+    ctx.rect(BOX.x, BOX.y, BOX.w, BOX.h);
+    ctx.clip();
     ctx.beginPath();
     ctx.moveTo(sx(x0), sy(y0));
     ctx.lineTo(sx(x1), sy(y0));
     ctx.lineTo(sx(x1), sy(y1));
+    ctx.closePath();
+    ctx.fillStyle = col('sec', on ? 0.14 : 0.06);
+    ctx.fill();
+    ctx.strokeStyle = col('sec', on ? 0.6 : 0.25);
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 4]);
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    // points
-    const dot = (x: number, y: number, col: string) => {
-      ctx.fillStyle = col;
-      ctx.strokeStyle = '#0b0c0e';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(sx(x), sy(y), 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    };
-    dot(x1, y1, '#fbbf24');
-    dot(x0, y0, accent);
-
-    (document.getElementById('sec') as HTMLElement).textContent = secSlope.toFixed(4);
-    (document.getElementById('tan') as HTMLElement).textContent = tanSlope.toFixed(4);
-    (document.getElementById('gap') as HTMLElement).textContent = Math.abs(secSlope - tanSlope).toFixed(4);
+    // right-aligned on the run, and dropped entirely once the step is too
+    // small to hold a caption without covering the point
+    const up = y1 >= y0;
+    if (sx(x1) - sx(x0) > 46)
+      label(
+        `run h = ${fmt(state.h, 2)}`,
+        sx(x1) - 4,
+        sy(y0) + (up ? 17 : -9),
+        on ? 0.8 : 0.35,
+        'right',
+        10.5,
+        col('sec', on ? 0.95 : 0.4)
+      );
+    if (Math.abs(sy(y1) - sy(y0)) > 22)
+      label(
+        `rise ${fmt(y1 - y0, 2)}`,
+        sx(x1) + 8,
+        (sy(y0) + sy(y1)) / 2 + 4,
+        on ? 0.8 : 0.35,
+        'left',
+        10.5,
+        col('sec', on ? 0.95 : 0.4)
+      );
+    ctx.restore();
   }
 
-  document.getElementById('fn')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#fn button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.fn = btn.dataset.fn!;
+  function drawCurve() {
+    const { f } = cur();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(BOX.x, BOX.y, BOX.w, BOX.h);
+    ctx.clip();
+    ctx.strokeStyle = ink(0.6);
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= 600; i++) {
+      const x = XR.min + ((XR.max - XR.min) * i) / 600;
+      const p = { x: sx(x), y: sy(f(x)) };
+      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function dot(x: number, y: number, colour: string, r = 5.5) {
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = inv(0.75);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx(x), sy(y), r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function drawPoints() {
+    const { y0, y1 } = slopes();
+    const x1 = state.x0 + state.h;
+    ctx.strokeStyle = ink(0.18);
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1;
+    for (const [x, y] of [
+      [state.x0, y0],
+      [x1, y1],
+    ] as [number, number][]) {
+      ctx.beginPath();
+      ctx.moveTo(sx(x), sy(y));
+      ctx.lineTo(sx(x), BOX.y + BOX.h);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(BOX.x, BOX.y, BOX.w, BOX.h);
+    ctx.clip();
+    dot(x1, y1, col('sec', 1));
+    dot(state.x0, y0, ink(0.95), 6);
+    ctx.restore();
+    label('x₀', sx(state.x0), BOX.y + BOX.h + 38, 0.75, 'center', 11);
+    if (sx(x1) - sx(state.x0) > 34)
+      label('x₀+h', sx(x1), BOX.y + BOX.h + 38, 0.75, 'center', 11, col('sec', 0.9));
+  }
+
+  // --- the card: the arithmetic behind the chosen line ----------------------
+  function fraction(
+    num: string,
+    den: string,
+    cx: number,
+    y: number,
+    size: number,
+    colour: string
+  ) {
+    const w = Math.max(textWidth(num, size), textWidth(den, size));
+    label(num, cx, y - 9, 1, 'center', size, colour);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2 - 5, y);
+    ctx.lineTo(cx + w / 2 + 5, y);
+    ctx.stroke();
+    label(den, cx, y + 20, 1, 'center', size, colour);
+  }
+
+  function drawCard() {
+    const w = state.which;
+    const { y0, y1, sec, tan } = slopes();
+    const m = w === 'sec' ? sec : tan;
+    const cx = CARD.x + CARD.w / 2;
+
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+
+    label(
+      w === 'sec' ? 'THE SECANT SLOPE' : 'THE TANGENT SLOPE',
+      CARD.x + 16,
+      CARD.y + 24,
+      1,
+      'left',
+      11,
+      col(w, 0.9)
+    );
+
+    if (w === 'sec') {
+      fraction('f(x₀+h) − f(x₀)', 'h', cx, CARD.y + 76, 12, col('sec', 0.85));
+      fraction(
+        `${fmt(y1, 3)} ${pm(-y0, 3)}`,
+        fmt(state.h, 3),
+        cx,
+        CARD.y + 142,
+        12,
+        ink(0.6)
+      );
+      label('two points, one honest slope', cx, CARD.y + 190, 0.4, 'center', 10.5);
+    } else {
+      label('the number the secant', cx, CARD.y + 62, 0.5, 'center', 11);
+      label('is heading for as h → 0', cx, CARD.y + 82, 0.5, 'center', 11);
+      fraction('f(x₀+h) − f(x₀)', 'h', cx, CARD.y + 130, 12, col('tan', 0.55));
+      label(
+        `h = ${fmt(state.h, 2)} still leaves ${fmt(Math.abs(sec - tan), 3)}`,
+        cx,
+        CARD.y + 190,
+        0.4,
+        'center',
+        10.5
+      );
+    }
+
+    label(`= ${fmt(m)}`, cx, CARD.y + 232, 1, 'center', 26, col(w, 1));
+
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 16, CARD.y + 262);
+    ctx.lineTo(CARD.x + CARD.w - 16, CARD.y + 262);
+    ctx.stroke();
+
+    label('THE LINE ITSELF', CARD.x + 16, CARD.y + 288, 0.42, 'left', 10.5);
+    label(
+      `y = ${fmt(y0, 2)} ${pm(m, 2)}(x ${pm(-state.x0, 2)})`,
+      CARD.x + 16,
+      CARD.y + 312,
+      1,
+      'left',
+      11.5,
+      col(w, 0.95)
+    );
+
+    ctx.strokeStyle = ink(0.1);
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 16, CARD.y + 338);
+    ctx.lineTo(CARD.x + CARD.w - 16, CARD.y + 338);
+    ctx.stroke();
+
+    label(cur().eq, CARD.x + 16, CARD.y + 366, 0.7, 'left', 12);
+    ctx.fillStyle = col('tan', w === 'tan' ? 1 : 0.3);
+    ctx.fillRect(CARD.x + 16, CARD.y + 386, 3, 11);
+    label(
+      cur().dq,
+      CARD.x + 26,
+      CARD.y + 396,
+      1,
+      'left',
+      12,
+      col('tan', w === 'tan' ? 1 : 0.35)
+    );
+    ctx.restore();
+  }
+
+
+  function draw() {
+    R = yRange();
+    ctx.clearRect(0, 0, W, H);
+    drawAxes();
+    drawTriangle();
+    drawCurve();
+    drawLine(state.which === 'sec' ? 'tan' : 'sec');
+    drawLine(state.which);
+    drawPoints();
+    drawCard();
+    sync();
+  }
+
+  function sync() {
+    const { sec, tan } = slopes();
+    const SEC = `rgb(${RGB.sec})`,
+      TAN = `rgb(${RGB.tan})`;
+    setEq([
+      [
+        ["f'(x_0)", TAN],
+        '=',
+        ['\\lim\\limits_{h\\to 0}\\frac{f(x_0+h)-f(x_0)}{h}', SEC],
+      ],
+      [
+        [`f'(x_0)=${fmt(tan)}`, TAN],
+        `\\quad\\text{at }h=${state.h.toFixed(2)}:`,
+        [`\\frac{\\Delta f}{h}=${fmt(sec)}`, SEC],
+        `\\quad\\text{gap }${fmt(Math.abs(sec - tan))}`,
+      ],
+      [
+        'the amber quotient is the one you can measure; the blue slope is what it walks into as h → 0',
+      ],
+    ]);
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('sec', fmt(sec));
+    set('tan', fmt(tan));
+    set('gap', fmt(Math.abs(sec - tan)));
+    set('x0val', state.x0.toFixed(2));
+    set('hval', state.h.toFixed(2));
+  }
+
+  // --- controls -------------------------------------------------------------
+  const $ = (id: string) => document.getElementById(id) as HTMLElement;
+  const segment = (id: string, fn: (v: string) => void) =>
+    $(id).addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (!b) return;
+      $(id)
+        .querySelectorAll('button')
+        .forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      fn(Object.values(b.dataset)[0] as string);
+    });
+
+  function select(w: Which) {
+    state.which = w;
+    $('line')
+      .querySelectorAll('button')
+      .forEach((b) =>
+        b.classList.toggle('active', (b as HTMLElement).dataset.l === w)
+      );
+    draw();
+  }
+
+  segment('fn', (f) => {
+    state.fn = f;
+    draw();
+  });
+  segment('line', (l) => {
+    state.which = l as Which;
     draw();
   });
 
-  const x0El = document.getElementById('x0') as HTMLInputElement;
+  const x0El = $('x0') as HTMLInputElement;
   x0El.addEventListener('input', () => {
+    cancelAnimationFrame(raf);
+    raf = 0;
     state.x0 = +x0El.value;
-    (document.getElementById('x0val') as HTMLElement).textContent = state.x0.toFixed(2);
+    clampH();
     draw();
   });
 
-  const hEl = document.getElementById('h') as HTMLInputElement;
+  const hEl = $('h') as HTMLInputElement;
   function setH(h: number) {
     state.h = h;
     hEl.value = String(h);
-    (document.getElementById('hval') as HTMLElement).textContent = h.toFixed(2);
   }
+
+  /** Keep x₀ + h inside the window, so both points are always on screen. */
+  function clampH() {
+    const max = Math.max(0.06, Math.min(2.4, XR.max - 0.25 - state.x0));
+    hEl.max = max.toFixed(2);
+    if (state.h > max) setH(+max.toFixed(2));
+    return max;
+  }
+
   hEl.addEventListener('input', () => {
     cancelAnimationFrame(raf);
     raf = 0;
@@ -227,10 +568,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     draw();
   });
 
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
+  $('run').addEventListener('click', () => {
     cancelAnimationFrame(raf);
-    setH(2.5);
+    setH(clampH());
     const shrink = () => {
       const next = state.h * 0.94;
       if (next <= 0.02) {
@@ -246,5 +586,40 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     shrink();
   });
 
+  // click either line to select it
+  canvas.addEventListener('pointerdown', (e) => {
+    const b = canvas.getBoundingClientRect();
+    const x = ((e.clientX - b.left) / b.width) * W;
+    const y = ((e.clientY - b.top) / b.height) * H;
+    if (x > BOX.x + BOX.w || y > BOX.y + BOX.h) return;
+    const { y0, sec, tan } = slopes();
+    let best: { w: Which; d: number } | null = null;
+    for (const w of ['sec', 'tan'] as Which[]) {
+      const [p, q] = lineEnds(w === 'sec' ? sec : tan, state.x0, y0);
+      const vx = q.x - p.x,
+        vy = q.y - p.y;
+      const t = Math.max(
+        0,
+        Math.min(1, ((x - p.x) * vx + (y - p.y) * vy) / (vx * vx + vy * vy))
+      );
+      const d = Math.hypot(p.x + vx * t - x, p.y + vy * t - y);
+      if (!best || d < best.d) best = { w, d };
+    }
+    if (best && best.d < 26) select(best.w);
+  });
+
+  clampH();
   draw();
 </script>
+
+<style>
+  .dl-canvas {
+    cursor: pointer;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

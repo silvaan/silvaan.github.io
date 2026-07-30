@@ -1,0 +1,461 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Joint Probability"
+  description="Two numbers come out of one experiment, so every pair of values gets its own probability. Lay them out as a table of little squares whose areas add to one, drag a box over the pairs you care about, and the probability of that event is simply the area you enclosed."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="jp" class="jp-canvas" width="900" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>How the two are linked</label>
+        <div class="seg" id="preset">
+          <button data-p="0">opposed</button>
+          <button data-p="1" class="active">independent</button>
+          <button data-p="2">together</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Strength of the link <b id="rval">0.00</b></label>
+        <input type="range" id="rho" min="-140" max="140" value="0" />
+        <div class="scale-hint"><span>opposed</span><span>independent</span><span>together</span></div>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>P(A) &nbsp;the columns</span><b id="pa">—</b></div>
+        <div class="row"><span>P(B) &nbsp;the rows</span><b id="pb">—</b></div>
+        <div class="row"><span>P(A and B)</span><b id="pab">—</b></div>
+        <div class="row"><span>P(A) × P(B)</span><b id="pp">—</b></div>
+        <div class="row"><span>Everything adds to</span><b id="tot">—</b></div>
+      </div>
+
+      <p class="note">
+        Drag a box across the table to choose an event. Every square is one pair
+        (x, y) and its area is that pair's probability, so the whole table has
+        area one.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Leave the link at <b>independent</b> and drag a box around. Whatever you
+      pick, <b>P(A and B) and P(A)×P(B) come out equal</b>. That equality is the
+      definition of independence, not a fact about the world.
+    </li>
+    <li>
+      Now slide the link towards <b>together</b>. The mass piles onto the
+      diagonal, and a box on the diagonal now holds <b>more</b> than the product
+      predicts while a box off it holds less. The two numbers have started
+      carrying information about each other.
+    </li>
+    <li>
+      The row of bars underneath and the column of bars on the right never
+      change shape as you drag your box: those are the <b>marginals</b>, and they
+      are what is left of the joint when you stop caring about the other
+      variable.
+    </li>
+    <li>
+      P(A) is the total of the highlighted bars underneath and P(B) the total on
+      the right, but <b>P(A and B) is not built from them</b>. You have to go
+      back to the table and add the squares themselves.
+    </li>
+    <li>
+      Push the link to <b>opposed</b>. Now a diagonal box is unusually empty, and
+      the product overestimates instead. Dependence has a direction, and the
+      product test does not care which.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { roundRect } from '../../../lib/theorem';
+
+  const N = 5;
+  const XL = ['1', '2', '3', '4', '5'];
+  const state = { rho: 0, i0: 2, i1: 3, j0: 1, j1: 2 };
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('jp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { label } = makeText(ctx, ink);
+  const XC = () => css('--accent', '#7c8cff'); // anything about x
+  const YC = () => css('--accent-2', '#5eead4'); // anything about y
+  const EV = '#f59e0b'; // the event you dragged out
+  const fmt = (v: number, n = 3) => v.toFixed(n);
+
+  // A joint that starts independent and can be tilted onto either diagonal.
+  // p(i,j) ∝ a_i b_j e^{ρ z_i z_j}, so ρ = 0 is exactly independent.
+  const A = [0.14, 0.2, 0.3, 0.22, 0.14];
+  const B = [0.18, 0.24, 0.26, 0.2, 0.12];
+  const z = (i: number) => (i - (N - 1) / 2) / ((N - 1) / 2);
+  let P: number[][] = [];
+  function build() {
+    P = [];
+    let s = 0;
+    for (let i = 0; i < N; i++) {
+      P.push([]);
+      for (let j = 0; j < N; j++) {
+        const v = A[i] * B[j] * Math.exp(state.rho * z(i) * z(j) * 2.2);
+        P[i].push(v);
+        s += v;
+      }
+    }
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) P[i][j] /= s;
+  }
+  const px = (i: number) => P[i].reduce((a, b) => a + b, 0);
+  const py = (j: number) => P.reduce((a, r) => a + r[j], 0);
+  const total = () => P.reduce((a, r) => a + r.reduce((c, v) => c + v, 0), 0);
+  const inA = (i: number) => i >= state.i0 && i <= state.i1;
+  const inB = (j: number) => j >= state.j0 && j <= state.j1;
+  function sums() {
+    let pa = 0,
+      pb = 0,
+      pab = 0;
+    for (let i = 0; i < N; i++) if (inA(i)) pa += px(i);
+    for (let j = 0; j < N; j++) if (inB(j)) pb += py(j);
+    for (let i = 0; i < N; i++)
+      for (let j = 0; j < N; j++) if (inA(i) && inB(j)) pab += P[i][j];
+    return { pa, pb, pab };
+  }
+
+  // --- layout ---------------------------------------------------------------
+  const G = { x: 108, y: 108, cell: 78 };
+  const MX = { y: G.y + N * G.cell + 14, h: 46 }; // the x marginal, underneath
+  const MY = { x: G.x + N * G.cell + 14, w: 46 }; // the y marginal, on the right
+  const CARD = { x: 604, y: 104, w: 272, h: 400 };
+  const cx = (i: number) => G.x + i * G.cell;
+  const cy = (j: number) => G.y + (N - 1 - j) * G.cell; // y grows upward
+
+  function drawTable() {
+    label('EVERY PAIR, AND HOW LIKELY IT IS', 24, 44, 0.45, 'left', 12);
+    label('the area of a square is its probability', 24, 62, 0.3, 'left', 11);
+
+    let pmax = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) pmax = Math.max(pmax, P[i][j]);
+
+    // the event, as bands across the table
+    ctx.fillStyle = `rgba(124,140,255,0.07)`;
+    ctx.fillRect(cx(state.i0), G.y, (state.i1 - state.i0 + 1) * G.cell, N * G.cell);
+    ctx.fillStyle = `rgba(94,234,212,0.07)`;
+    ctx.fillRect(
+      G.x,
+      cy(state.j1),
+      N * G.cell,
+      (state.j1 - state.j0 + 1) * G.cell
+    );
+
+    for (let i = 0; i < N; i++)
+      for (let j = 0; j < N; j++) {
+        const on = inA(i) && inB(j);
+        const s = G.cell * 0.92 * Math.sqrt(P[i][j] / pmax);
+        const mx = cx(i) + G.cell / 2,
+          my = cy(j) + G.cell / 2;
+        ctx.fillStyle = ink(0.05);
+        roundRect(ctx, cx(i) + 2, cy(j) + 2, G.cell - 4, G.cell - 4, 4);
+        ctx.fill();
+        if (s > 1) {
+          ctx.fillStyle = on ? 'rgba(245,158,11,0.85)' : ink(0.3);
+          roundRect(ctx, mx - s / 2, my - s / 2, s, s, 3);
+          ctx.fill();
+        }
+        label(
+          P[i][j].toFixed(3).slice(1),
+          mx,
+          my + 4,
+          on ? 1 : 0.55,
+          'center',
+          10,
+          on ? 'rgba(14,16,20,0.9)' : undefined
+        );
+      }
+
+    // the box you dragged
+    ctx.strokeStyle = EV;
+    ctx.lineWidth = 2;
+    roundRect(
+      ctx,
+      cx(state.i0) + 1,
+      cy(state.j1) + 1,
+      (state.i1 - state.i0 + 1) * G.cell - 2,
+      (state.j1 - state.j0 + 1) * G.cell - 2,
+      5
+    );
+    ctx.stroke();
+
+    for (let i = 0; i < N; i++)
+      label(
+        XL[i],
+        cx(i) + G.cell / 2,
+        MX.y + MX.h + 18,
+        inA(i) ? 1 : 0.4,
+        'center',
+        11,
+        inA(i) ? XC() : undefined
+      );
+    for (let j = 0; j < N; j++)
+      label(
+        XL[j],
+        G.x - 12,
+        cy(j) + G.cell / 2 + 4,
+        inB(j) ? 1 : 0.4,
+        'right',
+        11,
+        inB(j) ? YC() : undefined
+      );
+    label('x', cx(N - 1) + G.cell / 2 + 34, MX.y + MX.h + 18, 0.3, 'left', 11);
+    label('y', G.x - 12, G.y - 12, 0.3, 'right', 11);
+  }
+
+  /** The two marginals, drawn along the edges they belong to. */
+  function drawMarginals() {
+    let mx = 0;
+    for (let i = 0; i < N; i++) mx = Math.max(mx, px(i), py(i));
+
+    for (let i = 0; i < N; i++) {
+      const h = (px(i) / mx) * MX.h;
+      ctx.fillStyle = inA(i) ? XC() : ink(0.18);
+      roundRect(ctx, cx(i) + 8, MX.y + MX.h - h, G.cell - 16, h, 3);
+      ctx.fill();
+      label(
+        px(i).toFixed(2).slice(1),
+        cx(i) + G.cell / 2,
+        MX.y + MX.h - h - 5,
+        inA(i) ? 0.9 : 0.35,
+        'center',
+        9.5,
+        inA(i) ? XC() : undefined
+      );
+    }
+    label('P(x)', G.x - 12, MX.y + MX.h, 0.5, 'right', 10.5, XC());
+
+    for (let j = 0; j < N; j++) {
+      const w = (py(j) / mx) * MY.w;
+      ctx.fillStyle = inB(j) ? YC() : ink(0.18);
+      roundRect(ctx, MY.x, cy(j) + 8, w, G.cell - 16, 3);
+      ctx.fill();
+      label(
+        py(j).toFixed(2).slice(1),
+        MY.x + w + 5,
+        cy(j) + G.cell / 2 + 4,
+        inB(j) ? 0.9 : 0.35,
+        'left',
+        9.5,
+        inB(j) ? YC() : undefined
+      );
+    }
+    label('P(y)', MY.x, G.y - 12, 0.5, 'left', 10.5, YC());
+  }
+
+  function drawCard() {
+    const { pa, pb, pab } = sums();
+    const prod = pa * pb;
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+
+    label('THE EVENT YOU BOXED', CARD.x + 18, CARD.y + 26, 1, 'left', 11, EV);
+    label(
+      `x in ${XL[state.i0]}…${XL[state.i1]}, y in ${XL[state.j0]}…${XL[state.j1]}`,
+      CARD.x + 18,
+      CARD.y + 46,
+      0.4,
+      'left',
+      10.5
+    );
+
+    label('P(A and B)', CARD.x + 18, CARD.y + 84, 0.5, 'left', 11);
+    label(fmt(pab), CARD.x + CARD.w - 18, CARD.y + 88, 1, 'right', 22, EV);
+
+    // the same number, and the number independence would have predicted
+    const bx = CARD.x + 18,
+      bw = CARD.w - 36;
+    const scale = Math.max(pab, prod, 1e-6) * 1.15;
+    const bar = (y: number, v: number, colour: string, name: string) => {
+      ctx.fillStyle = ink(0.06);
+      roundRect(ctx, bx, y, bw, 16, 4);
+      ctx.fill();
+      ctx.fillStyle = colour;
+      roundRect(ctx, bx, y, Math.max(2, (bw * v) / scale), 16, 4);
+      ctx.fill();
+      label(name, bx, y - 6, 0.45, 'left', 10);
+      label(fmt(v), bx + bw, y - 6, 0.8, 'right', 10.5, colour);
+    };
+    bar(CARD.y + 132, pab, EV, 'the squares you enclosed');
+    bar(CARD.y + 180, prod, ink(0.5), 'P(A) × P(B)');
+
+    const rel = prod > 1e-9 ? pab / prod : 1;
+    const indep = Math.abs(rel - 1) < 0.02;
+    label(
+      indep
+        ? 'the same, so A and B are independent here'
+        : rel > 1
+          ? `${rel.toFixed(2)}× more than the product`
+          : `${rel.toFixed(2)}× less than the product`,
+      CARD.x + 18,
+      CARD.y + 222,
+      0.55,
+      'left',
+      10.5,
+      indep ? YC() : EV
+    );
+
+    ctx.strokeStyle = ink(0.1);
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 18, CARD.y + 248);
+    ctx.lineTo(CARD.x + CARD.w - 18, CARD.y + 248);
+    ctx.stroke();
+
+    let y = CARD.y + 276;
+    const row = (k: string, v: string, colour?: string) => {
+      label(k, CARD.x + 18, y, 0.45, 'left', 10.5);
+      label(v, CARD.x + CARD.w - 18, y, 1, 'right', 12, colour ?? ink(0.8));
+      y += 26;
+    };
+    row('P(A), the columns', fmt(pa), XC());
+    row('P(B), the rows', fmt(pb), YC());
+    row('P(A) × P(B)', fmt(prod), ink(0.6));
+    row('every square added up', fmt(total()), ink(0.6));
+    ctx.restore();
+  }
+
+  function draw() {
+    build();
+    ctx.clearRect(0, 0, W, H);
+    drawTable();
+    drawMarginals();
+    drawCard();
+    sync();
+  }
+
+  function sync() {
+    const { pa, pb, pab } = sums();
+    const prod = pa * pb;
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('pa', fmt(pa));
+    set('pb', fmt(pb));
+    set('pab', fmt(pab));
+    set('pp', fmt(prod));
+    set('tot', fmt(total()));
+    set('rval', state.rho.toFixed(2));
+
+    const rel = prod > 1e-9 ? pab / prod : 1;
+    const indep = Math.abs(rel - 1) < 0.02;
+    setEq([
+      [
+        ['P(A\\cap B)', EV],
+        '= \\displaystyle\\sum_{x\\in A}\\sum_{y\\in B} P(x,y)',
+      ],
+      [
+        [`P(A) = ${fmt(pa)}`, XC()],
+        [`\\quad P(B) = ${fmt(pb)}`, YC()],
+        [`\\quad P(A\\cap B) = ${fmt(pab)}`, EV],
+        `\\quad P(A)P(B) = ${fmt(prod)}`,
+      ],
+      [
+        indep
+          ? 'those last two agree, which is exactly what independence means'
+          : 'those last two disagree, so knowing one of the two numbers tells you something about the other',
+      ],
+    ]);
+  }
+
+  // --- interaction ---------------------------------------------------------
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * W,
+      y: ((e.clientY - r.top) / r.height) * H,
+    };
+  };
+  const clampi = (v: number) => Math.max(0, Math.min(N - 1, v));
+  const cellAt = (p: { x: number; y: number }) => ({
+    i: clampi(Math.floor((p.x - G.x) / G.cell)),
+    j: clampi(N - 1 - Math.floor((p.y - G.y) / G.cell)),
+  });
+  let anchor: { i: number; j: number } | null = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = local(e);
+    if (p.x < G.x - 6 || p.x > G.x + N * G.cell + 6) return;
+    if (p.y < G.y - 6 || p.y > G.y + N * G.cell + 6) return;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers are fine to ignore */
+    }
+    anchor = cellAt(p);
+    state.i0 = state.i1 = anchor.i;
+    state.j0 = state.j1 = anchor.j;
+    draw();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!anchor) return;
+    const c = cellAt(local(e));
+    state.i0 = Math.min(anchor.i, c.i);
+    state.i1 = Math.max(anchor.i, c.i);
+    state.j0 = Math.min(anchor.j, c.j);
+    state.j1 = Math.max(anchor.j, c.j);
+    draw();
+  });
+  const drop = () => (anchor = null);
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  const rhoEl = document.getElementById('rho') as HTMLInputElement;
+  const setRho = (v: number) => {
+    state.rho = v;
+    rhoEl.value = String(Math.round(v * 100));
+    draw();
+  };
+  rhoEl.addEventListener('input', () => setRho(+rhoEl.value / 100));
+  document.getElementById('preset')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document
+      .querySelectorAll('#preset button')
+      .forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    setRho([-1, 0, 1][+b.dataset.p!]);
+  });
+
+  draw();
+</script>
+
+<style>
+  .jp-canvas {
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

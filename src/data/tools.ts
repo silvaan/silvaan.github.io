@@ -33,6 +33,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'partial-derivatives',
+        title: 'Partial Derivatives',
+        description:
+          'Slide a vertical plane through a surface and the surface becomes one ordinary curve. The slope of its tangent line is a partial derivative; pick the other plane for the other one.',
+        href: '/simulations/calculus/partial-derivatives',
+        status: 'live',
+      },
+      {
         slug: 'riemann-sum',
         title: 'Riemann Sums',
         description:
@@ -94,14 +102,6 @@ export const AREAS: Area[] = [
         description:
           'Drag a tiny probe through a 3D density cloud. An arrow shows the direction of steepest increase, with the gradient magnitude alongside.',
         href: '/simulations/calculus/scalar-fields',
-        status: 'live',
-      },
-      {
-        slug: 'tangent-plane',
-        title: 'Tangent Plane',
-        description:
-          'Ride a point over a 3D surface with its tangent plane attached, and watch the slope change with direction, steepest along the gradient.',
-        href: '/simulations/calculus/tangent-plane',
         status: 'live',
       },
       {
@@ -238,6 +238,30 @@ export const AREAS: Area[] = [
         description:
           'Thousands of aimless walkers spread from a point into a Gaussian whose width grows like the square root of time, the particle view of diffusion.',
         href: '/simulations/statistics/random-walk',
+        status: 'live',
+      },
+      {
+        slug: 'joint-distribution',
+        title: 'Joint Probability',
+        description:
+          'Two numbers out of one experiment, laid out as a table of squares whose areas add to one. Drag a box over the pairs you care about and the probability is the area you enclosed; tilt the link between them and watch P(A and B) part company with P(A)P(B).',
+        href: '/simulations/statistics/joint-distribution',
+        status: 'live',
+      },
+      {
+        slug: 'marginal-distribution',
+        title: 'Marginals & Conditionals',
+        description:
+          'A marginal is a column of the joint table added up, so the other variable disappears. A conditional is that same column divided by its own total, so it adds to one again. Watch one column do both at once.',
+        href: '/simulations/statistics/marginal-distribution',
+        status: 'live',
+      },
+      {
+        slug: 'probability-density',
+        title: 'Probability Density',
+        description:
+          'No single value has any probability, only stretches do, so a density is the height whose area is that probability. Drag an interval across six different densities, or a circle across a density on the plane, and read off the integral.',
+        href: '/simulations/statistics/probability-density',
         status: 'live',
       },
       {
@@ -382,6 +406,22 @@ export const AREAS: Area[] = [
         description:
           'Every word is an arrow, and meaning is the direction it points. Drag a query around and watch which word it lines up with, then see why the raw dot product prefers long vectors and the cosine does not.',
         href: '/simulations/deep-learning/cosine-similarity',
+        status: 'live',
+      },
+      {
+        slug: 'attention',
+        title: 'Attention as a Soft Lookup',
+        description:
+          'A dictionary returns one value; attention returns a blend of all of them, weighted by how well each key matches the query. The values here are colours, so the blend is something you can see, and temperature slides you between a hard lookup and a grey average.',
+        href: '/simulations/deep-learning/attention',
+        status: 'live',
+      },
+      {
+        slug: 'self-attention',
+        title: 'Self-Attention',
+        description:
+          'Every token in a sentence writes a query, every token answers with a key, and the whole thing becomes one matrix of weights. Pick a token to see what it looks at, switch heads to see different jobs, and turn on the causal mask to see the future disappear.',
+        href: '/simulations/deep-learning/self-attention',
         status: 'live',
       },
       {

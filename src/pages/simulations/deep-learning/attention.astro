@@ -1,0 +1,492 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Attention as a Soft Lookup"
+  description="A dictionary lookup is brutal: one key matches and you get its value. Attention softens it. Every key gets a score for how well it matches the query, softmax turns those scores into weights that add to one, and what comes out is a blend of all the values. Here the values are colours, so the blend is something you can see."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="att" class="att-canvas" width="860" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Ask about</label>
+        <div class="seg" id="preset">
+          <button data-p="fruit" class="active">fruit</button>
+          <button data-p="stone">stone</button>
+          <button data-p="between">in between</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Temperature τ <b id="tval">0.35</b></label>
+        <input type="range" id="temp" min="4" max="200" value="35" />
+        <div class="scale-hint"><span>picks one</span><span>averages all</span></div>
+      </div>
+
+      <label class="check"
+        ><input type="checkbox" id="hard" /> Hard lookup: all the weight on the
+        best key</label
+      >
+
+      <div class="readout">
+        <div class="row"><span>Best match</span><b id="best">—</b></div>
+        <div class="row"><span>Its weight</span><b id="wmax">—</b></div>
+        <div class="row"><span>Weights add to</span><b id="wsum">—</b></div>
+        <div class="row"><span>Keys it really uses</span><b id="eff">—</b></div>
+      </div>
+
+      <p class="note">
+        Drag the query arrow anywhere on the left. Click any row on the right to
+        mask that key out, which is all a mask ever does: force its weight to
+        zero.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Swing the query into the fruit cluster. Two or three keys score well, and
+      the output colour becomes a <b>blend of exactly those values</b>. Nothing
+      else is retrieved, but nothing is ever fully excluded either.
+    </li>
+    <li>
+      Drag <b>temperature</b> to the left. The weights sharpen until one key has
+      almost everything and the output is nearly that value alone: a hard lookup.
+      Drag it right and every weight tends to 1/n, the output goes grey, and
+      attention has stopped telling you anything.
+    </li>
+    <li>
+      That is what the <b>√d</b> in the real formula is for. Dot products grow
+      with the number of dimensions, and without dividing by √d the softmax would
+      always land in that first, frozen regime.
+    </li>
+    <li>
+      Watch <b>keys it really uses</b>: it is 1/Σw², the number of keys the
+      output effectively draws on. Near one you have a lookup, near six you have
+      an average.
+    </li>
+    <li>
+      Mask a key by clicking its row. Its weight goes to zero and the others
+      grow to fill the gap, because softmax always renormalises what is left.
+      That single trick is how padding and causal masks work.
+    </li>
+    <li>
+      Notice the query never has to equal a key. It only has to <b>point</b> the
+      right way, which is why attention can retrieve things it has never seen an
+      exact match for.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { arrow, roundRect } from '../../../lib/theorem';
+
+  type Item = { w: string; a: number; r: number; c: [number, number, number] };
+  // A hand-made two-dimensional "meaning" plane: things that belong together
+  // point together. The value each key hands over is a colour, so a weighted
+  // average of values is a colour you can look at.
+  const ITEMS: Item[] = [
+    { w: 'lemon', a: 74, r: 0.95, c: [242, 205, 74] },
+    { w: 'lime', a: 98, r: 0.88, c: [126, 214, 108] },
+    { w: 'plum', a: 126, r: 0.8, c: [163, 112, 222] },
+    { w: 'sky', a: 208, r: 0.9, c: [92, 168, 240] },
+    { w: 'brick', a: 302, r: 0.86, c: [226, 112, 86] },
+    { w: 'coal', a: 332, r: 0.78, c: [142, 147, 162] },
+  ];
+  const D = 2; // the keys live in two dimensions, so the scale is √2
+
+  const state = {
+    qa: (100 * Math.PI) / 180,
+    ql: 0.95,
+    temp: 0.35,
+    hard: false,
+    masked: new Set<number>(),
+  };
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('att') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { label, textWidth } = makeText(ctx, ink);
+  const accent = () => css('--accent', '#7c8cff');
+  const teal = () => css('--accent-2', '#5eead4');
+  const rgb = (c: number[], a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+  const C = { x: 214, y: 228, R: 132 };
+  const TAB = { x: 442, y: 70, w: 394, row: 44 };
+  const OUT = { x: 24, y: 406, w: W - 48, h: 86 };
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const kx = (it: Item) => C.x + C.R * it.r * Math.cos(rad(it.a));
+  const ky = (it: Item) => C.y - C.R * it.r * Math.sin(rad(it.a));
+  const qx = () => C.x + C.R * state.ql * Math.cos(state.qa);
+  const qy = () => C.y - C.R * state.ql * Math.sin(state.qa);
+
+  /** q·kᵢ / √d, the raw match between the query and one key. */
+  const score = (it: Item) =>
+    (state.ql * it.r * Math.cos(rad(it.a) - state.qa)) / Math.sqrt(D);
+
+  /** softmax over the unmasked keys, at the current temperature. */
+  function weights() {
+    const live = ITEMS.map((it, i) => (state.masked.has(i) ? -Infinity : score(it)));
+    if (state.hard) {
+      let best = -Infinity,
+        bi = -1;
+      live.forEach((s, i) => {
+        if (s > best) {
+          best = s;
+          bi = i;
+        }
+      });
+      return live.map((_, i) => (i === bi ? 1 : 0));
+    }
+    const t = Math.max(0.04, state.temp);
+    const mx = Math.max(...live);
+    const e = live.map((s) => (s === -Infinity ? 0 : Math.exp((s - mx) / t)));
+    const sum = e.reduce((a, b) => a + b, 0) || 1;
+    return e.map((v) => v / sum);
+  }
+
+  const mix = (w: number[]) =>
+    [0, 1, 2].map((k) =>
+      Math.round(ITEMS.reduce((s, it, i) => s + w[i] * it.c[k], 0))
+    );
+
+  // --- the plane ------------------------------------------------------------
+  function drawPlane(w: number[]) {
+    label('THE QUERY, AND EVERY KEY IT COULD MATCH', 24, 46, 0.45, 'left', 12);
+    label('drag the arrow', 24, 64, 0.3, 'left', 11);
+
+    ctx.strokeStyle = ink(0.09);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(C.x, C.y, C.R, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const g of [0, 90, 180, 270]) {
+      ctx.beginPath();
+      ctx.moveTo(C.x, C.y);
+      ctx.lineTo(C.x + C.R * Math.cos(rad(g)), C.y - C.R * Math.sin(rad(g)));
+      ctx.stroke();
+    }
+
+    // each key, its weight showing as a halo
+    ITEMS.forEach((it, i) => {
+      const x = kx(it),
+        y = ky(it);
+      const off = state.masked.has(i);
+      if (!off && w[i] > 0.002) {
+        ctx.fillStyle = rgb(it.c, 0.16 + 0.34 * w[i]);
+        ctx.beginPath();
+        ctx.arc(x, y, 8 + 34 * Math.sqrt(w[i]), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = off ? ink(0.14) : rgb(it.c, 0.5 + 0.5 * w[i]);
+      ctx.lineWidth = off ? 1 : 1.4 + 3 * w[i];
+      ctx.beginPath();
+      ctx.moveTo(C.x, C.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.fillStyle = off ? ink(0.2) : rgb(it.c, 1);
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      const out = 18;
+      label(
+        it.w,
+        x + out * Math.cos(rad(it.a)),
+        y - out * Math.sin(rad(it.a)) + 4,
+        off ? 0.25 : 0.9,
+        Math.cos(rad(it.a)) < -0.3 ? 'right' : Math.cos(rad(it.a)) > 0.3 ? 'left' : 'center',
+        11,
+        off ? undefined : rgb(it.c, 1)
+      );
+    });
+
+    arrow(ctx, C.x, C.y, qx(), qy(), accent(), 3.4, 12);
+    ctx.fillStyle = accent();
+    ctx.strokeStyle = inv(0.8);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(qx(), qy(), 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    const half = 0.52;
+    label(
+      'query',
+      C.x + (qx() - C.x) * half + 13 * Math.cos(state.qa + Math.PI / 2),
+      C.y + (qy() - C.y) * half - 13 * Math.sin(state.qa + Math.PI / 2) + 4,
+      1,
+      'center',
+      11.5,
+      accent()
+    );
+  }
+
+  // --- the scores, and what softmax does to them ---------------------------
+  function drawTable(w: number[]) {
+    label('EVERY KEY GETS A SCORE, THEN A WEIGHT', TAB.x, 46, 0.45, 'left', 12);
+    label(
+      'score = q·k / √d       weight = softmax(score / τ)',
+      TAB.x,
+      64,
+      0.3,
+      'left',
+      11
+    );
+
+    const sc = ITEMS.map(score);
+    const smax = Math.max(...sc.map(Math.abs), 0.2);
+    const barX = TAB.x + 86,
+      barW = 84;
+    const wX = TAB.x + 220,
+      wW = 110;
+
+    ITEMS.forEach((it, i) => {
+      const y = TAB.y + 26 + i * TAB.row;
+      const off = state.masked.has(i);
+      if (off) {
+        ctx.fillStyle = ink(0.05);
+        roundRect(ctx, TAB.x - 6, y - 17, TAB.w + 6, TAB.row - 8, 7);
+        ctx.fill();
+      }
+      ctx.fillStyle = off ? ink(0.18) : rgb(it.c, 1);
+      roundRect(ctx, TAB.x, y - 9, 10, 10, 3);
+      ctx.fill();
+      label(it.w, TAB.x + 18, y, off ? 0.3 : 0.85, 'left', 11.5);
+
+      // the raw score, signed
+      const zero = barX + barW / 2;
+      ctx.strokeStyle = ink(0.14);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(zero, y - 12);
+      ctx.lineTo(zero, y + 6);
+      ctx.stroke();
+      const bw = (sc[i] / smax) * (barW / 2 - 2);
+      ctx.fillStyle = off ? ink(0.12) : ink(0.4);
+      ctx.fillRect(Math.min(zero, zero + bw), y - 9, Math.abs(bw), 10);
+      label(sc[i].toFixed(2), TAB.x + 208, y, off ? 0.25 : 0.5, 'right', 10.5);
+
+      // the weight after softmax
+      ctx.fillStyle = ink(0.07);
+      roundRect(ctx, wX, y - 10, wW, 12, 4);
+      ctx.fill();
+      if (w[i] > 0.001) {
+        ctx.fillStyle = rgb(it.c, 0.9);
+        roundRect(ctx, wX, y - 10, Math.max(2, wW * w[i]), 12, 4);
+        ctx.fill();
+      }
+      label(
+        `${(w[i] * 100).toFixed(1)}%`,
+        wX + wW + 8,
+        y,
+        off ? 0.25 : 1,
+        'left',
+        11,
+        off ? undefined : rgb(it.c, 1)
+      );
+      if (off) label('masked', TAB.x + 18, y + 14, 0.3, 'left', 9.5);
+    });
+    label(
+      'click a row to mask it out',
+      TAB.x,
+      TAB.y + 26 + ITEMS.length * TAB.row - 4,
+      0.3,
+      'left',
+      10.5
+    );
+  }
+
+  // --- the blend that comes out --------------------------------------------
+  function drawOutput(w: number[]) {
+    label('WHAT COMES OUT: THE VALUES, IN THOSE PROPORTIONS', OUT.x, OUT.y - 12, 0.45, 'left', 12);
+
+    const swW = 104;
+    const barW = OUT.w - swW - 76;
+    let x = OUT.x;
+    ITEMS.forEach((it, i) => {
+      const seg = barW * w[i];
+      if (seg <= 0.4) return;
+      ctx.fillStyle = rgb(it.c, 0.92);
+      ctx.fillRect(x, OUT.y + 8, seg, 44);
+      if (seg > 34)
+        label(it.w, x + seg / 2, OUT.y + 35, 1, 'center', 10.5, 'rgba(12,14,18,0.85)');
+      x += seg;
+    });
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(OUT.x, OUT.y + 8, barW, 44);
+
+    const ax = OUT.x + barW + 16;
+    arrow(ctx, ax, OUT.y + 30, ax + 32, OUT.y + 30, ink(0.4), 2, 9);
+
+    const out = mix(w);
+    const sx2 = ax + 46;
+    ctx.fillStyle = rgb(out, 1);
+    roundRect(ctx, sx2, OUT.y + 8, swW, 44, 8);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.2);
+    ctx.stroke();
+    label('output', sx2 + swW / 2, OUT.y + 68, 0.45, 'center', 10.5);
+    label(
+      `out = Σ w_i v_i = (${out[0]}, ${out[1]}, ${out[2]})`,
+      OUT.x,
+      OUT.y + 68,
+      0.4,
+      'left',
+      11
+    );
+  }
+
+  function draw() {
+    const w = weights();
+    ctx.clearRect(0, 0, W, H);
+    drawPlane(w);
+    drawTable(w);
+    drawOutput(w);
+    sync(w);
+  }
+
+  function sync(w: number[]) {
+    let bi = 0;
+    w.forEach((v, i) => {
+      if (v > w[bi]) bi = i;
+    });
+    const eff = 1 / Math.max(1e-9, w.reduce((s, v) => s + v * v, 0));
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('best', ITEMS[bi].w);
+    set('wmax', `${(w[bi] * 100).toFixed(1)}%`);
+    set('wsum', w.reduce((s, v) => s + v, 0).toFixed(3));
+    set('eff', `${eff.toFixed(2)} of ${ITEMS.length}`);
+    set('tval', state.temp.toFixed(2));
+
+    const out = mix(w);
+    setEq([
+      [
+        ['\\text{attn}(q,K,V)', accent()],
+        '=\\operatorname{softmax}\\!\\Big(\\dfrac{q\\,K^{\\mathsf T}}{\\sqrt{d}}\\Big)',
+        ['V', teal()],
+      ],
+      [
+        [
+          `w_{\\text{${ITEMS[bi].w}}} = ${(w[bi] * 100).toFixed(1)}\\%`,
+          `rgb(${ITEMS[bi].c.join(',')})`,
+        ],
+        `\\quad\\sum_i w_i = ${w.reduce((s, v) => s + v, 0).toFixed(3)}`,
+        [`\\quad 1/\\!\\sum_i w_i^2 = ${eff.toFixed(2)}\\text{ keys}`, `rgb(${out.join(',')})`],
+      ],
+      [
+        'the weights are a soft choice of which values to average, and nothing about attention is more than that',
+      ],
+    ]);
+  }
+
+  // --- interaction ---------------------------------------------------------
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * W,
+      y: ((e.clientY - r.top) / r.height) * H,
+    };
+  };
+  let dragging = false;
+  function aim(p: { x: number; y: number }) {
+    const dx = p.x - C.x,
+      dy = C.y - p.y;
+    state.qa = Math.atan2(dy, dx);
+    state.ql = Math.max(0.25, Math.min(1.15, Math.hypot(dx, dy) / C.R));
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = local(e);
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers are fine to ignore */
+    }
+    if (p.x < TAB.x - 20) {
+      dragging = true;
+      aim(p);
+      return;
+    }
+    if (p.y > TAB.y && p.y < TAB.y + ITEMS.length * TAB.row + 20) {
+      const i = Math.floor((p.y - TAB.y - 2) / TAB.row);
+      if (i >= 0 && i < ITEMS.length) {
+        state.masked.has(i) ? state.masked.delete(i) : state.masked.add(i);
+        if (state.masked.size === ITEMS.length) state.masked.delete(i);
+        draw();
+      }
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (dragging) aim(local(e));
+  });
+  const drop = () => (dragging = false);
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  document.getElementById('preset')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document
+      .querySelectorAll('#preset button')
+      .forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    const p = b.dataset.p!;
+    state.qa = rad(p === 'fruit' ? 100 : p === 'stone' ? 316 : 170);
+    state.ql = 0.95;
+    draw();
+  });
+
+  const tEl = document.getElementById('temp') as HTMLInputElement;
+  tEl.addEventListener('input', () => {
+    state.temp = +tEl.value / 100;
+    draw();
+  });
+  const hEl = document.getElementById('hard') as HTMLInputElement;
+  hEl.addEventListener('change', () => {
+    state.hard = hEl.checked;
+    draw();
+  });
+
+  void textWidth;
+  draw();
+</script>
+
+<style>
+  .att-canvas {
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

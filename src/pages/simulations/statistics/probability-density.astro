@@ -1,0 +1,857 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="Probability Density"
+  description="For a continuous quantity no single value has any probability at all: only stretches do. A density is the height whose area is that probability, so every question becomes an integral. Drag the interval on the curve, or drag a region across a two-dimensional density, and read the area you enclosed."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="pd" class="pd-canvas" width="900" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Dimensions</label>
+        <div class="seg" id="dim">
+          <button data-d="1" class="active">one</button>
+          <button data-d="2">two</button>
+        </div>
+      </div>
+
+      <div class="control" id="d1wrap">
+        <label>Density</label>
+        <div class="seg" id="dist">
+          <button data-f="normal" class="active">bell</button>
+          <button data-f="uniform">flat</button>
+          <button data-f="expo">decay</button>
+          <button data-f="two">two humps</button>
+          <button data-f="spike">narrow</button>
+          <button data-f="tri">triangle</button>
+        </div>
+      </div>
+
+      <div class="control" id="d2wrap" style="display:none">
+        <label>Density</label>
+        <div class="seg" id="dist2">
+          <button data-g="blob" class="active">one blob</button>
+          <button data-g="two">two blobs</button>
+          <button data-g="ring">ring</button>
+        </div>
+      </div>
+
+      <div class="control" id="abwrap">
+        <label>From a = <b id="aval">-1.00</b></label>
+        <input type="range" id="a" min="-400" max="400" value="-100" />
+      </div>
+      <div class="control" id="bbwrap">
+        <label>To b = <b id="bval">1.00</b></label>
+        <input type="range" id="b" min="-400" max="400" value="100" />
+      </div>
+
+      <div class="control" id="rwrap" style="display:none">
+        <label>Radius r = <b id="rrval">1.20</b></label>
+        <input type="range" id="rr" min="10" max="300" value="120" />
+      </div>
+
+      <button class="btn ghost" id="shrink">Shrink it to a point</button>
+
+      <div class="readout">
+        <div class="row"><span id="plab">P(a ≤ X ≤ b)</span><b id="pv">—</b></div>
+        <div class="row"><span>Total area</span><b id="tot">—</b></div>
+        <div class="row"><span>Tallest the density gets</span><b id="peak">—</b></div>
+        <div class="row"><span id="xlab">Width b − a</span><b id="wv">—</b></div>
+      </div>
+
+      <p class="note">
+        In one dimension, drag either end of the shaded stretch. In two, drag the
+        circle around. The number is always the same thing: the amount of density
+        you have enclosed.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Press <b>Shrink it to a point</b>. The shaded area collapses and the
+      probability goes to <b>zero</b>, even though the density there is perfectly
+      healthy. For a continuous quantity, <b>P(X = c) = 0</b> always, and that is
+      not a paradox: it takes a stretch to hold any probability.
+    </li>
+    <li>
+      Pick <b>narrow</b>. The curve shoots past <b>height 4</b>, which no
+      probability may do. A density is not a probability; it is probability
+      <b>per unit of x</b>, and only its area has to behave.
+    </li>
+    <li>
+      The curve underneath is the running total, the <b>CDF</b>. The shaded area
+      upstairs is exactly the vertical step F(b) − F(a) downstairs. Two pictures
+      of one number.
+    </li>
+    <li>
+      Try <b>decay</b> and slide the stretch to the right. Equal widths keep
+      giving smaller probabilities, because the density is what changes, never the
+      width.
+    </li>
+    <li>
+      Switch to <b>two</b> dimensions. Now the density is a height over the
+      plane, the region is a patch of ground, and the probability is the volume
+      standing on it. Every one-dimensional idea survives with an extra integral.
+    </li>
+    <li>
+      In two dimensions, watch the dots as you move the circle. The share of dots
+      caught inside tracks the integral, which is exactly what makes Monte Carlo
+      work.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { roundRect } from '../../../lib/theorem';
+
+  type D1 = { f: (x: number) => number; lo: number; hi: number; name: string };
+  const G1: Record<string, D1> = {
+    normal: {
+      f: (x) => Math.exp(-(x * x) / 2) / Math.sqrt(2 * Math.PI),
+      lo: -4,
+      hi: 4,
+      name: 'a bell',
+    },
+    uniform: {
+      f: (x) => (x >= -1.5 && x <= 1.5 ? 1 / 3 : 0),
+      lo: -4,
+      hi: 4,
+      name: 'flat between −1.5 and 1.5',
+    },
+    expo: {
+      f: (x) => (x >= 0 ? 0.8 * Math.exp(-0.8 * x) : 0),
+      lo: -1,
+      hi: 7,
+      name: 'a decay, rate 0.8',
+    },
+    two: {
+      f: (x) =>
+        0.55 * Math.exp(-((x + 1.4) ** 2) / 0.5) / Math.sqrt(0.5 * Math.PI) +
+        0.45 * Math.exp(-((x - 1.5) ** 2) / 1.2) / Math.sqrt(1.2 * Math.PI),
+      lo: -4,
+      hi: 5,
+      name: 'two humps',
+    },
+    spike: {
+      f: (x) => Math.exp(-(x * x) / (2 * 0.01)) / Math.sqrt(2 * Math.PI * 0.01),
+      lo: -1,
+      hi: 1,
+      name: 'a narrow bell, σ = 0.1',
+    },
+    tri: {
+      f: (x) => Math.max(0, (2 - Math.abs(x)) / 4),
+      lo: -3,
+      hi: 3,
+      name: 'a triangle',
+    },
+  };
+
+  type D2 = { f: (x: number, y: number) => number; name: string };
+  const G2: Record<string, D2> = {
+    blob: {
+      f: (x, y) => Math.exp(-(x * x + y * y) / 1.6),
+      name: 'one round blob',
+    },
+    two: {
+      f: (x, y) =>
+        Math.exp(-((x + 1.1) ** 2 + (y + 0.6) ** 2) / 0.9) +
+        0.8 * Math.exp(-((x - 1.2) ** 2 + (y - 0.9) ** 2) / 1.4),
+      name: 'two blobs',
+    },
+    ring: {
+      f: (x, y) => {
+        const r = Math.hypot(x, y);
+        return Math.exp(-((r - 1.5) ** 2) / 0.25);
+      },
+      name: 'a ring',
+    },
+  };
+
+  const state = {
+    dim: 1 as 1 | 2,
+    d1: 'normal',
+    d2: 'blob',
+    a: -1,
+    b: 1,
+    cx: 0.2,
+    cy: 0.1,
+    r: 1.2,
+  };
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('pd') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { label } = makeText(ctx, ink);
+  const DEN = () => css('--accent-2', '#5eead4'); // the density itself
+  const AREA = '#f59e0b'; // the piece of it you asked for
+  const CDF = () => css('--accent', '#7c8cff');
+  /** never print a negative zero */
+  const fmt = (v: number, n = 4) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(n);
+  const fx = (v: number, n = 2) => fmt(v, n);
+
+  // --- one dimension --------------------------------------------------------
+  const cur1 = () => G1[state.d1];
+  /** ∫ f over [p, q], midpoint rule at fine resolution */
+  function area1(p: number, q: number) {
+    if (q <= p) return 0;
+    const n = 2000,
+      h = (q - p) / n;
+    let s = 0;
+    for (let i = 0; i < n; i++) s += cur1().f(p + h * (i + 0.5));
+    return s * h;
+  }
+  const P1 = { x: 44, y: 108, w: 540, h: 208 };
+  const P2 = { x: 44, y: 396, w: 540, h: 128 };
+  const CARD = { x: 610, y: 104, w: 266, h: 420 };
+
+  function drawOne() {
+    const d = cur1();
+    const sx = (x: number) => P1.x + ((x - d.lo) / (d.hi - d.lo)) * P1.w;
+    const ix = (px: number) => d.lo + ((px - P1.x) / P1.w) * (d.hi - d.lo);
+    let peak = 0;
+    for (let i = 0; i <= 600; i++)
+      peak = Math.max(peak, d.f(d.lo + ((d.hi - d.lo) * i) / 600));
+    const top = peak * 1.18;
+    const sy = (v: number) => P1.y + P1.h - (v / top) * P1.h;
+
+    label('THE DENSITY f(x)', P1.x, 46, 0.45, 'left', 12);
+    label(`${d.name}`, P1.x, 64, 0.3, 'left', 11);
+
+    // axes
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(P1.x, P1.y + P1.h);
+    ctx.lineTo(P1.x + P1.w, P1.y + P1.h);
+    ctx.stroke();
+    for (let k = 0; k <= 6; k++) {
+      const xv = d.lo + ((d.hi - d.lo) * k) / 6;
+      label(xv.toFixed(1), sx(xv), P1.y + P1.h + 16, 0.3, 'center', 10);
+    }
+    if (top > 1) {
+      ctx.strokeStyle = ink(0.12);
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(P1.x, sy(1));
+      ctx.lineTo(P1.x + P1.w, sy(1));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label('1', P1.x - 6, sy(1) + 4, 0.3, 'right', 10);
+    }
+    label(`peak ${peak.toFixed(2)}`, P1.x + P1.w, 64, 0.35, 'right', 10.5, DEN());
+
+    // the shaded stretch
+    const a = Math.min(state.a, state.b),
+      b = Math.max(state.a, state.b);
+    ctx.beginPath();
+    ctx.moveTo(sx(a), P1.y + P1.h);
+    for (let i = 0; i <= 300; i++) {
+      const x = a + ((b - a) * i) / 300;
+      ctx.lineTo(sx(x), sy(d.f(x)));
+    }
+    ctx.lineTo(sx(b), P1.y + P1.h);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(245,158,11,0.34)';
+    ctx.fill();
+
+    // the curve
+    ctx.strokeStyle = DEN();
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= 600; i++) {
+      const x = d.lo + ((d.hi - d.lo) * i) / 600;
+      const p = { x: sx(x), y: sy(d.f(x)) };
+      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    }
+    ctx.stroke();
+
+    // the two handles
+    for (const [x, name] of [
+      [a, 'a'],
+      [b, 'b'],
+    ] as [number, string][]) {
+      ctx.strokeStyle = AREA;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), P1.y - 4);
+      ctx.lineTo(sx(x), P1.y + P1.h);
+      ctx.stroke();
+      ctx.fillStyle = AREA;
+      ctx.beginPath();
+      ctx.arc(sx(x), P1.y + P1.h, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (name === 'b' || sx(b) - sx(a) > 16)
+        label(name, sx(x), P1.y - 10, 1, 'center', 11, AREA);
+    }
+    const p = area1(a, b);
+    if (sx(b) - sx(a) > 40)
+      label(
+        `area = ${fmt(p, 3)}`,
+        (sx(a) + sx(b)) / 2,
+        P1.y + P1.h - 12,
+        1,
+        'center',
+        12,
+        'rgba(16,18,22,0.9)'
+      );
+
+    // the running total underneath
+    label('THE RUNNING TOTAL F(x)', P2.x, P2.y - 26, 0.45, 'left', 12);
+    label('the same number, read as a step', P2.x, P2.y - 9, 0.3, 'left', 11);
+    const fy = (v: number) => P2.y + P2.h - v * P2.h;
+    ctx.strokeStyle = ink(0.14);
+    ctx.beginPath();
+    ctx.moveTo(P2.x, P2.y + P2.h);
+    ctx.lineTo(P2.x + P2.w, P2.y + P2.h);
+    ctx.stroke();
+    label('1', P2.x - 6, fy(1) + 4, 0.3, 'right', 10);
+    label('0', P2.x - 6, fy(0) + 4, 0.3, 'right', 10);
+
+    let acc = 0;
+    const n = 400,
+      h = (d.hi - d.lo) / n;
+    const F: number[] = [];
+    for (let i = 0; i <= n; i++) {
+      if (i) acc += d.f(d.lo + h * (i - 0.5)) * h;
+      F.push(acc);
+    }
+    ctx.strokeStyle = CDF();
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const px2 = P2.x + (i / n) * P2.w;
+      i ? ctx.lineTo(px2, fy(F[i])) : ctx.moveTo(px2, fy(F[i]));
+    }
+    ctx.stroke();
+
+    const Fat = (x: number) => {
+      const t = Math.max(0, Math.min(1, (x - d.lo) / (d.hi - d.lo)));
+      return F[Math.round(t * n)];
+    };
+    const fa = Fat(a),
+      fb = Fat(b);
+    ctx.strokeStyle = AREA;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([3, 3]);
+    for (const x of [a, b]) {
+      ctx.beginPath();
+      ctx.moveTo(P2.x + ((x - d.lo) / (d.hi - d.lo)) * P2.w, P2.y + P2.h);
+      ctx.lineTo(P2.x + ((x - d.lo) / (d.hi - d.lo)) * P2.w, fy(Fat(x)));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    const bxp = P2.x + ((b - d.lo) / (d.hi - d.lo)) * P2.w;
+    ctx.strokeStyle = AREA;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.moveTo(bxp, fy(fa));
+    ctx.lineTo(bxp, fy(fb));
+    ctx.stroke();
+    label(
+      `F(b) − F(a) = ${fmt(fb - fa, 3)}`,
+      bxp + 10,
+      (fy(fa) + fy(fb)) / 2 + 4,
+      1,
+      'left',
+      11,
+      AREA
+    );
+  }
+
+  // --- two dimensions -------------------------------------------------------
+  const cur2 = () => G2[state.d2];
+  const DOM = 3; // the plane is drawn over [-DOM, DOM]²
+  const S2 = { x: 60, y: 112, s: 400 };
+  const px2 = (x: number) => S2.x + ((x + DOM) / (2 * DOM)) * S2.s;
+  const py2 = (y: number) => S2.y + ((DOM - y) / (2 * DOM)) * S2.s;
+  const ix2 = (p: number) => ((p - S2.x) / S2.s) * 2 * DOM - DOM;
+  const iy2 = (p: number) => DOM - ((p - S2.y) / S2.s) * 2 * DOM;
+
+  let norm2 = 1;
+  function calibrate2() {
+    const n = 260,
+      h = (2 * DOM) / n;
+    let s = 0;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        s += cur2().f(-DOM + h * (i + 0.5), -DOM + h * (j + 0.5));
+    norm2 = 1 / (s * h * h);
+  }
+  const f2 = (x: number, y: number) => cur2().f(x, y) * norm2;
+  /** ∬ f over the disc, on a fine grid */
+  function area2() {
+    const n = 260,
+      h = (2 * DOM) / n;
+    let s = 0;
+    for (let i = 0; i < n; i++) {
+      const x = -DOM + h * (i + 0.5);
+      for (let j = 0; j < n; j++) {
+        const y = -DOM + h * (j + 0.5);
+        if (Math.hypot(x - state.cx, y - state.cy) <= state.r)
+          s += cur2().f(x, y);
+      }
+    }
+    return s * h * h * norm2;
+  }
+
+  let dots: { x: number; y: number }[] = [];
+  function sample() {
+    dots = [];
+    let peak = 0;
+    for (let i = 0; i <= 120; i++)
+      for (let j = 0; j <= 120; j++)
+        peak = Math.max(
+          peak,
+          cur2().f(-DOM + (2 * DOM * i) / 120, -DOM + (2 * DOM * j) / 120)
+        );
+    let guard = 0;
+    while (dots.length < 2200 && guard++ < 400000) {
+      const x = -DOM + 2 * DOM * Math.random();
+      const y = -DOM + 2 * DOM * Math.random();
+      if (Math.random() * peak < cur2().f(x, y)) dots.push({ x, y });
+    }
+  }
+
+  function drawTwo() {
+    label('A DENSITY OVER THE PLANE', S2.x, 46, 0.45, 'left', 12);
+    label(
+      `${cur2().name} · the probability of a region is the volume standing on it`,
+      S2.x,
+      64,
+      0.3,
+      'left',
+      11
+    );
+
+    // the density as a heat map
+    const n = 100,
+      cell = S2.s / n;
+    let peak = 0;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        peak = Math.max(
+          peak,
+          f2(-DOM + (2 * DOM * (i + 0.5)) / n, -DOM + (2 * DOM * (j + 0.5)) / n)
+        );
+    // exact cell edges, so the tiles butt up instead of overlapping
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const x0 = -DOM + (2 * DOM * i) / n,
+          x1 = -DOM + (2 * DOM * (i + 1)) / n;
+        const y0 = -DOM + (2 * DOM * j) / n,
+          y1 = -DOM + (2 * DOM * (j + 1)) / n;
+        const t = f2((x0 + x1) / 2, (y0 + y1) / 2) / peak;
+        if (t < 0.015) continue;
+        ctx.fillStyle = `rgba(94,234,212,${0.06 + 0.62 * Math.pow(t, 0.8)})`;
+        ctx.fillRect(px2(x0), py2(y1), px2(x1) - px2(x0) + 0.4, py2(y0) - py2(y1) + 0.4);
+      }
+    void cell;
+
+    // a cloud of draws, to make the area concrete
+    let inside = 0;
+    ctx.fillStyle = inv(0.55);
+    for (const p of dots) {
+      const hit = Math.hypot(p.x - state.cx, p.y - state.cy) <= state.r;
+      if (hit) inside++;
+      ctx.fillStyle = hit ? 'rgba(245,158,11,0.9)' : ink(0.28);
+      ctx.beginPath();
+      ctx.arc(px2(p.x), py2(p.y), 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(S2.x, S2.y, S2.s, S2.s);
+
+    // the region
+    ctx.strokeStyle = AREA;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(px2(state.cx), py2(state.cy), (state.r / (2 * DOM)) * S2.s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(245,158,11,0.08)';
+    ctx.fill();
+    ctx.fillStyle = AREA;
+    ctx.beginPath();
+    ctx.arc(px2(state.cx), py2(state.cy), 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (const v of [-DOM, 0, DOM]) {
+      label(String(v), px2(v), S2.y + S2.s + 16, 0.3, 'center', 10);
+      label(String(v), S2.x - 8, py2(v) + 4, 0.3, 'right', 10);
+    }
+    label(
+      `${dots.length} draws · ${inside} of them inside`,
+      S2.x,
+      S2.y + S2.s + 34,
+      0.35,
+      'left',
+      11
+    );
+  }
+
+  function drawCard() {
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+
+    const one = state.dim === 1;
+    const a = Math.min(state.a, state.b),
+      b = Math.max(state.a, state.b);
+    const p = one ? area1(a, b) : area2();
+
+    label(
+      one ? 'THE STRETCH YOU CHOSE' : 'THE REGION YOU CHOSE',
+      CARD.x + 18,
+      CARD.y + 26,
+      1,
+      'left',
+      11,
+      AREA
+    );
+    label(
+      one
+        ? `from ${fx(a)} to ${fx(b)}`
+        : `centre (${state.cx.toFixed(2)}, ${state.cy.toFixed(2)}), r = ${state.r.toFixed(2)}`,
+      CARD.x + 18,
+      CARD.y + 46,
+      0.4,
+      'left',
+      10.5
+    );
+
+    label(
+      one ? 'P(a ≤ X ≤ b)' : 'P((X, Y) in R)',
+      CARD.x + 18,
+      CARD.y + 84,
+      0.5,
+      'left',
+      11
+    );
+    label(fmt(p, 4), CARD.x + CARD.w - 18, CARD.y + 88, 1, 'right', 24, AREA);
+
+    let y = CARD.y + 130;
+    const row = (k: string, v: string, colour?: string) => {
+      label(k, CARD.x + 18, y, 0.45, 'left', 10.5);
+      label(v, CARD.x + CARD.w - 18, y, 1, 'right', 11.5, colour ?? ink(0.8));
+      y += 24;
+    };
+    if (one) {
+      const d = cur1();
+      row('the whole area', fmt(area1(d.lo, d.hi), 4), DEN());
+      row('width b − a', fmt(b - a, 3));
+      row('f(a)', fmt(d.f(a), 3), DEN());
+      row('f(b)', fmt(d.f(b), 3), DEN());
+      row('if f were flat', fmt(((d.f(a) + d.f(b)) / 2) * (b - a), 4), ink(0.5));
+    } else {
+      let inside = 0;
+      for (const q of dots)
+        if (Math.hypot(q.x - state.cx, q.y - state.cy) <= state.r) inside++;
+      row('the whole volume', fmt(area2Total(), 4), DEN());
+      row('area of the disc', fmt(Math.PI * state.r * state.r, 3));
+      row('f at the centre', fmt(f2(state.cx, state.cy), 3), DEN());
+      row('draws inside', `${inside} of ${dots.length}`);
+      row('their share', fmt(dots.length ? inside / dots.length : 0, 4), AREA);
+    }
+
+    ctx.strokeStyle = ink(0.1);
+    ctx.beginPath();
+    ctx.moveTo(CARD.x + 18, y - 6);
+    ctx.lineTo(CARD.x + CARD.w - 18, y - 6);
+    ctx.stroke();
+    y += 18;
+    const lines = one
+      ? [
+          'a single value has no width,',
+          'so it has no probability at all:',
+          'P(X = c) = 0 for every c.',
+          '',
+          'the height can be anything;',
+          'only the total area is 1.',
+        ]
+      : [
+          'the dots are draws from f.',
+          'the share of them caught',
+          'inside the circle chases',
+          'the integral, which is all',
+          'Monte Carlo ever does.',
+        ];
+    for (const t of lines) {
+      label(t, CARD.x + 18, y, 0.42, 'left', 10.5);
+      y += 17;
+    }
+    ctx.restore();
+  }
+
+  function area2Total() {
+    const n = 200,
+      h = (2 * DOM) / n;
+    let s = 0;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        s += cur2().f(-DOM + h * (i + 0.5), -DOM + h * (j + 0.5));
+    return s * h * h * norm2;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (state.dim === 1) drawOne();
+    else drawTwo();
+    drawCard();
+    sync();
+  }
+
+  function sync() {
+    const one = state.dim === 1;
+    const a = Math.min(state.a, state.b),
+      b = Math.max(state.a, state.b);
+    const p = one ? area1(a, b) : area2();
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('pv', fmt(p, 4));
+    set('plab', one ? 'P(a ≤ X ≤ b)' : 'P((X, Y) in R)');
+    set('xlab', one ? 'Width b − a' : 'Radius r');
+    set('wv', one ? fmt(b - a, 3) : fmt(state.r, 3));
+    set('aval', state.a.toFixed(2));
+    set('bval', state.b.toFixed(2));
+    set('rrval', state.r.toFixed(2));
+    if (one) {
+      const d = cur1();
+      let peak = 0;
+      for (let i = 0; i <= 400; i++)
+        peak = Math.max(peak, d.f(d.lo + ((d.hi - d.lo) * i) / 400));
+      set('tot', fmt(area1(d.lo, d.hi), 4));
+      set('peak', fmt(peak, 3));
+    } else {
+      set('tot', fmt(area2Total(), 4));
+      let peak = 0;
+      for (let i = 0; i <= 160; i++)
+        for (let j = 0; j <= 160; j++)
+          peak = Math.max(
+            peak,
+            f2(-DOM + (2 * DOM * i) / 160, -DOM + (2 * DOM * j) / 160)
+          );
+      set('peak', fmt(peak, 3));
+    }
+
+    setEq(
+      one
+        ? [
+            [
+              [`P(a \\le X \\le b)`, AREA],
+              '= \\displaystyle\\int_a^b',
+              ['f(x)', DEN()],
+              '\\,dx = F(b) - F(a)',
+            ],
+            [
+              [`P(${fx(a)} \\le X \\le ${fx(b)}) = ${fmt(p, 4)}`, AREA],
+              `\\quad\\int f = ${fmt(area1(cur1().lo, cur1().hi), 4)}`,
+              `\\quad b - a = ${fmt(b - a, 3)}`,
+            ],
+            [
+              'the height is probability per unit of x, so it may pass 1; only the area may not',
+            ],
+          ]
+        : [
+            [
+              ['P\\big((X,Y)\\in R\\big)', AREA],
+              '= \\displaystyle\\iint_R',
+              ['f(x,y)', DEN()],
+              '\\,dx\\,dy',
+            ],
+            [
+              [`P = ${fmt(p, 4)}`, AREA],
+              `\\quad\\iint f = ${fmt(area2Total(), 4)}`,
+              `\\quad r = ${state.r.toFixed(2)}`,
+            ],
+            [
+              'in two dimensions the density is a height over the plane and a probability is the volume above a patch of it',
+            ],
+          ]
+    );
+  }
+
+  // --- controls -------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const aEl = el('a') as HTMLInputElement,
+    bEl = el('b') as HTMLInputElement,
+    rEl = el('rr') as HTMLInputElement;
+  const show = () => {
+    const one = state.dim === 1;
+    el('d1wrap').style.display = one ? '' : 'none';
+    el('d2wrap').style.display = one ? 'none' : '';
+    el('abwrap').style.display = one ? '' : 'none';
+    el('bbwrap').style.display = one ? '' : 'none';
+    el('rwrap').style.display = one ? 'none' : '';
+    (el('shrink') as HTMLButtonElement).textContent = one
+      ? 'Shrink it to a point'
+      : 'Shrink it to a point';
+  };
+  const seg = (id: string, fn: (v: string) => void) =>
+    el(id).addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (!b) return;
+      el(id)
+        .querySelectorAll('button')
+        .forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      fn(Object.values(b.dataset)[0] as string);
+    });
+  seg('dim', (v) => {
+    state.dim = +v as 1 | 2;
+    if (state.dim === 2) {
+      calibrate2();
+      sample();
+    }
+    show();
+    draw();
+  });
+  seg('dist', (v) => {
+    state.d1 = v;
+    const d = cur1();
+    state.a = Math.max(d.lo, Math.min(d.hi, state.a));
+    state.b = Math.max(d.lo, Math.min(d.hi, state.b));
+    aEl.value = String(Math.round(state.a * 100));
+    bEl.value = String(Math.round(state.b * 100));
+    draw();
+  });
+  seg('dist2', (v) => {
+    state.d2 = v;
+    calibrate2();
+    sample();
+    draw();
+  });
+  aEl.addEventListener('input', () => {
+    state.a = +aEl.value / 100;
+    draw();
+  });
+  bEl.addEventListener('input', () => {
+    state.b = +bEl.value / 100;
+    draw();
+  });
+  rEl.addEventListener('input', () => {
+    state.r = +rEl.value / 100;
+    draw();
+  });
+
+  let raf = 0;
+  el('shrink').addEventListener('click', () => {
+    cancelAnimationFrame(raf);
+    const step = () => {
+      if (state.dim === 1) {
+        const mid = (state.a + state.b) / 2;
+        state.a += (mid - state.a) * 0.12;
+        state.b += (mid - state.b) * 0.12;
+        aEl.value = String(Math.round(state.a * 100));
+        bEl.value = String(Math.round(state.b * 100));
+        if (Math.abs(state.b - state.a) < 0.004) {
+          draw();
+          return;
+        }
+      } else {
+        state.r *= 0.9;
+        rEl.value = String(Math.round(state.r * 100));
+        if (state.r < 0.1) {
+          draw();
+          return;
+        }
+      }
+      draw();
+      raf = requestAnimationFrame(() => setTimeout(step, 30));
+    };
+    step();
+  });
+
+  // drag: the handles in 1D, the region in 2D
+  let drag: 'a' | 'b' | 'c' | null = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers are fine to ignore */
+    }
+    if (state.dim === 1) {
+      if (x < P1.x - 10 || x > P1.x + P1.w + 10 || y > P1.y + P1.h + 20) return;
+      const d = cur1();
+      const xv = d.lo + ((x - P1.x) / P1.w) * (d.hi - d.lo);
+      drag = Math.abs(xv - state.a) < Math.abs(xv - state.b) ? 'a' : 'b';
+      state[drag] = xv;
+      (drag === 'a' ? aEl : bEl).value = String(Math.round(xv * 100));
+      draw();
+    } else {
+      if (x < S2.x || x > S2.x + S2.s || y < S2.y || y > S2.y + S2.s) return;
+      drag = 'c';
+      state.cx = ix2(x);
+      state.cy = iy2(y);
+      draw();
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    if (drag === 'c') {
+      state.cx = ix2(x);
+      state.cy = iy2(y);
+    } else {
+      const d = cur1();
+      const xv = Math.max(
+        d.lo,
+        Math.min(d.hi, d.lo + ((x - P1.x) / P1.w) * (d.hi - d.lo))
+      );
+      state[drag] = xv;
+      (drag === 'a' ? aEl : bEl).value = String(Math.round(xv * 100));
+    }
+    draw();
+  });
+  const drop = () => (drag = null);
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  calibrate2();
+  sample();
+  show();
+  draw();
+</script>
+
+<style>
+  .pd-canvas {
+    cursor: crosshair;
+    touch-action: none;
+  }
+  #dist button,
+  #dist2 button {
+    font-size: 0.76rem;
+    padding: 5px 8px;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>
