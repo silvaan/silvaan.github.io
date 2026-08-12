@@ -1,0 +1,702 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="generative-ai"
+  title="Byte Pair Encoding"
+  description="A tokenizer is not trained by gradient descent, it is built by counting. Start with the alphabet, find the pair of neighbouring symbols that occurs most often, glue it into one new symbol, and repeat. Watch the vocabulary grow merge by merge, then feed it a sentence it has never seen and see how it gets cut up."
+>
+  <div class="sim" id="wrap">
+    <div class="sim-stage">
+      <canvas id="bpe" width="1000" height="910"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Next merge</button>
+        <button class="btn ghost" id="reset">Back to zero</button>
+      </div>
+
+      <div class="control">
+        <label>Merges applied <b id="mval">0</b></label>
+        <input type="range" id="m" min="0" max="1" value="0" />
+      </div>
+
+      <div class="control">
+        <label>Speed <b id="spval">3</b></label>
+        <input type="range" id="sp" min="1" max="12" value="3" />
+      </div>
+
+      <div class="control">
+        <label for="train">Training text</label>
+        <textarea id="train" rows="6" spellcheck="false"></textarea>
+      </div>
+
+      <div class="control">
+        <label for="test">Tokenize this sentence</label>
+        <input type="text" id="test" spellcheck="false" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Distinct words</span><b id="rwords">—</b></div>
+        <div class="row"><span>Starting alphabet</span><b id="rbase">—</b></div>
+        <div class="row"><span>Merges learned</span><b id="rmerges">—</b></div>
+        <div class="row"><span>Vocabulary size</span><b id="rvocab">—</b></div>
+        <div class="row"><span>Sentence tokens</span><b id="rtok">—</b></div>
+        <div class="row"><span>Characters per token</span><b id="rcpt">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        ▁ marks the start of a word, so a token knows whether it begins a word or
+        continues one. Drag <b>merges applied</b> to scrub through the training
+        in either direction.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      At zero merges the vocabulary is just the alphabet, and every word is one
+      token per letter. The sentence at the bottom costs as many tokens as it has
+      characters. That is the worst tokenizer that still works.
+    </li>
+    <li>
+      Step once. The pair panel shows why that pair won: it is simply the one
+      with the most occurrences across the whole text, weighted by how often each
+      word appears. Nothing linguistic is consulted, only counting.
+    </li>
+    <li>
+      Keep stepping and watch common short words get swallowed whole:
+      <b>▁t + h</b> becomes <b>▁th</b>, then <b>▁the</b>. Frequent words end up
+      as single tokens while rare ones stay in pieces, which is exactly the
+      trade a tokenizer is for.
+    </li>
+    <li>
+      Watch the sentence at the bottom as merges accumulate. The same characters
+      keep collapsing into fewer tokens, and characters per token climbs. That
+      number is what a tokenizer is judged on: it is how much text fits in a
+      context window.
+    </li>
+    <li>
+      The test sentence contains words the training text never had. They still
+      tokenize, because whatever is left over falls back on shorter pieces, down
+      to single letters. <b>A BPE tokenizer can never be stumped by a new word</b>,
+      only made inefficient by it.
+    </li>
+    <li>
+      Type a word with a letter that does not appear in the training text at all
+      and it goes red. That is the one real failure mode, and why real
+      tokenizers work on <b>bytes</b>: with 256 byte values in the base
+      vocabulary there is nothing left to be unknown.
+    </li>
+    <li>
+      Edit the training text and the vocabulary is rebuilt from it. Feed it one
+      topic and the tokenizer becomes efficient at that topic and clumsy at
+      everything else, which is why tokenizers trained on English cut other
+      languages into far more tokens per word.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+
+  // ---------------------------------------------------------------------------
+  // Byte pair encoding, the whole of it: count neighbouring pairs, glue the
+  // commonest into one symbol, repeat. Training is computed once up front and
+  // snapshotted after every merge, so the slider can scrub through it in either
+  // direction and encoding always uses exactly the merges on screen.
+  // ---------------------------------------------------------------------------
+
+  const DEFAULT_TRAIN = `the cat sat on the mat. the cats sat on the mats.
+the fat cat sat on the fat mat. the fatter cat sat on the fatter mat.
+cats and rats sat on mats. the rat ran and the cats ran faster.
+the fattest rat ran fastest of all the rats.`;
+  const DEFAULT_TEST = 'the fattest cats ran on a flat mat';
+
+  const MARK = '▁'; // start of a word, the way SentencePiece writes it
+  const MAX_MERGES = 60;
+
+  /** Words and punctuation, in order, lowercased. */
+  const units = (text: string) => text.toLowerCase().match(/[a-z]+|[^\sa-z]/g) || [];
+
+  /** A word starts as its letters, with the first one carrying the marker. */
+  function initialSyms(unit: string): string[] {
+    if (!/^[a-z]+$/.test(unit)) return [unit];
+    return [MARK + unit[0], ...unit.slice(1).split('')];
+  }
+
+  type Merge = { a: string; b: string; count: number };
+  type Word = { w: string; f: number };
+  type Trained = {
+    words: Word[];
+    merges: Merge[];
+    /** word symbol lists after m merges: snaps[m][i] */
+    snaps: string[][][];
+    base: string[];
+  };
+
+  function mergeInto(syms: string[], a: string, b: string): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < syms.length; i++) {
+      if (i + 1 < syms.length && syms[i] === a && syms[i + 1] === b) {
+        out.push(a + b);
+        i++;
+      } else out.push(syms[i]);
+    }
+    return out;
+  }
+
+  /** Pair counts over the current state, weighted by word frequency. */
+  function pairCounts(words: Word[], syms: string[][]) {
+    const counts = new Map<string, number>();
+    const order: string[] = [];
+    syms.forEach((s, i) => {
+      for (let j = 0; j + 1 < s.length; j++) {
+        const k = s[j] + '\u0000' + s[j + 1];
+        if (!counts.has(k)) order.push(k);
+        counts.set(k, (counts.get(k) || 0) + words[i].f);
+      }
+    });
+    // ties go to whichever pair was met first, so training is reproducible
+    return order
+      .map((k) => {
+        const [a, b] = k.split('\u0000');
+        return { a, b, count: counts.get(k)! };
+      })
+      .sort((x, y) => y.count - x.count);
+  }
+
+  function train(text: string): Trained {
+    const freq = new Map<string, number>();
+    for (const u of units(text)) freq.set(u, (freq.get(u) || 0) + 1);
+    const words: Word[] = [...freq]
+      .map(([w, f]) => ({ w, f }))
+      .sort((a, b) => b.f - a.f || a.w.localeCompare(b.w));
+
+    let cur = words.map((e) => initialSyms(e.w));
+    const base = [...new Set(cur.flat())].sort();
+    const snaps: string[][][] = [cur];
+    const merges: Merge[] = [];
+
+    for (let step = 0; step < MAX_MERGES; step++) {
+      const best = pairCounts(words, cur)[0];
+      // a pair that happens once buys nothing: it would just rename one word
+      if (!best || best.count < 2) break;
+      cur = cur.map((s) => mergeInto(s, best.a, best.b));
+      merges.push(best);
+      snaps.push(cur);
+    }
+    return { words, merges, snaps, base };
+  }
+
+  const state = { m: 0, speed: 3, running: false, test: DEFAULT_TEST };
+  let model = train(DEFAULT_TRAIN);
+  let flash = 0;
+
+  const vocabAt = (m: number) => [...model.base, ...model.merges.slice(0, m).map((x) => x.a + x.b)];
+
+  type Tok = { t: string; unknown: boolean };
+  /** Standard BPE encoding: replay the learned merges, in order, to exhaustion. */
+  function encode(text: string, m: number): Tok[] {
+    const known = new Set(vocabAt(m));
+    const out: Tok[] = [];
+    for (const u of units(text)) {
+      let syms = initialSyms(u);
+      for (let i = 0; i < m; i++) syms = mergeInto(syms, model.merges[i].a, model.merges[i].b);
+      for (const s of syms) out.push({ t: s, unknown: !known.has(s) });
+    }
+    return out;
+  }
+
+  // --- canvas -------------------------------------------------------------------
+
+  const canvas = document.getElementById('bpe') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+
+  const NEXT = '#fbbf24';  // the pair about to be merged
+  const NEW = '#34d399';   // a symbol that a merge just created
+  const TOKEN = '#7c8cff'; // a learned token
+  const BAD = '#f9736a';   // not in the vocabulary at all
+
+  function hexA(hex: string, a: number) {
+    const h = hex.replace('#', '');
+    const s = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    const n = parseInt(s, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  const UI = (size: number, weight = 400) =>
+    `${weight} ${size}px 'Inter', system-ui, sans-serif`;
+  const MONO = (size: number, weight = 400) =>
+    `${weight} ${size}px 'JetBrains Mono', ui-monospace, monospace`;
+
+  function text(
+    s: string,
+    x: number,
+    y: number,
+    size: number,
+    col: string,
+    align: CanvasTextAlign = 'left',
+    mono = false,
+    weight = 400
+  ) {
+    ctx.font = mono ? MONO(size, weight) : UI(size, weight);
+    ctx.fillStyle = col;
+    ctx.textAlign = align;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
+  }
+  const measure = (s: string, size: number, mono = true) => {
+    ctx.font = mono ? MONO(size) : UI(size);
+    return ctx.measureText(s).width;
+  };
+
+  type Box = { x: number; y: number; w: number; h: number };
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+  function panel(b: Box, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(b.x, b.y, b.w, b.h, 10);
+    ctx.stroke();
+    text(title, b.x + 2, b.y - 9, 11, inkA(0.5), 'left', true);
+  }
+
+  /** One symbol, drawn as a chip. Returns the width it took. */
+  function chip(
+    s: string,
+    x: number,
+    y: number,
+    size: number,
+    fill: string,
+    stroke: string,
+    col: string,
+    h = size + 12
+  ) {
+    const w = measure(s, size) + 14;
+    ctx.fillStyle = fill;
+    rr(x, y, w, h, 5);
+    ctx.fill();
+    if (stroke) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1;
+      rr(x, y, w, h, 5);
+      ctx.stroke();
+    }
+    text(s, x + 7, y + h / 2 + size * 0.36, size, col, 'left', true);
+    return w;
+  }
+
+  const WORDS: Box = { x: 20, y: 32, w: 604, h: 408 };
+  const PAIRS: Box = { x: 644, y: 32, w: 336, h: 200 };
+  const RULES: Box = { x: 644, y: 264, w: 336, h: 176 };
+  const VOCAB: Box = { x: 20, y: 474, w: 960, h: 190 };
+  const ENC: Box = { x: 20, y: 698, w: 960, h: 190 };
+
+  // --- the words being trained on -------------------------------------------------
+
+  function drawWords(syms: string[][], next: Merge | null) {
+    panel(WORDS, 'THE TEXT, AS SYMBOLS THAT KEEP GLUING TOGETHER');
+    const rowH = 26, x0 = WORDS.x + 18, y0 = WORDS.y + 24;
+    const rows = Math.floor((WORDS.h - 46) / rowH);
+    const n = Math.min(rows * 2, model.words.length);
+    // one column while the words fit, two when they do not
+    const perCol = n <= rows ? n : Math.ceil(n / 2);
+    const colW = (WORDS.w - 36) / 2;
+    for (let i = 0; i < n; i++) {
+      const cx = x0 + Math.floor(i / perCol) * colW;
+      const y = y0 + (i % perCol) * rowH;
+      const clipX = cx + colW - 12;
+      text(`${model.words[i].f}×`, cx + 26, y + 15, 11, inkA(0.45), 'right', true);
+      let x = cx + 40;
+      const s = syms[i];
+      for (let j = 0; j < s.length; j++) {
+        if (x + measure(s[j], 13) + 14 > clipX) {
+          text('…', x + 2, y + 15, 12, inkA(0.4), 'left', true);
+          break;
+        }
+        const pairHere =
+          !!next && s[j] === next.a && j + 1 < s.length && s[j + 1] === next.b;
+        // the pair that is about to be merged is boxed wherever it occurs
+        const wA = measure(s[j], 13) + 14, wB = pairHere ? measure(s[j + 1], 13) + 14 : 0;
+        if (pairHere && x + wA + wB + 10 <= clipX + 4) {
+          ctx.fillStyle = hexA(NEXT, 0.16);
+          rr(x - 3, y - 2, wA + wB + 10, 24, 6);
+          ctx.fill();
+          ctx.strokeStyle = hexA(NEXT, 0.75);
+          ctx.lineWidth = 1;
+          rr(x - 3, y - 2, wA + wB + 10, 24, 6);
+          ctx.stroke();
+        }
+        const isNew =
+          flash > 0 && state.m > 0 && s[j] === model.merges[state.m - 1].a + model.merges[state.m - 1].b;
+        x +=
+          chip(
+            s[j],
+            x,
+            y,
+            13,
+            isNew ? hexA(NEW, 0.25 * flash + 0.1) : inkA(0.07),
+            isNew ? hexA(NEW, 0.7) : inkA(0.12),
+            s[j].length > 1 ? inkA(0.95) : inkA(0.7),
+            20
+          ) + 4;
+      }
+    }
+    if (model.words.length > n)
+      text(
+        `+ ${model.words.length - n} more words, all merged the same way`,
+        x0,
+        WORDS.y + WORDS.h - 14,
+        11,
+        inkA(0.4),
+        'left',
+        true
+      );
+    else
+      text(
+        'each row is one distinct word and how often it occurs',
+        x0,
+        WORDS.y + WORDS.h - 14,
+        11,
+        inkA(0.4),
+        'left',
+        true
+      );
+  }
+
+  // --- which pair wins ---------------------------------------------------------------
+
+  function drawPairs(pairs: { a: string; b: string; count: number }[], next: Merge | null) {
+    panel(PAIRS, 'PAIRS OF NEIGHBOURS, BY HOW OFTEN THEY OCCUR');
+    if (!pairs.length) {
+      text('nothing left to merge', PAIRS.x + PAIRS.w / 2, PAIRS.y + 100, 13, inkA(0.4), 'center');
+      return;
+    }
+    const top = pairs.slice(0, 5);
+    const maxC = top[0].count;
+    const x0 = PAIRS.x + 16, labelW = 118, barMax = PAIRS.w - 32 - labelW - 40;
+    top.forEach((p, i) => {
+      const y = PAIRS.y + 26 + i * 26;
+      const win = i === 0 && !!next;
+      text(
+        `${p.a} + ${p.b}`,
+        x0 + labelW - 8,
+        y + 14,
+        12,
+        win ? NEXT : inkA(0.6),
+        'right',
+        true
+      );
+      ctx.fillStyle = win ? hexA(NEXT, 0.8) : inkA(0.18);
+      ctx.fillRect(x0 + labelW, y + 3, Math.max(2, (p.count / maxC) * barMax), 14);
+      text(String(p.count), PAIRS.x + PAIRS.w - 16, y + 14, 11, inkA(0.6), 'right', true);
+    });
+    text(
+      next
+        ? `next merge: ${next.a} + ${next.b} → ${next.a + next.b}`
+        : 'no pair is left that occurs twice, so training stops here',
+      PAIRS.x + 16,
+      PAIRS.y + PAIRS.h - 16,
+      12,
+      next ? NEXT : inkA(0.45),
+      'left',
+      true
+    );
+  }
+
+  // --- the rules learned so far --------------------------------------------------------
+
+  function drawRules() {
+    panel(RULES, 'THE MERGES LEARNED, IN ORDER');
+    if (!state.m) {
+      text(
+        'no merges yet: the vocabulary is just the alphabet',
+        RULES.x + RULES.w / 2,
+        RULES.y + 96,
+        12,
+        inkA(0.4),
+        'center'
+      );
+      return;
+    }
+    const rowH = 22;
+    const rows = Math.floor((RULES.h - 30) / rowH);
+    const from = Math.max(0, state.m - rows);
+    for (let i = from; i < state.m; i++) {
+      const r = model.merges[i];
+      const y = RULES.y + 26 + (i - from) * rowH;
+      const latest = i === state.m - 1;
+      text(String(i + 1).padStart(2, ' '), RULES.x + 32, y, 11, inkA(0.35), 'right', true);
+      text(
+        `${r.a} + ${r.b} → ${r.a + r.b}`,
+        RULES.x + 44,
+        y,
+        12,
+        latest ? NEW : inkA(0.8),
+        'left',
+        true
+      );
+      text(String(r.count), RULES.x + RULES.w - 16, y, 11, inkA(0.4), 'right', true);
+    }
+    if (from > 0)
+      text(`${from} earlier merges above`, RULES.x + 44, RULES.y + 16, 10, inkA(0.3), 'left', true);
+  }
+
+  // --- the vocabulary ---------------------------------------------------------------------
+
+  function drawVocab() {
+    const vocab = vocabAt(state.m);
+    panel(VOCAB, `THE VOCABULARY: ${model.base.length} FROM THE ALPHABET + ${state.m} LEARNED = ${vocab.length}`);
+    const x0 = VOCAB.x + 16, maxW = VOCAB.w - 32;
+    let x = x0, y = VOCAB.y + 24;
+    const rowH = 26;
+    const limit = VOCAB.y + VOCAB.h - 34;
+    let hidden = 0;
+    for (let i = 0; i < vocab.length; i++) {
+      const s = vocab[i];
+      const learned = i >= model.base.length;
+      const w = measure(s, 13) + 14;
+      if (x + w > x0 + maxW) {
+        x = x0;
+        y += rowH;
+      }
+      if (y > limit) { hidden = vocab.length - i; break; }
+      const isNew = flash > 0 && i === model.base.length + state.m - 1;
+      chip(
+        s,
+        x,
+        y,
+        13,
+        isNew ? hexA(NEW, 0.3 * flash + 0.12) : learned ? hexA(TOKEN, 0.16) : inkA(0.06),
+        isNew ? hexA(NEW, 0.8) : learned ? hexA(TOKEN, 0.5) : inkA(0.12),
+        learned ? inkA(0.95) : inkA(0.55),
+        20
+      );
+      x += w + 5;
+    }
+    text(
+      hidden
+        ? `+ ${hidden} more · pale = the starting alphabet, blue = learned by merging`
+        : 'pale = the starting alphabet · blue = learned by merging',
+      x0,
+      VOCAB.y + VOCAB.h - 13,
+      10,
+      inkA(0.4),
+      'left',
+      true
+    );
+  }
+
+  // --- tokenizing a new sentence -------------------------------------------------------
+
+  function drawEncode(toks: Tok[]) {
+    panel(ENC, 'A SENTENCE THE TOKENIZER HAS NEVER SEEN');
+    const x0 = ENC.x + 16;
+    text(state.test || '(type a sentence in the panel)', x0, ENC.y + 26, 14, inkA(0.55));
+
+    let x = x0, y = ENC.y + 44;
+    const rowH = 32;
+    for (const t of toks) {
+      const w = measure(t.t, 15) + 14;
+      if (x + w > ENC.x + ENC.w - 16) { x = x0; y += rowH; }
+      if (y > ENC.y + ENC.h - 46) break;
+      chip(
+        t.t,
+        x,
+        y,
+        15,
+        t.unknown ? hexA(BAD, 0.2) : hexA(TOKEN, 0.18),
+        t.unknown ? hexA(BAD, 0.8) : hexA(TOKEN, 0.55),
+        t.unknown ? BAD : inkA(0.98),
+        26
+      );
+      x += w + 5;
+    }
+
+    const chars = (state.test.match(/\S/g) || []).length;
+    const cpt = toks.length ? chars / toks.length : 0;
+    text(
+      `${chars} characters → ${toks.length} tokens · ${cpt.toFixed(2)} characters per token`,
+      x0,
+      ENC.y + ENC.h - 14,
+      11,
+      inkA(0.5),
+      'left',
+      true
+    );
+    if (toks.some((t) => t.unknown))
+      text(
+        'red = no such symbol in the vocabulary',
+        ENC.x + ENC.w - 16,
+        ENC.y + ENC.h - 14,
+        11,
+        BAD,
+        'right',
+        true
+      );
+  }
+
+  // --- readouts -----------------------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setEq = equationBar();
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    const syms = model.snaps[Math.min(state.m, model.snaps.length - 1)];
+    const pairs = pairCounts(model.words, syms);
+    const next = state.m < model.merges.length ? model.merges[state.m] : null;
+    const toks = encode(state.test, state.m);
+
+    drawWords(syms, next);
+    drawPairs(pairs, next);
+    drawRules();
+    drawVocab();
+    drawEncode(toks);
+
+    const vocab = model.base.length + state.m;
+    const chars = (state.test.match(/\S/g) || []).length;
+    el('rwords').textContent = String(model.words.length);
+    el('rbase').textContent = String(model.base.length);
+    el('rmerges').textContent = `${state.m} of ${model.merges.length}`;
+    el('rvocab').textContent = String(vocab);
+    el('rtok').textContent = String(toks.length);
+    el('rcpt').textContent = toks.length ? (chars / toks.length).toFixed(2) : '—';
+
+    setEq([
+      ['(a,b)^{*}=\\arg\\max_{(a,b)}\\;\\text{count}(ab)'],
+      [
+        [`|V| = ${model.base.length} + ${state.m} = ${vocab}`, TOKEN],
+        [`\\quad \\text{tokens} = ${toks.length}`, NEW],
+        `\\quad \\text{chars/token} = ${toks.length ? (chars / toks.length).toFixed(2) : '0'}`,
+      ],
+      ['glue the commonest pair of neighbours into one symbol, then do it again'],
+    ]);
+  }
+
+  // --- loop ---------------------------------------------------------------------------------
+
+  let acc = 0, last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      acc += dt * state.speed;
+      while (acc >= 1) {
+        acc -= 1;
+        if (state.m < model.merges.length) setM(state.m + 1);
+        else stopRun();
+      }
+    }
+    if (flash > 0) flash = Math.max(0, flash - dt * 2);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // --- controls -------------------------------------------------------------------------------
+
+  const runBtn = el('run') as HTMLButtonElement;
+  const mEl = el('m') as HTMLInputElement;
+
+  function stopRun() {
+    state.running = false;
+    runBtn.textContent = 'Run';
+  }
+  function setM(m: number, fromSlider = false) {
+    const clamped = Math.max(0, Math.min(model.merges.length, m));
+    if (clamped > state.m) flash = 1;
+    state.m = clamped;
+    if (!fromSlider) mEl.value = String(clamped);
+    el('mval').textContent = String(clamped);
+  }
+  function retrain(text: string) {
+    model = train(text);
+    mEl.max = String(Math.max(1, model.merges.length));
+    setM(Math.min(state.m, model.merges.length));
+  }
+
+  mEl.addEventListener('input', () => {
+    stopRun();
+    setM(+mEl.value, true);
+  });
+  const spEl = el('sp') as HTMLInputElement;
+  spEl.addEventListener('input', () => {
+    state.speed = +spEl.value;
+    el('spval').textContent = spEl.value;
+  });
+
+  runBtn.addEventListener('click', () => {
+    if (state.running) return stopRun();
+    if (state.m >= model.merges.length) setM(0);
+    state.running = true;
+    runBtn.textContent = 'Pause';
+  });
+  el('step').addEventListener('click', () => {
+    stopRun();
+    setM(state.m + 1);
+  });
+  el('reset').addEventListener('click', () => {
+    stopRun();
+    setM(0);
+  });
+
+  const trainEl = el('train') as HTMLTextAreaElement;
+  const testEl = el('test') as HTMLInputElement;
+  trainEl.value = DEFAULT_TRAIN;
+  testEl.value = DEFAULT_TEST;
+
+  let debounce = 0;
+  trainEl.addEventListener('input', () => {
+    stopRun();
+    clearTimeout(debounce);
+    // retraining on every keystroke would fight with typing
+    debounce = window.setTimeout(() => retrain(trainEl.value), 350);
+  });
+  testEl.addEventListener('input', () => (state.test = testEl.value));
+
+  retrain(DEFAULT_TRAIN);
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .sim-panel textarea,
+  .sim-panel input[type='text'] {
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  .sim-panel textarea:focus,
+  .sim-panel input[type='text']:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+</style>

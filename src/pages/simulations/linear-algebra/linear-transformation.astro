@@ -23,11 +23,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           </div>
           <span class="bracket" aria-hidden="true"></span>
         </div>
-        <div style="display:grid;gap:12px;margin-top:14px">
-          <div class="control"><label>a <b id="aval">1.00</b></label><input type="range" id="a" min="-3" max="3" step="0.05" value="1"></div>
-          <div class="control"><label>b <b id="bval">0.00</b></label><input type="range" id="b" min="-3" max="3" step="0.05" value="0"></div>
-          <div class="control"><label>c <b id="cval">0.00</b></label><input type="range" id="c" min="-3" max="3" step="0.05" value="0"></div>
-          <div class="control"><label>d <b id="dval">1.00</b></label><input type="range" id="d" min="-3" max="3" step="0.05" value="1"></div>
+        <div class="mgrid">
+          <div><label>a <b id="aval">1.00</b></label><input type="range" id="a" min="-3" max="3" step="0.05" value="1"></div>
+          <div><label>b <b id="bval">0.00</b></label><input type="range" id="b" min="-3" max="3" step="0.05" value="0"></div>
+          <div><label>c <b id="cval">0.00</b></label><input type="range" id="c" min="-3" max="3" step="0.05" value="0"></div>
+          <div><label>d <b id="dval">1.00</b></label><input type="range" id="d" min="-3" max="3" step="0.05" value="1"></div>
         </div>
       </div>
 
@@ -38,6 +38,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           <button class="btn ghost" id="animate">Animate</button>
           <label class="check">
             <input type="checkbox" id="eig" /> Eigenvectors
+          </label>
+          <label class="check">
+            <input type="checkbox" id="ghost" checked /> Keep the original grid
+          </label>
+          <label class="check">
+            <input type="checkbox" id="vec" checked /> A vector to drag
           </label>
         </div>
       </div>
@@ -57,6 +63,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       <div class="readout">
         <div class="row"><span>î → </span><b id="ihat">(1, 0)</b></div>
         <div class="row"><span>ĵ → </span><b id="jhat">(0, 1)</b></div>
+        <div class="row"><span>v</span><b id="vin">—</b></div>
+        <div class="row"><span>Av</span><b id="vout">—</b></div>
         <div class="row"><span>Determinant</span><b id="det">1.000</b></div>
         <div class="row"><span>Eigenvalues</span><b id="eigval">1, 1</b></div>
       </div>
@@ -67,6 +75,18 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     <li>
       Drag the tip of <b>î</b> (indigo) or <b>ĵ</b> (teal). The whole grid follows:
       a linear map is nothing more than where the two basis vectors land.
+    </li>
+    <li>
+      Leave <b>Keep the original grid</b> on and the dotted grid stays where it
+      was, so the solid one has something to move against. Every solid line is
+      still straight, still evenly spaced, still parallel to its neighbours:
+      that, and the origin staying put, is the whole of what <b>linear</b> means.
+    </li>
+    <li>
+      Drag the ring marked <b>v</b>, an ordinary vector that is not a basis
+      vector. The two dashed pieces show how its image is assembled: go
+      <b>x</b> times where î landed, then <b>y</b> times where ĵ landed. Nothing
+      else is ever needed, which is what makes the map linear.
     </li>
     <li>
       Watch the shaded unit square. Its signed area <b>is</b> the determinant;
@@ -93,7 +113,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // M = the matrix actually drawn, interpolated from the identity by t.
   const A = { a: 1, b: 0, c: 0, d: 1 };
   const M = { a: 1, b: 0, c: 0, d: 1 };
-  const view = { t: 1, showEig: false };
+  const view = { t: 1, showEig: false, showGhost: true, showVec: true };
+  // a free vector the reader can drag, to watch A act on something that is not
+  // a basis vector
+  const vec = { x: 2, y: 1 };
+  const VEC_COL = '#fbbf24';
 
   const setEq = equationBar();
   const canvas = document.getElementById('lin') as HTMLCanvasElement;
@@ -217,6 +241,66 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
+  /**
+   * The free vector, drawn twice: where it started (dashed, draggable) and where
+   * A sends it, reached along x·Aî then y·Aĵ so the image is visibly built out
+   * of the two columns.
+   */
+  function drawVector(accent: string, teal: string, faint: string) {
+    const p = rawToScreen(vec.x, vec.y);
+    const q = toScreen(vec.x, vec.y);
+    const ai = toScreen(1, 0);
+    const mid = {
+      px: ORIGIN.x + vec.x * (ai.px - ORIGIN.x),
+      py: ORIGIN.y + vec.x * (ai.py - ORIGIN.y),
+    };
+
+    const seg = (
+      x1: number, y1: number, x2: number, y2: number, col: string, dash: number[]
+    ) => {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    // x·Aî then y·Aĵ, in the colours of the two basis images
+    seg(ORIGIN.x, ORIGIN.y, mid.px, mid.py, accent, [5, 4]);
+    seg(mid.px, mid.py, q.px, q.py, teal, [5, 4]);
+    // where the vector was before the transformation
+    seg(ORIGIN.x, ORIGIN.y, p.px, p.py, faint, [3, 4]);
+
+    ctx.strokeStyle = VEC_COL;
+    ctx.fillStyle = VEC_COL;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(ORIGIN.x, ORIGIN.y);
+    ctx.lineTo(q.px, q.py);
+    ctx.stroke();
+    const ang = Math.atan2(q.py - ORIGIN.y, q.px - ORIGIN.x);
+    ctx.beginPath();
+    ctx.moveTo(q.px, q.py);
+    ctx.lineTo(q.px - 12 * Math.cos(ang - 0.4), q.py - 12 * Math.sin(ang - 0.4));
+    ctx.lineTo(q.px - 12 * Math.cos(ang + 0.4), q.py - 12 * Math.sin(ang + 0.4));
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = "600 14px 'JetBrains Mono', monospace";
+    ctx.fillText('Av', q.px + 8, q.py - 8);
+
+    // the handle: a ring at the untransformed tip, which is what you drag
+    ctx.strokeStyle = VEC_COL;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = faint;
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText('v', p.px + 10, p.py + 4);
+  }
+
   function draw() {
     const grid = css('--border') || '#262a32';
     const accent = css('--accent') || '#7c8cff';
@@ -224,6 +308,27 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.clearRect(0, 0, W, H);
 
     const R = 7;
+    // the untransformed grid, left in place as a ruler to measure the moving
+    // one against: without it there is nothing to say how far anything moved
+    if (view.showGhost) {
+      ctx.strokeStyle = grid;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.4;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      for (let i = -R; i <= R; i++) {
+        const a1 = rawToScreen(i, -R), a2 = rawToScreen(i, R);
+        const b1 = rawToScreen(-R, i), b2 = rawToScreen(R, i);
+        ctx.moveTo(a1.px, a1.py);
+        ctx.lineTo(a2.px, a2.py);
+        ctx.moveTo(b1.px, b1.py);
+        ctx.lineTo(b2.px, b2.py);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+
     // transformed grid
     ctx.strokeStyle = grid;
     ctx.lineWidth = 1;
@@ -254,6 +359,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     // basis vectors
     arrow(1, 0, accent, 'î');
     arrow(0, 1, teal, 'ĵ');
+
+    if (view.showVec) drawVector(accent, teal, css('--text-faint') || '#6b7280');
+    const vo = { x: M.a * vec.x + M.b * vec.y, y: M.c * vec.x + M.d * vec.y };
+    (document.getElementById('vin') as HTMLElement).textContent = view.showVec
+      ? `(${vec.x.toFixed(2)}, ${vec.y.toFixed(2)})`
+      : '—';
+    (document.getElementById('vout') as HTMLElement).textContent = view.showVec
+      ? `(${vo.x.toFixed(2)}, ${vo.y.toFixed(2)})`
+      : '—';
 
     // readouts (reflect the displayed matrix M)
     (document.getElementById('m-a') as HTMLElement).textContent = M.a.toFixed(2);
@@ -317,6 +431,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     draw();
   });
 
+  document.getElementById('ghost')!.addEventListener('change', (e) => {
+    view.showGhost = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+
+  document.getElementById('vec')!.addEventListener('change', (e) => {
+    view.showVec = (e.target as HTMLInputElement).checked;
+    draw();
+  });
+
   let animRAF = 0;
   document.getElementById('animate')!.addEventListener('click', () => {
     cancelAnimationFrame(animRAF);
@@ -346,11 +470,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // ---- drag the basis-vector tips ----
   // î tip sits at math point (A.a, A.c); ĵ tip at (A.b, A.d) when t = 1.
-  let dragging: 'i' | 'j' | null = null;
-  function tipPixel(which: 'i' | 'j') {
-    return which === 'i' ? toScreen(1, 0) : toScreen(0, 1);
+  type Handle = 'i' | 'j' | 'v';
+  let dragging: Handle | null = null;
+  function tipPixel(which: Handle) {
+    // î and ĵ are grabbed where they land; the free vector is grabbed at its
+    // untransformed tip, since that is the input you are choosing
+    if (which === 'i') return toScreen(1, 0);
+    if (which === 'j') return toScreen(0, 1);
+    return rawToScreen(vec.x, vec.y);
   }
-  function near(e: PointerEvent, which: 'i' | 'j') {
+  function near(e: PointerEvent, which: Handle) {
+    if (which === 'v' && !view.showVec) return false;
     const rect = canvas.getBoundingClientRect();
     const mx = ((e.clientX - rect.left) / rect.width) * W;
     const my = ((e.clientY - rect.top) / rect.height) * H;
@@ -358,16 +488,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     return Math.hypot(mx - t.px, my - t.py) < 16;
   }
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = near(e, 'i') ? 'i' : near(e, 'j') ? 'j' : null;
+    dragging = near(e, 'i') ? 'i' : near(e, 'j') ? 'j' : near(e, 'v') ? 'v' : null;
     if (dragging) {
-      setT(1); // snap to the full transform so the tip you grab is the one you set
-      recompute();
+      if (dragging !== 'v') {
+        setT(1); // snap to the full transform so the tip you grab is the one you set
+        recompute();
+      }
       canvas.setPointerCapture(e.pointerId);
     }
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!dragging) {
-      canvas.style.cursor = near(e, 'i') || near(e, 'j') ? 'grab' : 'default';
+      canvas.style.cursor =
+        near(e, 'i') || near(e, 'j') || near(e, 'v') ? 'grab' : 'default';
       return;
     }
     const rect = canvas.getBoundingClientRect();
@@ -376,6 +509,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const wx = (mx - ORIGIN.x) / UNIT;
     const wy = (ORIGIN.y - my) / UNIT;
     const snap = (v: number) => (Math.abs(v - Math.round(v)) < 0.08 ? Math.round(v) : +v.toFixed(2));
+    if (dragging === 'v') {
+      vec.x = Math.max(-6, Math.min(6, snap(wx)));
+      vec.y = Math.max(-6, Math.min(6, snap(wy)));
+      draw();
+      return;
+    }
     if (dragging === 'i') {
       A.a = Math.max(-3, Math.min(3, snap(wx)));
       A.c = Math.max(-3, Math.min(3, snap(wy)));
@@ -396,6 +535,29 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </script>
 
 <style>
+  /* the four entries in the shape of the matrix they are */
+  .sim-panel .mgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 16px;
+    margin-top: 12px;
+  }
+  .sim-panel .mgrid label {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .sim-panel .mgrid label b {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .sim-panel .mgrid input[type='range'] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
   .row-controls {
     display: flex;
     align-items: center;

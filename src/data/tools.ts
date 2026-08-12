@@ -449,10 +449,18 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'bpe-tokenizer',
+        title: 'Byte Pair Encoding',
+        description:
+          'Build a tokenizer by counting: glue the commonest pair of neighbouring symbols into one, over and over, and watch the vocabulary grow from bare letters into whole words. Then hand it a sentence it has never seen and see where it cuts.',
+        href: '/simulations/generative-ai/bpe-tokenizer',
+        status: 'live',
+      },
+      {
         slug: 'autoregressive',
         title: 'Autoregressive Models',
         description:
-          'Predict the next word from the text so far, sample it, append, repeat, with a temperature knob. The same next-token loop that powers large language models.',
+          'A 40-word vocabulary, a probability for every one of them at every step, and temperature, top-k and top-p deciding which survive to be sampled. The same next-token loop that powers large language models, small enough to see whole.',
         href: '/simulations/generative-ai/autoregressive',
         status: 'live',
       },

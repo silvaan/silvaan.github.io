@@ -5,11 +5,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="generative-ai"
   title="Autoregressive Models"
-  description="Every large language model runs the same loop: read the text so far, predict a probability distribution over the next word, sample one, append it, repeat. Here the model is a word-level n-gram counted from a paragraph, but the mechanics, and the effect of temperature, are exactly those of an LLM."
+  description="One loop, repeated forever: give every word in the vocabulary a probability, cut the unlikely tail, pick one, append it. The vocabulary here is 40 words instead of 100,000, so you can watch temperature, top-k and top-p act on all of it at once."
 >
-  <div class="sim">
+  <div class="sim" id="wrap">
     <div class="sim-stage">
-      <canvas id="ar" width="900" height="500"></canvas>
+      <canvas id="ar" width="1000" height="936"></canvas>
     </div>
 
     <div class="sim-panel">
@@ -20,13 +20,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       </div>
 
       <div class="control">
-        <label>Context length (words) <b id="nval">1</b></label>
-        <input type="range" id="n" min="1" max="3" value="1" />
+        <div class="seg" id="mode">
+          <button data-m="sample" class="active">Sampling</button>
+          <button data-m="greedy">Greedy</button>
+        </div>
+      </div>
+
+      <div class="control tunes">
+        <label>Temperature <b id="tval">0.80</b></label>
+        <input type="range" id="t" min="5" max="200" value="80" />
+      </div>
+
+      <div class="control tunes">
+        <label>Top-k <b id="kval">off</b></label>
+        <input type="range" id="k" min="1" max="40" value="40" />
+      </div>
+
+      <div class="control tunes">
+        <label>Top-p <b id="pval">off</b></label>
+        <input type="range" id="p" min="5" max="100" value="100" />
       </div>
 
       <div class="control">
-        <label>Temperature <b id="tval">0.80</b></label>
-        <input type="range" id="t" min="5" max="200" value="80" />
+        <label>Context length (words) <b id="nval">2</b></label>
+        <input type="range" id="n" min="1" max="3" value="2" />
       </div>
 
       <div class="control">
@@ -36,61 +53,129 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
       <div class="readout">
         <div class="row"><span>Vocabulary</span><b id="vocab">—</b></div>
-        <div class="row"><span>Next-word options</span><b id="opts">—</b></div>
+        <div class="row"><span>Seen after this context</span><b id="seen">—</b></div>
+        <div class="row"><span>Kept by the cut</span><b id="kept">—</b></div>
+        <div class="row"><span>Mass kept</span><b id="mass">—</b></div>
+        <div class="row"><span>Last pick</span><b id="pick">—</b></div>
+        <div class="row"><span>Surprise of that pick</span><b id="bits">—</b></div>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        The highlighted words are the context. The bars are the live distribution
-        over the next word; drag temperature and watch them reshape.
+        Every word of the vocabulary gets a probability at every step, never
+        zero, exactly as in a real model. Top-k and top-p decide how much of
+        that tail is allowed to win.
       </p>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Drag <b>temperature</b> without stepping and watch the bars breathe. Near
-      <b>0</b> one bar towers over the rest (greedy, repetitive); crank it up and
-      they <b>flatten</b> toward uniform (adventurous, then incoherent). Same
-      counts, reshaped before sampling.
+      Look at the vocabulary map at the bottom: <b>every one of the 40 words has
+      a bar at every step</b>, even the absurd ones. Words the model has seen
+      after this context get most of the probability, the rest get a sliver.
+      That sliver is the whole reason top-k and top-p exist.
     </li>
     <li>
-      With <b>context = 1</b> the model only knows the previous word, so common
-      words like "the" branch into many options and the text wanders. Raise the
-      context and it copies longer real phrases: more fluent, but closer to just
-      quoting the source.
+      Set <b>top-k</b> to 1. That is greedy: the tallest bar wins every time,
+      nothing is random, and the text falls into a loop. Slide it back up and
+      the loop breaks.
     </li>
     <li>
-      Nothing here understands anything. It only tallies "what word usually
-      follows these". Swap the counts for a neural network and the vocabulary for
-      billions of tokens and this exact loop becomes a large language model.
+      Leave both cuts off and run. The dart can land anywhere, so sooner or
+      later a word from the sliver tail wins and the sentence derails. Any one
+      of them is unlikely, but there are 35 of them.
+    </li>
+    <li>
+      <b>Top-k</b> keeps a fixed count. When the model is certain, k = 10 drags
+      in nine words it did not believe in; when it is genuinely torn, the same
+      k = 10 may cut off good ones. The count is fixed, the confidence is not.
+    </li>
+    <li>
+      <b>Top-p</b> instead keeps the fewest words whose probabilities already
+      add up to p. Watch "kept by the cut" as you step: it shrinks to 1 or 2
+      where the model is sure and swells where it hesitates. Holding the mass
+      fixed is what makes the cut adapt.
+    </li>
+    <li>
+      Drag <b>temperature</b> without stepping. The pale bars, the model's own
+      probabilities, never move; the solid bars do. Near 0 everything collapses
+      onto the top word, high up they flatten toward uniform. The same numbers,
+      only reshaped before the cut.
+    </li>
+    <li>
+      The strip is where sampling becomes concrete: the surviving words laid end
+      to end from 0 to 1, each as wide as its probability, and a random number
+      thrown at it. Wide segments win often, slivers win rarely, and that is all
+      "sampling from a distribution" means.
+    </li>
+    <li>
+      Raise <b>context length</b>. With one word the text wanders; with three it
+      can only replay phrases it has seen. Fluent and unoriginal, or original
+      and unhinged, is the trade every language model lives on.
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
 
-  const CORPUS =
-    'The city wakes slowly in the pale light of morning. The baker opens the shop and the smell of warm bread drifts along the narrow street. The old woman sweeps the stone steps while the children run toward the square, laughing in the cool air. A cart rolls past the fountain, and the driver waves to the vendors who arrange their fruit in bright rows. The market fills with voices, with the ring of coins and the shuffle of feet, and the sun climbs above the rooftops. By noon the heat settles over the tiles and the cats sleep in the shade of the walls. The river moves quietly beyond the bridge, carrying small boats and the reflections of the clouds. In the afternoon the wind returns from the sea, and the shutters rattle, and the awnings lift and fall like slow breathing. The students cross the plaza with their books, arguing about numbers and stars and the shapes of distant things. The painter sits beneath the arch and studies the light on the water, mixing blue and gray until the color feels right. When evening comes the lamps glow along the avenue, and the tables spill out from the cafes onto the pavement. People gather to talk and to eat, and the music leaks from open windows into the warm dark. The night deepens and the streets grow quiet again, and the city keeps its slow and patient rhythm beneath the turning sky. Somewhere a clock counts the hours, and the last train hums away into the distance, and the stars burn steady above the sleeping town. Tomorrow the light will return to the same streets and the same doors, and the baker will open the shop once more, and the whole bright ordinary morning will begin again.';
+  // ---------------------------------------------------------------------------
+  // The next-token loop, one panel per stage: the text so far, a probability for
+  // every word in the vocabulary, the cut that throws the tail away, the dart
+  // that picks one. Counts stand in for a neural network, and a small smoothing
+  // term stands in for the softmax: no word is ever exactly impossible.
+  // ---------------------------------------------------------------------------
 
-  const TOKENS = CORPUS.match(/[A-Za-z]+|[.,;!?]/g) || [];
-  const isPunct = (t: string) => /^[.,;!?]$/.test(t);
-  const key = (arr: string[]) => arr.map((t) => t.toLowerCase()).join('');
+  const CORPUS = `the cat sleeps in the sun . the dog runs in the rain . the cat
+    runs to the door . the dog sleeps by the fire . the girl opens the door and
+    the cat runs out . the boy feeds the dog by the fire . the rain falls on the
+    roof . the sun warms the roof . the cat watches the rain from the window .
+    the dog watches the door . the girl calls the dog and the dog runs to the
+    girl . the boy calls the cat and the cat sleeps . the night falls and the
+    house grows quiet . the cat sleeps by the fire and the dog sleeps by the
+    door . in the morning the sun returns and the girl opens the window . the
+    boy runs out to the garden . the dog follows the boy . the cat watches from
+    the roof . the rain returns in the evening . the house grows warm and the
+    fire burns . the girl reads by the window . the boy sleeps . the cat and the
+    dog sleep by the fire .`;
 
-  const state = { n: 1, temp: 0.8, speed: 3, running: false };
+  const TOKENS = (CORPUS.toLowerCase().match(/[a-z]+|\./g) || []);
+  const VOCAB = [...new Set(TOKENS)].sort((a, b) => {
+    const pa = a === '.' ? 1 : 0, pb = b === '.' ? 1 : 0;
+    return pa - pb || a.localeCompare(b);
+  });
+  const V = VOCAB.length;
+
+  /**
+   * Every word gets `ALPHA` of a count for free, so the distribution covers the
+   * whole vocabulary. Without it an n-gram says "impossible" to most words,
+   * which a real model never does, and there would be no tail for top-k and
+   * top-p to cut.
+   */
+  const ALPHA = 0.02;
+
+  const state = {
+    greedy: false,
+    n: 2,
+    temp: 0.8,
+    k: V,
+    p: 1,
+    speed: 3,
+    running: false,
+  };
+
+  // --- the model --------------------------------------------------------------
+
   let models: Map<string, Map<string, number>>[] = [];
   let tokens: string[] = [];
-
-  const canvas = document.getElementById('ar') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
   function buildModels() {
     models = [];
     for (let order = 1; order <= 3; order++) {
       const m = new Map<string, Map<string, number>>();
       for (let i = order; i < TOKENS.length; i++) {
-        const k = key(TOKENS.slice(i - order, i));
+        const k = TOKENS.slice(i - order, i).join(' ');
         if (!m.has(k)) m.set(k, new Map());
         const inner = m.get(k)!;
         inner.set(TOKENS[i], (inner.get(TOKENS[i]) || 0) + 1);
@@ -99,152 +184,669 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
-  function rawCounts(): Map<string, number> {
-    for (let order = state.n; order >= 1; order--) {
+  /** The longest slice of recent words the corpus has actually seen. */
+  function usedContext(): string[] {
+    for (let order = Math.min(state.n, tokens.length); order >= 1; order--) {
       const ctxTok = tokens.slice(-order);
-      if (ctxTok.length < order) continue;
-      const m = models[order].get(key(ctxTok));
-      if (m && m.size) return m;
+      const m = models[order].get(ctxTok.join(' '));
+      if (m && m.size) return ctxTok;
     }
-    // unigram fallback
+    return [];
+  }
+
+  function counts(): Map<string, number> {
+    const c = usedContext();
+    if (c.length) return models[c.length].get(c.join(' '))!;
     const uni = new Map<string, number>();
     for (const t of TOKENS) uni.set(t, (uni.get(t) || 0) + 1);
     return uni;
   }
 
-  function distribution() {
-    const counts = rawCounts();
-    let total = 0;
-    counts.forEach((v) => (total += v));
+  type Cand = {
+    w: string;
+    /** how often it followed this context in the text */
+    n: number;
+    /** the model's own probability, smoothing included */
+    base: number;
+    /** after temperature, before anything is cut */
+    q: number;
+    /** what the dart actually sees: 0 for a word that was cut */
+    final: number;
+    kept: boolean;
+    cum: number;
+  };
+
+  function candidates(): Cand[] {
+    const c = counts();
+    let N = 0;
+    c.forEach((v) => (N += v));
+    const denom = N + ALPHA * V;
     const inv = 1 / Math.max(0.05, state.temp);
+
+    const arr: Cand[] = [];
     let z = 0;
-    const arr: { w: string; p: number }[] = [];
-    counts.forEach((v, w) => {
-      const q = Math.pow(v / total, inv);
+    for (const w of VOCAB) {
+      const n = c.get(w) || 0;
+      const base = (n + ALPHA) / denom;
+      const q = Math.pow(base, inv);
       z += q;
-      arr.push({ w, p: q });
-    });
-    for (const a of arr) a.p /= z;
-    arr.sort((a, b) => b.p - a.p);
+      arr.push({ w, n, base, q, final: 0, kept: false, cum: 0 });
+    }
+    for (const a of arr) a.q /= z || 1;
+    arr.sort((a, b) => b.q - a.q || a.w.localeCompare(b.w));
+
+    // top-k first, then top-p inside what survives, the order real samplers use
+    let keep = Math.min(arr.length, state.k);
+    if (state.p < 1) {
+      let acc = 0;
+      for (let i = 0; i < keep; i++) {
+        acc += arr[i].q;
+        if (acc >= state.p - 1e-12) { keep = i + 1; break; }
+      }
+    }
+    if (state.greedy) keep = 1;
+
+    let kz = 0;
+    for (let i = 0; i < arr.length; i++) {
+      arr[i].kept = i < keep;
+      if (arr[i].kept) kz += arr[i].q;
+    }
+    let cum = 0;
+    for (const a of arr) {
+      a.final = a.kept ? a.q / (kz || 1) : 0;
+      cum += a.final;
+      a.cum = cum;
+    }
     return arr;
   }
 
-  function sample(dist: { w: string; p: number }[]) {
-    let r = Math.random();
-    for (const d of dist) {
-      r -= d.p;
-      if (r <= 0) return d.w;
-    }
-    return dist[dist.length - 1]?.w ?? '.';
+  /** The last dart, kept on screen so the pick can be looked at afterwards. */
+  type Shot = {
+    ctxStr: string;
+    kept: { w: string; p: number }[];
+    r: number;
+    word: string;
+    prob: number;
+    base: number;
+    cutCount: number;
+  };
+  let shot: Shot | null = null;
+  let flash = 0;
+
+  function contextString() {
+    const used = usedContext();
+    return (used.length ? used : tokens.slice(-state.n)).join(' ') || '(start)';
   }
 
   function seed() {
-    tokens = ['The'];
+    tokens = ['the'];
+    shot = null;
+    flash = 0;
   }
+
   function stepOnce() {
-    tokens.push(sample(distribution()));
-    if (tokens.length > 160) tokens = tokens.slice(-150);
+    const cands = candidates();
+    const kept = cands.filter((c) => c.kept);
+    if (!kept.length) return;
+    const r = Math.random();
+    let chosen = kept[0];
+    if (!state.greedy) {
+      let acc = 0;
+      chosen = kept[kept.length - 1];
+      for (const c of kept) {
+        acc += c.final;
+        if (r <= acc) { chosen = c; break; }
+      }
+    }
+    shot = {
+      ctxStr: contextString(),
+      kept: kept.map((c) => ({ w: c.w, p: c.final })),
+      r: state.greedy ? -1 : r,
+      word: chosen.w,
+      prob: chosen.final,
+      base: chosen.base,
+      cutCount: cands.length - kept.length,
+    };
+    flash = 1;
+    tokens.push(chosen.w);
+    if (tokens.length > 150) tokens = tokens.slice(-130);
   }
 
-  function draw() {
-    const accent = css('--accent') || '#7c8cff';
-    const teal = css('--accent-2') || '#5eead4';
-    const faint = css('--text-faint') || '#6b7280';
-    const ink = css('--stage-ink') || '232,233,236';
-    ctx.clearRect(0, 0, W, H);
+  // --- canvas -----------------------------------------------------------------
 
-    // ---- generated text (word wrap) ----
-    ctx.font = "16px 'Inter', system-ui, sans-serif";
-    ctx.textBaseline = 'top';
-    const x0 = 24, y0 = 26, rowH = 25, maxX = W - 24;
+  const canvas = document.getElementById('ar') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+
+  const KEEP = '#7c8cff';   // survives the cut, and is sampled from
+  const CHOSEN = '#34d399'; // the word that was actually written
+  const DART = '#fbbf24';   // the random number
+  const CUTC = '#f9736a';   // where the tail gets chopped off
+
+  function hexA(hex: string, a: number) {
+    const h = hex.replace('#', '');
+    const s = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    const n = parseInt(s, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+
+  const UI = (size: number, weight = 400) =>
+    `${weight} ${size}px 'Inter', system-ui, sans-serif`;
+  const MONO = (size: number) => `${size}px 'JetBrains Mono', ui-monospace, monospace`;
+
+  function text(
+    s: string,
+    x: number,
+    y: number,
+    size: number,
+    col: string,
+    align: CanvasTextAlign = 'left',
+    mono = false,
+    weight = 400
+  ) {
+    ctx.font = mono ? MONO(size) : UI(size, weight);
+    ctx.fillStyle = col;
+    ctx.textAlign = align;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  type Box = { x: number; y: number; w: number; h: number };
+  function rr(x: number, y: number, w: number, h: number, r: number) {
+    const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rad, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rad);
+    ctx.lineTo(x, y + rad);
+    ctx.quadraticCurveTo(x, y, x + rad, y);
+    ctx.closePath();
+  }
+  function panel(b: Box, title: string) {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    rr(b.x, b.y, b.w, b.h, 10);
+    ctx.stroke();
+    text(title, b.x + 2, b.y - 9, 11, inkA(0.5), 'left', true);
+  }
+
+  const TEXTP: Box = { x: 20, y: 32, w: 960, h: 148 };
+  const DIST: Box = { x: 20, y: 214, w: 604, h: 326 };
+  const SIDE: Box = { x: 644, y: 214, w: 336, h: 326 };
+  const DARTP: Box = { x: 20, y: 574, w: 960, h: 96 };
+  const VOC: Box = { x: 20, y: 704, w: 960, h: 212 };
+
+  // --- 1. the text so far ------------------------------------------------------
+
+  /** Sentence case, purely so the toy text reads like text. */
+  function shown(i: number) {
+    const t = tokens[i];
+    return i === 0 || tokens[i - 1] === '.' ? t[0].toUpperCase() + t.slice(1) : t;
+  }
+
+  function layoutText(from: number, x0: number, maxW: number) {
+    ctx.font = UI(16);
     const spaceW = ctx.measureText(' ').width;
-    const ctxStart = Math.max(0, tokens.length - state.n);
-    let x = x0, y = y0;
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i];
-      const w = ctx.measureText(tok).width;
-      let sep = i > 0 && !isPunct(tok) ? spaceW : 0;
-      if (x + sep + w > maxX) { x = x0; y += rowH; sep = 0; }
-      if (i >= ctxStart) {
-        ctx.fillStyle = accent + '33';
-        ctx.fillRect(x + sep - 2, y - 3, w + 4, rowH - 4);
-      }
-      ctx.fillStyle = i >= ctxStart ? `rgba(${ink},1)` : `rgba(${ink},0.66)`;
-      ctx.fillText(tok, x + sep, y);
+    const out: { s: string; i: number; x: number; row: number; w: number }[] = [];
+    let x = x0, row = 0;
+    for (let i = from; i < tokens.length; i++) {
+      const s = shown(i);
+      const w = ctx.measureText(s).width;
+      let sep = i > from && s !== '.' ? spaceW : 0;
+      if (x + sep + w > x0 + maxW) { x = x0; row++; sep = 0; }
+      out.push({ s, i, x: x + sep, row, w });
       x += sep + w;
-      if (y > 210) break;
     }
-    // caret
-    ctx.fillStyle = teal;
-    ctx.fillRect(x + spaceW, y + 2, 2, rowH - 8);
+    return { out, rows: row + 1, endX: x, spaceW };
+  }
 
-    // ---- distribution bars (horizontal) ----
-    const dist = distribution();
-    const top = dist.slice(0, 9);
-    const bx = 24, by = 280, labelW = 150, barMax = W - 48 - labelW - 60;
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    const ctxStr = tokens.slice(-state.n).join(' ');
-    ctx.fillText(`P(next word  |  "${ctxStr}")`, bx, by - 22);
+  function drawText() {
+    panel(TEXTP, 'THE TEXT SO FAR, AND THE CONTEXT THE MODEL READS');
+    const x0 = TEXTP.x + 18, rowH = 25, maxW = TEXTP.w - 36;
+    const maxRows = Math.floor((TEXTP.h - 50) / rowH);
+    let from = 0;
+    let lay = layoutText(from, x0, maxW);
+    while (lay.rows > maxRows && from < tokens.length - 1) {
+      from += 4;
+      lay = layoutText(from, x0, maxW);
+    }
+    const y0 = TEXTP.y + 30;
+    const ctxLen = Math.max(1, usedContext().length || state.n);
+    const ctxStart = Math.max(0, tokens.length - ctxLen);
 
-    const maxP = top.length ? top[0].p : 1;
-    const rowH2 = 22;
-    top.forEach((d, i) => {
-      const ry = by + i * rowH2;
-      ctx.fillStyle = `rgba(${ink},0.9)`;
-      ctx.font = "14px 'Inter', system-ui, sans-serif";
-      ctx.textAlign = 'right';
-      ctx.fillText(d.w, bx + labelW - 8, ry + 3);
-      ctx.textAlign = 'left';
-      const bw = (d.p / maxP) * barMax;
-      ctx.fillStyle = i === 0 ? accent : `rgba(${ink},0.35)`;
-      ctx.fillRect(bx + labelW, ry, Math.max(1, bw), rowH2 - 6);
-      ctx.fillStyle = faint;
-      ctx.font = "11px 'JetBrains Mono', monospace";
-      ctx.fillText((d.p * 100).toFixed(1) + '%', bx + labelW + bw + 6, ry + 3);
+    for (const t of lay.out) {
+      const y = y0 + t.row * rowH;
+      const inCtx = t.i >= ctxStart;
+      if (inCtx) {
+        ctx.fillStyle = hexA(KEEP, 0.18);
+        rr(t.x - 3, y - 3, t.w + 6, rowH - 5, 4);
+        ctx.fill();
+      }
+      if (t.i === tokens.length - 1 && flash > 0) {
+        ctx.fillStyle = hexA(CHOSEN, 0.3 * flash);
+        rr(t.x - 3, y - 3, t.w + 6, rowH - 5, 4);
+        ctx.fill();
+      }
+      text(t.s, t.x, y + 14, 16, inCtx ? inkA(1) : inkA(0.62));
+    }
+    const lastRow = lay.out.length ? lay.out[lay.out.length - 1].row : 0;
+    ctx.fillStyle = CHOSEN;
+    ctx.fillRect(lay.endX + lay.spaceW, y0 + lastRow * rowH + 2, 2, rowH - 8);
+
+    text(
+      'highlighted = the words being conditioned on',
+      TEXTP.x + 18,
+      TEXTP.y + TEXTP.h - 13,
+      11,
+      inkA(0.4),
+      'left',
+      true
+    );
+  }
+
+  // --- 2. the distribution ------------------------------------------------------
+
+  function cutReason(keptN: number) {
+    if (state.greedy) return 'greedy keeps only the top word';
+    const kCut = state.k <= keptN;
+    if (kCut && state.p < 1) return `top-k = ${state.k} stops here, top-p ${state.p.toFixed(2)} would too`;
+    if (kCut) return `top-k = ${state.k} stops here`;
+    return `top-p = ${state.p.toFixed(2)}: these ${keptN} words already carry it`;
+  }
+
+  function drawDist(cands: Cand[]) {
+    panel(DIST, 'A PROBABILITY FOR EVERY WORD, BEST FIRST');
+    text(
+      `P(next word | "${contextString()}")`,
+      DIST.x + 16,
+      DIST.y + 26,
+      12,
+      inkA(0.6),
+      'left',
+      true
+    );
+
+    const ROWS = 9;
+    const shownRows = cands.slice(0, ROWS);
+    const rest = cands.slice(ROWS);
+    const keptN = cands.filter((c) => c.kept).length;
+
+    const lx = DIST.x + 16, labelW = 92;
+    const bx = lx + labelW + 12;
+    const numW = 112, cumW = 56;
+    const barMax = DIST.w - 32 - labelW - 12 - numW - cumW;
+    let maxP = 0.02;
+    for (const c of shownRows) maxP = Math.max(maxP, c.base, c.final);
+
+    const rowH = 24, y0 = DIST.y + 46;
+    shownRows.forEach((c, i) => {
+      const y = y0 + i * rowH;
+      text(c.w, lx + labelW, y + 13, 14, c.kept ? inkA(0.95) : inkA(0.38), 'right');
+      ctx.fillStyle = inkA(0.14);
+      ctx.fillRect(bx, y + 1, Math.max(1, (c.base / maxP) * barMax), 17);
+      if (c.kept) {
+        ctx.fillStyle = i === 0 ? KEEP : hexA(KEEP, 0.62);
+        ctx.fillRect(bx, y + 4, Math.max(1, (c.final / maxP) * barMax), 11);
+      }
+      text(
+        `${(c.base * 100).toFixed(1)}% → ${c.kept ? (c.final * 100).toFixed(1) + '%' : 'cut'}`,
+        bx + barMax + numW - 8,
+        y + 13,
+        11,
+        c.kept ? inkA(0.75) : inkA(0.3),
+        'right',
+        true
+      );
+      if (c.kept)
+        text(`Σ ${(c.cum * 100).toFixed(0)}%`, DIST.x + DIST.w - 16, y + 13, 11, inkA(0.42), 'right', true);
     });
 
-    (document.getElementById('vocab') as HTMLElement).textContent = String(new Set(TOKENS.map((t) => t.toLowerCase())).size);
-    (document.getElementById('opts') as HTMLElement).textContent = String(dist.length);
+    if (keptN < cands.length && keptN <= shownRows.length) {
+      const y = y0 + keptN * rowH - 3;
+      ctx.strokeStyle = hexA(CUTC, 0.7);
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(lx, y);
+      ctx.lineTo(DIST.x + DIST.w - 16, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      text(cutReason(keptN), lx + 4, y - 5, 10, hexA(CUTC, 0.85), 'left', true);
+    }
+
+    if (rest.length) {
+      const restKept = rest.filter((c) => c.kept).length;
+      const restMass = rest.reduce((s, c) => s + c.final, 0);
+      text(
+        restKept
+          ? `+ ${rest.length} more words, ${restKept} still in play, worth ${(restMass * 100).toFixed(1)}%`
+          : `+ ${rest.length} more words, all cut`,
+        lx,
+        y0 + shownRows.length * rowH + 16,
+        11,
+        inkA(0.42),
+        'left',
+        true
+      );
+    }
+
+    text(
+      'pale bar = the model\'s own probability · solid bar = after temperature and the cut',
+      DIST.x + 16,
+      DIST.y + DIST.h - 13,
+      10,
+      inkA(0.4),
+      'left',
+      true
+    );
+  }
+
+  // --- 3. what the cut did --------------------------------------------------------
+
+  function drawSide(cands: Cand[]) {
+    panel(SIDE, 'WHAT THE CUT DID');
+    const x0 = SIDE.x + 18, maxW = SIDE.w - 36;
+
+    const keptN = cands.filter((c) => c.kept).length;
+    const keptMass = cands.reduce((s, c) => s + (c.kept ? c.q : 0), 0);
+    const headline = state.greedy
+      ? 'Greedy: the top word, always'
+      : keptN === cands.length
+        ? 'Nothing is cut'
+        : `${keptN} words survive, ${cands.length - keptN} are gone`;
+    text(headline, x0, SIDE.y + 34, 16, state.greedy ? CHOSEN : KEEP, 'left', false, 600);
+    text(
+      state.greedy
+        ? 'no dart, so the same context always gives the same word'
+        : keptN === cands.length
+          ? 'the whole vocabulary can win, tail included'
+          : 'the dart only sees what is left, renormalised',
+      x0,
+      SIDE.y + 56,
+      12,
+      inkA(0.55)
+    );
+
+    const by = SIDE.y + 96;
+    text('probability kept by the cut', x0, by - 10, 11, inkA(0.5), 'left', true);
+    ctx.fillStyle = inkA(0.12);
+    ctx.fillRect(x0, by, maxW, 22);
+    ctx.fillStyle = hexA(KEEP, 0.8);
+    ctx.fillRect(x0, by, Math.max(2, keptMass * maxW), 22);
+    text(`${(keptMass * 100).toFixed(1)}%`, x0 + 8, by + 16, 12, inkA(0.95), 'left', true);
+    if (keptMass < 0.999)
+      text(`${((1 - keptMass) * 100).toFixed(1)}% thrown away`, x0 + maxW, by + 38, 11, inkA(0.45), 'right', true);
+
+    const seen = cands.filter((c) => c.n > 0).length;
+    const rows: [string, string][] = [
+      ['words in the vocabulary', String(cands.length)],
+      ['seen after this context', String(seen)],
+      ['given a share anyway', String(cands.length - seen)],
+      ['kept by the cut', `${keptN} of ${cands.length}`],
+      [
+        'last pick',
+        shot
+          ? `${shot.word}  ${(shot.prob * 100).toFixed(1)}%  ${(-Math.log2(Math.max(1e-9, shot.base))).toFixed(1)} bits`
+          : 'nothing yet',
+      ],
+    ];
+    rows.forEach(([k, v], i) => {
+      const y = SIDE.y + 190 + i * 25;
+      text(k, x0, y, 11, inkA(0.5), 'left', true);
+      text(v, x0 + maxW, y, 12, i === 4 && shot ? CHOSEN : inkA(0.9), 'right', true);
+    });
+  }
+
+  // --- 4. the dart ----------------------------------------------------------------
+
+  function drawDart() {
+    panel(DARTP, 'THE DART THAT PICKED THE LAST WORD');
+    if (!shot) {
+      text(
+        'press Next word (or the s key) and watch where the dart lands',
+        DARTP.x + DARTP.w / 2,
+        DARTP.y + 54,
+        13,
+        inkA(0.4),
+        'center'
+      );
+      return;
+    }
+    text(`"${shot.ctxStr}"  →  "${shot.word}"`, DARTP.x + 18, DARTP.y + 26, 12, inkA(0.6), 'left', true);
+    if (shot.cutCount)
+      text(
+        `${shot.kept.length} words on the strip, ${shot.cutCount} cut before the throw`,
+        DARTP.x + DARTP.w - 18,
+        DARTP.y + 26,
+        11,
+        inkA(0.42),
+        'right',
+        true
+      );
+
+    const sx = DARTP.x + 30, sw = DARTP.w - 60, sy = DARTP.y + 44, sh = 26;
+    let acc = 0;
+    shot.kept.forEach((seg, i) => {
+      const w = seg.p * sw;
+      const win = seg.w === shot!.word;
+      ctx.fillStyle = win ? CHOSEN : hexA(KEEP, i % 2 ? 0.4 : 0.62);
+      ctx.fillRect(sx + acc, sy, Math.max(0.6, w), sh);
+      if (w > 44) text(seg.w, sx + acc + w / 2, sy + 17, 11, win ? '#0d0e12' : inkA(0.95), 'center');
+      acc += w;
+    });
+    ctx.strokeStyle = inkA(0.18);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx, sy, sw, sh);
+    text('0', sx - 6, sy + 17, 10, inkA(0.4), 'right', true);
+    text('1', sx + sw + 6, sy + 17, 10, inkA(0.4), 'left', true);
+
+    if (shot.r >= 0) {
+      const dx = sx + shot.r * sw;
+      ctx.strokeStyle = DART;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(dx, sy - 9);
+      ctx.lineTo(dx, sy + sh + 6);
+      ctx.stroke();
+      ctx.fillStyle = DART;
+      ctx.beginPath();
+      ctx.moveTo(dx, sy - 2);
+      ctx.lineTo(dx - 5, sy - 11);
+      ctx.lineTo(dx + 5, sy - 11);
+      ctx.closePath();
+      ctx.fill();
+      text(
+        `random number ${shot.r.toFixed(3)}`,
+        dx,
+        sy + sh + 18,
+        11,
+        DART,
+        dx > sx + sw / 2 ? 'right' : 'left',
+        true
+      );
+    } else {
+      text('greedy throws no dart', sx + sw / 2, sy + sh + 18, 11, inkA(0.45), 'center', true);
+    }
+  }
+
+  // --- 5. the whole vocabulary -----------------------------------------------------
+
+  function drawVocab(cands: Cand[]) {
+    panel(VOC, `THE WHOLE VOCABULARY: ALL ${V} WORDS, EVERY ONE WITH A PROBABILITY`);
+    const byWord = new Map(cands.map((c) => [c.w, c]));
+    let maxBase = 0;
+    for (const c of cands) maxBase = Math.max(maxBase, c.base);
+
+    const x0 = VOC.x + 16, areaW = VOC.w - 32, areaH = VOC.h - 48;
+    const cols = Math.max(1, Math.floor(areaW / 132));
+    const rows = Math.ceil(V / cols);
+    const gap = 3;
+    const cw = areaW / cols;
+    const chh = Math.min(26, Math.floor((areaH - (rows - 1) * gap) / rows));
+    const y0 = VOC.y + 28;
+
+    VOCAB.forEach((w, i) => {
+      const c = byWord.get(w)!;
+      const cx = x0 + (i % cols) * cw;
+      const cy = y0 + Math.floor(i / cols) * (chh + gap);
+      const cellW = cw - 8;
+      const frac = c.base / Math.max(1e-9, maxBase);
+      // the cell is the bar: it fills from the left in proportion to the word's
+      // own probability, so the whole vocabulary reads as one chart
+      const ty = cy + chh / 2 + 4;
+      ctx.fillStyle = inkA(0.07);
+      rr(cx, cy, cellW, chh, 5);
+      ctx.fill();
+      ctx.fillStyle = hexA(c.kept ? KEEP : CUTC, c.kept ? 0.5 : 0.3);
+      rr(cx, cy, Math.max(3, cellW * frac), chh, 5);
+      ctx.fill();
+      if (c.kept) {
+        ctx.strokeStyle = hexA(KEEP, 0.75);
+        ctx.lineWidth = 1;
+        rr(cx, cy, cellW, chh, 5);
+        ctx.stroke();
+      }
+      if (flash > 0 && shot && shot.word === w) {
+        ctx.fillStyle = hexA(CHOSEN, 0.45 * flash);
+        rr(cx, cy, cellW, chh, 5);
+        ctx.fill();
+      }
+      text(w, cx + 8, ty, 12, inkA(c.kept ? 0.98 : 0.6));
+      text(
+        `${(c.base * 100).toFixed(c.base < 0.01 ? 2 : 0)}%`,
+        cx + cellW - 8,
+        ty,
+        10,
+        inkA(0.45),
+        'right',
+        true
+      );
+    });
+
+    text(
+      'filled part = its probability · blue = kept by the cut · red = in the tail that was thrown away',
+      VOC.x + 16,
+      VOC.y + VOC.h - 12,
+      10,
+      inkA(0.4),
+      'left',
+      true
+    );
+  }
+
+  // --- readouts ---------------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setEq = equationBar();
+
+  function updateHud(cands: Cand[]) {
+    const keptN = cands.filter((c) => c.kept).length;
+    const keptMass = cands.reduce((s, c) => s + (c.kept ? c.q : 0), 0);
+    el('vocab').textContent = String(V);
+    el('seen').textContent = String(cands.filter((c) => c.n > 0).length);
+    el('kept').textContent = `${keptN} of ${V}`;
+    el('mass').textContent = `${(keptMass * 100).toFixed(1)}%`;
+    el('pick').textContent = shot ? `${shot.word} (${(shot.prob * 100).toFixed(1)}%)` : '—';
+    el('bits').textContent = shot ? `${(-Math.log2(Math.max(1e-9, shot.base))).toFixed(2)} bits` : '—';
+
+    setEq([
+      ['x_{t+1}\\sim P(\\,\\cdot\\mid x_1\\dots x_t)'],
+      [
+        [`T = ${state.temp.toFixed(2)}`, DART],
+        [`\\quad k = ${state.greedy ? 1 : state.k}`, KEEP],
+        [`\\quad p = ${state.p.toFixed(2)}`, KEEP],
+        [`\\quad |S| = ${keptN}\\ \\text{of}\\ ${V}`, KEEP],
+      ],
+      ['score every word, reshape with temperature, cut the tail, throw a dart'],
+    ]);
+  }
+
+  // --- loop ------------------------------------------------------------------------
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    const cands = candidates();
+    drawText();
+    drawDist(cands);
+    drawSide(cands);
+    drawDart();
+    drawVocab(cands);
+    updateHud(cands);
   }
 
   let acc = 0, last = 0;
   function loop(ts: number) {
     if (!last) last = ts;
-    const dt = (ts - last) / 1000;
+    const dt = Math.min(0.05, (ts - last) / 1000);
     last = ts;
     if (state.running) {
       acc += dt * state.speed;
       while (acc >= 1) { acc -= 1; stepOnce(); }
     }
+    if (flash > 0) flash = Math.max(0, flash - dt * 1.6);
     draw();
     requestAnimationFrame(loop);
   }
 
-  const nEl = document.getElementById('n') as HTMLInputElement;
-  nEl.addEventListener('input', () => {
-    state.n = +nEl.value;
-    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
+  // --- controls ----------------------------------------------------------------------
+
+  const wrapEl = el('wrap');
+  function setGreedy(g: boolean) {
+    state.greedy = g;
+    wrapEl.className = g ? 'sim greedy' : 'sim';
+    document
+      .querySelectorAll('#mode button')
+      .forEach((b) =>
+        b.classList.toggle('active', ((b as HTMLElement).dataset.m === 'greedy') === g)
+      );
+  }
+  el('mode').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (btn) setGreedy(btn.dataset.m === 'greedy');
   });
-  const tEl = document.getElementById('t') as HTMLInputElement;
-  tEl.addEventListener('input', () => {
-    state.temp = +tEl.value / 100;
-    (document.getElementById('tval') as HTMLElement).textContent = state.temp.toFixed(2);
-  });
-  const spEl = document.getElementById('sp') as HTMLInputElement;
-  spEl.addEventListener('input', () => {
-    state.speed = +spEl.value;
-    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
-  });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
+
+  const bind = (id: string, f: (v: number) => void, fmt: (v: number) => string) => {
+    const inp = el(id) as HTMLInputElement;
+    const apply = () => {
+      f(+inp.value);
+      el(id + 'val').textContent = fmt(+inp.value);
+    };
+    inp.addEventListener('input', apply);
+    apply();
+  };
+  (el('k') as HTMLInputElement).max = String(V);
+  (el('k') as HTMLInputElement).value = String(V);
+  bind('n', (v) => (state.n = v), String);
+  bind('t', (v) => (state.temp = v / 100), (v) => (v / 100).toFixed(2));
+  bind('k', (v) => (state.k = v), (v) => (v >= V ? 'off' : v === 1 ? '1 (greedy)' : String(v)));
+  bind('p', (v) => (state.p = v / 100), (v) => (v >= 100 ? 'off' : (v / 100).toFixed(2)));
+  bind('sp', (v) => (state.speed = v), String);
+
+  const runBtn = el('run') as HTMLButtonElement;
   runBtn.addEventListener('click', () => {
     state.running = !state.running;
     runBtn.textContent = state.running ? 'Pause' : 'Run';
   });
-  document.getElementById('step')!.addEventListener('click', () => { stepOnce(); draw(); });
-  document.getElementById('reset')!.addEventListener('click', () => { seed(); draw(); });
+  el('step').addEventListener('click', () => stepOnce());
+  el('reset').addEventListener('click', () => seed());
 
   buildModels();
+  setGreedy(false);
   seed();
   requestAnimationFrame(loop);
 </script>
+
+<style>
+  /* the three knobs only matter when there is a dart to aim */
+  .greedy .tunes {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+</style>
