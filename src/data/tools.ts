@@ -369,6 +369,14 @@ export const AREAS: Area[] = [
     icon: 'M12 3v4 M12 17v4 M5 7l3 2 M16 15l3 2 M5 17l3-2 M16 9l3-2 M12 9a3 3 0 100 6 3 3 0 000-6z',
     simulators: [
       {
+        slug: 'space-warping',
+        title: 'How Layers Bend Space',
+        description:
+          'Every hidden layer is two units wide, so the space it makes can be drawn. Train on XOR, rings or spirals and step through the layers to watch the grid stretch and fold until one straight line separates the classes.',
+        href: '/simulations/deep-learning/space-warping',
+        status: 'live',
+      },
+      {
         slug: 'gradient-descent',
         title: 'Gradient Descent',
         description:
