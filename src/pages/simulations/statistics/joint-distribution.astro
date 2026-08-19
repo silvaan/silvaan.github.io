@@ -4,12 +4,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <SimLayout
   areaSlug="statistics"
-  title="Joint Probability"
-  description="Two numbers come out of one experiment, so every pair of values gets its own probability. Lay them out as a table of little squares whose areas add to one, drag a box over the pairs you care about, and the probability of that event is simply the area you enclosed."
+  title="Joint, Marginals & Conditionals"
+  description="Two numbers come out of one experiment, so every pair of values gets its own probability: a table of little squares whose areas add to one. Drag a box over the pairs you care about and one selection answers all three questions at once. The squares you enclosed are the joint, the bar each edge stacks up is a marginal, and that same bar divided by its own total is a conditional."
 >
   <div class="sim">
     <div class="sim-stage">
-      <canvas id="jp" class="jp-canvas" width="900" height="600"></canvas>
+      <canvas id="jp" class="jp-canvas" width="900" height="620"></canvas>
     </div>
 
     <div class="sim-panel">
@@ -28,18 +28,27 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="scale-hint"><span>opposed</span><span>independent</span><span>together</span></div>
       </div>
 
+      <div class="control">
+        <label>Condition on</label>
+        <div class="seg" id="given">
+          <button data-g="x" class="active">the x range</button>
+          <button data-g="y">the y range</button>
+        </div>
+      </div>
+
       <div class="readout">
         <div class="row"><span>P(A) &nbsp;the columns</span><b id="pa">—</b></div>
         <div class="row"><span>P(B) &nbsp;the rows</span><b id="pb">—</b></div>
         <div class="row"><span>P(A and B)</span><b id="pab">—</b></div>
         <div class="row"><span>P(A) × P(B)</span><b id="pp">—</b></div>
+        <div class="row"><span id="condlab">P(B | A)</span><b id="pcond">—</b></div>
         <div class="row"><span>Everything adds to</span><b id="tot">—</b></div>
       </div>
 
       <p class="note">
         Drag a box across the table to choose an event. Every square is one pair
         (x, y) and its area is that pair's probability, so the whole table has
-        area one.
+        area one. Drag a box a full column wide to get the textbook marginal.
       </p>
     </div>
   </div>
@@ -51,21 +60,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       definition of independence, not a fact about the world.
     </li>
     <li>
+      Look at the bar under a selected column. It is <b>literally that column
+      stacked up</b>, one segment per cell, and its full height is P(x): summing a
+      variable out is that, and nothing more. The amber part of the stack is the
+      slice your box actually kept, so <b>P(A and B) is visible on the margin
+      itself</b> as a piece of P(A).
+    </li>
+    <li>
+      Every marginal bar is <b>shorter than one</b>, and all of them together add
+      to one. A marginal is a share of the whole table, not a distribution over
+      the column. Divide it by its own total and it adds to one again: that is
+      the conditional in the lower half of the card, and the shape never changed,
+      only the scale.
+    </li>
+    <li>
+      The highlighted bars of that conditional add to <b>P(B | A)</b>, which is
+      the same P(A and B) you started with, now measured against P(A) instead of
+      against the whole table. One box, three readings.
+    </li>
+    <li>
       Now slide the link towards <b>together</b>. The mass piles onto the
-      diagonal, and a box on the diagonal now holds <b>more</b> than the product
-      predicts while a box off it holds less. The two numbers have started
-      carrying information about each other.
-    </li>
-    <li>
-      The row of bars underneath and the column of bars on the right never
-      change shape as you drag your box: those are the <b>marginals</b>, and they
-      are what is left of the joint when you stop caring about the other
-      variable.
-    </li>
-    <li>
-      P(A) is the total of the highlighted bars underneath and P(B) the total on
-      the right, but <b>P(A and B) is not built from them</b>. You have to go
-      back to the table and add the squares themselves.
+      diagonal, a box on the diagonal holds <b>more</b> than the product predicts,
+      and the conditional visibly leans as you slide the box across the columns.
+      Under <b>independent</b> it never moves at all: that is what independence
+      looks like from here.
     </li>
     <li>
       Push the link to <b>opposed</b>. Now a diagonal box is unusually empty, and
@@ -82,7 +100,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const N = 5;
   const XL = ['1', '2', '3', '4', '5'];
-  const state = { rho: 0, i0: 2, i1: 3, j0: 1, j1: 2 };
+  const state = { rho: 0, i0: 2, i1: 3, j0: 1, j1: 2, given: 'x' as 'x' | 'y' };
 
   const setEq = equationBar();
   const canvas = document.getElementById('jp') as HTMLCanvasElement;
@@ -90,7 +108,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const css = (n: string, f = '') =>
     getComputedStyle(canvas).getPropertyValue(n).trim() || f;
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
-  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
   const { label } = makeText(ctx, ink);
   const XC = () => css('--accent', '#7c8cff'); // anything about x
   const YC = () => css('--accent-2', '#5eead4'); // anything about y
@@ -132,11 +149,37 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     return { pa, pb, pab };
   }
 
+  /**
+   * The conditional the card draws. Conditioning on the x range leaves a
+   * distribution over y (and the other way round), and the bars belonging to the
+   * event add up to P(B|A), which is the joint probability measured against
+   * P(A) instead of against the whole table.
+   */
+  function conditional() {
+    const { pa, pb } = sums();
+    if (state.given === 'x') {
+      const d = pa || 1;
+      const bars = Array.from({ length: N }, (_, j) => {
+        let s = 0;
+        for (let i = 0; i < N; i++) if (inA(i)) s += P[i][j];
+        return s / d;
+      });
+      return { bars, keep: inB, given: 'x', over: 'y', denom: pa };
+    }
+    const d = pb || 1;
+    const bars = Array.from({ length: N }, (_, i) => {
+      let s = 0;
+      for (let j = 0; j < N; j++) if (inB(j)) s += P[i][j];
+      return s / d;
+    });
+    return { bars, keep: inA, given: 'y', over: 'x', denom: pb };
+  }
+
   // --- layout ---------------------------------------------------------------
-  const G = { x: 108, y: 108, cell: 78 };
-  const MX = { y: G.y + N * G.cell + 14, h: 46 }; // the x marginal, underneath
-  const MY = { x: G.x + N * G.cell + 14, w: 46 }; // the y marginal, on the right
-  const CARD = { x: 604, y: 104, w: 272, h: 400 };
+  const G = { x: 96, y: 128, cell: 72 };
+  const MX = { y: G.y + N * G.cell + 12, h: 58 }; // the x marginal, underneath
+  const MY = { x: G.x + N * G.cell + 12, w: 58 }; // the y marginal, on the right
+  const CARD = { x: 560, y: 92, w: 316, h: 468 };
   const cx = (i: number) => G.x + i * G.cell;
   const cy = (j: number) => G.y + (N - 1 - j) * G.cell; // y grows upward
 
@@ -220,16 +263,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     label('y', G.x - 12, G.y - 12, 0.3, 'right', 11);
   }
 
-  /** The two marginals, drawn along the edges they belong to. */
+  /**
+   * The two marginals, drawn along the edges they belong to. A selected column
+   * is not a plain bar but the column itself stacked up, so the marginal reads
+   * as an act of adding rather than a separate quantity, and the part of the
+   * stack your box kept is drawn in the event's own colour.
+   */
   function drawMarginals() {
     let mx = 0;
     for (let i = 0; i < N; i++) mx = Math.max(mx, px(i), py(i));
 
     for (let i = 0; i < N; i++) {
       const h = (px(i) / mx) * MX.h;
-      ctx.fillStyle = inA(i) ? XC() : ink(0.18);
-      roundRect(ctx, cx(i) + 8, MX.y + MX.h - h, G.cell - 16, h, 3);
-      ctx.fill();
+      if (inA(i)) {
+        let acc = 0;
+        for (let j = 0; j < N; j++) {
+          const seg = (P[i][j] / mx) * MX.h;
+          ctx.fillStyle = inB(j) ? 'rgba(245,158,11,0.9)' : 'rgba(124,140,255,0.5)';
+          ctx.fillRect(cx(i) + 8, MX.y + MX.h - acc - seg, G.cell - 16, seg);
+          acc += seg;
+        }
+        ctx.strokeStyle = XC();
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(cx(i) + 8, MX.y + MX.h - h, G.cell - 16, h);
+      } else {
+        ctx.fillStyle = ink(0.18);
+        roundRect(ctx, cx(i) + 8, MX.y + MX.h - h, G.cell - 16, h, 3);
+        ctx.fill();
+      }
       label(
         px(i).toFixed(2).slice(1),
         cx(i) + G.cell / 2,
@@ -244,9 +305,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     for (let j = 0; j < N; j++) {
       const w = (py(j) / mx) * MY.w;
-      ctx.fillStyle = inB(j) ? YC() : ink(0.18);
-      roundRect(ctx, MY.x, cy(j) + 8, w, G.cell - 16, 3);
-      ctx.fill();
+      if (inB(j)) {
+        let acc = 0;
+        for (let i = 0; i < N; i++) {
+          const seg = (P[i][j] / mx) * MY.w;
+          ctx.fillStyle = inA(i) ? 'rgba(245,158,11,0.9)' : 'rgba(94,234,212,0.5)';
+          ctx.fillRect(MY.x + acc, cy(j) + 8, seg, G.cell - 16);
+          acc += seg;
+        }
+        ctx.strokeStyle = YC();
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(MY.x, cy(j) + 8, w, G.cell - 16);
+      } else {
+        ctx.fillStyle = ink(0.18);
+        roundRect(ctx, MY.x, cy(j) + 8, w, G.cell - 16, 3);
+        ctx.fill();
+      }
       label(
         py(j).toFixed(2).slice(1),
         MY.x + w + 5,
@@ -258,6 +332,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       );
     }
     label('P(y)', MY.x, G.y - 12, 0.5, 'left', 10.5, YC());
+    label(
+      'the amber part of a stacked bar is the slice your box kept',
+      G.x - 12,
+      MX.y + MX.h + 40,
+      0.3,
+      'left',
+      10
+    );
   }
 
   function drawCard() {
@@ -282,8 +364,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       10.5
     );
 
-    label('P(A and B)', CARD.x + 18, CARD.y + 84, 0.5, 'left', 11);
-    label(fmt(pab), CARD.x + CARD.w - 18, CARD.y + 88, 1, 'right', 22, EV);
+    label('P(A and B)', CARD.x + 18, CARD.y + 82, 0.5, 'left', 11);
+    label(fmt(pab), CARD.x + CARD.w - 18, CARD.y + 86, 1, 'right', 22, EV);
 
     // the same number, and the number independence would have predicted
     const bx = CARD.x + 18,
@@ -291,16 +373,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const scale = Math.max(pab, prod, 1e-6) * 1.15;
     const bar = (y: number, v: number, colour: string, name: string) => {
       ctx.fillStyle = ink(0.06);
-      roundRect(ctx, bx, y, bw, 16, 4);
+      roundRect(ctx, bx, y, bw, 15, 4);
       ctx.fill();
       ctx.fillStyle = colour;
-      roundRect(ctx, bx, y, Math.max(2, (bw * v) / scale), 16, 4);
+      roundRect(ctx, bx, y, Math.max(2, (bw * v) / scale), 15, 4);
       ctx.fill();
       label(name, bx, y - 6, 0.45, 'left', 10);
       label(fmt(v), bx + bw, y - 6, 0.8, 'right', 10.5, colour);
     };
-    bar(CARD.y + 132, pab, EV, 'the squares you enclosed');
-    bar(CARD.y + 180, prod, ink(0.5), 'P(A) × P(B)');
+    bar(CARD.y + 128, pab, EV, 'the squares you enclosed');
+    bar(CARD.y + 172, prod, ink(0.5), 'P(A) × P(B)');
 
     const rel = prod > 1e-9 ? pab / prod : 1;
     const indep = Math.abs(rel - 1) < 0.02;
@@ -311,7 +393,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           ? `${rel.toFixed(2)}× more than the product`
           : `${rel.toFixed(2)}× less than the product`,
       CARD.x + 18,
-      CARD.y + 222,
+      CARD.y + 210,
       0.55,
       'left',
       10.5,
@@ -320,20 +402,85 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     ctx.strokeStyle = ink(0.1);
     ctx.beginPath();
-    ctx.moveTo(CARD.x + 18, CARD.y + 248);
-    ctx.lineTo(CARD.x + CARD.w - 18, CARD.y + 248);
+    ctx.moveTo(bx, CARD.y + 232);
+    ctx.lineTo(bx + bw, CARD.y + 232);
     ctx.stroke();
 
-    let y = CARD.y + 276;
-    const row = (k: string, v: string, colour?: string) => {
-      label(k, CARD.x + 18, y, 0.45, 'left', 10.5);
-      label(v, CARD.x + CARD.w - 18, y, 1, 'right', 12, colour ?? ink(0.8));
-      y += 26;
-    };
-    row('P(A), the columns', fmt(pa), XC());
-    row('P(B), the rows', fmt(pb), YC());
-    row('P(A) × P(B)', fmt(prod), ink(0.6));
-    row('every square added up', fmt(total()), ink(0.6));
+    // --- the same column, rescaled so it is a distribution again -------------
+    const C = conditional();
+    const gc = C.given === 'x' ? XC() : YC();
+    label(
+      `÷ P(${C.given} in A) = ${fmt(C.denom)}`,
+      bx,
+      CARD.y + 258,
+      0.45,
+      'left',
+      10.5,
+      gc
+    );
+    label(
+      `GIVES  P(${C.over} | ${C.given})`,
+      bx + bw,
+      CARD.y + 258,
+      1,
+      'right',
+      11,
+      EV
+    );
+
+    const cy0 = CARD.y + 276,
+      ch = 96;
+    const cmx = Math.max(...C.bars, 1e-6) * 1.2;
+    const cw = (bw - 8) / N;
+    let kept = 0;
+    C.bars.forEach((v, k) => {
+      const on = C.keep(k);
+      if (on) kept += v;
+      const h = (v / cmx) * ch;
+      ctx.fillStyle = on ? 'rgba(245,158,11,0.9)' : ink(0.2);
+      roundRect(ctx, bx + 4 + k * cw + 5, cy0 + ch - h, cw - 10, h, 3);
+      ctx.fill();
+      label(
+        v.toFixed(2).slice(1),
+        bx + 4 + k * cw + cw / 2,
+        cy0 + ch - h - 5,
+        on ? 0.95 : 0.4,
+        'center',
+        9.5,
+        on ? EV : undefined
+      );
+      label(
+        XL[k],
+        bx + 4 + k * cw + cw / 2,
+        cy0 + ch + 15,
+        on ? 0.8 : 0.3,
+        'center',
+        9.5
+      );
+    });
+    ctx.strokeStyle = ink(0.16);
+    ctx.beginPath();
+    ctx.moveTo(bx, cy0 + ch + 1);
+    ctx.lineTo(bx + bw, cy0 + ch + 1);
+    ctx.stroke();
+
+    label(
+      'all five add to 1.000: a distribution again',
+      bx,
+      cy0 + ch + 36,
+      0.4,
+      'left',
+      10
+    );
+    label(
+      `the amber ones add to ${C.given === 'x' ? 'P(B | A)' : 'P(A | B)'} = ${fmt(kept)}`,
+      bx,
+      cy0 + ch + 54,
+      0.75,
+      'left',
+      10.5,
+      EV
+    );
     ctx.restore();
   }
 
@@ -349,12 +496,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function sync() {
     const { pa, pb, pab } = sums();
     const prod = pa * pb;
+    const C = conditional();
+    const cond = C.denom > 1e-9 ? pab / C.denom : 0;
     const set = (id: string, v: string) =>
       ((document.getElementById(id) as HTMLElement).textContent = v);
     set('pa', fmt(pa));
     set('pb', fmt(pb));
     set('pab', fmt(pab));
     set('pp', fmt(prod));
+    set('pcond', fmt(cond));
+    set('condlab', state.given === 'x' ? 'P(B | A)' : 'P(A | B)');
     set('tot', fmt(total()));
     set('rval', state.rho.toFixed(2));
 
@@ -364,17 +515,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       [
         ['P(A\\cap B)', EV],
         '= \\displaystyle\\sum_{x\\in A}\\sum_{y\\in B} P(x,y)',
+        '\\quad',
+        ['P(x)=\\textstyle\\sum_y P(x,y)', XC()],
+        '\\quad',
+        ['P(y\\mid x)=\\dfrac{P(x,y)}{P(x)}', EV],
       ],
       [
         [`P(A) = ${fmt(pa)}`, XC()],
         [`\\quad P(B) = ${fmt(pb)}`, YC()],
         [`\\quad P(A\\cap B) = ${fmt(pab)}`, EV],
         `\\quad P(A)P(B) = ${fmt(prod)}`,
+        [`\\quad P(B\\mid A) = ${fmt(cond)}`, EV],
       ],
       [
         indep
-          ? 'those last two agree, which is exactly what independence means'
-          : 'those last two disagree, so knowing one of the two numbers tells you something about the other',
+          ? 'the product agrees with the joint, which is exactly what independence means · the conditional does not move as you slide the box across'
+          : 'the product disagrees with the joint, so knowing one of the two numbers tells you something about the other',
       ],
     ]);
   }
@@ -435,6 +591,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       .forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
     setRho([-1, 0, 1][+b.dataset.p!]);
+  });
+  document.getElementById('given')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document
+      .querySelectorAll('#given button')
+      .forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.given = b.dataset.g as 'x' | 'y';
+    draw();
   });
 
   draw();

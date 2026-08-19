@@ -1,0 +1,546 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Integration by Parts"
+  description="The product rule, run backwards and read as a picture. Plot one factor against the other and the curve cuts a rectangle into two pieces: the area under it and the area beside it. One of those is the integral you were asked for and the other is the one you are left with, and they have to add up to the corners. Choosing u is choosing which of the two you would rather do."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="ibp" width="900" height="558"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>The integral</label>
+        <div class="seg" id="prob">
+          <button data-p="0" class="active">∫ x eˣ dx</button>
+          <button data-p="1">∫ x sin x dx</button>
+          <button data-p="2">∫ ln x dx</button>
+          <button data-p="3">∫ x² eˣ dx</button>
+        </div>
+      </div>
+
+      <div class="control" id="ctl-choice">
+        <label>Call this one u</label>
+        <div class="seg" id="choice"></div>
+      </div>
+
+      <div class="control">
+        <label>Upper limit b <b id="bval">1.68</b></label>
+        <input type="range" id="b" min="0" max="100" value="80" />
+      </div>
+
+      <div class="control">
+        <label>Strips <b id="nval">10</b></label>
+        <input type="range" id="n" min="1" max="60" value="10" />
+        <div class="scale-hint"><span>a few wide ones</span><span>too fine to see</span></div>
+      </div>
+
+      <div class="readout" id="rows"></div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Every number is integrated numerically from the two functions
+        themselves, so the identity is checked on screen rather than assumed.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The curve is one factor plotted against the other as x runs from a to b.
+      Nothing else is plotted, and that single curve does all the work: it
+      splits the corner of the plane into <b>the area underneath it</b> and
+      <b>the area beside it</b>. Those two are exactly ∫v du and ∫u dv.
+    </li>
+    <li>
+      Watch what the two pieces have to add up to. The big rectangle is
+      <b>u(b)·v(b)</b>, the small one tucked in the corner is <b>u(a)·v(a)</b>,
+      and everything between them is covered by the two shaded regions with
+      nothing left over and no overlap. That is the whole theorem:
+      <b>∫u dv + ∫v du = [uv]</b>, which is just the product rule with an
+      integral sign in front of it.
+    </li>
+    <li>
+      Drag <b>strips</b>. The vertical ones stack along the u-axis and measure
+      ∫v du; the horizontal ones stack up the v-axis and measure ∫u dv. Same
+      curve, same region, sliced two different ways, and the residual in the
+      panel falls towards zero as they get thinner.
+    </li>
+    <li>
+      Now the part that matters in practice. Switch <b>which factor you call
+      u</b> and the curve is replaced by a completely different one, but the two
+      areas still tile the same kind of corner. What changes is the
+      <b>leftover</b>: with u = x the integral you are handed back is ∫eˣ dx,
+      and with u = eˣ it is ∫(x²/2)eˣ dx, which is worse than what you started
+      with. That is the whole of the LIATE rule of thumb, and you can see it
+      rather than memorise it.
+    </li>
+    <li>
+      Pick <b>∫ ln x dx</b>, where there is apparently only one factor. Taking
+      u = ln x and dv = dx makes the leftover ∫x·(1/x) dx, which is just ∫1 dx.
+      The trick is not that a second factor appeared, it is that <b>dv = dx</b>
+      was always available.
+    </li>
+    <li>
+      Pick <b>∫ x² eˣ dx</b>. The leftover is ∫2x eˣ dx: not finished, but one
+      power of x lighter than before. Apply the same move again and the x is
+      gone entirely. Integration by parts is often not a solution but a
+      <b>staircase</b>, and each step is one of these pictures.
+    </li>
+    <li>
+      One quiet freedom: v is <i>any</i> antiderivative of dv, so the constant is
+      yours to choose. For ∫x sin x dx this page uses v = 1 − cos x instead of
+      the usual −cos x, purely so the curve starts on the axis and the region
+      stays in view. The identity never noticed.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+
+  // ---------------------------------------------------------------------------
+  // ∫u dv + ∫v du = [uv], drawn as a picture. Plot the point (u(x), v(x)) as x
+  // runs over the interval and the curve it traces cuts the corner of the plane
+  // in two: the area under it is ∫v du and the area beside it is ∫u dv. They
+  // meet along the curve and fill exactly the big rectangle minus the small one.
+  //
+  // Both u and v are kept increasing and non-negative on every interval below,
+  // which is what makes "under" and "beside" mean something unambiguous.
+  // ---------------------------------------------------------------------------
+
+  type Choice = {
+    ul: string; vl: string; dvl: string;
+    u: (x: number) => number;
+    du: (x: number) => number;
+    v: (x: number) => number;
+    dv: (x: number) => number;
+    left: string; // the integral you are handed back
+    easier: boolean;
+    why: string;
+  };
+  type Prob = { label: string; a: number; bmin: number; bmax: number; choices: Choice[] };
+
+  const E = Math.exp;
+  const PROBS: Prob[] = [
+    {
+      label: '\\int x e^{x}\\,dx',
+      a: 0, bmin: 0.4, bmax: 2,
+      choices: [
+        {
+          ul: 'x', vl: 'eˣ', dvl: 'eˣ dx',
+          u: (x) => x, du: () => 1, v: (x) => E(x), dv: (x) => E(x),
+          left: '∫ eˣ dx', easier: true,
+          why: 'differentiating x kills it, so the leftover is the easiest integral there is',
+        },
+        {
+          ul: 'eˣ', vl: 'x²/2', dvl: 'x dx',
+          u: (x) => E(x), du: (x) => E(x), v: (x) => (x * x) / 2, dv: (x) => x,
+          left: '∫ (x²/2) eˣ dx', easier: false,
+          why: 'integrating x raised its power, so the leftover is worse than the original',
+        },
+      ],
+    },
+    {
+      label: '\\int x \\sin x\\,dx',
+      a: 0, bmin: 0.4, bmax: Math.PI / 2,
+      choices: [
+        {
+          ul: 'x', vl: '1 − cos x', dvl: 'sin x dx',
+          u: (x) => x, du: () => 1, v: (x) => 1 - Math.cos(x), dv: (x) => Math.sin(x),
+          left: '∫ (1 − cos x) dx', easier: true,
+          why: 'x differentiates away and what is left integrates on sight',
+        },
+        {
+          ul: 'sin x', vl: 'x²/2', dvl: 'x dx',
+          u: (x) => Math.sin(x), du: (x) => Math.cos(x), v: (x) => (x * x) / 2, dv: (x) => x,
+          left: '∫ (x²/2) cos x dx', easier: false,
+          why: 'the power went up and the trig stayed, so nothing was gained',
+        },
+      ],
+    },
+    {
+      label: '\\int \\ln x\\,dx',
+      a: 1, bmin: 1.4, bmax: 4,
+      choices: [
+        {
+          ul: 'ln x', vl: 'x', dvl: 'dx',
+          u: (x) => Math.log(x), du: (x) => 1 / x, v: (x) => x, dv: () => 1,
+          left: '∫ x · (1/x) dx = ∫ 1 dx', easier: true,
+          why: 'there is no second factor, only dv = dx, and that is enough',
+        },
+      ],
+    },
+    {
+      label: '\\int x^{2} e^{x}\\,dx',
+      a: 0, bmin: 0.4, bmax: 2,
+      choices: [
+        {
+          ul: 'x²', vl: 'eˣ', dvl: 'eˣ dx',
+          u: (x) => x * x, du: (x) => 2 * x, v: (x) => E(x), dv: (x) => E(x),
+          left: '∫ 2x eˣ dx', easier: true,
+          why: 'one power lighter than you started, so the same move again finishes it',
+        },
+        {
+          ul: 'eˣ', vl: 'x³/3', dvl: 'x² dx',
+          u: (x) => E(x), du: (x) => E(x), v: (x) => (x * x * x) / 3, dv: (x) => x * x,
+          left: '∫ (x³/3) eˣ dx', easier: false,
+          why: 'the power climbed instead, so this staircase goes the wrong way',
+        },
+      ],
+    },
+  ];
+
+  // b stops short of the top of its range on purpose: at b = 2 the two ways of
+  // splitting ∫x eˣ dx happen to give the same leftover value, which hides the
+  // very contrast the choice control exists to show.
+  const state = { pi: 0, ci: 0, bs: 80, n: 10 };
+  const P = () => PROBS[state.pi];
+  const C = () => P().choices[Math.min(state.ci, P().choices.length - 1)];
+  const bOf = () => P().bmin + ((P().bmax - P().bmin) * state.bs) / 100;
+
+  /** Composite Simpson, fine enough that the residual on screen is the maths. */
+  function simpson(f: (x: number) => number, a: number, b: number, n = 2000) {
+    if (b <= a) return 0;
+    const m = n % 2 ? n + 1 : n;
+    const h = (b - a) / m;
+    let s = f(a) + f(b);
+    for (let i = 1; i < m; i++) s += f(a + i * h) * (i % 2 ? 4 : 2);
+    return (s * h) / 3;
+  }
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('ibp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const ACC = '#7c8cff'; // the curve and the corners it cuts
+  const UDV = '#f59e0b'; // the integral you were asked for
+  const VDU = '#34d399'; // the one you are handed back
+
+  const AREA = { x: 64, y: 58, w: 416, h: 428 };
+  const OX = AREA.x, OY = AREA.y + AREA.h;
+  const SIDE = { x: 534, y: 58, w: 326 };
+
+  function tint(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function text(
+    t: string, x: number, y: number, a = 0.55,
+    al: CanvasTextAlign = 'left', size = 12, weight = '', colour?: string
+  ) {
+    ctx.fillStyle = colour ?? `rgba(${ink()},${a})`;
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.textAlign = al;
+    ctx.fillText(t, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  // world -> screen, with each axis scaled to fill the frame. The two axes carry
+  // different units anyway, and a common factor on both leaves every area in the
+  // picture in the same proportion it has in the maths.
+  let sx = 1, sy = 1;
+  function computeScale() {
+    const c = C(), p = P();
+    sx = AREA.w / (Math.max(1e-6, c.u(p.bmax)) * 1.1);
+    sy = AREA.h / (Math.max(1e-6, c.v(p.bmax)) * 1.1);
+  }
+  const X = (u: number) => OX + u * sx;
+  const Y = (v: number) => OY - v * sy;
+
+  /** The two regions, sliced into the strips that measure them. */
+  function drawStrips(a: number, b: number) {
+    const c = C();
+    const N = state.n;
+    for (let k = 0; k < N; k++) {
+      const x0 = a + ((b - a) * k) / N;
+      const x1 = a + ((b - a) * (k + 1)) / N;
+      const xm = (x0 + x1) / 2;
+      const u0 = c.u(x0), u1 = c.u(x1);
+      const v0 = c.v(x0), v1 = c.v(x1);
+
+      // under the curve: height v, thickness du
+      ctx.fillStyle = tint(VDU, 0.34);
+      ctx.fillRect(X(u0), Y(c.v(xm)), Math.max(0, X(u1) - X(u0)), Math.max(0, OY - Y(c.v(xm))));
+      ctx.strokeStyle = tint(VDU, 0.5);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(X(u0) + 0.5, Y(c.v(xm)) + 0.5, Math.max(0, X(u1) - X(u0) - 1), Math.max(0, OY - Y(c.v(xm)) - 1));
+
+      // beside the curve: width u, thickness dv
+      ctx.fillStyle = tint(UDV, 0.34);
+      ctx.fillRect(OX, Y(v1), Math.max(0, X(c.u(xm)) - OX), Math.max(0, Y(v0) - Y(v1)));
+      ctx.strokeStyle = tint(UDV, 0.5);
+      ctx.strokeRect(OX + 0.5, Y(v1) + 0.5, Math.max(0, X(c.u(xm)) - OX - 1), Math.max(0, Y(v0) - Y(v1) - 1));
+    }
+  }
+
+  function drawArea() {
+    const c = C(), p = P(), b = bOf(), a = p.a;
+    const ua = c.u(a), va = c.v(a), ub = c.u(b), vb = c.v(b);
+
+    text('ONE CURVE, CUTTING A CORNER IN TWO', AREA.x, AREA.y - 26, 0.5, 'left', 12, '600');
+    text(`the point (u, v) = (${c.ul}, ${c.vl}) as x goes ${a} → ${b.toFixed(2)}`, AREA.x, AREA.y - 10, 0.35);
+
+    // axes
+    ctx.strokeStyle = `rgba(${ink()},0.28)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(OX, AREA.y);
+    ctx.lineTo(OX, OY);
+    ctx.lineTo(OX + AREA.w, OY);
+    ctx.stroke();
+
+    drawStrips(a, b);
+
+    // the corner rectangle that gets subtracted
+    if (ua > 0 && va > 0) {
+      ctx.fillStyle = `rgba(${ink()},0.16)`;
+      ctx.fillRect(OX, Y(va), X(ua) - OX, OY - Y(va));
+      ctx.strokeStyle = `rgba(${ink()},0.4)`;
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(OX + 0.5, Y(va) + 0.5, X(ua) - OX - 1, OY - Y(va) - 1);
+      ctx.setLineDash([]);
+      if (X(ua) - OX > 52 && OY - Y(va) > 26)
+        text('u(a)·v(a)', (OX + X(ua)) / 2, (OY + Y(va)) / 2 + 4, 0.6, 'center', 11);
+    }
+
+    // the outer rectangle
+    ctx.strokeStyle = tint(ACC, 0.85);
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(OX + 0.5, Y(vb) + 0.5, X(ub) - OX - 1, OY - Y(vb) - 1);
+    text('u(b)·v(b)', X(ub) - 6, Y(vb) - 8, 1, 'right', 12, '600', tint(ACC, 1));
+
+    // the curve itself
+    ctx.strokeStyle = tint(ACC, 1);
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let k = 0; k <= 240; k++) {
+      const x = a + ((b - a) * k) / 240;
+      const px = X(c.u(x)), py = Y(c.v(x));
+      k ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.stroke();
+
+    for (const [uu, vv, lab] of [[ua, va, 'x = a'], [ub, vb, 'x = b']] as [number, number, string][]) {
+      ctx.fillStyle = tint(ACC, 1);
+      ctx.beginPath();
+      ctx.arc(X(uu), Y(vv), 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      text(lab, X(uu) + 8, Y(vv) - 8, 0.7, 'left', 11);
+    }
+
+    // which region is which, placed inside each one
+    const midU = (X(ua) + X(ub)) / 2;
+    if (X(ub) - X(ua) > 70)
+      text('∫ v du', midU, OY - 14, 1, 'center', 14, '600', tint(VDU, 1));
+    if (Y(va) - Y(vb) > 34)
+      text('∫ u dv', OX + 14, (Y(va) + Y(vb)) / 2 + 5, 1, 'left', 14, '600', tint(UDV, 1));
+
+    text('u', OX + AREA.w, OY + 18, 0.4, 'right', 11);
+    text('v', OX - 10, AREA.y + 6, 0.4, 'right', 11);
+  }
+
+  /** The identity as one bar, split where the curve splits the region. */
+  function drawSide() {
+    const c = C(), p = P(), b = bOf(), a = p.a;
+    const want = simpson((x) => c.u(x) * c.dv(x), a, b);
+    const left = simpson((x) => c.v(x) * c.du(x), a, b);
+    const rect = c.u(b) * c.v(b) - c.u(a) * c.v(a);
+
+    text('THE TWO PIECES, AND WHAT THEY FILL', SIDE.x, SIDE.y - 26, 0.5, 'left', 12, '600');
+    text('one bar, cut where the curve cuts', SIDE.x, SIDE.y - 10, 0.35);
+
+    const bw = SIDE.w, bx = SIDE.x, by = SIDE.y + 16, bh = 40;
+    const tot = Math.max(1e-9, Math.abs(want) + Math.abs(left));
+    const wA = (Math.abs(want) / tot) * bw;
+    ctx.fillStyle = tint(UDV, 0.5);
+    ctx.fillRect(bx, by, wA, bh);
+    ctx.fillStyle = tint(VDU, 0.5);
+    ctx.fillRect(bx + wA, by, bw - wA, bh);
+    ctx.strokeStyle = tint(ACC, 0.9);
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    if (wA > 56) text('∫ u dv', bx + wA / 2, by + 25, 1, 'center', 13, '600', tint(UDV, 1));
+    if (bw - wA > 56) text('∫ v du', bx + wA + (bw - wA) / 2, by + 25, 1, 'center', 13, '600', tint(VDU, 1));
+    text(`the whole bar is [uv] = ${rect.toFixed(4)}`, bx, by + bh + 18, 0.55, 'left', 11, '', tint(ACC, 1));
+
+    // the numbers, and the check that they close
+    let y = by + bh + 52;
+    const row = (lab: string, val: string, colour?: string) => {
+      text(lab, bx, y, 0.45, 'left', 11.5);
+      text(val, bx + bw, y, 0.95, 'right', 13, '600', colour);
+      y += 26;
+    };
+    row(`∫ u dv   the one you were asked for`, want.toFixed(4), tint(UDV, 1));
+    row(`∫ v du   the one you get back`, left.toFixed(4), tint(VDU, 1));
+    row(`[uv] from a to b`, rect.toFixed(4), tint(ACC, 1));
+    ctx.strokeStyle = `rgba(${ink()},0.14)`;
+    ctx.beginPath();
+    ctx.moveTo(bx, y - 16);
+    ctx.lineTo(bx + bw, y - 16);
+    ctx.stroke();
+    const resid = want + left - rect;
+    row('the two pieces minus the corners', resid.toExponential(1));
+
+    // what the choice actually bought you
+    const cy = y + 14;
+    ctx.fillStyle = c.easier ? tint(VDU, 0.1) : tint(UDV, 0.12);
+    ctx.strokeStyle = c.easier ? tint(VDU, 0.55) : tint(UDV, 0.6);
+    ctx.lineWidth = 1;
+    ctx.fillRect(bx, cy, bw, 72);
+    ctx.strokeRect(bx + 0.5, cy + 0.5, bw - 1, 71);
+    text(
+      c.easier ? 'THE LEFTOVER IS SIMPLER' : 'THE LEFTOVER IS WORSE',
+      bx + 12, cy + 20, 1, 'left', 11, '600',
+      c.easier ? tint(VDU, 1) : tint(UDV, 1)
+    );
+    text(c.left, bx + 12, cy + 40, 0.9, 'left', 13, '600');
+    text(c.why, bx + 12, cy + 58, 0.4, 'left', 10);
+
+    return { want, left, rect };
+  }
+
+  function drawHeader(want: number, left: number, rect: number) {
+    const c = C();
+    setEq([
+      [
+        ['\\int_a^b u\\,dv', UDV],
+        '=',
+        ['\\Big[uv\\Big]_a^b', ACC],
+        '-',
+        ['\\int_a^b v\\,du', VDU],
+      ],
+      [
+        [want.toFixed(4), UDV],
+        '=',
+        [rect.toFixed(4), ACC],
+        '-',
+        [left.toFixed(4), VDU],
+        `\\quad u = ${texify(c.ul)},\\; dv = ${texify(c.dvl)}`,
+      ],
+      [
+        'the two shaded regions tile the big rectangle minus the small one, so naming one of them names the other',
+      ],
+    ]);
+  }
+  const texify = (s: string) =>
+    s
+      .replace(/eˣ/g, 'e^{x}')
+      .replace(/x²/g, 'x^{2}')
+      .replace(/x³/g, 'x^{3}')
+      .replace(/ln x/g, '\\ln x')
+      .replace(/sin x/g, '\\sin x')
+      .replace(/cos x/g, '\\cos x')
+      .replace(/−/g, '-')
+      .replace(/ dx/g, '\\,dx');
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawArea();
+    const { want, left, rect } = drawSide();
+    drawHeader(want, left, rect);
+    updateRows(want, left, rect);
+  }
+
+  const rows = document.getElementById('rows') as HTMLElement;
+  const row = (a: string, b: string) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
+  function updateRows(want: number, left: number, rect: number) {
+    const c = C(), p = P(), b = bOf();
+    // the same two areas, but measured from the strips actually on screen
+    let sA = 0, sB = 0;
+    for (let k = 0; k < state.n; k++) {
+      const x0 = p.a + ((b - p.a) * k) / state.n;
+      const x1 = p.a + ((b - p.a) * (k + 1)) / state.n;
+      const xm = (x0 + x1) / 2;
+      sA += c.v(xm) * (c.u(x1) - c.u(x0));
+      sB += c.u(xm) * (c.v(x1) - c.v(x0));
+    }
+    rows.innerHTML =
+      row('u at b', c.u(b).toFixed(4)) +
+      row('v at b', c.v(b).toFixed(4)) +
+      row('∫ u dv', want.toFixed(4)) +
+      row('∫ v du', left.toFixed(4)) +
+      row('[uv] from a to b', rect.toFixed(4)) +
+      row('the two minus [uv]', (want + left - rect).toExponential(1)) +
+      row(`strips, ${state.n} of them`, (sA + sB).toFixed(4)) +
+      row('strips minus [uv]', (sA + sB - rect).toExponential(1));
+  }
+
+  // --- controls --------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+
+  /** The choice buttons belong to the problem, so they are rebuilt with it. */
+  function renderChoices() {
+    const p = P();
+    el('choice').innerHTML = p.choices
+      .map(
+        (c, i) =>
+          `<button data-c="${i}"${i === state.ci ? ' class="active"' : ''}>u = ${c.ul}</button>`
+      )
+      .join('');
+    el('ctl-choice').style.display = p.choices.length > 1 ? '' : 'none';
+  }
+
+  el('prob').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#prob button').forEach((n) => n.classList.remove('active'));
+    b.classList.add('active');
+    state.pi = +b.dataset.p!;
+    state.ci = 0;
+    renderChoices();
+    computeScale();
+    el('bval').textContent = bOf().toFixed(2);
+    draw();
+  });
+  el('choice').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document.querySelectorAll('#choice button').forEach((n) => n.classList.remove('active'));
+    b.classList.add('active');
+    state.ci = +b.dataset.c!;
+    computeScale();
+    draw();
+  });
+  const bEl = el('b') as HTMLInputElement;
+  bEl.addEventListener('input', () => {
+    state.bs = +bEl.value;
+    el('bval').textContent = bOf().toFixed(2);
+    draw();
+  });
+  const nEl = el('n') as HTMLInputElement;
+  nEl.addEventListener('input', () => {
+    state.n = +nEl.value;
+    el('nval').textContent = String(state.n);
+    draw();
+  });
+
+  renderChoices();
+  computeScale();
+  el('bval').textContent = bOf().toFixed(2);
+  draw();
+</script>
+
+<style>
+  #ibp {
+    touch-action: none;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+  #prob button {
+    font-size: 0.76rem;
+    padding: 5px 8px;
+  }
+</style>

@@ -1,0 +1,738 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Differential Equations"
+  description="An equation that gives you the slope instead of the value. Draw that slope at every point and the plane fills with little segments, each one telling any solution passing through it which way to go next. Drop a point anywhere and watch the curve thread itself through the field, then take steps too big and watch it drift off the truth."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="ode" width="880" height="620"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>The equation y′ =</label>
+        <div class="seg" id="eq">
+          <button data-k="linear" class="active">x − y</button>
+          <button data-k="growth">y</button>
+          <button data-k="logistic">y(1 − y)</button>
+          <button data-k="circle">−x / y</button>
+          <button data-k="sep">x · y</button>
+          <button data-k="wave">sin x − y/2</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Start x₀ <b id="x0val">−4.00</b></label>
+        <input type="range" id="x0" min="-4.3" max="4.3" step="0.05" value="-4" />
+      </div>
+
+      <div class="control">
+        <label>Start y₀ <b id="y0val">2.20</b></label>
+        <input type="range" id="y0" min="-3.1" max="3.1" step="0.05" value="2.2" />
+      </div>
+
+      <div class="control">
+        <label>Euler step h <b id="hval">0.60</b></label>
+        <input type="range" id="h" min="5" max="120" step="1" value="60" />
+        <div class="scale-hint"><span>tiny, faithful</span><span>huge, wrong</span></div>
+      </div>
+
+      <div class="control">
+        <label>Show</label>
+        <label class="check"><input type="checkbox" id="field" checked /> Slope field</label>
+        <label class="check"><input type="checkbox" id="family" /> The whole family of solutions</label>
+        <label class="check"><input type="checkbox" id="iso" /> Isoclines (constant slope)</label>
+        <label class="check"><input type="checkbox" id="euler" /> Euler's method, step by step</label>
+        <label class="check"><input type="checkbox" id="flow" /> Particles riding the field</label>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Point</span><b id="ptOut">—</b></div>
+        <div class="row"><span>Slope y′ there</span><b id="slopeOut">—</b></div>
+        <div class="row"><span>Euler steps</span><b id="stepOut">—</b></div>
+        <div class="row"><span>Euler error at the end</span><b id="errOut">—</b></div>
+        <div class="row"><span>Solution exists until</span><b id="liveOut">—</b></div>
+      </div>
+
+      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
+        Drag the white dot anywhere on the plane. The bright curve is the one
+        solution through it, integrated in both directions until it leaves.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The equation never mentions a curve. It only says, at this point, go this
+      steep. The <b>slope field</b> is that instruction drawn everywhere at once,
+      and a solution is any curve that stays <b>tangent to it the whole way</b>.
+      Drag the dot and the bright curve slides through the segments without ever
+      cutting across one.
+    </li>
+    <li>
+      Turn on <b>the whole family</b>. Nothing was solved differently for any of
+      them: they all obey the same field, they just started somewhere else. That
+      is what the <b>+ C</b> in an antiderivative really is, a whole sheaf of
+      curves stacked over the plane, and picking an initial condition is picking
+      one of them.
+    </li>
+    <li>
+      Try <b>x − y</b> and drag the start up and down. Every curve, from far
+      above and far below, is squeezed onto the same line. Solutions can
+      <b>forget where they came from</b>, which is why a stable system settles
+      to the same behaviour whatever state you switch it on in.
+    </li>
+    <li>
+      Try <b>y(1 − y)</b> and look at the two horizontal lines. Both are
+      solutions that never move, but they behave in opposite ways: start a hair
+      above y = 0 and you run away from it, start a hair below y = 1 and you run
+      towards it. <b>Stable and unstable equilibria</b>, read straight off the
+      arrows without solving anything.
+    </li>
+    <li>
+      Turn on <b>Euler's method</b> and push h up. Each straight hop uses the
+      slope at the point it starts from and then commits to it for the whole
+      step, so it lands slightly off the true curve, then reads its next slope
+      from the <b>wrong place</b>. The error compounds. Halve h and the error
+      roughly halves, which is exactly what first-order means.
+    </li>
+    <li>
+      Pick <b>−x / y</b>. The solutions are circles, and the field goes vertical
+      as they cross the x axis. The integration stops dead there: the equation
+      is fine, but <b>y as a function of x</b> is not, since one x would need
+      two values. Solutions are local objects and can simply run out.
+    </li>
+    <li>
+      Turn on <b>isoclines</b>. Each dashed curve is where the slope takes one
+      fixed value, so the segments along it are all parallel. Sketching two or
+      three isoclines by hand is how the whole field was drawn before there were
+      computers, and the zero one alone tells you where solutions turn around.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+
+  // ---------------------------------------------------------------------------
+  // A first-order ODE y' = f(x,y) does not hand over a curve, it hands over a
+  // slope at every point of the plane. Draw that slope everywhere and the
+  // equation becomes a field of segments; a solution is any curve that stays
+  // tangent to it. Everything here is that one idea: the field, the curves that
+  // thread it, and what goes wrong when you follow it in steps that are too big
+  // to still be tangent.
+  // ---------------------------------------------------------------------------
+
+  type F = (x: number, y: number) => number;
+
+  interface Preset {
+    key: string;
+    tex: string;
+    f: F;
+    start: { x: number; y: number };
+    note: string;
+  }
+
+  const PRESETS: Preset[] = [
+    {
+      key: 'linear',
+      tex: "y' = x - y",
+      f: (x, y) => x - y,
+      start: { x: -4, y: 2.2 },
+      note: 'every solution is dragged onto the line y = x - 1 and forgets where it started',
+    },
+    {
+      key: 'growth',
+      tex: "y' = y",
+      f: (_x, y) => y,
+      start: { x: -3, y: 0.25 },
+      note: 'growth proportional to what is already there, which is what makes an exponential',
+    },
+    {
+      key: 'logistic',
+      tex: "y' = y\\,(1 - y)",
+      f: (_x, y) => y * (1 - y),
+      start: { x: -4, y: 0.08 },
+      note: 'two equilibria: one that everything runs away from, one that everything runs into',
+    },
+    {
+      key: 'circle',
+      tex: "y' = -x/y",
+      f: (x, y) => -x / y,
+      start: { x: 0, y: 2.4 },
+      note: 'the solutions are circles, and no single function of x can cover a whole one',
+    },
+    {
+      key: 'sep',
+      tex: "y' = x\\,y",
+      f: (x, y) => x * y,
+      start: { x: -2.6, y: 0.5 },
+      note: 'separable: dy/y = x dx, so the solutions are bell curves in disguise',
+    },
+    {
+      key: 'wave',
+      tex: "y' = \\sin x - y/2",
+      f: (x, y) => Math.sin(x) - y / 2,
+      start: { x: -4, y: 2.6 },
+      note: 'a forced decay: the memory of the start fades away, the driving never does',
+    },
+  ];
+
+  const state = {
+    preset: PRESETS[0],
+    x0: -4,
+    y0: 2.2,
+    h: 0.6,
+    field: true,
+    family: false,
+    iso: false,
+    euler: false,
+    flow: false,
+    running: true,
+  };
+
+  /** Slopes go to infinity in perfectly ordinary equations, so cap them. */
+  const CAP = 60;
+  function slope(x: number, y: number) {
+    const m = state.preset.f(x, y);
+    if (!Number.isFinite(m)) return m > 0 || Object.is(m, Infinity) ? CAP : -CAP;
+    return Math.max(-CAP, Math.min(CAP, m));
+  }
+
+  // --- canvas ----------------------------------------------------------------
+
+  const canvas = document.getElementById('ode') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const cssv = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
+  const inkRGB = () => cssv('--stage-ink') || '232,233,236';
+  const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
+  const { label } = makeText(ctx, inkA);
+  const setEq = equationBar();
+
+  const ACC = '#7c8cff'; // the chosen solution
+  const TEAL = '#5eead4'; // the zero isocline and the flow
+  const HOT = '#f9736a'; // Euler, going wrong
+
+  const XMIN = -4.4, XMAX = 4.4, YMIN = -3.2, YMAX = 3.2;
+  const P = { x: 52, y: 20, w: W - 76, h: H - 54 };
+  const sx = (x: number) => P.x + ((x - XMIN) / (XMAX - XMIN)) * P.w;
+  const sy = (y: number) => P.y + P.h - ((y - YMIN) / (YMAX - YMIN)) * P.h;
+  const wxOf = (px: number) => XMIN + ((px - P.x) / P.w) * (XMAX - XMIN);
+  const wyOf = (py: number) => YMIN + ((P.y + P.h - py) / P.h) * (YMAX - YMIN);
+
+  // --- integration -----------------------------------------------------------
+
+  function rk4(x: number, y: number, h: number) {
+    const k1 = slope(x, y);
+    const k2 = slope(x + h / 2, y + (h * k1) / 2);
+    const k3 = slope(x + h / 2, y + (h * k2) / 2);
+    const k4 = slope(x + h, y + h * k3);
+    return y + (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4);
+  }
+
+  const OUT = 6; // how far past the window a curve may wander before we drop it
+
+  /** March from a point until the curve leaves the window or blows up. */
+  function integrate(x: number, y: number, dir: 1 | -1) {
+    const h = 0.02 * dir;
+    const pts: { x: number; y: number }[] = [{ x, y }];
+    let cx = x, cy = y;
+    for (let k = 0; k < 900; k++) {
+      const ny = rk4(cx, cy, h);
+      if (!Number.isFinite(ny) || Math.abs(ny) > OUT) break;
+      // A near-vertical field means y is racing while x crawls: stop rather
+      // than draw a lie. This is where "y as a function of x" gives out.
+      if (Math.abs(ny - cy) > 0.6) break;
+      cx += h;
+      cy = ny;
+      pts.push({ x: cx, y: cy });
+      if (cx < XMIN - 0.1 || cx > XMAX + 0.1) break;
+    }
+    return pts;
+  }
+
+  function solutionThrough(x: number, y: number) {
+    const back = integrate(x, y, -1).reverse();
+    const fwd = integrate(x, y, 1);
+    return back.concat(fwd.slice(1));
+  }
+
+  function eulerFrom(x: number, y: number, h: number) {
+    const pts: { x: number; y: number }[] = [{ x, y }];
+    let cx = x, cy = y;
+    while (cx < XMAX && pts.length < 400) {
+      cy = cy + h * slope(cx, cy);
+      cx = cx + h;
+      if (!Number.isFinite(cy)) break;
+      pts.push({ x: cx, y: Math.max(-OUT, Math.min(OUT, cy)) });
+      if (Math.abs(cy) > OUT) break;
+    }
+    return pts;
+  }
+
+  // --- contours (isoclines) --------------------------------------------------
+  // Marching squares over the sign of f - level. Two crossings give a segment,
+  // four give two, which is close enough for a drawing.
+
+  function contour(level: number, N = 72) {
+    const segs: number[][] = [];
+    const dx = (XMAX - XMIN) / N;
+    const dy = (YMAX - YMIN) / N;
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const ax = XMIN + i * dx, ay = YMIN + j * dy;
+        const bx = ax + dx, by = ay + dy;
+        const c = [
+          slope(ax, ay) - level,
+          slope(bx, ay) - level,
+          slope(bx, by) - level,
+          slope(ax, by) - level,
+        ];
+        if (c.some((v) => !Number.isFinite(v))) continue;
+        const corners = [
+          [ax, ay], [bx, ay], [bx, by], [ax, by],
+        ];
+        const hit: number[][] = [];
+        for (let e = 0; e < 4; e++) {
+          const v0 = c[e], v1 = c[(e + 1) % 4];
+          if (v0 === 0 || (v0 < 0) === (v1 < 0)) continue;
+          const t = v0 / (v0 - v1);
+          const p0 = corners[e], p1 = corners[(e + 1) % 4];
+          hit.push([p0[0] + t * (p1[0] - p0[0]), p0[1] + t * (p1[1] - p0[1])]);
+        }
+        if (hit.length === 2) segs.push([hit[0][0], hit[0][1], hit[1][0], hit[1][1]]);
+        else if (hit.length === 4) {
+          segs.push([hit[0][0], hit[0][1], hit[1][0], hit[1][1]]);
+          segs.push([hit[2][0], hit[2][1], hit[3][0], hit[3][1]]);
+        }
+      }
+    }
+    return segs;
+  }
+
+  // --- particles riding the field --------------------------------------------
+
+  const rndSeed = (() => {
+    let s = 987654321;
+    return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  })();
+
+  type Dot = { x: number; y: number; life: number };
+  let dots: Dot[] = [];
+  function seedDots() {
+    dots = [];
+    for (let k = 0; k < 150; k++)
+      dots.push({
+        x: XMIN + rndSeed() * (XMAX - XMIN),
+        y: YMIN + rndSeed() * (YMAX - YMIN),
+        life: rndSeed(),
+      });
+  }
+  function respawn(d: Dot) {
+    d.x = XMIN + rndSeed() * 0.35;
+    d.y = YMIN + rndSeed() * (YMAX - YMIN);
+    d.life = 0;
+  }
+  function stepDots(dt: number) {
+    const dx = dt * 1.5; // units of x per second
+    for (const d of dots) {
+      const ny = rk4(d.x, d.y, dx);
+      d.x += dx;
+      d.y = ny;
+      d.life += dt * 0.28;
+      if (!Number.isFinite(d.y) || Math.abs(d.y) > YMAX + 0.4 || d.x > XMAX || d.life > 1)
+        respawn(d);
+    }
+  }
+
+  // --- drawing ---------------------------------------------------------------
+
+  function drawAxes() {
+    ctx.strokeStyle = inkA(0.07);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = Math.ceil(XMIN); i <= XMAX; i++) {
+      ctx.moveTo(sx(i), P.y);
+      ctx.lineTo(sx(i), P.y + P.h);
+    }
+    for (let j = Math.ceil(YMIN); j <= YMAX; j++) {
+      ctx.moveTo(P.x, sy(j));
+      ctx.lineTo(P.x + P.w, sy(j));
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = inkA(0.28);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(P.x, sy(0));
+    ctx.lineTo(P.x + P.w, sy(0));
+    ctx.moveTo(sx(0), P.y);
+    ctx.lineTo(sx(0), P.y + P.h);
+    ctx.stroke();
+
+    for (let i = Math.ceil(XMIN); i <= XMAX; i++)
+      if (i !== 0) label(String(i), sx(i), sy(0) + 15, 0.35, 'center', 10);
+    for (let j = Math.ceil(YMIN); j <= YMAX; j++)
+      if (j !== 0) label(String(j), sx(0) - 7, sy(j) + 4, 0.35, 'right', 10);
+    label('x', P.x + P.w - 2, sy(0) - 8, 0.4, 'right', 11);
+    label('y', sx(0) + 9, P.y + 12, 0.4, 'left', 11);
+  }
+
+  function drawField() {
+    const NX = 30, NY = 21;
+    const L = 15;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i <= NX; i++) {
+      for (let j = 0; j <= NY; j++) {
+        const x = XMIN + ((XMAX - XMIN) * i) / NX;
+        const y = YMIN + ((YMAX - YMIN) * j) / NY;
+        const m = slope(x, y);
+        if (!Number.isFinite(m)) continue;
+        // The direction is (1, m) in world units; the picture is stretched, so
+        // convert before normalising or the drawn angle is not the real one.
+        let ux = P.w / (XMAX - XMIN);
+        let uy = -m * (P.h / (YMAX - YMIN));
+        const n = Math.hypot(ux, uy) || 1;
+        ux = (ux / n) * (L / 2);
+        uy = (uy / n) * (L / 2);
+        const cx = sx(x), cy = sy(y);
+        // one neutral colour, a touch stronger where it is steeper; the
+        // meaning of the field is its geometry, not a palette
+        const steep = Math.min(1, Math.abs(m) / 3);
+        ctx.strokeStyle = inkA(0.22 + 0.16 * steep);
+        ctx.beginPath();
+        ctx.moveTo(cx - ux, cy - uy);
+        ctx.lineTo(cx + ux, cy + uy);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // The field itself only changes when the equation does, so the two expensive
+  // things (the isoclines and the family of curves) are worked out once and
+  // kept until something they depend on moves.
+  let isoCache: { key: string; segs: number[][][] } | null = null;
+  let famCache: { key: string; curves: { x: number; y: number }[][] } | null = null;
+
+  function drawIsoclines() {
+    const levels: [number, string, number][] = [
+      [0, `rgba(94,234,212,0.6)`, 1.8],
+      [1, inkA(0.28), 1.1],
+      [-1, inkA(0.28), 1.1],
+      [2, inkA(0.16), 1],
+      [-2, inkA(0.16), 1],
+    ];
+    if (isoCache?.key !== state.preset.key)
+      isoCache = { key: state.preset.key, segs: levels.map(([lv]) => contour(lv)) };
+    ctx.setLineDash([5, 4]);
+    levels.forEach(([, col, lw], k) => {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      for (const s of isoCache!.segs[k]) {
+        ctx.moveTo(sx(s[0]), sy(s[1]));
+        ctx.lineTo(sx(s[2]), sy(s[3]));
+      }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    label("y′ = 0", P.x + 8, P.y + P.h - 10, 0.7, 'left', 11, TEAL);
+  }
+
+  function stroke(pts: { x: number; y: number }[], col: string, lw: number) {
+    if (pts.length < 2) return;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    pts.forEach((p, k) => (k ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))));
+    ctx.stroke();
+  }
+
+  function drawFamily() {
+    const key = `${state.preset.key}|${state.x0.toFixed(2)}`;
+    if (famCache?.key !== key) {
+      const curves: { x: number; y: number }[][] = [];
+      for (let k = 0; k < 13; k++) {
+        const y = YMIN + 0.15 + ((YMAX - YMIN - 0.3) * k) / 12;
+        curves.push(solutionThrough(state.x0, y));
+      }
+      famCache = { key, curves };
+    }
+    for (const c of famCache.curves) stroke(c, 'rgba(124,140,255,0.22)', 1.3);
+  }
+
+  function drawDots() {
+    for (const d of dots) {
+      const a = Math.sin(Math.min(1, d.life) * Math.PI);
+      if (a <= 0.02) continue;
+      ctx.fillStyle = `rgba(94,234,212,${(a * 0.7).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(sx(d.x), sy(d.y), 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawEuler(truth: { x: number; y: number }[]) {
+    const pts = eulerFrom(state.x0, state.y0, state.h);
+    stroke(pts, HOT, 2);
+    ctx.fillStyle = HOT;
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // The gap at the far end, drawn as the thing it is: a distance.
+    const last = pts[pts.length - 1];
+    let best: { x: number; y: number } | null = null;
+    for (const t of truth)
+      if (!best || Math.abs(t.x - last.x) < Math.abs(best.x - last.x)) best = t;
+    let err = NaN;
+    if (best && Math.abs(best.x - last.x) < 0.2 && pts.length > 1) {
+      err = Math.abs(best.y - last.y);
+      ctx.strokeStyle = HOT;
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(sx(last.x), sy(last.y));
+      ctx.lineTo(sx(best.x), sy(best.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (err > 0.06)
+        label(
+          `off by ${err.toFixed(2)}`,
+          sx(last.x) - 8,
+          (sy(last.y) + sy(best.y)) / 2,
+          0.9,
+          'right',
+          11,
+          HOT
+        );
+    }
+    return { steps: pts.length - 1, err };
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawAxes();
+    if (state.field) drawField();
+    if (state.iso) drawIsoclines();
+    if (state.flow) drawDots();
+    if (state.family) drawFamily();
+
+    const truth = solutionThrough(state.x0, state.y0);
+    stroke(truth, ACC, 2.8);
+
+    let euler = { steps: 0, err: NaN };
+    if (state.euler) euler = drawEuler(truth);
+
+    // the initial condition itself
+    const m = slope(state.x0, state.y0);
+    const cx = sx(state.x0), cy = sy(state.y0);
+    // the tangent the equation demands right here
+    let tx = P.w / (XMAX - XMIN);
+    let ty = -m * (P.h / (YMAX - YMIN));
+    const n = Math.hypot(tx, ty) || 1;
+    tx = (tx / n) * 46;
+    ty = (ty / n) * 46;
+    ctx.strokeStyle = inkA(0.85);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - tx, cy - ty);
+    ctx.lineTo(cx + tx, cy + ty);
+    ctx.stroke();
+    ctx.fillStyle = inkA(1);
+    ctx.strokeStyle = `rgba(${cssv('--stage-ink-inv') || '13,14,18'},0.8)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    label(
+      `(${state.x0.toFixed(2)}, ${state.y0.toFixed(2)})`,
+      cx + 11,
+      cy - 11,
+      0.75,
+      'left',
+      11
+    );
+
+    // readouts
+    const el = (id: string) => document.getElementById(id) as HTMLElement;
+    el('ptOut').textContent = `(${state.x0.toFixed(2)}, ${state.y0.toFixed(2)})`;
+    el('slopeOut').textContent = Number.isFinite(m)
+      ? `${m.toFixed(3)}  (${((Math.atan(m) * 180) / Math.PI).toFixed(0)}°)`
+      : 'vertical';
+    el('stepOut').textContent = state.euler ? String(euler.steps) : '—';
+    el('errOut').textContent = state.euler
+      ? Number.isFinite(euler.err)
+        ? euler.err.toFixed(3)
+        : 'it left the picture'
+      : '—';
+    const last = truth[truth.length - 1];
+    el('liveOut').textContent =
+      truth.length < 2
+        ? 'nowhere, it is vertical here'
+        : last.x >= XMAX - 0.2
+          ? 'past the right edge'
+          : `x = ${last.x.toFixed(2)}`;
+
+    setEq([
+      [
+        [state.preset.tex, ACC],
+        '\\quad\\text{with}\\;',
+        [`y(${state.x0.toFixed(2)}) = ${state.y0.toFixed(2)}`, TEAL],
+      ],
+      [
+        [`\\text{slope here} = ${Number.isFinite(m) ? m.toFixed(3) : '\\infty'}`, ACC],
+        state.euler
+          ? [
+              `\\quad y_{n+1} = y_n + ${state.h.toFixed(2)}\\,f(x_n,y_n)`,
+              HOT,
+            ]
+          : '',
+      ],
+      [state.preset.note],
+    ]);
+  }
+
+  // --- loop ------------------------------------------------------------------
+
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    if (state.running && state.flow) stepDots(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // --- controls --------------------------------------------------------------
+
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const inp = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  function setStart(x: number, y: number) {
+    state.x0 = Math.max(XMIN + 0.1, Math.min(XMAX - 0.1, x));
+    state.y0 = Math.max(YMIN + 0.1, Math.min(YMAX - 0.1, y));
+    inp('x0').value = String(state.x0);
+    inp('y0').value = String(state.y0);
+    el('x0val').textContent = state.x0.toFixed(2);
+    el('y0val').textContent = state.y0.toFixed(2);
+  }
+
+  inp('x0').addEventListener('input', () => {
+    state.x0 = +inp('x0').value;
+    el('x0val').textContent = state.x0.toFixed(2);
+  });
+  inp('y0').addEventListener('input', () => {
+    state.y0 = +inp('y0').value;
+    el('y0val').textContent = state.y0.toFixed(2);
+  });
+  inp('h').addEventListener('input', () => {
+    state.h = +inp('h').value / 100;
+    el('hval').textContent = state.h.toFixed(2);
+  });
+
+  const toggles: [string, keyof typeof state][] = [
+    ['field', 'field'],
+    ['family', 'family'],
+    ['iso', 'iso'],
+    ['euler', 'euler'],
+    ['flow', 'flow'],
+  ];
+  for (const [id, key] of toggles)
+    inp(id).addEventListener('change', () => {
+      (state as Record<string, unknown>)[key] = inp(id).checked;
+    });
+
+  el('eq').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#eq button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.preset = PRESETS.find((p) => p.key === btn.dataset.k) ?? PRESETS[0];
+    setStart(state.preset.start.x, state.preset.start.y);
+    seedDots();
+  });
+
+  const runBtn = el('run');
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  el('reset').addEventListener('click', () => {
+    setStart(state.preset.start.x, state.preset.start.y);
+    seedDots();
+  });
+
+  // --- dragging the initial condition ----------------------------------------
+
+  let dragging = false;
+  const localPt = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * W,
+      y: ((e.clientY - r.top) / r.height) * H,
+    };
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    const l = localPt(e);
+    if (l.x < P.x || l.x > P.x + P.w || l.y < P.y || l.y > P.y + P.h) return;
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    setStart(wxOf(l.x), wyOf(l.y));
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const l = localPt(e);
+    if (!dragging) {
+      const d = Math.hypot(l.x - sx(state.x0), l.y - sy(state.y0));
+      canvas.style.cursor = d < 18 ? 'grab' : 'crosshair';
+      return;
+    }
+    setStart(wxOf(l.x), wyOf(l.y));
+  });
+  const stopDrag = () => (dragging = false);
+  canvas.addEventListener('pointerup', stopDrag);
+  canvas.addEventListener('pointercancel', stopDrag);
+
+  seedDots();
+  setStart(state.x0, state.y0);
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  #ode {
+    touch-action: none;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.86rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .check input {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+  }
+  .scale-hint {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+</style>

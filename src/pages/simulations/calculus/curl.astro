@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Curl"
-  description="Curl measures how much a vector field twists a tiny region. In 2D it is a signed number: drop in a little paddle wheel and positive curl spins it counterclockwise, negative curl clockwise, zero curl leaves it still, no matter how the flow itself is shaped."
+  description="Curl measures how much a vector field twists a tiny region. In 2D it is a signed number that lives at each point separately: drop in a little paddle wheel and positive curl spins it counterclockwise, negative curl clockwise, zero curl leaves it still, no matter how the flow itself is shaped. Drag the wheel around and watch the rate change from place to place."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -16,10 +16,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       <div class="control">
         <label>Vector field</label>
         <div class="seg" id="field">
-          <button data-f="rotation" class="active">Rotation</button>
-          <button data-f="shear">Shear</button>
+          <button data-f="differential" class="active">Differential</button>
+          <button data-f="rigid">Rigid spin</button>
+          <button data-f="shear">Channel</button>
           <button data-f="radial">Radial</button>
-          <button data-f="vortices">Vortices</button>
+          <button data-f="vortices">Vortex pair</button>
         </div>
       </div>
 
@@ -33,7 +34,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <input id="strength" type="range" min="-150" max="150" value="100" />
       </div>
       <div class="control">
-        <label>Flow speed <b id="speed-val">1.0×</b></label>
+        <label>Time scale <b id="speed-val">1.0×</b></label>
         <input id="speed" type="range" min="0" max="200" value="100" />
       </div>
       <div class="control">
@@ -41,10 +42,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <input id="radius" type="range" min="10" max="36" value="19" />
       </div>
 
+      <label class="check"
+        ><input type="checkbox" id="streaks" checked /> Let the flow run</label
+      >
+      <label class="check"
+        ><input type="checkbox" id="ref" checked /> Reference wheel at the
+        centre</label
+      >
+
       <div class="readout">
         <div class="row"><span>(∇ × F)_z at probe</span><b id="value">+2.00</b></div>
         <div class="row"><span>Circulation ÷ area</span><b id="circulation">+2.00</b></div>
         <div class="row"><span>Angular speed ω = ½ curl</span><b id="omega">1.00 rad/s</b></div>
+        <div class="row"><span>Reference wheel ω</span><b id="omega-ref">1.00 rad/s</b></div>
+        <div class="row"><span>Probe ÷ reference</span><b id="ratio">1.00×</b></div>
         <div class="row"><span>Wheel rotation</span><b id="direction">counterclockwise</b></div>
       </div>
 
@@ -58,18 +69,38 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   <Fragment slot="observe">
     <li>
-      In rigid <b>Rotation</b> the paddle turns at half the curl: <b>ω = ½ ∇ × F</b>.
-      Flip the strength and both the spin and the sign reverse.
+      Start on <b>Differential</b> rotation, the way a galaxy or a stirred cup
+      turns: everything circles the middle, but the inner rings go round far
+      faster than the outer ones. Drag the wheel from the centre to the rim and
+      <b>watch it slow to a crawl</b>. Curl is a function of position, and the
+      readout <b>probe ÷ reference</b> tells you how far it has fallen behind the
+      wheel pinned at the middle.
     </li>
     <li>
-      Pick <b>Shear</b>: every arrow points horizontally, yet the layers slide
-      past each other at different speeds, so the wheel still turns. A field
-      needn't look swirly to have curl.
+      Now pick <b>Rigid spin</b>, the one field where dragging changes nothing.
+      The whole plane turns as a solid slab, so every point twists at the same
+      rate and <b>curl really is constant</b>: <b>ω = ½ ∇ × F</b> everywhere. The
+      contrast with the previous field is the whole point, since both of them
+      look like circulation from a distance.
+    </li>
+    <li>
+      Pick <b>Channel</b>: every arrow points horizontally, so nothing goes round
+      anything, yet the layers slide past each other and the wheel still turns. It
+      turns <b>one way above the centreline and the other way below</b>, and sits
+      perfectly still on the line itself where the flow is fastest. A field needn't
+      look swirly to have curl.
     </li>
     <li>
       Pick <b>Radial</b>: flow streams straight outward along rays, clearly not
-      circulating, and the paddle <b>does not spin</b>. This field has divergence
-      but <b>zero curl</b>, the mirror image of the source in the divergence demo.
+      circulating, and the paddle <b>does not spin anywhere</b>. This field has
+      divergence but <b>zero curl</b>, the mirror image of the source in the
+      divergence demo.
+    </li>
+    <li>
+      <b>Vortex pair</b> is the sharpest case. The streaks wind round both
+      centres, but away from the two cores the curl dies off fast, so a wheel
+      carried a long way around the outside <b>orbits without ever spinning</b>.
+      Travelling in a circle and rotating are simply different things.
     </li>
   </Fragment>
 </SimLayout>
@@ -84,33 +115,73 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
 
-  const state = { field: 'rotation', strength: 1, speed: 1, radius: 0.19, running: true, px: 0, py: 0, angle: 0 };
+  const HOME = { x: 0.86, y: 0.44 };
+  const state = {
+    field: 'differential',
+    strength: 1,
+    speed: 1,
+    radius: 0.19,
+    running: true,
+    streaks: true,
+    ref: true,
+    px: HOME.x,
+    py: HOME.y,
+    angle: 0,
+    refAngle: 0,
+  };
   let last = 0, drag = false;
   const UNIT = 190;
+  const XR = W / 2 / UNIT;
+  const YR = H / 2 / UNIT;
   const sx = (x: number) => W / 2 + x * UNIT;
   const sy = (y: number) => H / 2 - y * UNIT;
 
   function vec(x: number, y: number) {
     const s = state.strength;
-    if (state.field === 'rotation') return { x: -s * y, y: s * x };
-    if (state.field === 'shear') return { x: s * y, y: 0 };
-    if (state.field === 'radial') return { x: s * x, y: s * y };
-    const eps = 0.09;
-    const vortex = (cx: number, cy: number, k: number) => {
-      const dx = x - cx, dy = y - cy, r = dx * dx + dy * dy + eps;
-      return { x: (-k * dy) / r, y: (k * dx) / r };
-    };
-    const p = vortex(-0.72, 0, s), q = vortex(0.72, 0, -s);
-    return { x: (p.x + q.x) * 0.38, y: (p.y + q.y) * 0.38 };
+    switch (state.field) {
+      case 'rigid':
+        return { x: -s * y, y: s * x };
+      // Angular rate falls off with radius, so the inner rings outrun the outer
+      // ones. Curl works out to 2s/(1 + a r²)², large in the core and small at
+      // the rim, which is exactly the position dependence rigid spin hides.
+      case 'differential': {
+        const k = s / (1 + 1.6 * (x * x + y * y));
+        return { x: -k * y, y: k * x };
+      }
+      // Parabolic channel flow: straight arrows, fastest on the centreline.
+      // Curl ∝ y, so it changes sign across the middle of the channel.
+      case 'shear': {
+        const a = y / 1.4;
+        return { x: s * 1.25 * (1 - a * a), y: 0 };
+      }
+      case 'radial':
+        return { x: s * x, y: s * y };
+      default: {
+        const eps = 0.09;
+        const vortex = (cx: number, cy: number, k: number) => {
+          const dx = x - cx, dy = y - cy, r = dx * dx + dy * dy + eps;
+          return { x: (-k * dy) / r, y: (k * dx) / r };
+        };
+        const p = vortex(-0.72, 0, s), q = vortex(0.72, 0, -s);
+        return { x: (p.x + q.x) * 0.38, y: (p.y + q.y) * 0.38 };
+      }
+    }
   }
+
+  // Only the two fields with a one-line answer are hard-coded; everything else
+  // is differenced from vec() itself, so the picture can never drift from the
+  // number underneath it.
+  const DH = 1e-3;
   function curl(x: number, y: number) {
     const s = state.strength;
-    if (state.field === 'rotation') return 2 * s;
-    if (state.field === 'shear') return -s;
+    if (state.field === 'rigid') return 2 * s;
     if (state.field === 'radial') return 0;
-    const h = 0.008;
-    return (vec(x + h, y).y - vec(x - h, y).y) / (2 * h) - (vec(x, y + h).x - vec(x, y - h).x) / (2 * h);
+    return (
+      (vec(x + DH, y).y - vec(x - DH, y).y) / (2 * DH) -
+      (vec(x, y + DH).x - vec(x, y - DH).x) / (2 * DH)
+    );
   }
+
   function circulationPerArea() {
     let sum = 0;
     const N = 120, r = state.radius, ds = (2 * Math.PI * r) / N;
@@ -120,6 +191,68 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       sum += (v.x * tx + v.y * ty) * ds;
     }
     return sum / (Math.PI * r * r);
+  }
+
+  // --- drifting tracers ------------------------------------------------------
+  // Short streaks carried by the field. They are what makes "goes round in a
+  // circle" and "spins about its own centre" visibly different: in the vortex
+  // pair a streak can loop the whole way round while its wheel stays still.
+  const TRAIL = 7;
+  type Streak = { pts: number[]; life: number; max: number };
+  const streaks: Streak[] = [];
+  function respawn(s: Streak, fresh = true) {
+    const x = (Math.random() * 2 - 1) * XR;
+    const y = (Math.random() * 2 - 1) * YR;
+    s.pts = [];
+    for (let i = 0; i < TRAIL; i++) s.pts.push(x, y);
+    s.max = 1.8 + Math.random() * 2.8;
+    s.life = fresh ? 0 : Math.random() * s.max;
+  }
+  for (let i = 0; i < 200; i++) {
+    const s: Streak = { pts: [], life: 0, max: 1 };
+    respawn(s, false);
+    streaks.push(s);
+  }
+
+  function advect(dt: number) {
+    const step = dt * state.speed * 0.55;
+    for (const s of streaks) {
+      const n = s.pts.length;
+      let x = s.pts[n - 2], y = s.pts[n - 1];
+      const v = vec(x, y);
+      x += v.x * step;
+      y += v.y * step;
+      s.pts.push(x, y);
+      if (s.pts.length > TRAIL * 2) s.pts.splice(0, 2);
+      s.life += dt * state.speed;
+      if (s.life > s.max || Math.abs(x) > XR * 1.08 || Math.abs(y) > YR * 1.08)
+        respawn(s);
+    }
+  }
+
+  function drawStreaks() {
+    if (!state.streaks) return;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const s of streaks) {
+      const t = s.life / s.max;
+      const a = Math.min(1, Math.min(t, 1 - t) * 6) * 0.55;
+      if (a < 0.02) continue;
+      ctx.strokeStyle = `rgba(${ink()},${a.toFixed(3)})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (let i = 0; i < s.pts.length; i += 2) {
+        const X = sx(s.pts[i]), Y = sy(s.pts[i + 1]);
+        if (i) ctx.lineTo(X, Y);
+        else ctx.moveTo(X, Y);
+      }
+      ctx.stroke();
+      const n = s.pts.length;
+      ctx.fillStyle = `rgba(${ink()},${(a * 1.3).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(sx(s.pts[n - 2]), sy(s.pts[n - 1]), 1.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Tint the plane by the sign of the curl: teal where the flow spins one way,
@@ -139,7 +272,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       for (let px = 0; px < W; px += cell) {
         const t = Math.max(-1, Math.min(1, g[k++] / cmax));
         if (Math.abs(t) < 0.04) continue;
-        ctx.fillStyle = t > 0 ? `rgba(94,234,212,${(0.13 * t).toFixed(3)})` : `rgba(245,158,11,${(0.13 * -t).toFixed(3)})`;
+        ctx.fillStyle = t > 0 ? `rgba(94,234,212,${(0.15 * t).toFixed(3)})` : `rgba(245,158,11,${(0.15 * -t).toFixed(3)})`;
         ctx.fillRect(px, py, cell, cell);
       }
   }
@@ -152,7 +285,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const ax = sx(x), ay = sy(y), bx = ax + v.x * scale, by = ay - v.y * scale;
     const t = Math.min(1, m / 2.2);
     ctx.strokeStyle = css('--accent') || '#7c8cff';
-    ctx.globalAlpha = 0.3 + 0.4 * t;
+    ctx.globalAlpha = 0.22 + 0.32 * t;
     ctx.lineWidth = 1.3 + 1.2 * t;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -169,6 +302,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.closePath();
     ctx.fill();
     ctx.globalAlpha = 1;
+  }
+
+  /** The paddle wheel itself. The ghost is the fixed reference at the origin. */
+  function drawWheel(cx: number, cy: number, r: number, angle: number, ghost: boolean) {
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-angle);
+    const w = ghost ? 3.5 : 5;
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = ghost
+        ? `rgba(${ink()},0.34)`
+        : i % 2
+          ? teal
+          : accent;
+      ctx.fillRect(-w, -r + w, 2 * w, r - 2 * w);
+    }
+    ctx.fillStyle = ghost ? `rgba(${ink()},0.45)` : `rgba(${ink()},1)`;
+    ctx.beginPath();
+    ctx.arc(0, 0, ghost ? 4.5 : 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   function draw() {
@@ -188,9 +345,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (let gy = H / 2 - 48; gy > 0; gy -= 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
 
     // fill the whole visible plane with the field, on a fine even lattice
-    const xr = W / 2 / UNIT, yr = H / 2 / UNIT, dxy = 0.2;
-    for (let y = -Math.ceil(yr / dxy) * dxy; y <= yr; y += dxy)
-      for (let x = -Math.ceil(xr / dxy) * dxy; x <= xr; x += dxy) drawArrow(x, y);
+    const dxy = 0.2;
+    for (let y = -Math.ceil(YR / dxy) * dxy; y <= YR; y += dxy)
+      for (let x = -Math.ceil(XR / dxy) * dxy; x <= XR; x += dxy) drawArrow(x, y);
+
+    drawStreaks();
+
+    // the fixed reference wheel, so a change of rate reads as a change of rate
+    if (state.ref) {
+      const rr = 0.13 * UNIT;
+      const gx = sx(0), gy = sy(0);
+      ctx.strokeStyle = `rgba(${ink()},0.2)`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(gx, gy, rr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      drawWheel(gx, gy, rr, state.refAngle, true);
+      ctx.font = "11px 'JetBrains Mono', monospace";
+      ctx.fillStyle = faint;
+      ctx.textAlign = 'center';
+      ctx.fillText('reference', gx, gy + rr + 16);
+      ctx.textAlign = 'left';
+    }
 
     const cx = sx(state.px), cy = sy(state.py), r = state.radius * UNIT;
 
@@ -219,22 +397,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.stroke();
     }
 
-    // paddle wheel
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(-state.angle);
-    for (let i = 0; i < 4; i++) {
-      ctx.rotate(Math.PI / 2);
-      ctx.fillStyle = i % 2 ? teal : accent;
-      ctx.fillRect(-5, -r + 5, 10, r - 10);
-    }
-    ctx.fillStyle = `rgba(${ink()},1)`;
-    ctx.beginPath();
-    ctx.arc(0, 0, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    drawWheel(cx, cy, r, state.angle, false);
 
+    // readouts
+    const c = curl(state.px, state.py);
+    const c0 = curl(0, 0);
+    const ce = circulationPerArea();
+    const om = c / 2;
+
+    // the probe's own rate, written where the probe is
     ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillStyle = Math.abs(c) < 0.02 ? faint : c > 0 ? teal : '#f59e0b';
+    ctx.textAlign = 'center';
+    ctx.fillText(`ω ${Math.abs(om).toFixed(2)}`, cx, cy - r - 10);
+    ctx.textAlign = 'left';
+
     ctx.fillStyle = teal;
     ctx.fillText('■', 16, H - 16);
     ctx.fillStyle = faint;
@@ -244,17 +421,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.fillStyle = faint;
     ctx.fillText(' spins clockwise', 228, H - 16);
 
-    // readouts
-    const c = curl(state.px, state.py);
-    const ce = circulationPerArea();
-    const om = c / 2;
     (document.getElementById('value') as HTMLElement).textContent = (c >= 0 ? '+' : '') + c.toFixed(2);
     (document.getElementById('circulation') as HTMLElement).textContent = (ce >= 0 ? '+' : '') + ce.toFixed(2);
     (document.getElementById('omega') as HTMLElement).textContent = Math.abs(om).toFixed(2) + ' rad/s';
+    (document.getElementById('omega-ref') as HTMLElement).textContent = Math.abs(c0 / 2).toFixed(2) + ' rad/s';
+    (document.getElementById('ratio') as HTMLElement).textContent =
+      Math.abs(c0) < 1e-4 ? '—' : (c / c0).toFixed(2) + '×';
     const SIGN = Math.abs(c) < 0.02 ? faint : c > 0 ? teal : '#f59e0b';
     setEq([
       [
-        ['(\\nabla\\times\\mathbf{F})_z', SIGN],
+        ['(\\nabla\\times\\mathbf{F})_z(x,y)', SIGN],
         '=\\frac{\\partial Q}{\\partial x}-\\frac{\\partial P}{\\partial y}=',
         ['\\lim\\limits_{A\\to 0}\\frac{\\text{circulation}}{A}', SIGN],
       ],
@@ -262,7 +438,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         [`(\\nabla\\times\\mathbf{F})_z = ${(c >= 0 ? '+' : '') + c.toFixed(2)}`, SIGN],
         `\\quad\\text{spins at }${Math.abs(om).toFixed(2)}\\text{ rad/s}`,
       ],
-      ['teal turns anticlockwise, amber clockwise, and the paddle wheel follows'],
+      ['curl is a number at each point, not one number for the field · drag the wheel and read how the rate changes'],
     ]);
     const d = document.getElementById('direction') as HTMLElement;
     d.textContent = Math.abs(c) < 0.02 ? 'not rotating' : c > 0 ? 'counterclockwise' : 'clockwise';
@@ -275,6 +451,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     last = t;
     if (state.running) {
       state.angle += (curl(state.px, state.py) / 2) * dt * state.speed;
+      state.refAngle += (curl(0, 0) / 2) * dt * state.speed;
+      advect(dt);
     }
     draw();
     requestAnimationFrame(loop);
@@ -296,6 +474,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     document.querySelectorAll('#field button').forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
     state.field = b.dataset.f!;
+    for (const s of streaks) respawn(s, false);
   });
   document.getElementById('strength')!.addEventListener('input', (e) => {
     state.strength = +(e.target as HTMLInputElement).value / 100;
@@ -309,9 +488,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     state.radius = +(e.target as HTMLInputElement).value / 100;
     (document.getElementById('radius-val') as HTMLElement).textContent = state.radius.toFixed(2);
   });
+  (document.getElementById('streaks') as HTMLInputElement).addEventListener('change', (e) => {
+    state.streaks = (e.target as HTMLInputElement).checked;
+  });
+  (document.getElementById('ref') as HTMLInputElement).addEventListener('change', (e) => {
+    state.ref = (e.target as HTMLInputElement).checked;
+  });
   const runBtn = document.getElementById('run') as HTMLButtonElement;
   runBtn.addEventListener('click', () => { state.running = !state.running; runBtn.textContent = state.running ? 'Pause' : 'Run'; });
-  document.getElementById('reset')!.addEventListener('click', () => { state.angle = 0; state.px = 0; state.py = 0; });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    state.angle = 0;
+    state.refAngle = 0;
+    state.px = HOME.x;
+    state.py = HOME.y;
+  });
 
   requestAnimationFrame(loop);
 </script>
@@ -320,5 +510,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   #curl {
     cursor: crosshair;
     touch-action: none;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
   }
 </style>

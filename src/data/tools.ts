@@ -36,7 +36,7 @@ export const AREAS: Area[] = [
         slug: 'partial-derivatives',
         title: 'Partial Derivatives',
         description:
-          'Slide a vertical plane through a surface and the surface becomes one ordinary curve. The slope of its tangent line is a partial derivative; pick the other plane for the other one.',
+          'Slide a vertical plane through a surface and what it cuts is one ordinary curve. The slope of its tangent is a partial derivative; turn the plane for the other.',
         href: '/simulations/calculus/partial-derivatives',
         status: 'live',
       },
@@ -44,7 +44,7 @@ export const AREAS: Area[] = [
         slug: 'riemann-sum',
         title: 'Riemann Sums',
         description:
-          'Approximate the area under a curve with rectangles and watch it converge to the integral.',
+          'Approximate the area under a curve with rectangles, then add more and thinner ones and watch the staircase converge onto the integral.',
         href: '/simulations/calculus/riemann-sum',
         status: 'live',
       },
@@ -73,6 +73,22 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'integration-by-parts',
+        title: 'Integration by Parts',
+        description:
+          'Two areas that tile one rectangle: the integral you were asked for and the one you are handed back. Choosing u is choosing which of the two you would rather do.',
+        href: '/simulations/calculus/integration-by-parts',
+        status: 'live',
+      },
+      {
+        slug: 'differential-equations',
+        title: 'Differential Equations',
+        description:
+          'An equation for the slope instead of the value. Draw it everywhere and the plane fills with segments; a solution is any curve that stays tangent to them the whole way.',
+        href: '/simulations/calculus/differential-equations',
+        status: 'live',
+      },
+      {
         slug: 'taylor-series',
         title: 'Taylor Series',
         description:
@@ -92,7 +108,7 @@ export const AREAS: Area[] = [
         slug: 'laplace-transform',
         title: 'Laplace Transform',
         description:
-          'Plot |F(s)| as a landscape over the complex plane: poles become spikes, the region of convergence a half-plane, and the Fourier transform the slice above the imaginary axis.',
+          'Plot |F(s)| as a landscape over the complex plane, where poles become spikes and the Fourier transform is the slice above the imaginary axis.',
         href: '/simulations/calculus/laplace-transform',
         status: 'live',
       },
@@ -116,7 +132,7 @@ export const AREAS: Area[] = [
         slug: 'line-integral',
         title: 'Line Integrals',
         description:
-          'Ride a bead along a curve through a field in 3D and add up only the part of the field that points your way. Bend the path and find out whether the total cared, which is the whole difference between a conservative field and a swirling one.',
+          'Ride a bead along a curve through a field in 3D, adding up only the part of the field that points your way. Then bend the path and see whether the total cared.',
         href: '/simulations/calculus/line-integral',
         status: 'live',
       },
@@ -124,7 +140,7 @@ export const AREAS: Area[] = [
         slug: 'green-theorem',
         title: "Green's Theorem",
         description:
-          'Chop a wobbly region into little squares and click any one to open it up. Each square carries its own spin, every shared edge is walked twice in opposite directions, and when they cancel only the rim is left.',
+          'Chop a wobbly region into little squares, each carrying its own spin. Every shared edge is walked twice in opposite directions, so only the rim survives.',
         href: '/simulations/calculus/green-theorem',
         status: 'live',
       },
@@ -132,7 +148,7 @@ export const AREAS: Area[] = [
         slug: 'stokes-theorem',
         title: "Stokes' Theorem",
         description:
-          'Tile a surface with little loops, click one to see its own spin, and watch every shared edge cancel in pairs until only the boundary curve is left. Then bend the surface into a dome, a bowl or a crumple: the answer refuses to move.',
+          'Tile a surface with little loops and watch every shared edge cancel in pairs until only the boundary is left. Bend the surface and the answer refuses to move.',
         href: '/simulations/calculus/stokes-theorem',
         status: 'live',
       },
@@ -140,7 +156,7 @@ export const AREAS: Area[] = [
         slug: 'gauss-theorem',
         title: "Gauss's Divergence Theorem",
         description:
-          'Fill a lumpy region with little boxes, cut it open and click one to count what leaks out of its walls. Every inner wall is shared by two boxes and cancels, so the whole sum collapses onto the outer skin alone.',
+          'Fill a lumpy region with little boxes and count what leaks out of each. Every inner wall is shared by two boxes and cancels, leaving only the outer skin.',
         href: '/simulations/calculus/gauss-theorem',
         status: 'live',
       },
@@ -156,7 +172,7 @@ export const AREAS: Area[] = [
         slug: 'curl',
         title: 'Curl',
         description:
-          'Drop a paddle wheel into a vector field and watch local circulation make it spin, revealing the magnitude and sign of curl.',
+          'Drop a paddle wheel into a vector field and drag it around. It spins fast in the core of a differential rotation and barely at all out at the rim.',
         href: '/simulations/calculus/curl',
         status: 'live',
       },
@@ -172,8 +188,24 @@ export const AREAS: Area[] = [
         slug: 'linear-transformation',
         title: 'Linear Transformations',
         description:
-          'Drag the matrix entries and see how the plane, grid and basis vectors deform.',
+          'Drag the matrix entries and watch the plane deform with them, carrying the grid and the two basis vectors along for the ride.',
         href: '/simulations/linear-algebra/linear-transformation',
+        status: 'live',
+      },
+      {
+        slug: 'determinant',
+        title: 'The Determinant',
+        description:
+          'One number for what a matrix does to area. Squash the parallelogram to nothing and the map has thrown a dimension away; push past that and the plane comes back inside out.',
+        href: '/simulations/linear-algebra/determinant',
+        status: 'live',
+      },
+      {
+        slug: 'change-of-basis',
+        title: 'Change of Basis',
+        description:
+          'The same arrow, watched through two different grids and written down as two different pairs of numbers. The dictionary between them is a matrix, and a transformation translated is the sandwich.',
+        href: '/simulations/linear-algebra/change-of-basis',
         status: 'live',
       },
       {
@@ -188,7 +220,7 @@ export const AREAS: Area[] = [
         slug: 'dot-product',
         title: 'The Dot Product',
         description:
-          'One length times the shadow the other casts on it, and the component formula falling out of that picture: break one vector into its three axis steps and add up the shadow each one casts.',
+          'One length times the shadow the other casts on it, with the component formula falling straight out of that one picture.',
         href: '/simulations/linear-algebra/dot-product',
         status: 'live',
       },
@@ -196,7 +228,7 @@ export const AREAS: Area[] = [
         slug: 'cross-product',
         title: 'The Cross Product',
         description:
-          'Two vectors span a patch of area. Its size is the length of the answer and its tilt is the direction, and every component of the formula is the signed area of that patch\u2019s shadow on one of the walls.',
+          'Two vectors span a patch of area. Its size is the length of the answer, its tilt is the direction, and each component is a shadow of that patch.',
         href: '/simulations/linear-algebra/cross-product',
         status: 'live',
       },
@@ -242,25 +274,17 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'joint-distribution',
-        title: 'Joint Probability',
+        title: 'Joint, Marginals & Conditionals',
         description:
-          'Two numbers out of one experiment, laid out as a table of squares whose areas add to one. Drag a box over the pairs you care about and the probability is the area you enclosed; tilt the link between them and watch P(A and B) part company with P(A)P(B).',
+          'Every pair of values gets a square whose area is its probability. Drag a box over the table and read the joint, the marginals and a conditional off one selection.',
         href: '/simulations/statistics/joint-distribution',
-        status: 'live',
-      },
-      {
-        slug: 'marginal-distribution',
-        title: 'Marginals & Conditionals',
-        description:
-          'A marginal is a column of the joint table added up, so the other variable disappears. A conditional is that same column divided by its own total, so it adds to one again. Watch one column do both at once.',
-        href: '/simulations/statistics/marginal-distribution',
         status: 'live',
       },
       {
         slug: 'probability-density',
         title: 'Probability Density',
         description:
-          'No single value has any probability, only stretches do, so a density is the height whose area is that probability. Drag an interval across six different densities, or a circle across a density on the plane, and read off the integral.',
+          'No single value has any probability, only stretches do, so a density is the height whose area is that probability. Drag an interval and read off the integral.',
         href: '/simulations/statistics/probability-density',
         status: 'live',
       },
@@ -348,7 +372,7 @@ export const AREAS: Area[] = [
         slug: 'curse-of-dimensionality',
         title: 'The Curse of Dimensionality',
         description:
-          'Add axes and space stops behaving: data thins out until every point is alone, a ball keeps its volume in a paper-thin crust, near and far collapse into the same distance, and any two directions you pick meet at 90°.',
+          'Add axes and space stops behaving: data thins out, a ball keeps its volume in a paper-thin crust, and near and far collapse into the same distance.',
         href: '/simulations/machine-learning/curse-of-dimensionality',
         status: 'live',
       },
@@ -372,7 +396,7 @@ export const AREAS: Area[] = [
         slug: 'space-warping',
         title: 'How Layers Bend Space',
         description:
-          'Every hidden layer is two units wide, so the space it makes can be drawn. Train on XOR, rings or spirals and step through the layers to watch the grid stretch and fold until one straight line separates the classes.',
+          'Every hidden layer is two units wide, so the space it makes can be drawn. Step through the layers and watch the grid fold until one line separates the classes.',
         href: '/simulations/deep-learning/space-warping',
         status: 'live',
       },
@@ -380,7 +404,7 @@ export const AREAS: Area[] = [
         slug: 'gradient-descent',
         title: 'Gradient Descent',
         description:
-          'Tune the learning rate and starting point to watch optimization roll downhill, or diverge.',
+          'Tune the learning rate and the starting point, then watch optimization roll downhill into a minimum, or overshoot it and diverge.',
         href: '/simulations/deep-learning/gradient-descent',
         status: 'live',
       },
@@ -388,16 +412,8 @@ export const AREAS: Area[] = [
         slug: 'optimizers',
         title: 'Optimizers',
         description:
-          'Race SGD, Momentum, NAG, RMSProp and Adam down a 3D loss surface and watch how differently they descend.',
+          'Race SGD, Momentum, NAG, RMSProp and Adam down the same loss, drawn either as a surface you can click on or as a volumetric cloud in three parameters.',
         href: '/simulations/deep-learning/optimizers',
-        status: 'live',
-      },
-      {
-        slug: 'optimizers-3d',
-        title: 'Optimizers in 3D',
-        description:
-          'Same optimizer race, but the loss is a volumetric density cloud and the balls move freely through 3D space toward the densest cores.',
-        href: '/simulations/deep-learning/optimizers-3d',
         status: 'live',
       },
       {
@@ -412,7 +428,7 @@ export const AREAS: Area[] = [
         slug: 'cosine-similarity',
         title: 'Embeddings & Cosine Similarity',
         description:
-          'Every word is an arrow, and meaning is the direction it points. Drag a query around and watch which word it lines up with, then see why the raw dot product prefers long vectors and the cosine does not.',
+          'Every word is an arrow and meaning is the direction it points. Drag a query around and see why the raw dot product prefers long vectors and the cosine does not.',
         href: '/simulations/deep-learning/cosine-similarity',
         status: 'live',
       },
@@ -420,7 +436,7 @@ export const AREAS: Area[] = [
         slug: 'attention',
         title: 'Attention as a Soft Lookup',
         description:
-          'A dictionary returns one value; attention returns a blend of all of them, weighted by how well each key matches the query. The values here are colours, so the blend is something you can see, and temperature slides you between a hard lookup and a grey average.',
+          'A dictionary returns one value; attention returns a blend of all of them, weighted by how well each key matches the query. Here the values are colours.',
         href: '/simulations/deep-learning/attention',
         status: 'live',
       },
@@ -428,7 +444,7 @@ export const AREAS: Area[] = [
         slug: 'self-attention',
         title: 'Self-Attention',
         description:
-          'Every token in a sentence writes a query, every token answers with a key, and the whole thing becomes one matrix of weights. Pick a token to see what it looks at, switch heads to see different jobs, and turn on the causal mask to see the future disappear.',
+          'Every token writes a query and answers with a key, and the whole thing becomes one matrix of weights. Pick a token to see what it chooses to look at.',
         href: '/simulations/deep-learning/self-attention',
         status: 'live',
       },
@@ -460,7 +476,7 @@ export const AREAS: Area[] = [
         slug: 'bpe-tokenizer',
         title: 'Byte Pair Encoding',
         description:
-          'Build a tokenizer by counting: glue the commonest pair of neighbouring symbols into one, over and over, and watch the vocabulary grow from bare letters into whole words. Then hand it a sentence it has never seen and see where it cuts.',
+          'Glue the commonest pair of neighbouring symbols into one, over and over, and watch a vocabulary grow from bare letters into whole words.',
         href: '/simulations/generative-ai/bpe-tokenizer',
         status: 'live',
       },
@@ -468,7 +484,7 @@ export const AREAS: Area[] = [
         slug: 'autoregressive',
         title: 'Autoregressive Models',
         description:
-          'A 40-word vocabulary, a probability for every one of them at every step, and temperature, top-k and top-p deciding which survive to be sampled. The same next-token loop that powers large language models, small enough to see whole.',
+          'A 40-word vocabulary with a probability for every word at every step, and temperature, top-k and top-p deciding which of them survive to be sampled.',
         href: '/simulations/generative-ai/autoregressive',
         status: 'live',
       },
@@ -524,7 +540,7 @@ export const AREAS: Area[] = [
         slug: 'phonons',
         title: 'Phonons',
         description:
-          'Every mass obeys Hooke’s law and pulls only on its neighbours. Out comes a pulse travelling at a speed nobody wrote down, and a shortest possible wavelength that no continuous material would have.',
+          'Every mass obeys Hooke’s law and pulls only on its neighbours. Out comes a pulse travelling at a speed nobody wrote down, and a shortest possible wavelength.',
         href: '/simulations/physics/phonons',
         status: 'live',
       },
@@ -540,7 +556,7 @@ export const AREAS: Area[] = [
         slug: 'ideal-gas',
         title: 'Ideal Gas',
         description:
-          'A few hundred molecules bouncing in a box, and nothing else. Pressure is the drumming of their impacts, temperature is how fast they are, and PV = NkT is what the counting adds up to.',
+          'A few hundred molecules bouncing in a box. Pressure is the drumming of their impacts, temperature is how fast they are, and PV = NkT is what that adds up to.',
         href: '/simulations/physics/ideal-gas',
         status: 'live',
       },
@@ -548,7 +564,7 @@ export const AREAS: Area[] = [
         slug: 'stationary-action',
         title: 'Stationary Action',
         description:
-          'Bend the path a particle takes between two fixed events and watch its action get worse. The path is painted with its own Lagrangian, the shaded area under L is the action, and rolling that downhill is Newton in disguise.',
+          'Bend the path a particle takes between two fixed events and watch its action get worse. Rolling that downhill turns out to be Newton in disguise.',
         href: '/simulations/physics/stationary-action',
         status: 'live',
       },
@@ -556,7 +572,7 @@ export const AREAS: Area[] = [
         slug: 'band-theory',
         title: 'Band Theory',
         description:
-          'Bring a line of atoms together and every level splits into a band. Which bands are full, and how wide the gap is, decides on its own whether you are holding a metal, a semiconductor or a rock.',
+          'Bring a line of atoms together and every level splits into a band. Which bands are full, and how wide the gap is, decides metal, semiconductor or rock.',
         href: '/simulations/physics/band-theory',
         status: 'live',
       },
@@ -572,7 +588,7 @@ export const AREAS: Area[] = [
         slug: 'fission',
         title: 'Nuclear Fission',
         description:
-          'One neutron splits one nucleus and two more fly out. Turn the enrichment, the size and the control rods and watch the chain die, hold steady, or run away, the same knobs that separate a warm reactor from Chernobyl and from Hiroshima.',
+          'One neutron splits one nucleus and two more fly out. Turn the enrichment, the size and the control rods and watch the chain die, hold steady, or run away.',
         href: '/simulations/physics/fission',
         status: 'live',
       },
@@ -580,7 +596,7 @@ export const AREAS: Area[] = [
         slug: 'fusion',
         title: 'Nuclear Fusion',
         description:
-          'Slam light nuclei together hard enough to tunnel through their own repulsion. Crank the temperature, the density and the confinement and chase the one line every star and every reactor has to cross: power out beating power lost.',
+          'Slam light nuclei together hard enough to tunnel through their own repulsion, and chase the one line every star has to cross: power out beating power lost.',
         href: '/simulations/physics/fusion',
         status: 'live',
       },
@@ -629,10 +645,18 @@ export const AREAS: Area[] = [
     icon: 'M6 6h12v12H6z M9 3v3 M15 3v3 M9 18v3 M15 18v3 M3 9h3 M3 15h3 M18 9h3 M18 15h3',
     simulators: [
       {
+        slug: 'resistor',
+        title: 'Resistor',
+        description:
+          'The field pulls an electron along and the lattice knocks it back to random, over and over. The average of that stop-start crawl is the current, and the winnings the lattice keeps are the heat.',
+        href: '/simulations/electronics/resistor',
+        status: 'live',
+      },
+      {
         slug: 'semiconductors',
         title: 'Diodes & Transistors',
         description:
-          'Pick a diode or a transistor and watch electrons and holes move through it while you drive the external circuit. A one-way valve, then a valve with a knob, both made of a barrier you can raise and lower.',
+          'Pick a diode or a transistor and watch electrons and holes move through it: a one-way valve, then a valve with a knob, both built from a barrier you can raise.',
         href: '/simulations/electronics/semiconductors',
         status: 'live',
       },
@@ -640,7 +664,7 @@ export const AREAS: Area[] = [
         slug: 'capacitor',
         title: 'Capacitor',
         description:
-          'Every charge is a ball you can count. Drive the source by hand or with AC, and watch electrons get dragged off one plate, round the circuit, onto the other, building the field that finally pushes back.',
+          'Every charge is a ball you can count. Drive the source by hand and watch electrons get dragged off one plate, round the circuit, and onto the other one.',
         href: '/simulations/electronics/capacitor',
         status: 'live',
       },
@@ -648,8 +672,32 @@ export const AREAS: Area[] = [
         slug: 'inductor',
         title: 'Inductor',
         description:
-          'A flywheel for charge. Shove the source by hand and the electrons will not jump, only ramp, and when you cut them off the collapsing field produces hundreds of times the battery voltage to keep them moving.',
+          'A flywheel for charge. Shove the source and the electrons will not jump, only ramp, and cutting them off makes the collapsing field fight to keep them going.',
         href: '/simulations/electronics/inductor',
+        status: 'live',
+      },
+      {
+        slug: 'memristor',
+        title: 'Memristor',
+        description:
+          'A resistor that remembers the charge that has been through it. Watch the boundary inside the film move as you drive it, and stay put when you stop.',
+        href: '/simulations/electronics/memristor',
+        status: 'live',
+      },
+      {
+        slug: 'rlc',
+        title: 'RC, RL and RLC Circuits',
+        description:
+          'One store of energy makes a circuit slow; two make it ring. Watch the transient, the damping and the frequency response all follow the same pair of poles as you move R.',
+        href: '/simulations/electronics/rlc',
+        status: 'live',
+      },
+      {
+        slug: 'mosfet',
+        title: 'MOSFET & CMOS Logic',
+        description:
+          'A plate of metal that conjures a wire underneath itself and never touches it. Then stack a p-type one on an n-type one and get a gate that costs power only while it changes its mind.',
+        href: '/simulations/electronics/mosfet',
         status: 'live',
       },
     ],

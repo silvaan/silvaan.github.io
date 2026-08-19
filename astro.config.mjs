@@ -8,6 +8,13 @@ import rehypeKatex from 'rehype-katex';
 export default defineConfig({
   site: 'https://silvaan.xyz',
   integrations: [mdx(), sitemap()],
+  // Simulators that were folded into a single richer page. The old slugs were
+  // public, so they keep working and land on the mode that replaced them.
+  redirects: {
+    '/simulations/statistics/marginal-distribution':
+      '/simulations/statistics/joint-distribution',
+    '/simulations/deep-learning/optimizers-3d': '/simulations/deep-learning/optimizers',
+  },
   markdown: {
     // Keep authored punctuation literal so `--`/`---` never become en/em dashes.
     smartypants: false,

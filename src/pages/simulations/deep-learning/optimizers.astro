@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Optimizers"
-  description="Five optimizers descending the same 3D loss surface. Click the surface to set where they start, give each its own learning rate and hyperparameters, show the gradient and momentum arrows, and step frame by frame to compare SGD, Momentum, Nesterov, RMSProp and Adam."
+  description="Five optimizers descending the same loss, drawn two ways. As a surface, the loss is a height you can read off directly and click on to choose where they start. As a volumetric cloud, the loss is minus a density and the balls move freely through 3D space toward the brightest cores. The hyperparameters carry across, so the same setup can be watched in both."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -14,6 +14,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     <div class="sim-panel">
       <div class="control">
+        <label>Landscape</label>
+        <div class="seg" id="mode">
+          <button data-m="surface" class="active">Surface</button>
+          <button data-m="cloud">Density cloud</button>
+        </div>
+      </div>
+
+      <div class="control" id="surfwrap">
         <label>Surface</label>
         <div class="seg" id="surf">
           <button data-s="saddle" class="active">Saddle</button>
@@ -31,12 +39,18 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <button class="btn" id="run">Pause</button>
         <button class="btn ghost" id="step">Step</button>
         <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="newfield">New field</button>
         <button class="btn ghost" id="newstart">Random start</button>
       </div>
 
       <div class="control">
         <label>Speed (steps / sec) <b id="spval">10</b></label>
         <input type="range" id="sp" min="2" max="80" value="10" />
+      </div>
+
+      <div class="control" id="ptswrap">
+        <label>Point density <b id="ptval">3500</b></label>
+        <input type="range" id="pts" min="600" max="6000" step="200" value="3500" />
       </div>
 
       <div class="control">
@@ -52,13 +66,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
       <div class="readout">
         <div class="row"><span>Iteration</span><b id="iter">0</b></div>
+        <div class="row"><span>Parameters</span><b id="dim">2</b></div>
       </div>
 
       <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag to orbit, scroll to zoom, click the surface to drop the start point
-        there. Click an optimizer's coloured dot to toggle it on or off. The
-        dashed white arrow is the downhill gradient; the coloured arrow is its
-        momentum.
+        Drag to orbit, scroll to zoom. On the surface, click to drop the start
+        point there; in the cloud, colour runs blue (sparse) to red (dense) and
+        the loss is minus the density, so the balls climb into the bright cores.
+        Toggle an optimizer with its coloured checkbox. The dashed white arrow is
+        the downhill gradient; the coloured arrow is its momentum.
       </p>
     </div>
   </div>
@@ -77,6 +93,23 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       straight downhill, but the coloured <b>momentum</b> arrow lags behind:
       that stored inertia is why momentum overshoots and then corrects.
     </li>
+    <li>
+      Now switch to the <b>density cloud</b> without touching anything else. The
+      optimizers are the same five, running the same hyperparameters, but the
+      loss now lives in three parameters instead of two and there is no height to
+      read off: only the haze tells you where the minima are. Watch the same
+      learning rate that behaved on the surface start to overshoot.
+    </li>
+    <li>
+      In the cloud, orbit while a path is running. A trail that looks like it is
+      diving into a bright core often turns out to be passing well in front of
+      it, which is the honest version of what "seeing" a loss landscape means
+      once you are past two parameters.
+    </li>
+    <li>
+      Hit <b>new field</b> a few times. With several cores, different optimizers
+      can end up in <b>different</b> ones from the very same start.
+    </li>
   </Fragment>
 </SimLayout>
 
@@ -89,12 +122,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const ink = () => css('--stage-ink') || '232,233,236';
   const CX = W / 2;
   const CY = H / 2;
-  const CAM = 3.2;
-  const FOCAL = 2.7;
-  const SCALE = 250;
-  const D = 2;
+  const CAM = 3.25;
+  const FOCAL = 2.75;
+  const SCALE = 255;
   const EPS = 1e-7;
 
+  /** How far the parameters may wander, per landscape. */
+  const D = 2; // surface: the square the mesh is drawn over
+  const LIM = 1.3; // cloud: the box the points are sampled in
+
+  // ---------------------------------------------------------------------------
+  // The two landscapes. Both boil down to one thing the optimizers care about:
+  // a gradient at a point. Everything else is how it gets drawn.
+  // ---------------------------------------------------------------------------
   type Surf = {
     f: (x: number, y: number) => number;
     g: (x: number, y: number) => { x: number; y: number };
@@ -137,81 +177,39 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     },
   };
 
-  type Cfg = { on: boolean; lr: number; momentum: number; rho: number; beta1: number; beta2: number };
-  type RT = { x: number; y: number; mx: number; my: number; vx: number; vy: number; t: number };
+  const NMAX = 6000;
+  type Blob = { x: number; y: number; z: number; s: number; a: number };
+  let blobs: Blob[] = [];
+  const cpx = new Float32Array(NMAX);
+  const cpy = new Float32Array(NMAX);
+  const cpz = new Float32Array(NMAX);
+  const cpt = new Float32Array(NMAX);
+  let nPoints = 0;
+  let dMin = 0, dSpan = 1;
 
-  const DEFS: { name: string; color: string; uses: string[]; step: (o: RT, c: Cfg, g: Surf['g']) => void }[] = [
-    {
-      name: 'SGD', color: '#f87171', uses: ['lr'],
-      step: (o, c, g) => { const d = g(o.x, o.y); o.x -= c.lr * d.x; o.y -= c.lr * d.y; },
-    },
-    {
-      name: 'Momentum', color: '#fbbf24', uses: ['lr', 'momentum'],
-      step: (o, c, g) => {
-        const d = g(o.x, o.y);
-        o.vx = c.momentum * o.vx - c.lr * d.x; o.vy = c.momentum * o.vy - c.lr * d.y;
-        o.x += o.vx; o.y += o.vy;
-      },
-    },
-    {
-      name: 'Nesterov', color: '#34d399', uses: ['lr', 'momentum'],
-      step: (o, c, g) => {
-        const d = g(o.x + c.momentum * o.vx, o.y + c.momentum * o.vy);
-        o.vx = c.momentum * o.vx - c.lr * d.x; o.vy = c.momentum * o.vy - c.lr * d.y;
-        o.x += o.vx; o.y += o.vy;
-      },
-    },
-    {
-      name: 'RMSProp', color: '#60a5fa', uses: ['lr', 'rho'],
-      step: (o, c, g) => {
-        const d = g(o.x, o.y);
-        o.vx = c.rho * o.vx + (1 - c.rho) * d.x * d.x;
-        o.vy = c.rho * o.vy + (1 - c.rho) * d.y * d.y;
-        o.x -= (c.lr * d.x) / (Math.sqrt(o.vx) + EPS);
-        o.y -= (c.lr * d.y) / (Math.sqrt(o.vy) + EPS);
-      },
-    },
-    {
-      name: 'Adam', color: '#c084fc', uses: ['lr', 'beta1', 'beta2'],
-      step: (o, c, g) => {
-        const d = g(o.x, o.y); o.t++;
-        o.mx = c.beta1 * o.mx + (1 - c.beta1) * d.x; o.my = c.beta1 * o.my + (1 - c.beta1) * d.y;
-        o.vx = c.beta2 * o.vx + (1 - c.beta2) * d.x * d.x; o.vy = c.beta2 * o.vy + (1 - c.beta2) * d.y * d.y;
-        const mhx = o.mx / (1 - c.beta1 ** o.t), mhy = o.my / (1 - c.beta1 ** o.t);
-        const vhx = o.vx / (1 - c.beta2 ** o.t), vhy = o.vy / (1 - c.beta2 ** o.t);
-        o.x -= (c.lr * mhx) / (Math.sqrt(vhx) + EPS);
-        o.y -= (c.lr * mhy) / (Math.sqrt(vhy) + EPS);
-      },
-    },
-  ];
-
-  // velocity vector to show as the "momentum" arrow (null where not meaningful)
-  function momentumOf(i: number): { x: number; y: number } | null {
-    const o = rt[i];
-    const n = DEFS[i].name;
-    if (n === 'Momentum' || n === 'Nesterov') return { x: o.vx, y: o.vy };
-    if (n === 'Adam') return { x: o.mx, y: o.my };
-    return null;
+  function density(x: number, y: number, z: number) {
+    let f = 0;
+    for (const b of blobs) {
+      const dx = x - b.x, dy = y - b.y, dz = z - b.z;
+      f += b.a * Math.exp(-(dx * dx + dy * dy + dz * dz) / (2 * b.s * b.s));
+    }
+    return f;
   }
-
-  const PMETA: Record<string, { label: string; min: number; max: number; scale: number; fmt: number }> = {
-    lr: { label: 'Learning rate', min: 2, max: 200, scale: 1000, fmt: 3 },
-    momentum: { label: 'Momentum β', min: 0, max: 99, scale: 100, fmt: 2 },
-    rho: { label: 'Decay ρ', min: 500, max: 999, scale: 1000, fmt: 3 },
-    beta1: { label: 'β₁', min: 0, max: 99, scale: 100, fmt: 2 },
-    beta2: { label: 'β₂', min: 9000, max: 9999, scale: 10000, fmt: 4 },
-  };
-
-  const cfg: Cfg[] = DEFS.map(() => ({ on: true, lr: 0.03, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
-  let rt: RT[] = [];
-  const trails: { x: number; y: number }[][] = [];
+  // loss = −density, so minimising it means climbing into the dense cores
+  const cloudLoss = (p: number[]) => -density(p[0], p[1], p[2]);
 
   const state = {
+    mode: 'surface' as 'surface' | 'cloud',
     yaw: 0.7, pitch: -0.62, surf: 'saddle', speed: 10, running: true,
-    iter: 0, start: { x: 1.0, y: 0.7 }, showGrad: false, showMom: false, zoom: 1,
+    iter: 0, showGrad: false, showMom: false, zoom: 1, count: 3500,
+    start2: [1.0, 0.7],
+    start3: [0.8, 0.6, 0.5],
   };
-  let fmin = 0, fspan = 1;
+  const surfaceMode = () => state.mode === 'surface';
+  const start = () => (surfaceMode() ? state.start2 : state.start3);
+  const limit = () => (surfaceMode() ? D : LIM);
 
+  let fmin = 0, fspan = 1;
   const curF = (x: number, y: number) => SURFACES[state.surf].f(x, y);
 
   function computeRange() {
@@ -225,9 +223,31 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     fspan = fmax - fmin || 1;
   }
 
-  function worldOf(x: number, y: number) {
-    const wy = ((curF(x, y) - fmin) / fspan) * 1.3 - 0.65;
-    return project(x / D, wy, y / D);
+  /** The one call the optimizers make. Analytic on a surface, differenced in the cloud. */
+  function grad(p: number[]): number[] {
+    if (surfaceMode()) {
+      const g = SURFACES[state.surf].g(p[0], p[1]);
+      return [g.x, g.y];
+    }
+    const h = 0.02;
+    const out: number[] = [];
+    for (let k = 0; k < 3; k++) {
+      const a = [...p], b = [...p];
+      a[k] += h; b[k] -= h;
+      out.push((cloudLoss(a) - cloudLoss(b)) / (2 * h));
+    }
+    return out;
+  }
+
+  /**
+   * Parameters to a point in the drawn scene. On a surface the two parameters
+   * are the floor and the loss becomes the height; in the cloud all three
+   * parameters are already spatial and nothing is added.
+   */
+  function toWorld(p: number[]): [number, number, number] {
+    if (surfaceMode())
+      return [p[0] / D, ((curF(p[0], p[1]) - fmin) / fspan) * 1.3 - 0.65, p[1] / D];
+    return [p[0], p[1], p[2]];
   }
 
   function project(x: number, y: number, z: number) {
@@ -242,43 +262,159 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const k = s * SCALE * state.zoom;
     return { sx: CX + x1 * k, sy: CY - y2 * k, s: s * state.zoom, zc };
   }
+  const projectP = (p: number[]) => {
+    const w = toWorld(p);
+    return project(w[0], w[1], w[2]);
+  };
 
   function turbo(t: number) {
     t = Math.max(0, Math.min(1, t));
-    const stops = [[40, 60, 150], [30, 150, 200], [50, 200, 120], [240, 200, 70], [235, 80, 70]];
+    const stops = [[30, 52, 140], [26, 150, 205], [45, 200, 120], [242, 202, 65], [238, 75, 62]];
     const seg = t * (stops.length - 1);
     const i = Math.min(stops.length - 2, Math.floor(seg));
     const f = seg - i;
     const a = stops[i], b = stops[i + 1];
-    return `rgb(${(a[0] + (b[0] - a[0]) * f) | 0},${(a[1] + (b[1] - a[1]) * f) | 0},${(a[2] + (b[2] - a[2]) * f) | 0})`;
+    return [(a[0] + (b[0] - a[0]) * f) | 0, (a[1] + (b[1] - a[1]) * f) | 0, (a[2] + (b[2] - a[2]) * f) | 0];
+  }
+  const turboCss = (t: number) => { const c = turbo(t); return `rgb(${c[0]},${c[1]},${c[2]})`; };
+
+  // ---------------------------------------------------------------------------
+  // The optimizers, written once in vector form so the same code runs over two
+  // parameters or three.
+  // ---------------------------------------------------------------------------
+  type Cfg = { on: boolean; lr: number; momentum: number; rho: number; beta1: number; beta2: number };
+  type RT = { p: number[]; m: number[]; v: number[]; t: number };
+
+  const DEFS: { name: string; color: string; uses: string[]; step: (o: RT, c: Cfg) => void }[] = [
+    {
+      name: 'SGD', color: '#f87171', uses: ['lr'],
+      step: (o, c) => {
+        const g = grad(o.p);
+        for (let k = 0; k < o.p.length; k++) o.p[k] -= c.lr * g[k];
+      },
+    },
+    {
+      name: 'Momentum', color: '#fbbf24', uses: ['lr', 'momentum'],
+      step: (o, c) => {
+        const g = grad(o.p);
+        for (let k = 0; k < o.p.length; k++) {
+          o.v[k] = c.momentum * o.v[k] - c.lr * g[k];
+          o.p[k] += o.v[k];
+        }
+      },
+    },
+    {
+      name: 'Nesterov', color: '#34d399', uses: ['lr', 'momentum'],
+      step: (o, c) => {
+        const look = o.p.map((v, k) => v + c.momentum * o.v[k]);
+        const g = grad(look);
+        for (let k = 0; k < o.p.length; k++) {
+          o.v[k] = c.momentum * o.v[k] - c.lr * g[k];
+          o.p[k] += o.v[k];
+        }
+      },
+    },
+    {
+      name: 'RMSProp', color: '#60a5fa', uses: ['lr', 'rho'],
+      step: (o, c) => {
+        const g = grad(o.p);
+        for (let k = 0; k < o.p.length; k++) {
+          o.v[k] = c.rho * o.v[k] + (1 - c.rho) * g[k] * g[k];
+          o.p[k] -= (c.lr * g[k]) / (Math.sqrt(o.v[k]) + EPS);
+        }
+      },
+    },
+    {
+      name: 'Adam', color: '#c084fc', uses: ['lr', 'beta1', 'beta2'],
+      step: (o, c) => {
+        const g = grad(o.p); o.t++;
+        for (let k = 0; k < o.p.length; k++) {
+          o.m[k] = c.beta1 * o.m[k] + (1 - c.beta1) * g[k];
+          o.v[k] = c.beta2 * o.v[k] + (1 - c.beta2) * g[k] * g[k];
+          const mh = o.m[k] / (1 - c.beta1 ** o.t), vh = o.v[k] / (1 - c.beta2 ** o.t);
+          o.p[k] -= (c.lr * mh) / (Math.sqrt(vh) + EPS);
+        }
+      },
+    },
+  ];
+
+  /** The velocity to show as the "momentum" arrow, where there is one. */
+  function momentumOf(i: number): number[] | null {
+    const n = DEFS[i].name;
+    if (n === 'Momentum' || n === 'Nesterov') return rt[i].v;
+    if (n === 'Adam') return rt[i].m;
+    return null;
   }
 
+  const PMETA: Record<string, { label: string; min: number; max: number; scale: number; fmt: number }> = {
+    lr: { label: 'Learning rate', min: 2, max: 300, scale: 1000, fmt: 3 },
+    momentum: { label: 'Momentum β', min: 0, max: 99, scale: 100, fmt: 2 },
+    rho: { label: 'Decay ρ', min: 500, max: 999, scale: 1000, fmt: 3 },
+    beta1: { label: 'β₁', min: 0, max: 99, scale: 100, fmt: 2 },
+    beta2: { label: 'β₂', min: 9000, max: 9999, scale: 10000, fmt: 4 },
+  };
+
+  const cfg: Cfg[] = DEFS.map(() => ({ on: true, lr: 0.04, momentum: 0.9, rho: 0.9, beta1: 0.9, beta2: 0.999 }));
+  let rt: RT[] = [];
+  const trails: number[][][] = [];
+
   function resetOpts() {
-    rt = DEFS.map(() => ({ x: state.start.x, y: state.start.y, mx: 0, my: 0, vx: 0, vy: 0, t: 0 }));
+    const s = start();
+    const n = s.length;
+    rt = DEFS.map(() => ({ p: [...s], m: new Array(n).fill(0), v: new Array(n).fill(0), t: 0 }));
     state.iter = 0;
     trails.length = 0;
-    for (let i = 0; i < DEFS.length; i++) trails.push([{ ...state.start }]);
+    for (let i = 0; i < DEFS.length; i++) trails.push([[...s]]);
   }
 
   function stepAll() {
-    const g = SURFACES[state.surf].g;
+    const L = limit();
     DEFS.forEach((def, i) => {
       if (!cfg[i].on) return;
       const o = rt[i];
-      if (!isFinite(o.x) || !isFinite(o.y)) return;
-      def.step(o, cfg[i], g);
-      o.x = Math.max(-D, Math.min(D, o.x));
-      o.y = Math.max(-D, Math.min(D, o.y));
+      if (!isFinite(o.p[0])) return;
+      def.step(o, cfg[i]);
+      for (let k = 0; k < o.p.length; k++) o.p[k] = Math.max(-L, Math.min(L, o.p[k]));
       const tr = trails[i];
-      tr.push({ x: o.x, y: o.y });
+      tr.push([...o.p]);
       if (tr.length > 600) tr.shift();
     });
     state.iter++;
   }
 
-  function arrow(x: number, y: number, dx: number, dy: number, L: number, color: string, dashed: boolean) {
-    const a = worldOf(x, y);
-    const b = worldOf(x + dx * L, y + dy * L);
+  function newField() {
+    const n = 3 + Math.floor(Math.random() * 3);
+    blobs = [];
+    for (let i = 0; i < n; i++) {
+      blobs.push({
+        x: Math.random() * 1.4 - 0.7, y: Math.random() * 1.4 - 0.7, z: Math.random() * 1.4 - 0.7,
+        s: 0.2 + Math.random() * 0.22, a: 0.6 + Math.random() * 0.9,
+      });
+    }
+    dMin = Infinity; let dMax = -Infinity;
+    for (let i = 0; i < 6000; i++) {
+      const d = density(Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2, Math.random() * 2.4 - 1.2);
+      if (d < dMin) dMin = d;
+      if (d > dMax) dMax = d;
+    }
+    dSpan = dMax - dMin || 1;
+
+    nPoints = 0;
+    let tries = 0;
+    while (nPoints < NMAX && tries < NMAX * 60) {
+      tries++;
+      const x = Math.random() * 2.2 - 1.1, y = Math.random() * 2.2 - 1.1, z = Math.random() * 2.2 - 1.1;
+      const t = (density(x, y, z) - dMin) / dSpan;
+      if (Math.random() < Math.pow(Math.max(0, t), 1.6) * 0.9 + 0.02) {
+        cpx[nPoints] = x; cpy[nPoints] = y; cpz[nPoints] = z; cpt[nPoints] = t;
+        nPoints++;
+      }
+    }
+  }
+
+  function arrow(p: number[], dir: number[], L: number, color: string, dashed: boolean) {
+    const a = projectP(p);
+    const b = projectP(p.map((v, k) => v + dir[k] * L));
     if (a.zc <= 0.1 || b.zc <= 0.1) return;
     ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
     if (dashed) ctx.setLineDash([4, 3]);
@@ -293,8 +429,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.closePath(); ctx.fill();
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
+  // --- the two backdrops -----------------------------------------------------
+  function drawSurface() {
     const M = 30;
     for (let i = 0; i <= M; i++) {
       for (const axis of [0, 1]) {
@@ -305,18 +441,18 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           const b = -D + (2 * D * j) / M;
           const x = axis === 0 ? b : a;
           const y = axis === 0 ? a : b;
-          const p = worldOf(x, y);
+          const p = projectP([x, y]);
           if (p.zc <= 0.1) { started = false; continue; }
           if (!started) { ctx.moveTo(p.sx, p.sy); started = true; } else ctx.lineTo(p.sx, p.sy);
         }
         const a = -D + (2 * D * i) / M;
         const tH = (curF(axis === 0 ? 0 : a, axis === 0 ? a : 0) - fmin) / fspan;
         if (isLight()) {
-          const m = (turbo(tH).match(/\d+/g) || ['0', '0', '0']).map(Number);
+          const m = turbo(tH);
           ctx.strokeStyle = `rgb(${(m[0] * 0.6) | 0},${(m[1] * 0.6) | 0},${(m[2] * 0.6) | 0})`;
           ctx.globalAlpha = 0.65;
         } else {
-          ctx.strokeStyle = turbo(tH);
+          ctx.strokeStyle = turboCss(tH);
           ctx.globalAlpha = 0.38;
         }
         ctx.lineWidth = 1;
@@ -325,7 +461,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
     }
 
-    const sm = worldOf(state.start.x, state.start.y);
+    const sm = projectP(state.start2);
     if (sm.zc > 0.1) {
       ctx.strokeStyle = `rgba(${ink()},0.55)`;
       ctx.lineWidth = 1.5;
@@ -333,6 +469,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.arc(sm.sx, sm.sy, 4, 0, 6.2832);
       ctx.stroke();
     }
+  }
+
+  function drawCloud() {
+    const light = isLight();
+    ctx.globalCompositeOperation = light ? 'multiply' : 'lighter';
+    const count = Math.min(state.count, nPoints);
+    for (let i = 0; i < count; i++) {
+      const p = project(cpx[i], cpy[i], cpz[i]);
+      if (p.zc <= 0.1) continue;
+      const c = turbo(cpt[i]);
+      const alpha = light ? 0.1 + 0.44 * cpt[i] : 0.07 + 0.36 * cpt[i];
+      const r = Math.max(0.7, 1.5 * p.s);
+      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (surfaceMode()) drawSurface();
+    else drawCloud();
 
     DEFS.forEach((def, i) => {
       if (!cfg[i].on) return;
@@ -343,7 +503,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.beginPath();
       let started = false;
       for (const pt of tr) {
-        const p = worldOf(pt.x, pt.y);
+        const p = projectP(pt);
         if (p.zc <= 0.1) { started = false; continue; }
         if (!started) { ctx.moveTo(p.sx, p.sy); started = true; } else ctx.lineTo(p.sx, p.sy);
       }
@@ -351,21 +511,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.globalAlpha = 1;
 
       const o = rt[i];
-      // arrows
       if (state.showGrad) {
-        const g = SURFACES[state.surf].g(o.x, o.y);
-        const m = Math.hypot(g.x, g.y);
-        if (m > 1e-5) arrow(o.x, o.y, -g.x / m, -g.y / m, 0.34, `rgba(${ink()},0.92)`, true);
+        const g = grad(o.p);
+        const m = Math.hypot(...g);
+        if (m > 1e-5) arrow(o.p, g.map((v) => -v / m), surfaceMode() ? 0.34 : 0.3, `rgba(${ink()},0.92)`, true);
       }
       if (state.showMom) {
         const v = momentumOf(i);
         if (v) {
-          const m = Math.hypot(v.x, v.y);
-          if (m > 1e-5) arrow(o.x, o.y, v.x / m, v.y / m, Math.min(0.55, m * 5) + 0.05, def.color, false);
+          const m = Math.hypot(...v);
+          if (m > 1e-5)
+            arrow(o.p, v.map((c) => c / m), Math.min(0.55, m * (surfaceMode() ? 5 : 6)) + 0.05, def.color, false);
         }
       }
 
-      const p = worldOf(o.x, o.y);
+      const p = projectP(o.p);
       if (p.zc > 0.1) {
         ctx.fillStyle = def.color;
         ctx.beginPath();
@@ -385,10 +545,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const ox = 50, oy = H - 50, len = 28;
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
     const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+    // on a surface the vertical axis is the loss itself, in the cloud it is a
+    // third parameter like the other two
+    const up = surfaceMode() ? 'f' : 'y';
+    const across = surfaceMode() ? 'y' : 'z';
     const axes = [
       { v: [1, 0, 0], c: '#f87171', l: 'x' },
-      { v: [0, 1, 0], c: '#4ade80', l: 'f' },
-      { v: [0, 0, 1], c: '#60a5fa', l: 'y' },
+      { v: [0, 1, 0], c: '#4ade80', l: up },
+      { v: [0, 0, 1], c: '#60a5fa', l: across },
     ];
     const proj = axes.map((a) => {
       const [x, y, z] = a.v;
@@ -449,8 +613,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     });
   });
 
-  // ---- click on surface to set start ----
+  // ---- click on the surface to set the start ----
   function pickStart(clientX: number, clientY: number) {
+    if (!surfaceMode()) return;
     const rect = canvas.getBoundingClientRect();
     const mx = ((clientX - rect.left) / rect.width) * W;
     const my = ((clientY - rect.top) / rect.height) * H;
@@ -460,13 +625,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       for (let j = 0; j <= G; j++) {
         const x = -D + (2 * D * i) / G;
         const y = -D + (2 * D * j) / G;
-        const p = worldOf(x, y);
+        const p = projectP([x, y]);
         if (p.zc <= 0.1) continue;
         const d = (p.sx - mx) ** 2 + (p.sy - my) ** 2;
         if (d < bestD) { bestD = d; bx = x; by = y; found = true; }
       }
     if (found && bestD < 44 * 44) {
-      state.start = { x: bx, y: by };
+      state.start2 = [bx, by];
       resetOpts();
     }
   }
@@ -482,7 +647,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     if (!dragging) return;
     if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) moved = true;
     state.yaw += (e.clientX - lastX) * 0.01;
-    state.pitch = Math.max(-1.45, Math.min(-0.05, state.pitch + (e.clientY - lastY) * 0.01));
+    // the surface is only readable from above; the cloud can be seen from anywhere
+    const hi = surfaceMode() ? -0.05 : 1.45;
+    state.pitch = Math.max(-1.45, Math.min(hi, state.pitch + (e.clientY - lastY) * 0.01));
     lastX = e.clientX; lastY = e.clientY;
     if (!state.running) draw();
   });
@@ -504,7 +671,37 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   );
 
   // ---- controls ----
-  document.getElementById('surf')!.addEventListener('click', (e) => {
+  const $ = (id: string) => document.getElementById(id) as HTMLElement;
+
+  /** Show only the controls that mean something for the landscape on screen. */
+  function syncControls() {
+    const s = surfaceMode();
+    $('surfwrap').style.display = s ? '' : 'none';
+    $('ptswrap').style.display = s ? 'none' : '';
+    ($('newfield') as HTMLButtonElement).style.display = s ? 'none' : '';
+    $('dim').textContent = s ? '2' : '3';
+    canvas.classList.toggle('orbit-only', !s);
+  }
+
+  $('mode').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#mode button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.mode = btn.dataset.m as 'surface' | 'cloud';
+    if (!surfaceMode()) {
+      if (!nPoints) newField();
+      // looking slightly down suits the cloud; the surface needs a steeper view
+      state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch));
+    } else {
+      state.pitch = Math.max(-1.45, Math.min(-0.05, state.pitch));
+    }
+    syncControls();
+    resetOpts();
+    draw();
+  });
+
+  $('surf').addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('button');
     if (!btn) return;
     document.querySelectorAll('#surf button').forEach((b) => b.classList.remove('active'));
@@ -514,7 +711,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     resetOpts();
   });
 
-  document.getElementById('arrows')!.addEventListener('click', (e) => {
+  $('arrows').addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('button');
     if (!btn) return;
     btn.classList.toggle('active');
@@ -523,22 +720,37 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     if (!state.running) draw();
   });
 
-  const spEl = document.getElementById('sp') as HTMLInputElement;
+  const spEl = $('sp') as HTMLInputElement;
   spEl.addEventListener('input', () => {
     state.speed = +spEl.value;
-    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
+    $('spval').textContent = spEl.value;
+  });
+  const ptsEl = $('pts') as HTMLInputElement;
+  ptsEl.addEventListener('input', () => {
+    state.count = +ptsEl.value;
+    $('ptval').textContent = ptsEl.value;
+    if (!state.running) draw();
   });
 
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  const runBtn = $('run') as HTMLButtonElement;
   runBtn.addEventListener('click', () => {
     state.running = !state.running;
     runBtn.textContent = state.running ? 'Pause' : 'Run';
   });
-  document.getElementById('step')!.addEventListener('click', () => { stepAll(); draw(); });
-  document.getElementById('reset')!.addEventListener('click', resetOpts);
-  document.getElementById('newstart')!.addEventListener('click', () => {
-    state.start = { x: +(Math.random() * 3 - 1.5).toFixed(2), y: +(Math.random() * 3 - 1.5).toFixed(2) };
+  $('step').addEventListener('click', () => { stepAll(); draw(); });
+  $('reset').addEventListener('click', () => { resetOpts(); draw(); });
+  $('newfield').addEventListener('click', () => { newField(); resetOpts(); draw(); });
+  $('newstart').addEventListener('click', () => {
+    if (surfaceMode())
+      state.start2 = [+(Math.random() * 3 - 1.5).toFixed(2), +(Math.random() * 3 - 1.5).toFixed(2)];
+    else
+      state.start3 = [
+        +(Math.random() * 2 - 1).toFixed(2),
+        +(Math.random() * 2 - 1).toFixed(2),
+        +(Math.random() * 2 - 1).toFixed(2),
+      ];
     resetOpts();
+    draw();
   });
 
   // ---- loop with time-based stepping ----
@@ -557,6 +769,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   computeRange();
+  syncControls();
   resetOpts();
   requestAnimationFrame(loop);
 </script>
@@ -565,6 +778,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .probe-canvas {
     cursor: crosshair;
     touch-action: none;
+  }
+  .probe-canvas.orbit-only {
+    cursor: grab;
+  }
+  .probe-canvas.orbit-only:active {
+    cursor: grabbing;
   }
   .block-label {
     font-size: 0.72rem;
