@@ -361,6 +361,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'linear-models',
+        title: 'Linear Models',
+        description:
+          'Regression and classification are the same straight line wx + b wearing two costumes. Change what the score turns into, and one gradient descent fits both.',
+        href: '/simulations/machine-learning/linear-models',
+        status: 'live',
+      },
+      {
         slug: 'overfitting',
         title: 'Overfitting',
         description:

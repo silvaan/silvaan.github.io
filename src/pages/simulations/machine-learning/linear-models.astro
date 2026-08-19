@@ -1,0 +1,478 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Linear Models"
+  description="Linear regression and logistic regression are one model in two costumes. Both score an input with the same straight line, z = wx + b. Change what that score turns into and how its error is counted, and the very same gradient descent fits both."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="lm" width="760" height="520"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div class="control">
+        <label>Model</label>
+        <div class="seg" id="mode">
+          <button data-m="reg" class="active">Regression</button>
+          <button data-m="clf">Classification</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="newdata">New data</button>
+      </div>
+
+      <div class="control">
+        <label>Weight w <b id="wv">0.00</b></label>
+        <input type="range" id="w" min="-200" max="500" value="0" />
+      </div>
+
+      <div class="control">
+        <label>Bias b <b id="bv">0.00</b></label>
+        <input type="range" id="b" min="-300" max="300" value="0" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span id="losslab">Loss</span><b id="loss">—</b></div>
+        <div class="row"><span id="fitlab">R²</span><b id="fit">—</b></div>
+        <div class="row"><span>Steps</span><b id="steps">0</b></div>
+      </div>
+
+      <p class="note">
+        Drag a point to move it, click empty space to add one. Run lets gradient
+        descent find w and b on its own.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Flip between the two models and watch what actually changes. The score
+      <b>z = wx + b is the same line either way</b>. Only what it turns into
+      changes: regression hands z back as the answer, classification squashes it
+      into a probability between 0 and 1.
+    </li>
+    <li>
+      Press <b>Run</b> in both. The same descent loop fits both models, because
+      the gradient shown above the stage comes out
+      <b>identical</b>: (prediction − y)·x, averaged over the points.
+    </li>
+    <li>
+      In regression, drag one point far away from the others. The whole line
+      swings toward it, because its error is <b>squared</b>.
+    </li>
+    <li>
+      In classification, drag a point across to the wrong side. The curve leans
+      to reach it, but a probability can only ever slide between 0 and 1, so a
+      few stragglers <b>cannot pull the model apart</b> the way one outlier pulls
+      a regression line.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+
+  type Pt = { x: number; y: number };
+  type Mode = 'reg' | 'clf';
+
+  const PAD = { l: 52, r: 26, t: 34, b: 44 };
+  const XR = [-4, 4] as const;
+  const YRR = [-5, 5] as const; // targets, regression
+  const YRC = [-0.3, 1.3] as const; // targets, classification
+  const LR = 0.3;
+
+  const MODEL = '#fbbf24'; // the fitted curve
+  const ERR = '#f87171'; // the gap the loss measures
+
+  const state = { mode: 'reg' as Mode, w: 0, b: 0, running: false, steps: 0, seed: 7 };
+  const DATA: Record<Mode, Pt[]> = { reg: [], clf: [] };
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('lm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (n: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { label } = makeText(ctx, ink);
+  const C0 = () => css('--accent', '#7c8cff');
+  const C1 = () => css('--accent-2', '#5eead4');
+
+  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+  const sig = (z: number) => 1 / (1 + Math.exp(-z));
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const pts = () => DATA[state.mode];
+  const yr = () => (state.mode === 'reg' ? YRR : YRC);
+
+  const sx = (x: number) =>
+    PAD.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - PAD.l - PAD.r);
+  const sy = (y: number) => {
+    const [lo, hi] = yr();
+    return H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+  };
+  const dx = (px: number) =>
+    XR[0] + ((px - PAD.l) / (W - PAD.l - PAD.r)) * (XR[1] - XR[0]);
+  const dy = (py: number) => {
+    const [lo, hi] = yr();
+    return lo + ((H - PAD.b - py) / (H - PAD.t - PAD.b)) * (hi - lo);
+  };
+
+  // ---- data ---------------------------------------------------------------
+  function genData() {
+    let s = state.seed >>> 0;
+    const r = () => ((s = (s * 1664525 + 1013904223) >>> 0), s / 4294967296);
+    const g = () =>
+      Math.sqrt(-2 * Math.log(Math.max(1e-9, r()))) * Math.cos(2 * Math.PI * r());
+
+    const reg: Pt[] = [];
+    for (let i = 0; i < 18; i++) {
+      const x = -3.2 + (6.4 * (i + 0.5)) / 18 + (r() - 0.5) * 0.2;
+      reg.push({ x, y: clamp(1.05 * x + 0.5 + g() * 0.5, -4.6, 4.6) });
+    }
+    const clf: Pt[] = [];
+    for (let i = 0; i < 9; i++) {
+      clf.push({ x: clamp(-1.4 + g() * 0.9, -3.6, 3.6), y: 0 });
+      clf.push({ x: clamp(1.4 + g() * 0.9, -3.6, 3.6), y: 1 });
+    }
+    DATA.reg = reg;
+    DATA.clf = clf;
+  }
+
+  // ---- the model ----------------------------------------------------------
+  function evalModel(w: number, b: number) {
+    const P = pts();
+    const pred: number[] = [];
+    let L = 0, gw = 0, gb = 0;
+    for (const p of P) {
+      const z = w * p.x + b;
+      if (state.mode === 'reg') {
+        const e = z - p.y;
+        pred.push(z);
+        L += 0.5 * e * e;
+        gw += e * p.x;
+        gb += e;
+      } else {
+        const q = clamp(sig(z), 1e-9, 1 - 1e-9);
+        pred.push(q);
+        L += -(p.y * Math.log(q) + (1 - p.y) * Math.log(1 - q));
+        gw += (q - p.y) * p.x;
+        gb += q - p.y;
+      }
+    }
+    const n = Math.max(1, P.length);
+    return { L: L / n, gw: gw / n, gb: gb / n, pred };
+  }
+
+  /** R² for regression, plain accuracy for classification. */
+  function quality(pred: number[]) {
+    const P = pts();
+    if (!P.length) return NaN;
+    if (state.mode === 'clf') {
+      let ok = 0;
+      P.forEach((p, i) => (ok += (pred[i] > 0.5 ? 1 : 0) === p.y ? 1 : 0));
+      return ok / P.length;
+    }
+    const mean = P.reduce((s, p) => s + p.y, 0) / P.length;
+    let sse = 0, sst = 0;
+    P.forEach((p, i) => {
+      sse += (p.y - pred[i]) ** 2;
+      sst += (p.y - mean) ** 2;
+    });
+    return sst < 1e-9 ? 1 : 1 - sse / sst;
+  }
+
+  // ---- drawing ------------------------------------------------------------
+  function draw() {
+    const reg = state.mode === 'reg';
+    const P = pts();
+    const r = evalModel(state.w, state.b);
+    ctx.clearRect(0, 0, W, H);
+
+    // grid
+    ctx.strokeStyle = ink(0.07);
+    ctx.lineWidth = 1;
+    for (let x = -3; x <= 3; x++) {
+      ctx.beginPath();
+      ctx.moveTo(sx(x), PAD.t);
+      ctx.lineTo(sx(x), H - PAD.b);
+      ctx.stroke();
+    }
+    const yticks = reg ? [-4, -2, 0, 2, 4] : [0, 0.5, 1];
+    for (const y of yticks) {
+      ctx.beginPath();
+      ctx.moveTo(PAD.l, sy(y));
+      ctx.lineTo(W - PAD.r, sy(y));
+      ctx.stroke();
+    }
+    ctx.strokeStyle = ink(0.13);
+    ctx.strokeRect(PAD.l + 0.5, PAD.t + 0.5, W - PAD.l - PAD.r, H - PAD.t - PAD.b);
+
+    for (let x = -3; x <= 3; x++)
+      label(String(x), sx(x), H - PAD.b + 19, 0.4, 'center', 11);
+    for (const y of yticks)
+      label(reg ? String(y) : y.toFixed(1), PAD.l - 9, sy(y) + 4, 0.4, 'right', 11);
+    label('x', W - PAD.r, H - PAD.b + 19, 0.5, 'right', 11);
+    label(reg ? 'y' : 'class', PAD.l - 9, PAD.t + 2, 0.5, 'right', 11);
+
+    // the gap each point contributes to the loss
+    ctx.strokeStyle = `${ERR}80`;
+    ctx.lineWidth = 1.6;
+    P.forEach((p, i) => {
+      ctx.beginPath();
+      ctx.moveTo(sx(p.x), sy(p.y));
+      ctx.lineTo(sx(p.x), sy(clamp(r.pred[i], yr()[0], yr()[1])));
+      ctx.stroke();
+    });
+
+    // the model
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD.l, PAD.t, W - PAD.l - PAD.r, H - PAD.t - PAD.b);
+    ctx.clip();
+    ctx.strokeStyle = MODEL;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    for (let i = 0; i <= 200; i++) {
+      const x = XR[0] + ((XR[1] - XR[0]) * i) / 200;
+      const z = state.w * x + state.b;
+      const py = sy(reg ? z : sig(z));
+      i ? ctx.lineTo(sx(x), py) : ctx.moveTo(sx(x), py);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // where the score crosses zero
+    if (!reg && Math.abs(state.w) > 1e-6) {
+      const xb = -state.b / state.w;
+      if (xb > XR[0] && xb < XR[1]) {
+        ctx.save();
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = ink(0.4);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(sx(xb), PAD.t);
+        ctx.lineTo(sx(xb), H - PAD.b);
+        ctx.stroke();
+        ctx.restore();
+        label('z = 0', sx(xb) + 7, PAD.t + 15, 0.45, 'left', 11);
+      }
+    }
+
+    // the data
+    for (const p of P) {
+      ctx.fillStyle = reg ? C0() : p.y > 0.5 ? C1() : C0();
+      ctx.strokeStyle = css('--stage-bg', '#0b0c0e');
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(p.x), sy(p.y), 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    readout(r);
+  }
+
+  function readout(r: ReturnType<typeof evalModel>) {
+    const reg = state.mode === 'reg';
+    const n = pts().length;
+    el('loss').textContent = n ? r.L.toFixed(4) : '—';
+    el('fitlab').textContent = reg ? 'R²' : 'Accuracy';
+    const q = quality(r.pred);
+    el('fit').textContent = Number.isNaN(q)
+      ? '—'
+      : reg
+        ? q.toFixed(3)
+        : `${(q * 100).toFixed(0)}%`;
+    el('steps').textContent = String(state.steps);
+
+    const sign = state.b >= 0 ? '+' : '-';
+    setEq([
+      [
+        ['z = wx + b', C0()],
+        reg ? ['\\hat y = z', MODEL] : ['p = \\sigma(z)', MODEL],
+        reg
+          ? ['L = \\tfrac{1}{2n}\\sum (\\hat y - y)^2', ERR]
+          : ['L = -\\tfrac{1}{n}\\sum \\log p_{\\text{correct}}', ERR],
+      ],
+      [
+        [`z = ${state.w.toFixed(2)}x ${sign} ${Math.abs(state.b).toFixed(2)}`, C0()],
+        `\\quad L = ${r.L.toFixed(4)}`,
+        [
+          `\\quad \\nabla_w = \\overline{(\\text{pred}-y)\\,x} = ${r.gw.toFixed(3)}`,
+          ERR,
+        ],
+      ],
+      [
+        reg
+          ? 'the prediction is the score itself, and the error it is scored on is squared'
+          : 'the score is squashed into a probability, yet the gradient formula is unchanged',
+      ],
+    ]);
+  }
+
+  // ---- descent ------------------------------------------------------------
+  function stepOnce() {
+    if (!pts().length) return 0;
+    const r = evalModel(state.w, state.b);
+    state.w = clamp(state.w - LR * r.gw, -50, 50);
+    state.b = clamp(state.b - LR * r.gb, -50, 50);
+    state.steps++;
+    sync();
+    return Math.hypot(r.gw, r.gb);
+  }
+
+  function sync() {
+    (document.getElementById('w') as HTMLInputElement).value = String(Math.round(state.w * 100));
+    (document.getElementById('b') as HTMLInputElement).value = String(Math.round(state.b * 100));
+    el('wv').textContent = state.w.toFixed(2);
+    el('bv').textContent = state.b.toFixed(2);
+  }
+
+  function stopRun() {
+    state.running = false;
+    (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
+  }
+
+  function resetWeights() {
+    state.w = 0;
+    state.b = 0;
+    state.steps = 0;
+    stopRun();
+    sync();
+  }
+
+  // ---- interaction --------------------------------------------------------
+  let drag = -1;
+  const snap = (py: number) =>
+    state.mode === 'reg' ? clamp(dy(py), YRR[0], YRR[1]) : dy(py) > 0.5 ? 1 : 0;
+  const at = (e: PointerEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * W,
+      y: ((e.clientY - rect.top) / rect.height) * H,
+    };
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const { x, y } = at(e);
+    if (x < PAD.l - 12 || x > W - PAD.r + 12 || y < PAD.t - 12 || y > H - PAD.b + 12)
+      return;
+    canvas.setPointerCapture(e.pointerId);
+    const P = pts();
+    let best = -1, bd = 16 * 16;
+    P.forEach((p, i) => {
+      const d = (sx(p.x) - x) ** 2 + (sy(p.y) - y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    });
+    if (best >= 0) {
+      drag = best;
+      return;
+    }
+    P.push({ x: clamp(dx(x), XR[0], XR[1]), y: snap(y) });
+    drag = P.length - 1;
+    draw();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (drag < 0) return;
+    const { x, y } = at(e);
+    pts()[drag] = { x: clamp(dx(x), XR[0], XR[1]), y: snap(y) };
+    draw();
+  });
+  const endDrag = () => (drag = -1);
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  // ---- controls -----------------------------------------------------------
+  document.getElementById('mode')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#mode button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.mode = btn.dataset.m as Mode;
+    el('losslab').textContent =
+      state.mode === 'reg' ? 'Loss  squared error' : 'Loss  log-loss';
+    resetWeights();
+    draw();
+  });
+
+  const wEl = document.getElementById('w') as HTMLInputElement;
+  const bEl = document.getElementById('b') as HTMLInputElement;
+  const manual = () => {
+    state.w = +wEl.value / 100;
+    state.b = +bEl.value / 100;
+    state.steps = 0;
+    stopRun();
+    el('wv').textContent = state.w.toFixed(2);
+    el('bv').textContent = state.b.toFixed(2);
+    draw();
+  };
+  wEl.addEventListener('input', manual);
+  bEl.addEventListener('input', manual);
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    stopRun();
+    stepOnce();
+    draw();
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    resetWeights();
+    draw();
+  });
+  document.getElementById('newdata')!.addEventListener('click', () => {
+    state.seed = (Math.random() * 1e6) | 0;
+    genData();
+    resetWeights();
+    draw();
+  });
+
+  // ---- loop ---------------------------------------------------------------
+  let acc = 0, last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.1, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      while (acc >= 0.05) {
+        acc -= 0.05;
+        if (stepOnce() < 1e-4) {
+          stopRun();
+          break;
+        }
+      }
+      draw();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  genData();
+  el('losslab').textContent = 'Loss  squared error';
+  draw();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #lm {
+    cursor: crosshair;
+    touch-action: none;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>
