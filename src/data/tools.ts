@@ -426,9 +426,9 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'neural-net',
-        title: 'Neural Networks',
+        title: 'Neuron Activations',
         description:
-          'Train a small neural network to separate two classes of dots and watch its decision boundary bend and fold in real time.',
+          'A network trains itself in front of you, then you draw a shape and watch it go through: every wire lit by what it carries, every neuron opened up to show the picture it looks for.',
         href: '/simulations/deep-learning/neural-net',
         status: 'live',
       },
@@ -436,7 +436,7 @@ export const AREAS: Area[] = [
         slug: 'cosine-similarity',
         title: 'Embeddings & Cosine Similarity',
         description:
-          'Every word is an arrow and meaning is the direction it points. Drag a query around and see why the raw dot product prefers long vectors and the cosine does not.',
+          'Every word is an arrow and meaning is the direction it points. Rank the same words by cosine, by raw dot product and by straight-line distance, and watch the level sets turn from rays into rings.',
         href: '/simulations/deep-learning/cosine-similarity',
         status: 'live',
       },
@@ -444,7 +444,7 @@ export const AREAS: Area[] = [
         slug: 'attention',
         title: 'Attention as a Soft Lookup',
         description:
-          'A dictionary returns one value; attention returns a blend of all of them, weighted by how well each key matches the query. Here the values are colours.',
+          'The mechanism on its own: a dictionary returns one value, attention returns a blend of all of them, weighted by how well each key matches the query. Sharpen it, flatten it, mask a key out.',
         href: '/simulations/deep-learning/attention',
         status: 'live',
       },
@@ -452,7 +452,7 @@ export const AREAS: Area[] = [
         slug: 'self-attention',
         title: 'Self-Attention',
         description:
-          'Every token writes a query and answers with a key, and the whole thing becomes one matrix of weights. Pick a token to see what it chooses to look at.',
+          'Where the queries and the keys come from: three projections of one X, so the sentence looks itself up. The full matrix, one head at a time, down to every multiplication.',
         href: '/simulations/deep-learning/self-attention',
         status: 'live',
       },
@@ -590,6 +590,22 @@ export const AREAS: Area[] = [
         description:
           'Launch a quantum wave packet at a barrier taller than its energy and watch part of it tunnel through, the wave nature of matter in action.',
         href: '/simulations/physics/schrodinger',
+        status: 'live',
+      },
+      {
+        slug: 'stern-gerlach',
+        title: 'Stern-Gerlach Experiment',
+        description:
+          'A beam of atoms should smear into a band and arrives as two spots. Chain the analysers, turn the next one, and measuring x wipes out what was known about z.',
+        href: '/simulations/physics/stern-gerlach',
+        status: 'live',
+      },
+      {
+        slug: 'quantum-gates',
+        title: 'Quantum Gates',
+        description:
+          'Build a circuit on two qubits and watch the amplitudes, their phases and both Bloch arrows move together. Then build the one circuit whose arrows shrink to nothing.',
+        href: '/simulations/physics/quantum-gates',
         status: 'live',
       },
       {
