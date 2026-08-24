@@ -1,0 +1,873 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Quantum Gates"
+  description="A gate is a rotation, a circuit is a product of rotations, and the state is a list of four complex numbers whose squared lengths are the only thing a measurement ever sees. Build a circuit on two qubits and watch three pictures of the same state move together: the amplitudes with their phases, the two Bloch arrows, and the odds of each outcome. Then build the one circuit whose arrows both vanish."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="qg" class="qg-canvas" width="960" height="480"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="control">
+        <label>Circuit</label>
+        <div class="seg" id="preset">
+          <button data-p="0" class="active">Bell</button>
+          <button data-p="1">H·Z·H</button>
+          <button data-p="2">kickback</button>
+          <button data-p="3">empty</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Gate to place, then click a wire</label>
+        <div class="seg" id="gate">
+          <button data-g="H" class="active">H</button>
+          <button data-g="X">X</button>
+          <button data-g="Y">Y</button>
+          <button data-g="Z">Z</button>
+          <button data-g="S">S</button>
+          <button data-g="T">T</button>
+          <button data-g="RX">Rx</button>
+          <button data-g="RY">Ry</button>
+          <button data-g="RZ">Rz</button>
+          <button data-g="CNOT">CNOT</button>
+          <button data-g="CZ">CZ</button>
+          <button data-g="SWAP">SWAP</button>
+          <button data-g="ERASE">erase</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Angle for Rx, Ry, Rz <b id="thv">90°</b></label>
+        <input type="range" id="theta" min="0" max="360" step="15" value="90" />
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" id="shoot">Measure ×200</button>
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Entanglement C</span><b id="conc">—</b></div>
+        <div class="row"><span>Length of each arrow</span><b id="blen">—</b></div>
+        <div class="row"><span>Most likely outcome</span><b id="likely">—</b></div>
+        <div class="row"><span>Shots recorded</span><b id="shots">0</b></div>
+      </div>
+
+      <p class="note">
+        Click a wire in the circuit to drop the selected gate there; click the
+        same gate again to take it off. A two-qubit gate puts its control on the
+        wire you clicked. Measuring samples the state as it stands now, and
+        never changes it.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Reset and step through <b>Bell</b> one column at a time. The H spreads
+      q<sub>0</sub> across the equator, and its Bloch arrow swings from the pole
+      down to |+⟩: still a perfectly definite state, just not a definite
+      <b>answer</b>.
+    </li>
+    <li>
+      Now step the <b>CNOT</b>. Watch both arrows: they do not move to somewhere
+      else, they <b>shrink to nothing</b>. The pair is in one exact state, and
+      yet neither qubit has a state of its own any more. That is entanglement,
+      and the arrow length is √(1−C²), which the panel is reporting.
+    </li>
+    <li>
+      Try <b>H·Z·H</b> on one qubit. The Z does nothing you can measure: the two
+      probability bars do not move, only the phase dial of |1⟩ turns by 180°.
+      Then the second H turns that invisible phase into a certainty, and the
+      qubit comes out flipped. <b>Phase is what interferes</b>; measurement is
+      where it stops mattering.
+    </li>
+    <li>
+      That is also why <b>Measure ×200</b> is worth pressing twice, once before
+      and once after adding a Z. The sampled bars are the same both times. The
+      squared length is all that leaves the machine, and the phase only shows
+      itself through a later gate.
+    </li>
+    <li>
+      Load <b>kickback</b>. The target q<sub>1</sub> is prepared in |−⟩, the
+      CNOT is supposed to act <b>on</b> it, and yet at the end q<sub>1</sub>'s
+      arrow is exactly where it started while <b>q<sub>0</sub>'s has swung to
+      the south pole</b>. The control is the one that got flipped. Look at the
+      arrows, not the bars: the two bars sit at 50/50 the whole time and never
+      show it. A controlled gate is not one-directional, and a phase put on one
+      side can be read out on the other.
+    </li>
+    <li>
+      Point Rx, Ry and Rz at an empty wire and turn the angle. Every gate in the
+      palette is one of these three at some fixed angle: X is Rx at 180°, S is
+      Rz at 90°, T is Rz at 45°. There is nothing in a quantum computer but
+      rotations of an arrow, and which axis you rotate about.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { arrow, roundRect } from '../../../lib/theorem';
+
+  // ---------------------------------------------------------------------------
+  // Two qubits, so the state is four complex amplitudes. The basis is written
+  // |q0 q1> with q0 the top wire, so index = 2*q0 + q1. Gates are 2x2 unitaries
+  // applied to one wire, or the same thing done only on the half of the state
+  // where a control qubit is 1.
+  // ---------------------------------------------------------------------------
+
+  type C = [number, number]; // a complex number, [real, imaginary]
+  type M2 = [C, C, C, C]; // a 2x2 matrix, row major
+
+  const cadd = (a: C, b: C): C => [a[0] + b[0], a[1] + b[1]];
+  const csub = (a: C, b: C): C => [a[0] - b[0], a[1] - b[1]];
+  const cmul = (a: C, b: C): C => [
+    a[0] * b[0] - a[1] * b[1],
+    a[0] * b[1] + a[1] * b[0],
+  ];
+  const cabs2 = (a: C) => a[0] * a[0] + a[1] * a[1];
+  const cconj = (a: C): C => [a[0], -a[1]];
+  const expi = (t: number): C => [Math.cos(t), Math.sin(t)];
+
+  const R2 = Math.SQRT1_2;
+  const I2: M2 = [[1, 0], [0, 0], [0, 0], [1, 0]];
+
+  type GateId =
+    | 'H' | 'X' | 'Y' | 'Z' | 'S' | 'T'
+    | 'RX' | 'RY' | 'RZ'
+    | 'CNOT' | 'CZ' | 'SWAP';
+
+  const TWO: GateId[] = ['CNOT', 'CZ', 'SWAP'];
+  const isTwo = (g: GateId) => TWO.includes(g);
+
+  /** The 2x2 the gate stands for; for controlled gates, what it does to the target. */
+  function matrix(g: GateId, th: number): M2 {
+    const c = Math.cos(th / 2);
+    const s = Math.sin(th / 2);
+    switch (g) {
+      case 'H': return [[R2, 0], [R2, 0], [R2, 0], [-R2, 0]];
+      case 'X': case 'CNOT': return [[0, 0], [1, 0], [1, 0], [0, 0]];
+      case 'Y': return [[0, 0], [0, -1], [0, 1], [0, 0]];
+      case 'Z': case 'CZ': return [[1, 0], [0, 0], [0, 0], [-1, 0]];
+      case 'S': return [[1, 0], [0, 0], [0, 0], [0, 1]];
+      case 'T': return [[1, 0], [0, 0], [0, 0], expi(Math.PI / 4)];
+      case 'RX': return [[c, 0], [0, -s], [0, -s], [c, 0]];
+      case 'RY': return [[c, 0], [-s, 0], [s, 0], [c, 0]];
+      case 'RZ': return [expi(-th / 2), [0, 0], [0, 0], expi(th / 2)];
+      default: return I2;
+    }
+  }
+
+  /**
+   * U raised to the power t, for the animation. Every 2x2 unitary is a rotation
+   * of the Bloch sphere by some angle about some axis, times a phase; doing a
+   * fraction of it means turning through a fraction of that angle about the very
+   * same axis, which is exactly the path the arrow takes on the way.
+   */
+  function fracGate(U: M2, t: number): M2 {
+    if (t >= 1) return U;
+    if (t <= 0) return I2;
+    // strip the global phase so what is left sits in SU(2)
+    const det = csub(cmul(U[0], U[3]), cmul(U[1], U[2]));
+    const alpha = Math.atan2(det[1], det[0]) / 2;
+    const V = U.map((z) => cmul(z, expi(-alpha))) as M2;
+    const nz = -V[0][1];
+    const nx = -V[1][1];
+    const ny = -V[1][0];
+    const sin = Math.hypot(nx, ny, nz);
+    const half = Math.atan2(sin, V[0][0]); // θ/2 of the full rotation
+    const n = sin > 1e-12 ? [nx / sin, ny / sin, nz / sin] : [0, 0, 1];
+    const cs = Math.cos(half * t);
+    const sn = Math.sin(half * t);
+    const g = expi(alpha * t); // put the phase back, in the same proportion
+    return [
+      cmul(g, [cs, -sn * n[2]]),
+      cmul(g, [-sn * n[1], -sn * n[0]]),
+      cmul(g, [sn * n[1], -sn * n[0]]),
+      cmul(g, [cs, sn * n[2]]),
+    ];
+  }
+
+  type Psi = C[]; // four amplitudes
+  const bitOf = (w: number) => (w === 0 ? 2 : 1); // top wire is the high bit
+
+  function apply1(psi: Psi, w: number, U: M2) {
+    const b = bitOf(w);
+    for (let i = 0; i < 4; i++) {
+      if (i & b) continue;
+      const j = i | b;
+      const a = psi[i];
+      const d = psi[j];
+      psi[i] = cadd(cmul(U[0], a), cmul(U[1], d));
+      psi[j] = cadd(cmul(U[2], a), cmul(U[3], d));
+    }
+  }
+
+  function applyC(psi: Psi, ctrl: number, tgt: number, U: M2) {
+    const cb = bitOf(ctrl);
+    const tb = bitOf(tgt);
+    for (let i = 0; i < 4; i++) {
+      if (!(i & cb) || i & tb) continue;
+      const j = i | tb;
+      const a = psi[i];
+      const d = psi[j];
+      psi[i] = cadd(cmul(U[0], a), cmul(U[1], d));
+      psi[j] = cadd(cmul(U[2], a), cmul(U[3], d));
+    }
+  }
+
+  /**
+   * SWAP leaves |00>, |11> and the symmetric combination alone and flips the
+   * sign of the antisymmetric one, so a fraction of it is a fraction of that
+   * sign: e^{iπt} on the singlet.
+   */
+  function applySwap(psi: Psi, t: number) {
+    const p: C = [(psi[1][0] + psi[2][0]) / 2, (psi[1][1] + psi[2][1]) / 2];
+    const m: C = [(psi[1][0] - psi[2][0]) / 2, (psi[1][1] - psi[2][1]) / 2];
+    const ph = cmul(expi(Math.PI * t), m);
+    psi[1] = cadd(p, ph);
+    psi[2] = csub(p, ph);
+  }
+
+  // --- the circuit -----------------------------------------------------------
+  const COLS = 8;
+  type Col = {
+    top?: GateId; // a one-qubit gate on wire 0
+    bot?: GateId; // a one-qubit gate on wire 1
+    two?: { g: GateId; ctrl: number }; // a two-qubit gate, control on this wire
+  };
+
+  const state = {
+    cols: [] as Col[],
+    pick: 'H' as GateId | 'ERASE',
+    theta: Math.PI / 2,
+    pc: 0, // columns fully applied
+    frac: 0, // how far through column pc
+    playing: false,
+    stopAt: null as number | null,
+    shots: [0, 0, 0, 0],
+    total: 0,
+  };
+
+  const emptyCircuit = (): Col[] => Array.from({ length: COLS }, () => ({}));
+  const used = (c: Col) => !!(c.top || c.bot || c.two);
+  const lastUsed = () => {
+    let k = 0;
+    state.cols.forEach((c, i) => {
+      if (used(c)) k = i + 1;
+    });
+    return k;
+  };
+
+  /** The state after `pc` columns, plus `frac` of the one being applied. */
+  function evolve(): Psi {
+    const psi: Psi = [[1, 0], [0, 0], [0, 0], [0, 0]];
+    for (let i = 0; i < state.pc && i < COLS; i++) applyCol(psi, state.cols[i], 1);
+    if (state.pc < COLS && state.frac > 0)
+      applyCol(psi, state.cols[state.pc], state.frac);
+    return psi;
+  }
+
+  function applyCol(psi: Psi, col: Col, t: number) {
+    if (col.two) {
+      const { g, ctrl } = col.two;
+      if (g === 'SWAP') applySwap(psi, t);
+      else applyC(psi, ctrl, 1 - ctrl, fracGate(matrix(g, state.theta), t));
+      return;
+    }
+    if (col.top) apply1(psi, 0, fracGate(matrix(col.top, state.theta), t));
+    if (col.bot) apply1(psi, 1, fracGate(matrix(col.bot, state.theta), t));
+  }
+
+  // --- what one qubit looks like on its own ---------------------------------
+  /** Bloch vector of the reduced state of one wire: the length tells the story. */
+  function bloch(psi: Psi, w: number): [number, number, number] {
+    const b = bitOf(w);
+    let r01: C = [0, 0];
+    let p0 = 0;
+    let p1 = 0;
+    for (let i = 0; i < 4; i++) {
+      if (i & b) continue;
+      const j = i | b;
+      r01 = cadd(r01, cmul(psi[i], cconj(psi[j])));
+      p0 += cabs2(psi[i]);
+      p1 += cabs2(psi[j]);
+    }
+    return [2 * r01[0], -2 * r01[1], p0 - p1];
+  }
+
+  /** Concurrence: 0 for a product state, 1 for a Bell state. */
+  const concurrence = (psi: Psi) => {
+    const ad = cmul(psi[0], psi[3]);
+    const bc = cmul(psi[1], psi[2]);
+    const d = csub(ad, bc);
+    return Math.min(1, 2 * Math.hypot(d[0], d[1]));
+  };
+
+  // --- layout ----------------------------------------------------------------
+  const setEq = equationBar();
+  const canvas = document.getElementById('qg') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw(0));
+  const css = (k: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(k).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { label } = makeText(ctx, ink);
+  const accent = () => css('--accent', '#7c8cff');
+
+  const KETS = ['00', '01', '10', '11'];
+  const KCOL = ['#5eead4', '#60a5fa', '#f59e0b', '#a78bfa'];
+
+  const WIRE = [78, 134];
+  const COLX = (i: number) => 138 + i * 88;
+  const CELL = 42;
+  const ROW0 = 208;
+  const RPITCH = 56;
+  const BLOCH = { r: 72, y: 300, x: [666, 856] };
+
+  // --- the circuit -----------------------------------------------------------
+  function gateLabel(g: GateId) {
+    const deg = Math.round((state.theta * 180) / Math.PI);
+    if (g === 'RX') return `Rx ${deg}`;
+    if (g === 'RY') return `Ry ${deg}`;
+    if (g === 'RZ') return `Rz ${deg}`;
+    return g;
+  }
+
+  function drawCircuit() {
+    label('THE CIRCUIT', 24, 38, 0.45, 'left', 12);
+    label('click a wire to place the chosen gate', 190, 38, 0.28, 'left', 10.5);
+
+    // the column being applied right now
+    if (state.pc < COLS) {
+      const x = COLX(state.pc);
+      ctx.fillStyle = `${accent()}1f`;
+      roundRect(ctx, x - 34, 50, 68, 118, 8);
+      ctx.fill();
+    }
+
+    for (let w = 0; w < 2; w++) {
+      ctx.strokeStyle = ink(0.28);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(96, WIRE[w]);
+      ctx.lineTo(W - 92, WIRE[w]);
+      ctx.stroke();
+      label(`q_${w}`, 56, WIRE[w] + 4, 0.7, 'left', 12);
+      label('|0⟩', 76, WIRE[w] + 4, 0.4, 'left', 11);
+    }
+
+    // how far the state has got: everything left of this has happened
+    const done = COLX(Math.min(state.pc, COLS - 1)) - 34 + 68 * state.frac;
+    const edge = state.pc >= COLS ? W - 92 : done;
+    ctx.strokeStyle = `${accent()}aa`;
+    ctx.lineWidth = 2.4;
+    for (let w = 0; w < 2; w++) {
+      ctx.beginPath();
+      ctx.moveTo(96, WIRE[w]);
+      ctx.lineTo(edge, WIRE[w]);
+      ctx.stroke();
+    }
+
+    state.cols.forEach((col, i) => {
+      const x = COLX(i);
+      if (col.two) {
+        const { g, ctrl } = col.two;
+        const cy = WIRE[ctrl];
+        const ty = WIRE[1 - ctrl];
+        ctx.strokeStyle = KCOL[0];
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, cy);
+        ctx.lineTo(x, ty);
+        ctx.stroke();
+        ctx.fillStyle = KCOL[0];
+        if (g === 'SWAP') {
+          for (const y of [cy, ty]) {
+            ctx.beginPath();
+            ctx.moveTo(x - 8, y - 8);
+            ctx.lineTo(x + 8, y + 8);
+            ctx.moveTo(x + 8, y - 8);
+            ctx.lineTo(x - 8, y + 8);
+            ctx.stroke();
+          }
+        } else {
+          ctx.beginPath();
+          ctx.arc(x, cy, 6, 0, Math.PI * 2);
+          ctx.fill();
+          if (g === 'CZ') {
+            ctx.beginPath();
+            ctx.arc(x, ty, 6, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.beginPath();
+            ctx.arc(x, ty, 13, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x - 13, ty);
+            ctx.lineTo(x + 13, ty);
+            ctx.moveTo(x, ty - 13);
+            ctx.lineTo(x, ty + 13);
+            ctx.stroke();
+          }
+        }
+        label(g, x, WIRE[1] + 42, 0.3, 'center', 9.5);
+      }
+      for (const [w, g] of [[0, col.top], [1, col.bot]] as [number, GateId | undefined][]) {
+        if (!g) continue;
+        const y = WIRE[w];
+        ctx.fillStyle = ink(0.1);
+        roundRect(ctx, x - CELL / 2, y - CELL / 2, CELL, CELL, 8);
+        ctx.fill();
+        ctx.strokeStyle = ink(0.3);
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        const t = gateLabel(g);
+        label(t, x, y + 4, 1, 'center', t.length > 2 ? 9 : 13, accent());
+      }
+      if (!used(state.cols[i])) {
+        ctx.strokeStyle = ink(0.07);
+        ctx.setLineDash([2, 4]);
+        ctx.lineWidth = 1;
+        for (const w of [0, 1]) {
+          ctx.beginPath();
+          ctx.arc(x, WIRE[w], CELL / 2 - 6, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
+    });
+  }
+
+  // --- the four amplitudes ---------------------------------------------------
+  function drawState(psi: Psi) {
+    label('THE STATE: FOUR COMPLEX NUMBERS', 24, 190, 0.45, 'left', 12);
+    label('dial = phase · bar = probability', 300, 190, 0.28, 'left', 10);
+
+    for (let i = 0; i < 4; i++) {
+      const y = ROW0 + i * RPITCH;
+      const a = psi[i];
+      const p = cabs2(a);
+      const mag = Math.sqrt(p);
+      const col = KCOL[i];
+
+      label(`|${KETS[i]}⟩`, 30, y + 5, p > 0.001 ? 1 : 0.3, 'left', 15, col);
+
+      // the phase dial
+      const dx = 116;
+      ctx.strokeStyle = ink(0.12);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(dx, y, 20, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(dx - 20, y);
+      ctx.lineTo(dx + 20, y);
+      ctx.stroke();
+      if (mag > 0.004) {
+        const ph = Math.atan2(a[1], a[0]);
+        arrow(
+          ctx,
+          dx,
+          y,
+          dx + 20 * mag * Math.cos(ph),
+          y - 20 * mag * Math.sin(ph),
+          col,
+          2.2,
+          7
+        );
+      }
+
+      const sign = a[1] < 0 ? '−' : '+';
+      label(
+        `${a[0].toFixed(3)} ${sign} ${Math.abs(a[1]).toFixed(3)}i`,
+        152,
+        y - 4,
+        p > 0.001 ? 0.75 : 0.25,
+        'left',
+        11
+      );
+      label(
+        mag > 0.004
+          ? `∠ ${((Math.atan2(a[1], a[0]) * 180) / Math.PI).toFixed(0)}°`
+          : 'amplitude zero',
+        152,
+        y + 14,
+        0.35,
+        'left',
+        10
+      );
+
+      // probability, and what the shots actually gave
+      const bx = 296;
+      const bw = 168;
+      ctx.fillStyle = ink(0.07);
+      roundRect(ctx, bx, y - 15, bw, 18, 5);
+      ctx.fill();
+      if (p > 0.0005) {
+        ctx.fillStyle = `${col}dd`;
+        roundRect(ctx, bx, y - 15, Math.max(2, bw * p), 18, 5);
+        ctx.fill();
+      }
+      label(`${(p * 100).toFixed(1)}%`, bx + bw + 10, y - 2, 0.9, 'left', 11, col);
+
+      if (state.total) {
+        const f = state.shots[i] / state.total;
+        ctx.strokeStyle = ink(0.5);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx, y + 7, bw, 7);
+        ctx.fillStyle = ink(0.45);
+        ctx.fillRect(bx, y + 7, bw * f, 7);
+        label(
+          `${state.shots[i]} shots`,
+          bx + bw + 10,
+          y + 14,
+          0.35,
+          'left',
+          9.5
+        );
+      }
+    }
+    if (!state.total)
+      label(
+        'press measure to sample this state',
+        296,
+        ROW0 + 3 * RPITCH + 30,
+        0.28,
+        'left',
+        10
+      );
+  }
+
+  // --- one Bloch sphere per wire --------------------------------------------
+  const AZ = -0.62;
+  const EL = 0.34;
+  function bproj(cx: number, cy: number, R: number, v: number[]) {
+    const u = v[0] * Math.cos(AZ) + v[1] * Math.sin(AZ);
+    const d = -v[0] * Math.sin(AZ) + v[1] * Math.cos(AZ);
+    return { x: cx + R * u, y: cy - R * (v[2] * Math.cos(EL) + d * Math.sin(EL)) };
+  }
+
+  function drawBloch(psi: Psi) {
+    label('EACH QUBIT ON ITS OWN', 566, 190, 0.45, 'left', 12);
+    const c = concurrence(psi);
+
+    for (let w = 0; w < 2; w++) {
+      const cx = BLOCH.x[w];
+      const cy = BLOCH.y;
+      const R = BLOCH.r;
+      const r = bloch(psi, w);
+      const len = Math.hypot(r[0], r[1], r[2]);
+
+      ctx.strokeStyle = ink(0.16);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, R, R * Math.sin(EL), 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // the three axes, which are the six states everyone names
+      ctx.strokeStyle = ink(0.1);
+      const axes: [number[], string, string][] = [
+        [[0, 0, 1], '|0⟩', '|1⟩'],
+        [[1, 0, 0], '|+⟩', ''],
+        [[0, 1, 0], '|i⟩', ''],
+      ];
+      for (const [v, pos, neg] of axes) {
+        const a = bproj(cx, cy, R, v);
+        const b = bproj(cx, cy, R, v.map((k) => -k));
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        label(pos, a.x, a.y - 7, 0.34, 'center', 9.5);
+        if (neg) label(neg, b.x, b.y + 14, 0.34, 'center', 9.5);
+      }
+
+      // the state itself, as long as it still has one
+      if (len > 0.02) {
+        const tip = bproj(cx, cy, R, r);
+        const foot = bproj(cx, cy, R, [r[0], r[1], 0]);
+        ctx.strokeStyle = ink(0.2);
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(tip.x, tip.y);
+        ctx.lineTo(foot.x, foot.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        arrow(ctx, cx, cy, tip.x, tip.y, KCOL[w === 0 ? 0 : 3], 3, 10);
+      } else {
+        ctx.fillStyle = ink(0.4);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      label(`q_${w}`, cx, cy + R + 26, 0.75, 'center', 12);
+      label(
+        `|r| = ${len.toFixed(2)}`,
+        cx,
+        cy + R + 42,
+        0.5,
+        'center',
+        10.5,
+        len < 0.02 ? '#f59e0b' : undefined
+      );
+      label(
+        c < 0.01
+          ? 'a state of its own'
+          : len < 0.02
+            ? 'no state of its own'
+            : 'partly given away',
+        cx,
+        cy + R + 57,
+        0.32,
+        'center',
+        9.5
+      );
+    }
+  }
+
+  // --- the whole frame -------------------------------------------------------
+  function draw(dt: number) {
+    if (state.playing) {
+      state.frac += dt * 1.6;
+      while (state.frac >= 1) {
+        state.frac -= 1;
+        state.pc++;
+        if (state.pc >= lastUsed() || (state.stopAt !== null && state.pc >= state.stopAt)) {
+          state.frac = 0;
+          state.playing = false;
+          state.stopAt = null;
+          break;
+        }
+      }
+      if (state.pc >= COLS) {
+        state.pc = COLS;
+        state.frac = 0;
+        state.playing = false;
+      }
+    }
+    const psi = evolve();
+    ctx.clearRect(0, 0, W, H);
+    drawCircuit();
+    drawState(psi);
+    drawBloch(psi);
+    sync(psi);
+  }
+
+  function sentence(psi: Psi, c: number) {
+    if (c > 0.99)
+      return 'maximally entangled: the pair is in one exact state and neither qubit has any state of its own';
+    if (c > 0.01)
+      return 'partly entangled: each arrow has shrunk inside its sphere, and its length is √(1−C²)';
+    if (state.pc === 0) return 'nothing has happened yet: both qubits sit at the north pole, definitely |0⟩';
+    return 'still a product state: these two arrows are the whole of it, one per qubit';
+  }
+
+  function sync(psi: Psi) {
+    const c = concurrence(psi);
+    const len = Math.sqrt(Math.max(0, 1 - c * c));
+    let bi = 0;
+    for (let i = 1; i < 4; i++) if (cabs2(psi[i]) > cabs2(psi[bi])) bi = i;
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('conc', c.toFixed(3));
+    set('blen', len.toFixed(3));
+    set('likely', `|${KETS[bi]}⟩ ${(cabs2(psi[bi]) * 100).toFixed(0)}%`);
+    set('shots', String(state.total));
+
+    const terms = psi
+      .map((a, i) =>
+        cabs2(a) > 1e-6
+          ? ([
+              `${a[1] >= 0 && i > 0 ? '+' : ''}(${a[0].toFixed(2)}${
+                a[1] < 0 ? '-' : '+'
+              }${Math.abs(a[1]).toFixed(2)}i)|${KETS[i]}\\rangle`,
+              KCOL[i],
+            ] as [string, string])
+          : ''
+      )
+      .filter(Boolean);
+
+    setEq([
+      [
+        ['|\\psi\\rangle', accent()],
+        '=\\alpha|00\\rangle+\\beta|01\\rangle+\\gamma|10\\rangle+\\delta|11\\rangle',
+        '\\quad\\text{and a gate is a unitary }U|\\psi\\rangle',
+      ],
+      terms.length ? terms : ['|\\psi\\rangle = |00\\rangle'],
+      [sentence(psi, c)],
+    ]);
+  }
+
+  // --- placing gates ---------------------------------------------------------
+  function editAt(col: number, wire: number) {
+    const c = state.cols[col];
+    const g = state.pick;
+    if (g === 'ERASE') {
+      state.cols[col] = {};
+    } else if (isTwo(g)) {
+      const same = c.two && c.two.g === g && c.two.ctrl === wire;
+      state.cols[col] = same ? {} : { two: { g, ctrl: wire } };
+    } else {
+      const key = wire === 0 ? 'top' : 'bot';
+      const next: Col = c.two ? {} : { ...c };
+      next[key] = next[key] === g ? undefined : g;
+      state.cols[col] = next;
+    }
+    afterEdit();
+  }
+
+  /** A changed circuit is a different experiment: run it to the end and start
+   *  the tally over. */
+  function afterEdit() {
+    state.pc = lastUsed();
+    state.frac = 0;
+    state.playing = false;
+    state.stopAt = null;
+    state.shots = [0, 0, 0, 0];
+    state.total = 0;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    const wire = Math.abs(y - WIRE[0]) < 30 ? 0 : Math.abs(y - WIRE[1]) < 30 ? 1 : -1;
+    if (wire < 0) return;
+    for (let i = 0; i < COLS; i++)
+      if (Math.abs(x - COLX(i)) < 34) {
+        editAt(i, wire);
+        return;
+      }
+  });
+
+  // --- panel -----------------------------------------------------------------
+  const seg = (id: string, fn: (v: string) => void) =>
+    document.getElementById(id)!.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (!b) return;
+      document
+        .querySelectorAll(`#${id} button`)
+        .forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      fn(Object.values(b.dataset)[0] as string);
+    });
+
+  seg('gate', (v) => (state.pick = v as GateId | 'ERASE'));
+
+  const PRESETS: Col[][] = [
+    // one H and one CNOT: the shortest road to an entangled pair
+    [{ top: 'H' }, { two: { g: 'CNOT', ctrl: 0 } }],
+    // a phase that does nothing, until an H turns it into an answer
+    [{ top: 'H' }, { top: 'Z' }, { top: 'H' }],
+    // the target is put in |−⟩, and the control is the one that comes out marked
+    [{ bot: 'X' }, { top: 'H', bot: 'H' }, { two: { g: 'CNOT', ctrl: 0 } }, { top: 'H' }],
+    [],
+  ];
+
+  seg('preset', (v) => {
+    const p = PRESETS[+v];
+    state.cols = emptyCircuit();
+    p.forEach((c, i) => (state.cols[i] = { ...c }));
+    afterEdit();
+  });
+
+  const thEl = document.getElementById('theta') as HTMLInputElement;
+  thEl.addEventListener('input', () => {
+    state.theta = (+thEl.value * Math.PI) / 180;
+    (document.getElementById('thv') as HTMLElement).textContent = `${thEl.value}°`;
+    afterEdit();
+  });
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    if (!lastUsed()) return;
+    if (state.pc >= lastUsed()) {
+      state.pc = 0;
+      state.frac = 0;
+    }
+    state.playing = !state.playing;
+    state.stopAt = null;
+    runBtn.textContent = state.playing ? 'Pause' : 'Run';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    if (!lastUsed()) return;
+    if (state.pc >= lastUsed()) {
+      state.pc = 0;
+      state.frac = 0;
+    }
+    state.stopAt = state.pc + 1;
+    state.playing = true;
+  });
+  document.getElementById('reset')!.addEventListener('click', () => {
+    state.pc = 0;
+    state.frac = 0;
+    state.playing = false;
+    state.stopAt = null;
+    state.shots = [0, 0, 0, 0];
+    state.total = 0;
+  });
+
+  document.getElementById('shoot')!.addEventListener('click', () => {
+    const psi = evolve();
+    const p = psi.map(cabs2);
+    for (let n = 0; n < 200; n++) {
+      let u = Math.random();
+      let k = 3;
+      for (let i = 0; i < 4; i++) {
+        u -= p[i];
+        if (u <= 0) {
+          k = i;
+          break;
+        }
+      }
+      state.shots[k]++;
+      state.total++;
+    }
+  });
+
+  // --- the loop --------------------------------------------------------------
+  let last = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (!state.playing && runBtn.textContent === 'Pause') runBtn.textContent = 'Run';
+    draw(dt);
+    requestAnimationFrame(loop);
+  }
+
+  state.cols = emptyCircuit();
+  PRESETS[0].forEach((c, i) => (state.cols[i] = { ...c }));
+  afterEdit();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .qg-canvas {
+    cursor: pointer;
+    touch-action: none;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>

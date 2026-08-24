@@ -1,0 +1,962 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Stern-Gerlach Experiment"
+  description="Send silver atoms through a magnet whose field is stronger on one side than the other. Classical physics says the beam should smear out into a continuous band, because a little magnet can be tilted any way at all. It arrives as two spots. Chain the analysers, turn the next one, and the atoms keep answering the same two answers while forgetting the answer they gave before."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="sg" class="sg-canvas" width="960" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Pause</button>
+        <button class="btn ghost" id="step">One atom</button>
+        <button class="btn ghost" id="reset">Clear</button>
+      </div>
+
+      <div class="control">
+        <label>Setup</label>
+        <div class="seg" id="preset">
+          <button data-p="0">z</button>
+          <button data-p="1">z, z</button>
+          <button data-p="2" class="active">z, x</button>
+          <button data-p="3">z, x, z</button>
+        </div>
+      </div>
+
+      <div class="control" id="c-th1">
+        <label>Analyser 1 axis <b id="th1v">0°</b></label>
+        <input type="range" id="th1" min="0" max="180" step="5" value="0" />
+      </div>
+
+      <div class="control" id="c-keep1">
+        <label>Beam kept after 1</label>
+        <div class="seg" id="keep1">
+          <button data-k="1" class="active">+ħ/2</button>
+          <button data-k="-1">−ħ/2</button>
+        </div>
+      </div>
+
+      <div class="control" id="c-th2">
+        <label>Analyser 2 axis <b id="th2v">90°</b></label>
+        <input type="range" id="th2" min="0" max="180" step="5" value="90" />
+      </div>
+
+      <div class="control" id="c-keep2">
+        <label>Beam kept after 2</label>
+        <div class="seg" id="keep2">
+          <button data-k="1" class="active">+ħ/2</button>
+          <button data-k="-1">−ħ/2</button>
+        </div>
+      </div>
+
+      <div class="control" id="c-th3">
+        <label>Analyser 3 axis <b id="th3v">0°</b></label>
+        <input type="range" id="th3" min="0" max="180" step="5" value="0" />
+      </div>
+
+      <div class="control">
+        <label>Beam intensity <b id="ratev">24/s</b></label>
+        <input type="range" id="rate" min="2" max="90" value="24" />
+      </div>
+
+      <label class="check"
+        ><input type="checkbox" id="classical" /> Show what classical physics
+        predicts</label
+      >
+
+      <div class="readout">
+        <div class="row"><span>Atoms detected</span><b id="tot">—</b></div>
+        <div class="row"><span>Upper spot</span><b id="cplus">—</b></div>
+        <div class="row"><span>Lower spot</span><b id="cminus">—</b></div>
+        <div class="row"><span>cos²(Δ/2) says</span><b id="pexp">—</b></div>
+      </div>
+
+      <p class="note">
+        Each analyser passes one of its two beams on and stops the other. The
+        cards below the apparatus compare what the last analyser measured with
+        what the angle between the two axes predicts.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Start with a <b>single</b> analyser. A classical magnetic moment could be
+      tilted at any angle, so the beam should arrive as one smeared band, and
+      the checkbox draws that prediction. What arrives is <b>two spots</b>. The
+      component of spin along any axis has only two possible values, ±ħ/2, and
+      nothing in between is ever measured.
+    </li>
+    <li>
+      Now <b>z, z</b>: two analysers on the same axis. Every atom that came out
+      of the first one's upper beam goes up again, so the lower spot stays
+      completely empty. A measurement is <b>repeatable</b>: the first one left
+      the atom in the state it reported.
+    </li>
+    <li>
+      Turn the second analyser to <b>x</b>, ninety degrees away. The beam that
+      was purely "spin up along z" splits again, exactly <b>fifty-fifty</b>.
+      Being definite along z means being completely undecided along x.
+    </li>
+    <li>
+      Slide analyser 2 anywhere between and the split follows
+      <b>cos²(Δ/2)</b>, the fraction shown on the card. At Δ = 0 it is 1, at
+      Δ = 180° it is 0, and the halfway point is not 90° of angle but 90° of
+      half-angle, which is the fingerprint of a spin-½ object.
+    </li>
+    <li>
+      The one that should feel wrong: <b>z, x, z</b>. The first analyser
+      selects spin up along z, the third one asks about z again, and the answer
+      is 50/50. Measuring x <b>destroyed</b> what was known about z. The two
+      questions cannot be answered at once, which is what it means for their
+      operators not to commute.
+    </li>
+    <li>
+      Watch a <b>single atom</b> at a time. Nothing about it is halfway: it goes
+      up or it goes down. The smooth cos²(Δ/2) only appears in the counts, after
+      thousands of atoms have each made a discrete choice.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import { arrow, roundRect } from '../../../lib/theorem';
+
+  // ---------------------------------------------------------------------------
+  // The physics is one line. An analyser along n̂ has two eigenvalues, ±ħ/2, and
+  // an atom that arrived polarised along m̂ comes out of the + beam with
+  // probability cos²(Δ/2), where Δ is the angle between m̂ and n̂. Straight out
+  // of the oven the atoms are unpolarised, so that first probability is ½.
+  // Everything below is bookkeeping and pictures around that one line.
+  // ---------------------------------------------------------------------------
+
+  type Stage = { th: number; keep: 1 | -1 };
+
+  const state = {
+    n: 2,
+    stages: [
+      { th: 0, keep: 1 },
+      { th: 90, keep: 1 },
+      { th: 0, keep: 1 },
+    ] as Stage[],
+    rate: 24,
+    running: true,
+    classical: false,
+    /** keep animating while paused until the atoms in flight have landed */
+    flush: false,
+  };
+
+  // --- geometry --------------------------------------------------------------
+  const MW = 92; // magnet body width
+  const MH = 56;
+  const SCREEN_X = 858;
+  const BAND_Y = 452; // top of the row of explanation cards
+  const CARD_W = 306;
+  const BLOCK_GAP = 34; // how far in front of the next magnet a beam is stopped
+  const Y_TOP = 76; // the strip of stage the apparatus is centred inside
+  const Y_BOT = BAND_Y - 16;
+  const OVEN = { x: 22, w: 76, h: 60 };
+
+  // Where the magnets sit, and how far apart the two beams of each one get.
+  const LAY: Record<number, { cx: number[]; split: number[] }> = {
+    1: { cx: [380], split: [104] },
+    2: { cx: [300, 610], split: [92, 56] },
+    3: { cx: [210, 460, 700], split: [84, 50, 32] },
+  };
+
+  const setEq = equationBar();
+  const canvas = document.getElementById('sg') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw(0));
+  const css = (k: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(k).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { label } = makeText(ctx, ink);
+  const PLUS = '#5eead4';
+  const MINUS = '#f59e0b';
+  const CLASSIC = '#f87171';
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const fmt = (v: number) => v.toLocaleString('en-US').replace(/,/g, ' ');
+
+  // --- the chain of analysers ------------------------------------------------
+  const lay = () => LAY[state.n];
+
+  /** Lane heights measured from the first one, before the chain is centred. */
+  function rels() {
+    const { split } = lay();
+    const r = [0];
+    for (let i = 0; i < state.n - 1; i++)
+      r.push(r[i] - state.stages[i].keep * split[i]);
+    return r;
+  }
+
+  /**
+   * Height of the beam entering each analyser. Keeping the lower beam every
+   * time walks the whole apparatus downwards, so rather than pin the oven to a
+   * fixed height the finished chain is centred in the stage.
+   */
+  function lanes() {
+    const { split } = lay();
+    const r = rels();
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < state.n; i++) {
+      const spread = i === state.n - 1 ? split[i] * 1.5 : split[i];
+      lo = Math.min(lo, r[i] - spread - 12, r[i] - MH / 2 - 56);
+      hi = Math.max(hi, r[i] + spread + 22);
+    }
+    const base = Y_TOP - lo + Math.max(0, (Y_BOT - Y_TOP - (hi - lo)) / 2);
+    return r.map((v) => v + base);
+  }
+
+  const lane = (i: number) => lanes()[i];
+
+  /** The axis the beam entering analyser i is polarised along, null if not. */
+  function inAxis(i: number): number | null {
+    if (i === 0) return null; // straight from the oven: no direction at all
+    const prev = state.stages[i - 1];
+    return prev.th + (prev.keep > 0 ? 0 : 180);
+  }
+
+  /** Angle between what came in and what analyser i is about to ask. */
+  function delta(i: number): number | null {
+    const a = inAxis(i);
+    if (a === null) return null;
+    let d = Math.abs(state.stages[i].th - a) % 360;
+    if (d > 180) d = 360 - d;
+    return d;
+  }
+
+  function pPlus(i: number) {
+    const d = delta(i);
+    return d === null ? 0.5 : Math.cos(rad(d) / 2) ** 2;
+  }
+
+  // --- one beam's path through and past a magnet -----------------------------
+  // Inside the poles the atom follows a parabola; outside it flies straight.
+  // The two are joined so the straight part is the parabola's own tangent, so
+  // the beam has no visible kink where the field ends.
+  interface Bend {
+    x0: number;
+    x1: number;
+    xT: number;
+    yc: number;
+    spread: number;
+    a: number;
+  }
+
+  function bend(i: number): Bend {
+    const { cx, split } = lay();
+    const last = i === state.n - 1;
+    const x0 = cx[i] - MW / 2;
+    const x1 = cx[i] + MW / 2;
+    const xT = last ? SCREEN_X : cx[i + 1] - MW / 2;
+    const spread = last ? split[i] * 1.5 : split[i];
+    return {
+      x0,
+      x1,
+      xT,
+      yc: lane(i),
+      spread,
+      a: (spread * MW) / (MW + 2 * (xT - x1)),
+    };
+  }
+
+  /** Vertical offset from the incoming lane, for outcome s = ±1. */
+  function off(g: Bend, s: number, x: number) {
+    if (x <= g.x0) return 0;
+    if (x <= g.x1) {
+      const u = (x - g.x0) / MW;
+      return -s * g.a * u * u;
+    }
+    const t = (x - g.x1) / (g.xT - g.x1);
+    return -s * (g.a + (g.spread - g.a) * t);
+  }
+
+  function branchPoints(g: Bend, s: number, xEnd: number) {
+    const pts: { x: number; y: number }[] = [];
+    for (let k = 0; k <= 6; k++) {
+      const x = g.x0 + (MW * k) / 6;
+      if (x > xEnd) break;
+      pts.push({ x, y: g.yc + off(g, s, x) });
+    }
+    pts.push({ x: xEnd, y: g.yc + off(g, s, xEnd) });
+    return pts;
+  }
+
+  // --- atoms in flight -------------------------------------------------------
+  type Atom = {
+    px: number[];
+    py: number[];
+    cum: number[];
+    total: number;
+    d: number;
+    blocked: boolean;
+    out: number; // outcome at the last analyser it reached
+    dead: number; // fade counter once absorbed
+  };
+
+  const atoms: Atom[] = [];
+  const spots: { x: number; y: number; s: number }[] = [];
+  let counts: { p: number; m: number }[] = [];
+  const SPEED = 430; // pixels per second
+
+  function resetCounts() {
+    counts = Array.from({ length: state.n }, () => ({ p: 0, m: 0 }));
+    atoms.length = 0;
+    spots.length = 0;
+  }
+
+  function release() {
+    const pts: { x: number; y: number }[] = [{ x: OVEN.x + OVEN.w, y: lane(0) }];
+    let blocked = false;
+    let out = 1;
+
+    for (let i = 0; i < state.n; i++) {
+      const s = Math.random() < pPlus(i) ? 1 : -1;
+      const c = counts[i];
+      s > 0 ? c.p++ : c.m++;
+      out = s;
+
+      const g = bend(i);
+      const last = i === state.n - 1;
+      const stopped = !last && s !== state.stages[i].keep;
+      const xEnd = stopped ? g.xT - BLOCK_GAP : g.xT;
+      pts.push(...branchPoints(g, s, xEnd));
+      if (stopped) {
+        blocked = true;
+        break;
+      }
+    }
+
+    const px = pts.map((p) => p.x);
+    const py = pts.map((p) => p.y);
+    const cum = [0];
+    for (let k = 1; k < px.length; k++)
+      cum.push(cum[k - 1] + Math.hypot(px[k] - px[k - 1], py[k] - py[k - 1]));
+
+    atoms.push({
+      px,
+      py,
+      cum,
+      total: cum[cum.length - 1],
+      d: 0,
+      blocked,
+      out,
+      dead: 0,
+    });
+  }
+
+  /** Position of an atom that has travelled d along its polyline. */
+  function at(a: Atom, d: number) {
+    const c = a.cum;
+    let k = 1;
+    while (k < c.length - 1 && c[k] < d) k++;
+    const t = (d - c[k - 1]) / Math.max(1e-6, c[k] - c[k - 1]);
+    return {
+      x: a.px[k - 1] + (a.px[k] - a.px[k - 1]) * t,
+      y: a.py[k - 1] + (a.py[k] - a.py[k - 1]) * t,
+    };
+  }
+
+  function advance(dt: number) {
+    for (let i = atoms.length - 1; i >= 0; i--) {
+      const a = atoms[i];
+      if (a.dead > 0) {
+        a.dead -= dt;
+        if (a.dead <= 0) atoms.splice(i, 1);
+        continue;
+      }
+      a.d += SPEED * dt;
+      if (a.d >= a.total) {
+        a.d = a.total;
+        if (a.blocked) a.dead = 0.35;
+        else {
+          const p = at(a, a.total);
+          spots.push({
+            x: SCREEN_X + 2 + Math.random() * 12,
+            y: p.y + (Math.random() - 0.5) * 11,
+            s: a.out,
+          });
+          if (spots.length > 900) spots.shift();
+          atoms.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  // --- drawing ---------------------------------------------------------------
+  function drawOven() {
+    const y0 = lane(0);
+    const oy = y0 - OVEN.h / 2;
+    const g = ctx.createLinearGradient(OVEN.x, 0, OVEN.x + OVEN.w, 0);
+    g.addColorStop(0, 'rgba(248,113,113,0.30)');
+    g.addColorStop(1, 'rgba(248,113,113,0.10)');
+    ctx.fillStyle = g;
+    roundRect(ctx, OVEN.x, oy, OVEN.w, OVEN.h, 9);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(248,113,113,0.45)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // spins pointing every which way: nothing has been measured yet
+    const seeds = [22, 74, 131, 188, 245, 302, 339, 15];
+    seeds.forEach((deg, k) => {
+      const cx = OVEN.x + 20 + (k % 3) * 19;
+      const cy = oy + 16 + Math.floor(k / 3) * 15;
+      const a = rad(deg);
+      arrow(
+        ctx,
+        cx - 6 * Math.cos(a),
+        cy + 6 * Math.sin(a),
+        cx + 6 * Math.cos(a),
+        cy - 6 * Math.sin(a),
+        ink(0.34),
+        1.2,
+        4
+      );
+    });
+
+    label('OVEN', OVEN.x, oy - 22, 0.45, 'left', 11);
+    label('unpolarised', OVEN.x, oy - 8, 0.3, 'left', 10);
+    ctx.strokeStyle = ink(0.22);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(OVEN.x + OVEN.w, y0 - 7);
+    ctx.lineTo(OVEN.x + OVEN.w + 10, y0 - 7);
+    ctx.moveTo(OVEN.x + OVEN.w, y0 + 7);
+    ctx.lineTo(OVEN.x + OVEN.w + 10, y0 + 7);
+    ctx.stroke();
+  }
+
+  /** The faint skeleton of every beam, so the layout reads when nothing flies. */
+  function drawBeams() {
+    for (let i = 0; i < state.n; i++) {
+      const g = bend(i);
+      const last = i === state.n - 1;
+      for (const s of [1, -1]) {
+        const stopped = !last && s !== state.stages[i].keep;
+        const xEnd = stopped ? g.xT - BLOCK_GAP : g.xT;
+        const pts = branchPoints(g, s, xEnd);
+        ctx.strokeStyle = stopped
+          ? ink(0.1)
+          : (s > 0 ? PLUS : MINUS) + (last ? '55' : '44');
+        ctx.lineWidth = stopped ? 1 : 1.6;
+        ctx.setLineDash(stopped ? [4, 4] : []);
+        ctx.beginPath();
+        pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (stopped) {
+          const y = g.yc + off(g, s, xEnd);
+          ctx.fillStyle = ink(0.16);
+          roundRect(ctx, xEnd - 3, y - 17, 12, 34, 3);
+          ctx.fill();
+          ctx.strokeStyle = ink(0.3);
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          // under the block, so the word never runs into the next magnet
+          if (i === 0) label('stopped', xEnd + 3, y + 31, 0.3, 'center', 9.5);
+        }
+      }
+      // the collimated beam from the oven into the first magnet
+      if (i === 0) {
+        ctx.strokeStyle = ink(0.3);
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(OVEN.x + OVEN.w, lane(0));
+        ctx.lineTo(g.x0, lane(0));
+        ctx.stroke();
+      }
+    }
+  }
+
+  /** A small compass showing where the analyser's axis points. */
+  function dial(cx: number, cy: number, r: number, i: number, big: boolean) {
+    const th = state.stages[i].th;
+    const ax = Math.sin(rad(th));
+    const ay = -Math.cos(rad(th));
+
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    if (big) {
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy);
+      ctx.lineTo(cx + r, cy);
+      ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx, cy + r);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label('z', cx, cy - r - 6, 0.3, 'center', 9.5);
+      label('x', cx + r + 8, cy + 4, 0.3, 'left', 9.5);
+
+      // where the incoming spin points, or that it points nowhere
+      const m = inAxis(i);
+      if (m === null) {
+        for (const d of [18, 62, 106, 150, 198, 242, 286, 330]) {
+          const u = Math.sin(rad(d));
+          const v = -Math.cos(rad(d));
+          arrow(
+            ctx,
+            cx + u * r * 0.18,
+            cy + v * r * 0.18,
+            cx + u * r * 0.62,
+            cy + v * r * 0.62,
+            ink(0.16),
+            1.1,
+            4
+          );
+        }
+      } else {
+        arrow(
+          ctx,
+          cx,
+          cy,
+          cx + Math.sin(rad(m)) * r * 0.78,
+          cy - Math.cos(rad(m)) * r * 0.78,
+          ink(0.42),
+          1.6,
+          6
+        );
+        const d = delta(i)!;
+        if (d > 4) {
+          const a0 = rad(m) - Math.PI / 2;
+          const a1 = rad(th) - Math.PI / 2;
+          ctx.strokeStyle = ink(0.35);
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r * 0.34, Math.min(a0, a1), Math.max(a0, a1));
+          ctx.stroke();
+          const mid = (a0 + a1) / 2;
+          label(
+            `${d.toFixed(0)}°`,
+            cx + Math.cos(mid) * r * 0.55,
+            cy + Math.sin(mid) * r * 0.55 + 3,
+            0.55,
+            'center',
+            9.5
+          );
+        }
+      }
+    }
+
+    // the axis itself: + end filled, − end hollow
+    ctx.strokeStyle = ink(0.5);
+    ctx.lineWidth = big ? 2 : 1.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - ax * r * 0.9, cy - ay * r * 0.9);
+    ctx.lineTo(cx + ax * r * 0.9, cy + ay * r * 0.9);
+    ctx.stroke();
+    ctx.fillStyle = PLUS;
+    ctx.beginPath();
+    ctx.arc(cx + ax * r * 0.9, cy + ay * r * 0.9, big ? 5 : 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = MINUS;
+    ctx.beginPath();
+    ctx.arc(cx - ax * r * 0.9, cy - ay * r * 0.9, big ? 4 : 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawMagnets() {
+    for (let i = 0; i < state.n; i++) {
+      const g = bend(i);
+      const x = g.x0;
+      const y = g.yc - MH / 2;
+      ctx.fillStyle = ink(0.05);
+      roundRect(ctx, x, y, MW, MH, 8);
+      ctx.fill();
+      ctx.strokeStyle = ink(0.22);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // the field is stronger towards the + end: draw it as a wedge of tint
+      const grad = ctx.createLinearGradient(0, y, 0, y + MH);
+      grad.addColorStop(0, PLUS + '22');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      roundRect(ctx, x, y, MW, MH, 8);
+      ctx.fill();
+
+      dial(g.x0 + MW / 2, g.yc - MH / 2 - 22, 15, i, false);
+      label(
+        `SG ${i + 1}  n̂ = ${state.stages[i].th}°`,
+        g.x0 + MW / 2,
+        g.yc - MH / 2 - 46,
+        0.5,
+        'center',
+        10.5
+      );
+      if (i === state.n - 1) {
+        const sp = g.spread;
+        label('+ħ/2', g.xT - 46, g.yc - sp - 12, 1, 'right', 11, PLUS);
+        label('−ħ/2', g.xT - 46, g.yc + sp + 20, 1, 'right', 11, MINUS);
+      }
+    }
+  }
+
+  function drawScreen() {
+    const g = bend(state.n - 1);
+    ctx.fillStyle = ink(0.06);
+    roundRect(ctx, SCREEN_X, Y_TOP - 8, 16, Y_BOT - Y_TOP + 16, 4);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.2);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    label('DETECTOR', SCREEN_X + 8, Y_TOP - 20, 0.45, 'center', 10.5);
+
+    // what a classical magnetic moment would have given: a continuous band
+    if (state.classical) {
+      const top = g.yc - g.spread * 1.25;
+      const bot = g.yc + g.spread * 1.25;
+      const grad = ctx.createLinearGradient(0, top, 0, bot);
+      grad.addColorStop(0, CLASSIC + '00');
+      grad.addColorStop(0.5, CLASSIC + '66');
+      grad.addColorStop(1, CLASSIC + '00');
+      ctx.fillStyle = grad;
+      ctx.fillRect(SCREEN_X + 1, top, 14, bot - top);
+      label('classical:', SCREEN_X - 12, g.yc - 6, 0.75, 'right', 10, CLASSIC);
+      label('one smear', SCREEN_X - 12, g.yc + 8, 0.75, 'right', 10, CLASSIC);
+    }
+
+    for (const s of spots) {
+      ctx.fillStyle = (s.s > 0 ? PLUS : MINUS) + '33';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const last = counts[state.n - 1] ?? { p: 0, m: 0 };
+    const tot = last.p + last.m || 1;
+    const rows: [number, number, string][] = [
+      [g.yc - g.spread, last.p, PLUS],
+      [g.yc + g.spread, last.m, MINUS],
+    ];
+    for (const [y, c, col] of rows) {
+      label(`${((c / tot) * 100).toFixed(1)}%`, SCREEN_X + 24, y - 1, 1, 'left', 11.5, col);
+      label(`n = ${fmt(c)}`, SCREEN_X + 24, y + 14, 0.4, 'left', 10);
+    }
+  }
+
+  function drawAtoms() {
+    for (const a of atoms) {
+      const p = at(a, a.d);
+      const alpha = a.dead > 0 ? Math.max(0, a.dead / 0.35) : 1;
+      const col = a.blocked && a.dead > 0 ? ink(0.5 * alpha) : a.out > 0 ? PLUS : MINUS;
+      // a short tail so the direction of travel reads
+      const q = at(a, Math.max(0, a.d - 13));
+      ctx.strokeStyle = a.out > 0 ? PLUS + '55' : MINUS + '55';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(q.x, q.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /** One card per analyser: the angle, the prediction, and what was counted. */
+  function drawCards() {
+    const startX = (W - state.n * CARD_W) / 2;
+    for (let i = 0; i < state.n; i++) {
+      const x = startX + i * CARD_W;
+      ctx.fillStyle = ink(0.035);
+      roundRect(ctx, x + 8, BAND_Y, CARD_W - 16, 140, 10);
+      ctx.fill();
+      ctx.strokeStyle = ink(0.12);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      dial(x + 72, BAND_Y + 72, 44, i, true);
+
+      const tx = x + 128;
+      const d = delta(i);
+      const pe = pPlus(i);
+      const c = counts[i];
+      const tot = c.p + c.m;
+      const meas = tot ? c.p / tot : 0;
+
+      label(`ANALYSER ${i + 1}`, tx, BAND_Y + 26, 0.45, 'left', 10.5);
+      label(`axis n̂ = ${state.stages[i].th}°`, tx, BAND_Y + 46, 0.75, 'left', 10.5);
+      label(
+        d === null ? 'in: unpolarised' : `in: spin at ${inAxisLabel(i)}`,
+        tx,
+        BAND_Y + 64,
+        0.45,
+        'left',
+        10
+      );
+      label(
+        d === null ? 'no axis, so P = ½' : `cos²(${(d / 2).toFixed(0)}°) = ${(pe * 100).toFixed(1)}%`,
+        tx,
+        BAND_Y + 86,
+        0.9,
+        'left',
+        10.5,
+        PLUS
+      );
+
+      // measured fraction as a bar, with the prediction marked on it
+      const bw = CARD_W - 16 - (tx - x) - 14;
+      const by = BAND_Y + 96;
+      ctx.fillStyle = ink(0.08);
+      roundRect(ctx, tx, by, bw, 11, 5);
+      ctx.fill();
+      if (tot) {
+        ctx.fillStyle = PLUS + 'cc';
+        roundRect(ctx, tx, by, Math.max(2, bw * meas), 11, 5);
+        ctx.fill();
+      }
+      ctx.strokeStyle = ink(0.75);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(tx + bw * pe, by - 3);
+      ctx.lineTo(tx + bw * pe, by + 14);
+      ctx.stroke();
+
+      label(
+        tot ? `measured ${(meas * 100).toFixed(1)}%  n=${fmt(tot)}` : 'nothing counted yet',
+        tx,
+        BAND_Y + 126,
+        0.4,
+        'left',
+        9.5
+      );
+    }
+  }
+
+  function inAxisLabel(i: number) {
+    const m = inAxis(i)!;
+    const norm = ((m % 360) + 360) % 360;
+    return `${norm}°`;
+  }
+
+  function draw(dt: number) {
+    if (state.running || state.flush) advance(dt);
+    ctx.clearRect(0, 0, W, H);
+    drawBeams();
+    drawOven();
+    drawMagnets();
+    drawScreen();
+    drawAtoms();
+    drawCards();
+    sync();
+  }
+
+  // --- the line of maths above the stage ------------------------------------
+  function sentence() {
+    const dLast = delta(state.n - 1);
+    if (state.n === 1)
+      return 'one magnet, two spots: the component of spin along n̂ is never anything but +ħ/2 or −ħ/2';
+    if (dLast === 0)
+      return 'the same axis asked twice gives the same answer every time: the first measurement left the atom in the state it reported';
+    if (
+      state.n === 3 &&
+      delta(2) !== null &&
+      state.stages[2].th === state.stages[0].th &&
+      delta(1)! > 20
+    )
+      return 'the third analyser has forgotten the first: measuring x destroyed everything that was known about z';
+    if (dLast === 180)
+      return 'exactly opposite axes: every atom comes out of the other beam, and the first one is empty';
+    return 'the spin has no value along n̂ until n̂ is the thing measured, and then the only values are ±ħ/2';
+  }
+
+  function sync() {
+    const i = state.n - 1;
+    const c = counts[i] ?? { p: 0, m: 0 };
+    const tot = c.p + c.m;
+    const pe = pPlus(i);
+    const d = delta(i);
+    const set = (id: string, v: string) =>
+      ((document.getElementById(id) as HTMLElement).textContent = v);
+    set('tot', fmt(tot));
+    set('cplus', tot ? `${((c.p / tot) * 100).toFixed(1)}%` : '—');
+    set('cminus', tot ? `${((c.m / tot) * 100).toFixed(1)}%` : '—');
+    set('pexp', `${(pe * 100).toFixed(1)}%`);
+
+    setEq([
+      [
+        ['S_{\\hat n}', PLUS],
+        '\\text{ can only come back as }',
+        ['+\\tfrac{\\hbar}{2}', PLUS],
+        '\\text{ or }',
+        ['-\\tfrac{\\hbar}{2}', MINUS],
+        ',\\qquad P(+)=\\cos^2\\!\\dfrac{\\Delta}{2}',
+      ],
+      [
+        d === null
+          ? '\\text{unpolarised beam}'
+          : `\\Delta = ${d.toFixed(0)}^\\circ`,
+        [`\\quad\\cos^2(\\Delta/2) = ${(pe * 100).toFixed(1)}\\%`, PLUS],
+        tot
+          ? `\\quad\\text{measured } ${((c.p / tot) * 100).toFixed(1)}\\%\\ \\text{of } ${tot}`
+          : '',
+      ],
+      [sentence()],
+    ]);
+  }
+
+  // --- controls --------------------------------------------------------------
+  function refreshPanel() {
+    for (let i = 1; i <= 3; i++) {
+      const box = document.getElementById(`c-th${i}`)!;
+      box.classList.toggle('hidden', i > state.n);
+      const sl = document.getElementById(`th${i}`) as HTMLInputElement;
+      sl.value = String(state.stages[i - 1].th);
+      (document.getElementById(`th${i}v`) as HTMLElement).textContent =
+        `${state.stages[i - 1].th}°`;
+    }
+    for (let i = 1; i <= 2; i++) {
+      const box = document.getElementById(`c-keep${i}`)!;
+      box.classList.toggle('hidden', i > state.n - 1);
+      document
+        .querySelectorAll(`#keep${i} button`)
+        .forEach((b) =>
+          b.classList.toggle(
+            'active',
+            +(b as HTMLElement).dataset.k! === state.stages[i - 1].keep
+          )
+        );
+    }
+  }
+
+  function restart() {
+    resetCounts();
+    refreshPanel();
+  }
+
+  /** A hand-made setup is no longer any of the presets. */
+  function clearPreset() {
+    document
+      .querySelectorAll('#preset button')
+      .forEach((x) => x.classList.remove('active'));
+  }
+
+  const PRESETS: { n: number; th: number[]; keep: (1 | -1)[] }[] = [
+    { n: 1, th: [0, 90, 0], keep: [1, 1] },
+    { n: 2, th: [0, 0, 0], keep: [1, 1] },
+    { n: 2, th: [0, 90, 0], keep: [1, 1] },
+    { n: 3, th: [0, 90, 0], keep: [1, 1] },
+  ];
+
+  document.getElementById('preset')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document
+      .querySelectorAll('#preset button')
+      .forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    const p = PRESETS[+b.dataset.p!];
+    state.n = p.n;
+    state.stages = p.th.map((th, k) => ({ th, keep: p.keep[k] ?? 1 }));
+    restart();
+  });
+
+  for (let i = 1; i <= 3; i++) {
+    const sl = document.getElementById(`th${i}`) as HTMLInputElement;
+    sl.addEventListener('input', () => {
+      state.stages[i - 1].th = +sl.value;
+      (document.getElementById(`th${i}v`) as HTMLElement).textContent =
+        `${sl.value}°`;
+      clearPreset();
+      restart();
+    });
+  }
+
+  for (let i = 1; i <= 2; i++) {
+    document.getElementById(`keep${i}`)!.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (!b) return;
+      state.stages[i - 1].keep = +b.dataset.k! === 1 ? 1 : -1;
+      clearPreset();
+      restart();
+    });
+  }
+
+  const rateEl = document.getElementById('rate') as HTMLInputElement;
+  rateEl.addEventListener('input', () => {
+    state.rate = +rateEl.value;
+    (document.getElementById('ratev') as HTMLElement).textContent =
+      `${rateEl.value}/s`;
+  });
+
+  const clEl = document.getElementById('classical') as HTMLInputElement;
+  clEl.addEventListener('change', () => (state.classical = clEl.checked));
+
+  const runBtn = document.getElementById('run') as HTMLButtonElement;
+  runBtn.addEventListener('click', () => {
+    state.running = !state.running;
+    runBtn.textContent = state.running ? 'Pause' : 'Play';
+  });
+  document.getElementById('step')!.addEventListener('click', () => {
+    if (state.running) {
+      state.running = false;
+      runBtn.textContent = 'Play';
+    }
+    release();
+    state.flush = true;
+  });
+  document.getElementById('reset')!.addEventListener('click', restart);
+
+  // --- the loop --------------------------------------------------------------
+  let last = performance.now();
+  let due = 0;
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (state.running) {
+      due += state.rate * dt;
+      while (due >= 1) {
+        release();
+        due -= 1;
+      }
+    }
+    if (state.flush && atoms.length === 0) state.flush = false;
+    draw(dt);
+    requestAnimationFrame(loop);
+  }
+
+  restart();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .sg-canvas {
+    touch-action: none;
+  }
+  .hidden {
+    display: none;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>
