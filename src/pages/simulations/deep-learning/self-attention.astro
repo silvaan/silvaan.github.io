@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Self-Attention"
-  description="Self-attention is attention where the queries, the keys and the values all come from the same sentence. Every token asks its own question, every token answers, and the answers become one matrix whose rows each add to one. Switch to the vector view to see the actual columns of numbers and every multiplication that turns them into an output."
+  description="The softmax at the centre of attention is taken apart on its own page. The question here is narrower and stranger: where do the queries, the keys and the values come from? All three are projections of the same X, so the sentence is querying itself. Switch to the vector view for the actual columns of numbers and every multiplication that turns them into an output."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -43,20 +43,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <input type="range" id="q" min="0" max="7" value="2" />
       </div>
 
-      <div class="control">
-        <label>Temperature τ <b id="tval">0.60</b></label>
-        <input type="range" id="temp" min="10" max="200" value="60" />
-      </div>
-
       <label class="check"
         ><input type="checkbox" id="causal" /> Causal mask: no looking ahead</label
       >
 
       <div class="readout">
+        <div class="row"><span>Q, K and V</span><b id="src">3 views of X</b></div>
+        <div class="row"><span>d_k, and its scale</span><b id="dk">—</b></div>
         <div class="row"><span>Looks hardest at</span><b id="best">—</b></div>
-        <div class="row"><span>That weight</span><b id="wmax">—</b></div>
-        <div class="row"><span>Row adds to</span><b id="wsum">—</b></div>
-        <div class="row"><span>Tokens it uses</span><b id="eff">—</b></div>
+        <div class="row"><span>Keeps of itself</span><b id="diag">—</b></div>
       </div>
 
       <p class="note">
@@ -97,8 +92,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       decoder here.
     </li>
     <li>
-      Every row adds to <b>one</b>, always. Attention never invents magnitude,
-      it only decides how to spend it.
+      Nothing here tunes the softmax: the only scale is the <b>√d<sub>k</sub></b>
+      the formula already has. What sharpening, flattening and masking do to
+      those weights is the subject of
+      <a href="/simulations/deep-learning/attention">Attention as a Soft Lookup</a>,
+      where the keys are a fixed dictionary rather than the sentence itself.
     </li>
   </Fragment>
 </SimLayout>
@@ -145,7 +143,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     head: 0,
     q: 2,
     jf: 2,
-    temp: 0.6,
     causal: false,
     view: 'map' as 'map' | 'vec',
   };
@@ -190,6 +187,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const Z = [0, 0, 0, 0, 0, 0, 0];
   const cT = Math.cos(TH),
     sT = Math.sin(TH);
+  // A transformer has no temperature knob: the only thing that decides how
+  // sharp a head is, is how large its own projections are, because larger q and
+  // k make larger dot products and softmax does the rest. These queries are
+  // scaled up for exactly that reason.
+  const QSHARP = 5 / 3;
+
   /** W_q for each head: four rows of seven, applied to x. */
   const WQ: number[][][] = [
     [[2.6, 0, 0, 0, 0, 0, 0], [0, 2.6, 0, 0, 0, 0, 0], Z, Z],
@@ -202,7 +205,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       [0, 0, 0, 0, 1.5 * cT, 1.5 * sT, 0],
       [0, 0, 0, 0, -1.5 * sT, 1.5 * cT, 0],
     ],
-  ];
+  ].map((head) => head.map((r) => r.map((v) => v * QSHARP)));
   const WK: number[][][] = [
     [[2.6, 0, 0, 0, 0, 0, 0], [0, 2.6, 0, 0, 0, 0, 0], Z, Z],
     [Z, Z, [0, 0, 0, 0, 3.4, 0, 0], [0, 0, 0, 0, 0, 3.4, 0]],
@@ -232,7 +235,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   /** One row of the attention matrix: softmax over the keys it may see. */
   function row(i: number) {
     const raw = toks().map((_, j) =>
-      state.causal && j > i ? -Infinity : score(i, j) / Math.max(0.1, state.temp)
+      state.causal && j > i ? -Infinity : score(i, j)
     );
     const mx = Math.max(...raw);
     const e = raw.map((v) => (v === -Infinity ? 0 : Math.exp(v - mx)));
@@ -704,15 +707,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     w.forEach((v, i) => {
       if (v > w[bi]) bi = i;
     });
-    const eff = 1 / Math.max(1e-9, w.reduce((s, v) => s + v * v, 0));
     const set = (id: string, v: string) =>
       ((document.getElementById(id) as HTMLElement).textContent = v);
-    set('best', toks()[bi].t);
-    set('wmax', `${(w[bi] * 100).toFixed(1)}%`);
-    set('wsum', w.reduce((s, v) => s + v, 0).toFixed(3));
-    set('eff', `${eff.toFixed(2)} of ${n()}`);
+    set('dk', `${DK} → √${DK} = ${Math.sqrt(DK).toFixed(2)}`);
+    set('best', `${toks()[bi].t} ${(w[bi] * 100).toFixed(0)}%`);
+    set('diag', `${(w[state.q] * 100).toFixed(1)}%`);
     set('qval', toks()[state.q].t);
-    set('tval', state.temp.toFixed(2));
 
     setEq([
       [
@@ -797,11 +797,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     draw();
   });
   qEl().addEventListener('input', () => setQ(+qEl().value));
-  const tEl = document.getElementById('temp') as HTMLInputElement;
-  tEl.addEventListener('input', () => {
-    state.temp = +tEl.value / 100;
-    draw();
-  });
   const cEl = document.getElementById('causal') as HTMLInputElement;
   cEl.addEventListener('change', () => {
     state.causal = cEl.checked;

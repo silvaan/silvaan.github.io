@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Embeddings & Cosine Similarity"
-  description="An embedding turns a word into an arrow. Two words mean similar things when their arrows point the same way, so similarity is an angle and nothing else. Drag the query arrow around and watch which word it lines up with."
+  description="An embedding turns a word into an arrow. Two words mean similar things when their arrows point the same way, so similarity is an angle and nothing else. Or is it? Rank the same words by straight-line distance instead and the level sets change from rays out of the origin into rings around the query, which is a different question with different answers, unless every arrow has length one."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -18,6 +18,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="seg" id="score">
           <button data-s="cos" class="active">cos θ</button>
           <button data-s="dot">dot product</button>
+          <button data-s="euc">distance</button>
         </div>
       </div>
 
@@ -34,13 +35,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         ><input type="checkbox" id="unit" /> Force the query to length 1</label
       >
       <label class="check"
-        ><input type="checkbox" id="proj" checked /> Show the shadow the query casts</label
+        ><input type="checkbox" id="proj" checked />
+        <span id="projlbl">Show the shadow the query casts</span></label
       >
 
       <div class="readout">
         <div class="row"><span>Angle θ</span><b id="ang">—</b></div>
         <div class="row"><span>cos θ</span><b id="cosv">—</b></div>
         <div class="row"><span>Dot product</span><b id="dotv">—</b></div>
+        <div class="row"><span>Distance ‖q−w‖</span><b id="eucv">—</b></div>
         <div class="row"><span>Query length</span><b id="qlen">—</b></div>
       </div>
 
@@ -82,6 +85,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       the dot product and the cosine become the same number, and the shadow is
       literally cos θ. Normalised embeddings are used precisely so these two agree.
     </li>
+    <li>
+      Switch the ranking to <b>distance</b>. The picture changes shape: the
+      cosine's level sets are <b>rays out of the origin</b>, so length is
+      invisible to it, while distance measures rings <b>around the query tip</b>,
+      so a word can lose simply by being long. Watch <b>kitten</b>, a short arrow,
+      beat <b>cat</b> whenever your query is short, even though cat points more
+      the way you are pointing.
+    </li>
+    <li>
+      Then put both on the circle: tick <b>length 1</b> and click a word whose
+      arrow is already about that long. Now the two rankings agree, always, and
+      they must, because ‖q−w‖² = 2 − 2 cos θ when both have length one. That one
+      identity is why a vector database can index cosine similarity with a
+      nearest-neighbour structure that only knows how to measure distance.
+    </li>
   </Fragment>
 </SimLayout>
 
@@ -115,7 +133,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const state = {
     qa: (232 * Math.PI) / 180,
     ql: 0.8,
-    score: 'cos' as 'cos' | 'dot',
+    score: 'cos' as 'cos' | 'dot' | 'euc',
     compare: 'best',
     unit: false,
     proj: true,
@@ -129,8 +147,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const cosOf = (a: number) => Math.cos(a - state.qa);
   const dotOf = (a: number, r: number) => qlen() * r * Math.cos(a - state.qa);
+  /** ‖q − w‖, straight-line distance between the two arrow tips. */
+  const eucOf = (a: number, r: number) =>
+    Math.sqrt(
+      Math.max(0, qlen() ** 2 + r * r - 2 * qlen() * r * Math.cos(a - state.qa))
+    );
+  /** What a word is ranked by. Always bigger = better, so distance is negated. */
   const scoreOf = (word: { a: number; r: number }) =>
-    state.score === 'cos' ? cosOf(rad(word.a)) : dotOf(rad(word.a), word.r);
+    state.score === 'cos'
+      ? cosOf(rad(word.a))
+      : state.score === 'dot'
+        ? dotOf(rad(word.a), word.r)
+        : -eucOf(rad(word.a), word.r);
+  /** What the ranking prints: a distance is shown as the positive number it is. */
+  const shownOf = (word: { a: number; r: number }) =>
+    state.score === 'euc' ? eucOf(rad(word.a), word.r) : scoreOf(word);
 
   function ranked() {
     return WORDS.map((x) => ({ ...x, s: scoreOf(x) })).sort((p, q) => q.s - p.s);
@@ -187,8 +218,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.setLineDash([]);
     label('length 1', C.x + C.R + 8, C.y - 6, 0.3, 'left', 10.5);
 
+    const dist = eucOf(ta, t.r);
+
     // the shadow of the query on the matched direction
-    if (state.proj) {
+    if (state.proj && state.score !== 'euc') {
       const shadow = qlen() * c;
       ctx.strokeStyle = ink(0.14);
       ctx.lineWidth = 1;
@@ -214,17 +247,66 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.setLineDash([]);
     }
 
+    // Distance mode draws what it actually measures: the straight line between
+    // the two tips, and the ring of everything else exactly that far from the
+    // query. The cosine's level sets are rays out of the origin; these are not.
+    if (state.score === 'euc') {
+      const qxp = toX(q, qlen()),
+        qyp = toY(q, qlen());
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, 552, H);
+      ctx.clip();
+      if (state.proj) {
+        ctx.strokeStyle = ink(0.12);
+        ctx.setLineDash([2, 5]);
+        ctx.lineWidth = 1;
+        for (const rr of [0.35, 0.7, 1.05, 1.4]) {
+          ctx.beginPath();
+          ctx.arc(qxp, qyp, C.R * rr, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+      }
+      ctx.strokeStyle = `${teal()}66`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(qxp, qyp, C.R * dist, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.strokeStyle = teal();
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(qxp, qyp);
+      ctx.lineTo(toX(ta, t.r), toY(ta, t.r));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(
+        dist.toFixed(2),
+        (qxp + toX(ta, t.r)) / 2,
+        (qyp + toY(ta, t.r)) / 2 - 8,
+        1,
+        'center',
+        11.5,
+        teal()
+      );
+    }
+
     // angle wedge between the query and the compared word
     const wr = 74;
     let a0 = q,
       a1 = ta;
     if (((a1 - a0 + Math.PI * 4) % (Math.PI * 2)) > Math.PI) [a0, a1] = [a1, a0];
-    ctx.fillStyle = `${teal()}22`;
-    ctx.beginPath();
-    ctx.moveTo(C.x, C.y);
-    ctx.arc(C.x, C.y, wr, -a0, -a1, true);
-    ctx.closePath();
-    ctx.fill();
+    if (state.score !== 'euc') {
+      ctx.fillStyle = `${teal()}22`;
+      ctx.beginPath();
+      ctx.moveTo(C.x, C.y);
+      ctx.arc(C.x, C.y, wr, -a0, -a1, true);
+      ctx.closePath();
+      ctx.fill();
+    }
 
     // the vocabulary
     for (const word of WORDS) {
@@ -262,19 +344,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     // the answer, in words
     const bx = 590;
-    label('SIMILARITY WITH', bx, 176, 0.45, 'left', 11);
+    const euc = state.score === 'euc';
+    label(euc ? 'DISTANCE TO' : 'SIMILARITY WITH', bx, 176, 0.45, 'left', 11);
     label(t.w, bx, 214, 1, 'left', 22, teal());
-    label('cos θ', bx, 268, 0.45, 'left', 11);
-    label(c.toFixed(2), bx, 312, 1, 'left', 30, accent());
+    label(euc ? '‖q − w‖' : 'cos θ', bx, 268, 0.45, 'left', 11);
+    label((euc ? dist : c).toFixed(2), bx, 312, 1, 'left', 30, accent());
     label(`θ = ${theta.toFixed(1)}°`, bx, 344, 0.55, 'left', 12);
     label(
-      state.proj ? `shadow = |q| cos θ = ${(qlen() * c).toFixed(2)}` : '',
+      euc
+        ? `‖q−w‖² = ${qlen().toFixed(2)}² + ${t.r.toFixed(2)}² − 2·${qlen().toFixed(2)}·${t.r.toFixed(2)}·cos θ`
+        : state.proj
+          ? `shadow = |q| cos θ = ${(qlen() * c).toFixed(2)}`
+          : '',
       bx,
       370,
       0.45,
       'left',
-      11
+      euc ? 9.5 : 11
     );
+    if (euc && Math.abs(qlen() - t.r) < 0.06)
+      label(
+        'both about the same length, so this is 2 − 2 cos θ',
+        bx,
+        390,
+        0.4,
+        'left',
+        9.5,
+        teal()
+      );
     label('drag the arrow · click a word', 32, 32, 0.32, 'left', 10.5);
 
     updatePanel(c, theta, t);
@@ -286,22 +383,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   function updatePanel(c: number, theta: number, t: { w: string; r: number }) {
     const rows = ranked();
+    const euc = state.score === 'euc';
+    // A similarity is signed and grows from the middle; a distance is positive
+    // and *smaller* is better, so its bar grows from the left as it shrinks.
     const span = Math.max(...rows.map((r) => Math.abs(r.s)), 0.001);
     listEl.innerHTML = rows
       .map((r) => {
-        const w = (Math.abs(r.s) / span) * 50;
-        const side = r.s >= 0 ? `left:50%` : `right:50%`;
-        return `<div class="cs-row${r.w === t.w ? ' sel' : ''}" data-w="${r.w}">
+        const shown = shownOf(r);
+        const w = euc
+          ? (1 - Math.abs(r.s) / span) * 100
+          : (Math.abs(r.s) / span) * 50;
+        const side = euc ? 'left:0' : r.s >= 0 ? 'left:50%' : 'right:50%';
+        return `<div class="cs-row${euc ? ' full' : ''}${
+          r.w === t.w ? ' sel' : ''
+        }" data-w="${r.w}">
           <span class="nm">${r.w}</span>
           <span class="bar"><i style="${side};width:${w}%"></i><s></s></span>
-          <b>${r.s.toFixed(2)}</b>
+          <b>${shown.toFixed(2)}</b>
         </div>`;
       })
       .join('');
     $('ang').textContent = `${theta.toFixed(1)}°`;
     $('cosv').textContent = c.toFixed(3);
     $('dotv').textContent = (qlen() * t.r * c).toFixed(3);
+    $('eucv').textContent = eucOf(rad(WORDS.find((x) => x.w === t.w)!.a), t.r).toFixed(3);
     $('qlen').textContent = qlen().toFixed(2);
+    $('projlbl').textContent = euc
+      ? 'Show rings of equal distance'
+      : 'Show the shadow the query casts';
   }
 
   const sel = $('compare') as HTMLSelectElement;
@@ -330,7 +439,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       .querySelectorAll('#score button')
       .forEach((x) => x.classList.remove('active'));
     b.classList.add('active');
-    state.score = b.dataset.s as 'cos' | 'dot';
+    state.score = b.dataset.s as 'cos' | 'dot' | 'euc';
     draw();
   });
   ($('unit') as HTMLInputElement).addEventListener('change', (e) => {
@@ -463,6 +572,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .cs-row.sel .bar i {
     background: var(--accent-2);
     opacity: 0.9;
+  }
+  .cs-row.full .bar s {
+    display: none;
   }
   .cs-row .bar s {
     position: absolute;

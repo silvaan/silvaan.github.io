@@ -5,7 +5,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Attention as a Soft Lookup"
-  description="A dictionary lookup is brutal: one key matches and you get its value. Attention softens it. Every key gets a score for how well it matches the query, softmax turns those scores into weights that add to one, and what comes out is a blend of all the values. Here the values are colours, so the blend is something you can see."
+  description="A dictionary lookup is brutal: one key matches and you get its value. Attention softens it. Every key gets a score for how well it matches the query, softmax turns those scores into weights that add to one, and what comes out is a blend of all the values. Here the values are colours, so the blend is something you can see. This page is only the mechanism, with the query and the keys handed to it; where they come from is the subject of Self-Attention."
 >
   <div class="sim">
     <div class="sim-stage">
@@ -19,6 +19,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           <button data-p="fruit" class="active">fruit</button>
           <button data-p="stone">stone</button>
           <button data-p="between">in between</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Score each key by</label>
+        <div class="seg" id="metric">
+          <button data-m="dot" class="active">q·k</button>
+          <button data-m="cos">cos θ</button>
+          <button data-m="euc">distance</button>
         </div>
       </div>
 
@@ -80,6 +89,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       right way, which is why attention can retrieve things it has never seen an
       exact match for.
     </li>
+    <li>
+      Swap the score for <b>distance</b>. Softmax does not care what it is fed,
+      so attention still works, but what it retrieves changes: −‖q−k‖²/2 is
+      q·k minus ‖k‖²/2, which is the dot product with a <b>penalty on long
+      keys</b>. That is the same fix as normalising, arrived at from the other
+      side. Pick <b>cos θ</b> and the length of the query stops mattering at all,
+      which is why the rings around the query tip collapse back into rays.
+    </li>
+    <li>
+      Nothing on this page says where the query and the keys came from: they are
+      given. Make every one of them a projection of the same sentence and this
+      exact machine becomes
+      <a href="/simulations/deep-learning/self-attention">Self-Attention</a>,
+      where the dictionary being looked up is the sentence itself.
+    </li>
   </Fragment>
 </SimLayout>
 
@@ -105,6 +129,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const state = {
     qa: (100 * Math.PI) / 180,
     ql: 0.95,
+    metric: 'dot' as 'dot' | 'cos' | 'euc',
     temp: 0.35,
     hard: false,
     masked: new Set<number>(),
@@ -131,9 +156,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const qx = () => C.x + C.R * state.ql * Math.cos(state.qa);
   const qy = () => C.y - C.R * state.ql * Math.sin(state.qa);
 
-  /** q·kᵢ / √d, the raw match between the query and one key. */
-  const score = (it: Item) =>
-    (state.ql * it.r * Math.cos(rad(it.a) - state.qa)) / Math.sqrt(D);
+  /**
+   * How well the query matches one key. The dot product is what a transformer
+   * uses; the other two are here to show that softmax will take any score at
+   * all, and that the choice is what decides whether length counts.
+   */
+  const score = (it: Item) => {
+    const dq = rad(it.a) - state.qa;
+    if (state.metric === 'cos') return Math.cos(dq);
+    const dot = state.ql * it.r * Math.cos(dq);
+    if (state.metric === 'dot') return dot / Math.sqrt(D);
+    // −‖q−k‖²/2, which is the dot product less ‖k‖²/2: a penalty on long keys
+    return -(state.ql ** 2 + it.r ** 2 - 2 * dot) / (2 * Math.sqrt(D));
+  };
+
+  const SCORE_TEX: Record<string, string> = {
+    dot: '\\dfrac{q\\,K^{\\mathsf T}}{\\sqrt{d}}',
+    cos: '\\cos\\theta',
+    euc: '-\\dfrac{\\lVert q-k\\rVert^2}{2\\sqrt{d}}',
+  };
+  const SCORE_TXT: Record<string, string> = {
+    dot: 'score = q·k / √d',
+    cos: 'score = cos θ, length ignored',
+    euc: 'score = −‖q−k‖² / 2√d',
+  };
 
   /** softmax over the unmasked keys, at the current temperature. */
   function weights() {
@@ -176,6 +222,24 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.moveTo(C.x, C.y);
       ctx.lineTo(C.x + C.R * Math.cos(rad(g)), C.y - C.R * Math.sin(rad(g)));
       ctx.stroke();
+    }
+
+    // Distance scores everything by how far it is from the query tip, so the
+    // level sets are rings around it rather than rays out of the origin.
+    if (state.metric === 'euc') {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, TAB.x - 26, H);
+      ctx.clip();
+      ctx.strokeStyle = ink(0.1);
+      ctx.setLineDash([2, 5]);
+      for (const rr of [0.3, 0.6, 0.9, 1.2]) {
+        ctx.beginPath();
+        ctx.arc(qx(), qy(), C.R * rr, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
     }
 
     // each key, its weight showing as a halo
@@ -235,7 +299,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function drawTable(w: number[]) {
     label('EVERY KEY GETS A SCORE, THEN A WEIGHT', TAB.x, 46, 0.45, 'left', 12);
     label(
-      'score = q·k / √d       weight = softmax(score / τ)',
+      `${SCORE_TXT[state.metric]}       weight = softmax(score / τ)`,
       TAB.x,
       64,
       0.3,
@@ -374,7 +438,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     setEq([
       [
         ['\\text{attn}(q,K,V)', accent()],
-        '=\\operatorname{softmax}\\!\\Big(\\dfrac{q\\,K^{\\mathsf T}}{\\sqrt{d}}\\Big)',
+        `=\\operatorname{softmax}\\!\\Big(${SCORE_TEX[state.metric]}\\Big)`,
         ['V', teal()],
       ],
       [
@@ -445,6 +509,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const p = b.dataset.p!;
     state.qa = rad(p === 'fruit' ? 100 : p === 'stone' ? 316 : 170);
     state.ql = 0.95;
+    draw();
+  });
+
+  document.getElementById('metric')!.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (!b) return;
+    document
+      .querySelectorAll('#metric button')
+      .forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    state.metric = b.dataset.m as 'dot' | 'cos' | 'euc';
     draw();
   });
 
