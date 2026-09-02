@@ -348,7 +348,7 @@ export const AREAS: Area[] = [
         slug: 'dbscan',
         title: 'DBSCAN',
         description:
-          'Density-based clustering that finds arbitrary shapes and flags outliers as noise, with no need to choose the number of clusters up front.',
+          'Density-based clustering that finds arbitrary shapes and flags outliers as noise, with no need to choose the number of clusters up front. A second view works out reachability and connectivity on small cases, one point at a time.',
         href: '/simulations/machine-learning/dbscan',
         status: 'live',
       },
@@ -414,6 +414,14 @@ export const AREAS: Area[] = [
         description:
           'Tune the learning rate and the starting point, then watch optimization roll downhill into a minimum, or overshoot it and diverge.',
         href: '/simulations/deep-learning/gradient-descent',
+        status: 'live',
+      },
+      {
+        slug: 'backpropagation',
+        title: 'Backpropagation',
+        description:
+          'One tiny network with every number on screen. Push the example forward unit by unit, then send the error back down the same wires that carried the value out, one of the ten steps at a time.',
+        href: '/simulations/deep-learning/backpropagation',
         status: 'live',
       },
       {

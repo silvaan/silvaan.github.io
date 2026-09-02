@@ -1,0 +1,880 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Backpropagation"
+  description="One tiny network, one example, and every number on screen. Push the input forward unit by unit, watch the error appear at the end, then send it back down the same wires that carried the value out. Ten steps, and at the last one every weight takes one step downhill."
+>
+  <div class="sim">
+    <div class="sim-stage">
+      <canvas id="bp" class="bp-canvas" width="980" height="600"></canvas>
+    </div>
+
+    <div class="sim-panel">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="run">Run</button>
+        <button class="btn ghost" id="step">Step</button>
+        <button class="btn ghost" id="reset">Reset</button>
+      </div>
+
+      <div class="now">
+        <span id="stepno">before the first step</span>
+        <b id="steptitle">press Step to begin</b>
+      </div>
+
+      <div class="control">
+        <label><span>Input x<sub>1</sub></span> <b id="x1val">0.90</b></label>
+        <input type="range" id="x1" min="-1" max="1" step="0.05" value="0.9" />
+      </div>
+
+      <div class="control">
+        <label><span>Input x<sub>2</sub></span> <b id="x2val">0.30</b></label>
+        <input type="range" id="x2" min="-1" max="1" step="0.05" value="0.3" />
+      </div>
+
+      <div class="control">
+        <label>Target y</label>
+        <div class="seg" id="target">
+          <button data-y="1" class="active">1</button>
+          <button data-y="0">0</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Hidden activation</label>
+        <div class="seg" id="act">
+          <button data-a="tanh" class="active">tanh</button>
+          <button data-a="sig">σ</button>
+          <button data-a="relu">ReLU</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Learning rate η <b id="lrval">0.50</b></label>
+        <input type="range" id="lr" min="0.05" max="5" step="0.05" value="0.5" />
+      </div>
+
+      <div class="readout">
+        <div class="row"><span>Passes done</span><b id="pass">0</b></div>
+        <div class="row"><span>Prediction ŷ</span><b id="yhat">—</b></div>
+        <div class="row"><span>Loss</span><b id="loss">—</b></div>
+      </div>
+
+      <div class="control">
+        <label>Gradients <b id="gstate">none yet</b></label>
+        <div class="grads">
+          <div class="g" id="cw00"><span>∂L/∂w<sub>11</sub></span><b>—</b></div>
+          <div class="g" id="cw01"><span>∂L/∂w<sub>12</sub></span><b>—</b></div>
+          <div class="g" id="cb0"><span>∂L/∂b<sub>1</sub></span><b>—</b></div>
+          <div class="g" id="cw10"><span>∂L/∂w<sub>21</sub></span><b>—</b></div>
+          <div class="g" id="cw11"><span>∂L/∂w<sub>22</sub></span><b>—</b></div>
+          <div class="g" id="cb1"><span>∂L/∂b<sub>2</sub></span><b>—</b></div>
+          <div class="g" id="cv0"><span>∂L/∂v<sub>1</sub></span><b>—</b></div>
+          <div class="g" id="cv1"><span>∂L/∂v<sub>2</sub></span><b>—</b></div>
+          <div class="g" id="cc"><span>∂L/∂c</span><b>—</b></div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Loss after each pass</label>
+        <canvas id="losscurve" class="mini-canvas" width="300" height="140"></canvas>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn ghost" id="fast">Run 100 passes</button>
+      </div>
+
+      <p class="note">
+        Click any cell of the strip at the bottom of the picture to jump back to
+        that step. Nothing is hidden: every number in the drawing is one of the
+        nine parameters, one activation, or one partial derivative.
+      </p>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Step through one whole pass slowly. The forward half (teal) does one
+      thing at every unit: <b>multiply, add, squash</b>. The backward half
+      (amber) also does one thing at every unit: <b>multiply by the local
+      slope, and hand the result back down the wires</b>.
+    </li>
+    <li>
+      Look at step 6 and step 9, the two gradient steps. They are the same
+      formula: <b>the gradient of a weight is the delta at its head times the
+      activation at its tail</b>. A bias has nothing at its tail, so its
+      gradient is just the delta. That is why ∂L/∂b<sub>1</sub> and δ<sub>1</sub>
+      always print the same number.
+    </li>
+    <li>
+      At step 8 the weight v<sub>1</sub> is used a second time, now in the other
+      direction: it carried a<sub>1</sub> out, and it carries δ back. <b>The
+      backward pass is the forward pass run through the transposed weights</b>,
+      which is why it costs the same as the forward pass rather than one forward
+      pass per parameter.
+    </li>
+    <li>
+      Set an input to <b>zero</b> with its slider and watch the gradients of
+      both weights leaving it collapse to zero. A weight that had no influence
+      on the answer gets no blame, automatically.
+    </li>
+    <li>
+      Pick <b>ReLU</b> and drive a hidden unit's z below zero. Its slope is
+      exactly 0, so δ for that unit is 0 and every weight below it stops
+      learning. That is a dead unit, seen in the act of dying.
+    </li>
+    <li>
+      Pick <b>σ</b> and push an input to ±1. The pre-activation saturates, the
+      slope σ'(z) collapses toward zero, and the gradients shrink with it. Stack
+      a few more layers of that and the gradient reaching the first one is
+      nothing: the vanishing gradient, and the reason tanh and ReLU exist.
+    </li>
+    <li>
+      Raise <b>η</b> past 3 and hold Run. The updates overshoot the target and
+      the loss curve climbs instead of falling. Backpropagation only computes
+      the direction; how far to move along it is a separate decision, and it is
+      the one made in
+      <a href="/simulations/deep-learning/gradient-descent">Gradient Descent</a>.
+    </li>
+    <li>
+      Press <b>Run 100 passes</b>. The prediction slides onto the target and the
+      loss curve flattens. Nothing else happened in those hundred passes than
+      the ten steps you just watched, repeated.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equationBar } from '../../../lib/equation';
+  import type { Part } from '../../../lib/equation';
+  import { arrow, roundRect } from '../../../lib/theorem';
+
+  // --- the network -----------------------------------------------------------
+  // Two inputs, two hidden units, one output, one training example. Nine
+  // parameters in total, which is few enough to print every gradient.
+  const sig = (z: number) => 1 / (1 + Math.exp(-z));
+
+  type Act = { f: (z: number) => number; d: (z: number) => number; tex: string; dtex: string };
+  const ACTS: Record<string, Act> = {
+    tanh: { f: Math.tanh, d: (z) => 1 - Math.tanh(z) ** 2, tex: '\\tanh', dtex: "\\tanh'" },
+    sig: { f: sig, d: (z) => sig(z) * (1 - sig(z)), tex: '\\sigma', dtex: "\\sigma'" },
+    relu: { f: (z) => Math.max(0, z), d: (z) => (z > 0 ? 1 : 0), tex: '\\mathrm{ReLU}', dtex: "\\mathrm{ReLU}'" },
+  };
+
+  type Params = { w: number[][]; b: number[]; v: number[]; c: number };
+  // Hand-picked so the first pass starts visibly wrong and the numbers are
+  // short. Reset always comes back here, so a shared link shows the same run.
+  const START: Params = {
+    w: [[0.6, -0.4], [-0.3, 0.8]],
+    b: [0.1, -0.2],
+    v: [0.9, -0.7],
+    c: 0.2,
+  };
+  const clone = (p: Params): Params => ({
+    w: [p.w[0].slice(), p.w[1].slice()],
+    b: p.b.slice(),
+    v: p.v.slice(),
+    c: p.c,
+  });
+
+  type Calc = {
+    z: number[]; a: number[]; zo: number; yh: number; L: number;
+    e: number; dO: number; dv: number[]; dc: number;
+    dh: number[]; dw: number[][]; db: number[];
+  };
+
+  const S = {
+    k: -1, // index of the last step performed, -1 = nothing yet, 9 = updated
+    pass: 0,
+    playing: false,
+    lr: 0.5,
+    x: [0.9, 0.3],
+    y: 1,
+    act: 'tanh',
+  };
+
+  let P = clone(START);
+  let hist: number[] = [];
+  // The gradients shown at the update step belong to the pass that produced it,
+  // so they are kept aside when the parameters move on.
+  let snap: Calc | null = null;
+
+  function compute(p: Params): Calc {
+    const A = ACTS[S.act];
+    const z = [0, 0];
+    const a = [0, 0];
+    for (let j = 0; j < 2; j++) {
+      z[j] = p.w[j][0] * S.x[0] + p.w[j][1] * S.x[1] + p.b[j];
+      a[j] = A.f(z[j]);
+    }
+    const zo = p.v[0] * a[0] + p.v[1] * a[1] + p.c;
+    const yh = sig(zo);
+    const L = 0.5 * (yh - S.y) ** 2;
+
+    const e = yh - S.y; // dL/dyhat
+    const dO = e * yh * (1 - yh); // delta at the output: dL/dz_o
+    const dv = [dO * a[0], dO * a[1]];
+    const dc = dO;
+    const dh = [dO * p.v[0] * A.d(z[0]), dO * p.v[1] * A.d(z[1])];
+    const dw = [
+      [dh[0] * S.x[0], dh[0] * S.x[1]],
+      [dh[1] * S.x[0], dh[1] * S.x[1]],
+    ];
+    const db = [dh[0], dh[1]];
+    return { z, a, zo, yh, L, e, dO, dv, dc, dh, dw, db };
+  }
+
+  let C = compute(P);
+
+  function applyUpdate() {
+    snap = C;
+    for (let j = 0; j < 2; j++) {
+      for (let i = 0; i < 2; i++) P.w[j][i] -= S.lr * C.dw[j][i];
+      P.b[j] -= S.lr * C.db[j];
+      P.v[j] -= S.lr * C.dv[j];
+    }
+    P.c -= S.lr * C.dc;
+    C = compute(P);
+    S.pass++;
+    hist.push(C.L);
+    S.k = 9;
+  }
+
+  /** Gradients on screen: after an update they are last pass's, not this one's. */
+  const G = () => (S.k === 9 && snap ? snap : C);
+  /** Has step i been performed? Everything is on screen at the update step. */
+  const seen = (i: number) => S.k >= i;
+
+  // --- the ten steps ---------------------------------------------------------
+  const TITLES = [
+    'FORWARD · hidden unit 1',
+    'FORWARD · hidden unit 2',
+    'FORWARD · the output',
+    'FORWARD · the loss',
+    'BACKWARD · how wrong the output is',
+    'BACKWARD · delta at the output',
+    'BACKWARD · gradients of the output weights',
+    'BACKWARD · deltas at the hidden units',
+    'BACKWARD · gradients of the input weights',
+    'UPDATE · every parameter steps against its gradient',
+  ];
+  const PHASE = (k: number) => (k < 0 ? 'idle' : k < 4 ? 'fwd' : k < 9 ? 'bwd' : 'upd');
+
+  // --- canvas ----------------------------------------------------------------
+  const setEq = equationBar();
+  const canvas = document.getElementById('bp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (k: string, f = '') =>
+    getComputedStyle(canvas).getPropertyValue(k).trim() || f;
+  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const bg = () => css('--stage-bg', '#0d0e12');
+  const light = () => +css('--stage-light', '0') === 1;
+  const accent = () => css('--accent', '#7c8cff');
+  const TEAL = () => css('--accent-2', '#5eead4');
+  const AMB = () => (light() ? '#b45309' : '#fbbf24');
+  const RED = () => css('--danger', '#f87171');
+  const { label, textWidth } = makeText(ctx, ink);
+
+  const IN_X = 118, H_X = 430, O_X = 706, LOSS_X = 878;
+  const IN_Y = [206, 372];
+  const H_Y = [186, 392];
+  const O_Y = 289;
+  const R_IN = 26, R_H = 34, R_O = 34;
+  const BOX = { x: 818, y: 240, w: 120, h: 80 };
+  const BAR = { x: 118, y: 508, w: 820, h: 20, n: 10 };
+
+  const n2 = (v: number) => (Math.abs(v) < 5e-3 ? '0.00' : v.toFixed(2));
+  const n3 = (v: number) => (Math.abs(v) < 5e-4 ? '0.000' : v.toFixed(3));
+  const pp = (v: number, d = 2) => (v < 0 ? `(${v.toFixed(d)})` : v.toFixed(d));
+
+  // Which pieces glow for the step just performed.
+  function hot() {
+    const k = S.k;
+    const e1: [number, number][] = []; // input -> hidden, as [i, j]
+    const e2: number[] = []; // hidden -> output, by j
+    const nin: number[] = [];
+    const nh: number[] = [];
+    let nout = false, nloss = false;
+    if (k === 0 || k === 1) {
+      nin.push(0, 1); nh.push(k); e1.push([0, k], [1, k]);
+    } else if (k === 2) {
+      nh.push(0, 1); e2.push(0, 1); nout = true;
+    } else if (k === 3) {
+      nout = true; nloss = true;
+    } else if (k === 4) {
+      nloss = true; nout = true;
+    } else if (k === 5) {
+      nout = true;
+    } else if (k === 6) {
+      nh.push(0, 1); e2.push(0, 1); nout = true;
+    } else if (k === 7) {
+      nh.push(0, 1); e2.push(0, 1); nout = true;
+    } else if (k === 8) {
+      nin.push(0, 1); nh.push(0, 1); e1.push([0, 0], [1, 0], [0, 1], [1, 1]);
+    } else if (k === 9) {
+      nin.push(0, 1); nh.push(0, 1); nout = true;
+      e1.push([0, 0], [1, 0], [0, 1], [1, 1]); e2.push(0, 1);
+    }
+    return { e1, e2, nin, nh, nout, nloss };
+  }
+
+  let t0 = performance.now();
+  const now = () => (performance.now() - t0) / 1000;
+
+  function edge(
+    x0: number, y0: number, x1: number, y1: number,
+    weight: number, live: boolean, back: boolean, flow: string
+  ) {
+    const mag = Math.min(1, Math.abs(weight) / 1.4);
+    ctx.lineCap = 'round';
+    if (live) {
+      // the resting wire stays visible under the moving dashes
+      ctx.strokeStyle = ink(0.1);
+      ctx.lineWidth = 1 + 3.2 * mag;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+
+      ctx.strokeStyle = flow;
+      ctx.lineWidth = 1.4 + 3 * mag;
+      ctx.setLineDash([9, 11]);
+      ctx.lineDashOffset = (back ? 1 : -1) * now() * 46;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = weight >= 0 ? ink(0.26) : RED();
+      ctx.globalAlpha = weight >= 0 ? 1 : 0.42;
+      ctx.lineWidth = 0.8 + 3 * mag;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  type ChipLine = { t: string; c?: string; a?: number; s?: number };
+
+  /** A small boxed label, used where wires cross behind the text. */
+  function chip(cx: number, cy: number, lines: ChipLine[], glow = false) {
+    let w = 0;
+    for (const l of lines) w = Math.max(w, textWidth(l.t, l.s ?? 10.5));
+    const bw = w + 16;
+    const bh = lines.length * 13 + 8;
+    ctx.fillStyle = bg();
+    ctx.globalAlpha = 0.94;
+    roundRect(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = glow ? AMB() : ink(0.14);
+    ctx.lineWidth = glow ? 1.4 : 1;
+    ctx.stroke();
+    lines.forEach((l, i) =>
+      label(l.t, cx, cy - bh / 2 + 13 + i * 13 - 2, l.a ?? 0.72, 'center', l.s ?? 10.5, l.c)
+    );
+  }
+
+  function node(
+    x: number, y: number, r: number,
+    title: string, value: string, live: boolean, flow: string, fill = 0
+  ) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = bg();
+    ctx.fill();
+    // a unit's fill tracks what it is holding, so a saturated unit looks it
+    ctx.fillStyle = ink(0.05 + 0.14 * Math.min(1, Math.abs(fill)));
+    ctx.fill();
+    if (live) {
+      const pulse = 0.55 + 0.35 * Math.sin(now() * 4.2);
+      ctx.strokeStyle = flow;
+      ctx.globalAlpha = pulse;
+      ctx.lineWidth = 3.4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = ink(0.22);
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+    label(title, x, y - r - 11, 0.5, 'center', 12);
+    label(value, x, y + 5, value === '?' ? 0.25 : 0.92, 'center', value === '?' ? 15 : 14.5);
+  }
+
+  function draw() {
+    const k = S.k;
+    const g = G();
+    const back = PHASE(k) === 'bwd';
+    const h = hot();
+    const amber = AMB();
+    const flow = k === 9 ? accent() : back ? amber : TEAL();
+    const dim = k === 9 ? 0.5 : 1; // last pass's gradients, kept but faded
+
+    ctx.clearRect(0, 0, W, H);
+
+    // heading
+    label(
+      k < 0 ? 'PRESS STEP TO SEND THE INPUT FORWARD' : TITLES[k],
+      W / 2, 30,
+      k < 0 ? 0.35 : 0.72, 'center', 13,
+      k < 0 ? undefined : flow
+    );
+
+    // column captions
+    label('INPUT', IN_X, 76, 0.45, 'center', 11);
+    label('the example', IN_X, 93, 0.26, 'center', 10);
+    label('HIDDEN', H_X, 76, 0.45, 'center', 11);
+    label(`2 units, ${S.act === 'sig' ? 'σ' : S.act}`, H_X, 93, 0.26, 'center', 10);
+    label('OUTPUT', O_X, 76, 0.45, 'center', 11);
+    label('1 unit, σ', O_X, 93, 0.26, 'center', 10);
+    label('LOSS', LOSS_X, 76, 0.45, 'center', 11);
+    label('one number', LOSS_X, 93, 0.26, 'center', 10);
+
+    // --- wires, input to hidden ---------------------------------------------
+    // labels sit at different points along the two crossing wires so the boxes
+    // never land on top of each other
+    const T1 = [[0.38, 0.26], [0.74, 0.38]];
+    for (let j = 0; j < 2; j++) {
+      for (let i = 0; i < 2; i++) {
+        const live = h.e1.some(([a, b]) => a === i && b === j);
+        edge(IN_X + R_IN, IN_Y[i], H_X - R_H, H_Y[j], P.w[j][i], live, back, flow);
+      }
+    }
+    for (let j = 0; j < 2; j++) {
+      for (let i = 0; i < 2; i++) {
+        const t = T1[i][j];
+        const cx = IN_X + R_IN + t * (H_X - R_H - IN_X - R_IN);
+        const cy = IN_Y[i] + t * (H_Y[j] - IN_Y[i]);
+        const lines: ChipLine[] = [{ t: `w_${j + 1}${i + 1} ${n2(P.w[j][i])}`, a: 0.8 }];
+        if (seen(8)) lines.push({ t: `∂ ${n3(g.dw[j][i])}`, c: amber, a: dim, s: 10 });
+        chip(cx, cy, lines, seen(8) && h.e1.some(([a, b]) => a === i && b === j));
+      }
+    }
+
+    // --- wires, hidden to output --------------------------------------------
+    for (let j = 0; j < 2; j++)
+      edge(H_X + R_H, H_Y[j], O_X - R_O, O_Y, P.v[j], h.e2.includes(j), back, flow);
+    for (let j = 0; j < 2; j++) {
+      const t = 0.46;
+      const cx = H_X + R_H + t * (O_X - R_O - H_X - R_H);
+      const cy = H_Y[j] + t * (O_Y - H_Y[j]);
+      const lines: ChipLine[] = [{ t: `v_${j + 1} ${n2(P.v[j])}`, a: 0.8 }];
+      if (seen(6)) lines.push({ t: `∂ ${n3(g.dv[j])}`, c: amber, a: dim, s: 10 });
+      chip(cx, cy, lines, seen(6) && h.e2.includes(j));
+    }
+
+    // --- units ---------------------------------------------------------------
+    for (let i = 0; i < 2; i++)
+      node(IN_X, IN_Y[i], R_IN, `x_${i + 1}`, n2(S.x[i]), h.nin.includes(i), flow, S.x[i]);
+
+    for (let j = 0; j < 2; j++) {
+      const on = seen(j);
+      node(H_X, H_Y[j], R_H, `h_${j + 1}`, on ? n2(C.a[j]) : '?', h.nh.includes(j), flow, on ? C.a[j] : 0);
+      const y = H_Y[j] + R_H;
+      label(on ? `z ${n2(C.z[j])}` : 'z ?', H_X, y + 16, 0.42, 'center', 10.5);
+      label(
+        seen(8) ? `b_${j + 1} ${n2(P.b[j])}   ∂ ${n3(g.db[j])}` : `b_${j + 1} ${n2(P.b[j])}`,
+        H_X, y + 30, 0.42, 'center', 10.5
+      );
+      if (seen(7))
+        label(`δ_${j + 1} = ${n3(g.dh[j])}`, H_X, y + 45, dim, 'center', 11.5, amber);
+    }
+
+    node(O_X, O_Y, R_O, 'ŷ', seen(2) ? n2(C.yh) : '?', h.nout, flow, seen(2) ? C.yh : 0);
+    label(seen(2) ? `z ${n2(C.zo)}` : 'z ?', O_X, O_Y + R_O + 16, 0.42, 'center', 10.5);
+    label(
+      seen(6) ? `c ${n2(P.c)}   ∂ ${n3(g.dc)}` : `c ${n2(P.c)}`,
+      O_X, O_Y + R_O + 30, 0.42, 'center', 10.5
+    );
+    if (seen(5))
+      label(`δ_o = ${n3(g.dO)}`, O_X, O_Y + R_O + 45, dim, 'center', 11.5, amber);
+
+    // --- the loss ------------------------------------------------------------
+    arrow(ctx, O_X + R_O + 6, O_Y, BOX.x - 8, O_Y, h.nloss ? flow : ink(0.26), 1.6, 7);
+    ctx.fillStyle = bg();
+    roundRect(ctx, BOX.x, BOX.y, BOX.w, BOX.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = h.nloss ? flow : ink(0.2);
+    ctx.lineWidth = h.nloss ? 2 : 1.2;
+    ctx.stroke();
+    label('½(ŷ - y)²', LOSS_X, BOX.y + 22, 0.4, 'center', 10.5);
+    label(seen(3) ? C.L.toFixed(4) : '?', LOSS_X, BOX.y + 50, seen(3) ? 0.92 : 0.25, 'center', 17);
+    label(`target y = ${S.y}`, LOSS_X, BOX.y + 70, 0.45, 'center', 10.5);
+    if (seen(4))
+      label(`∂L/∂ŷ = ${n3(g.e)}`, LOSS_X, BOX.y + BOX.h + 20, dim, 'center', 11.5, amber);
+
+    drawBar();
+    drawLegend();
+    setEq(eqLines());
+    syncPanel();
+  }
+
+  /** The ten steps as a strip, so the shape of a pass is visible at a glance. */
+  function drawBar() {
+    const gap = 6;
+    const cw = (BAR.w - gap * (BAR.n - 1)) / BAR.n;
+    for (let i = 0; i < BAR.n; i++) {
+      const x = BAR.x + i * (cw + gap);
+      const col = i < 4 ? TEAL() : i < 9 ? AMB() : accent();
+      const done = i <= S.k;
+      ctx.fillStyle = col;
+      ctx.globalAlpha = i === S.k ? 0.85 : done ? 0.4 : 0.1;
+      roundRect(ctx, x, BAR.y, cw, BAR.h, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (i === S.k) {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+      label(String(i + 1), x + cw / 2, BAR.y + 14, done ? 0.85 : 0.3, 'center', 10.5,
+        i === S.k ? bg() : undefined);
+    }
+    // centre of the cells a..b inclusive
+    const span = (a: number, b: number) =>
+      BAR.x + (a * (cw + gap) + b * (cw + gap) + cw) / 2;
+    label('FORWARD', span(0, 3), BAR.y + 38, 0.4, 'center', 10.5, TEAL());
+    label('BACKWARD', span(4, 8), BAR.y + 38, 0.4, 'center', 10.5, AMB());
+    label('UPDATE', span(9, 9), BAR.y + 38, 0.4, 'center', 10.5, accent());
+  }
+
+  function drawLegend() {
+    const y = BAR.y + 70;
+    const items: [string, string][] = [
+      ['values going forward', TEAL()],
+      ['gradients coming back', AMB()],
+      ['negative weight', RED()],
+    ];
+    let x = BAR.x;
+    for (const [t, c] of items) {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = 2.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x + 20, y - 4);
+      ctx.stroke();
+      label(t, x + 27, y, 0.4, 'left', 10.5);
+      x += 27 + textWidth(t, 10.5) + 26;
+    }
+    label('wire thickness = |weight|', BAR.x + BAR.w, y, 0.3, 'right', 10.5);
+  }
+
+  // --- the line of maths above the stage -------------------------------------
+  // Three lines, each of a fixed height: the rule, the rule with this pass's
+  // numbers in it, and one sentence. Partials are written with a slash instead
+  // of as built-up fractions, so no step is taller than any other and the
+  // picture below never moves when the step changes.
+  const dL = (x: string) => `\\partial L/\\partial ${x}`;
+
+  function eqLines(): Part[][] {
+    const A = ACTS[S.act];
+    const g = G();
+    const T = TEAL(), M = AMB(), W2 = accent();
+    const k = S.k;
+    const phi = A.tex, dphi = A.dtex;
+
+    if (k < 0)
+      return [
+        [['\\hat y', T], '=\\sigma\\big(', ['v^{\\top}', W2], `${phi}(`, ['W', W2], ['x', T], '+', ['b', W2], ')+', ['c', W2], '\\big)', '\\qquad L=\\tfrac12(\\hat y-y)^2'],
+        [`x_1=${S.x[0].toFixed(2)},\\; x_2=${S.x[1].toFixed(2)},\\; y=${S.y},\\; \\eta=${S.lr.toFixed(2)}`],
+        ['Nine parameters and one example. Every arrow in the picture below is one line of this.'],
+      ];
+
+    if (k === 0 || k === 1) {
+      const j = k;
+      return [
+        [[`z_${j + 1}`, T], '=', [`w_{${j + 1}1}`, W2], ['x_1', T], '+', [`w_{${j + 1}2}`, W2], ['x_2', T], '+', [`b_${j + 1}`, W2], `,\\;\\; a_${j + 1}=${phi}(z_${j + 1})`],
+        [[`z_${j + 1}=${pp(P.w[j][0])}\\!\\cdot\\!${pp(S.x[0])}+${pp(P.w[j][1])}\\!\\cdot\\!${pp(S.x[1])}+${pp(P.b[j])}=${n3(C.z[j])},\\;\\; a_${j + 1}=${n3(C.a[j])}`, T]],
+        ['Every wire multiplies what arrives by its own weight, the unit adds them up with its bias, and the activation squashes the sum.'],
+      ];
+    }
+
+    if (k === 2)
+      return [
+        [['z_o', T], '=', ['v_1', W2], ['a_1', T], '+', ['v_2', W2], ['a_2', T], '+', ['c', W2], ',\\;\\; \\hat y=\\sigma(z_o)'],
+        [[`z_o=${pp(P.v[0])}\\!\\cdot\\!${pp(C.a[0], 3)}+${pp(P.v[1])}\\!\\cdot\\!${pp(C.a[1], 3)}+${pp(P.c)}=${n3(C.zo)},\\;\\; \\hat y=${n3(C.yh)}`, T]],
+        ['The output unit does exactly what the hidden ones did, one layer up. The forward pass is over.'],
+      ];
+
+    if (k === 3)
+      return [
+        [['L', T], '=\\tfrac12(', ['\\hat y', T], '-\\,y)^2'],
+        [[`L=\\tfrac12(${n3(C.yh)}-${S.y})^2=${C.L.toFixed(4)}`, T]],
+        ['One number for how wrong the whole network is. Everything from here on is a derivative of it.'],
+      ];
+
+    if (k === 4)
+      return [
+        [[dL('\\hat y'), M], '=', ['\\hat y', T], '-\\,y'],
+        [[`${dL('\\hat y')}=${n3(C.yh)}-${S.y}=${n3(g.e)}`, M]],
+        ['Backpropagation starts at the far end and walks backwards. This first derivative is the only free one.'],
+      ];
+
+    if (k === 5)
+      return [
+        [['\\delta_o', M], '=', [dL('z_o'), M], '=', [dL('\\hat y'), M], "\\cdot\\,\\sigma'(z_o)"],
+        [[`\\delta_o=${pp(g.e, 3)}\\!\\cdot\\!${n3(C.yh * (1 - C.yh))}=${n3(g.dO)}`, M]],
+        ['Pull the derivative back through the activation by multiplying by its slope. A delta is the only thing that ever travels backwards.'],
+      ];
+
+    if (k === 6)
+      return [
+        [[dL('v_j'), M], '=', ['\\delta_o', M], ['a_j', T], ',\\;\\;', [dL('c'), M], '=', ['\\delta_o', M]],
+        [[`${dL('v_1')}=${pp(g.dO, 3)}\\!\\cdot\\!${pp(C.a[0], 3)}=${n3(g.dv[0])},\\;\\; ${dL('v_2')}=${n3(g.dv[1])},\\;\\; ${dL('c')}=${n3(g.dc)}`, M]],
+        ['A weight\u2019s gradient is the delta at its head times the activation at its tail. A bias has no tail, so its gradient is the delta itself.'],
+      ];
+
+    if (k === 7)
+      return [
+        [['\\delta_j', M], '=', ['\\delta_o', M], ['v_j', W2], `\\cdot\\,${dphi}(z_j)`],
+        [[`\\delta_1=${pp(g.dO, 3)}\\!\\cdot\\!${pp(P.v[0])}\\!\\cdot\\!${pp(A.d(C.z[0]), 3)}=${n3(g.dh[0])},\\;\\; \\delta_2=${n3(g.dh[1])}`, M]],
+        ['The wire that carried the value out carries the blame back, scaled by the same weight. That reuse is the whole trick.'],
+      ];
+
+    if (k === 8)
+      return [
+        [[dL('w_{ji}'), M], '=', ['\\delta_j', M], ['x_i', T], ',\\;\\;', [dL('b_j'), M], '=', ['\\delta_j', M]],
+        [[`${dL('w_{11}')}=${pp(g.dh[0], 3)}\\!\\cdot\\!${pp(S.x[0])}=${n3(g.dw[0][0])},\\;\\; ${dL('b_1')}=\\delta_1=${n3(g.db[0])}`, M]],
+        ['The same rule as the layer above, one layer down. Every parameter now has a gradient, and one sweep got them all.'],
+      ];
+
+    const before = hist.length >= 2 ? hist[hist.length - 2] : snap ? snap.L : C.L;
+    return [
+      [['\\theta', W2], '\\leftarrow', ['\\theta', W2], '-\\,\\eta\\;', [dL('\\theta'), M]],
+      [[`L:\\; ${before.toFixed(4)}\\;\\rightarrow\\; ${C.L.toFixed(4)}`, W2], `\\quad (\\eta=${S.lr.toFixed(2)})`],
+      ['All nine parameters move at once, each against its own gradient. Training is this, repeated.'],
+    ];
+  }
+
+  // --- panel -----------------------------------------------------------------
+  const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const GCELL: [string, () => number, number][] = [
+    ['cw00', () => G().dw[0][0], 8], ['cw01', () => G().dw[0][1], 8], ['cb0', () => G().db[0], 8],
+    ['cw10', () => G().dw[1][0], 8], ['cw11', () => G().dw[1][1], 8], ['cb1', () => G().db[1], 8],
+    ['cv0', () => G().dv[0], 6], ['cv1', () => G().dv[1], 6], ['cc', () => G().dc, 6],
+  ];
+
+  function syncPanel() {
+    el('stepno').textContent =
+      S.k < 0 ? 'before the first step' : `step ${S.k + 1} of 10`;
+    el('steptitle').textContent = S.k < 0 ? 'press Step to begin' : TITLES[S.k];
+    el('pass').textContent = String(S.pass);
+    el('yhat').textContent = seen(2) ? C.yh.toFixed(4) : '—';
+    el('loss').textContent = seen(3) ? C.L.toFixed(4) : '—';
+    el('gstate').textContent = seen(8) ? 'all nine' : seen(6) ? 'output layer' : 'none yet';
+    for (const [id, get, at] of GCELL) {
+      const cell = el(id);
+      const on = seen(at);
+      cell.classList.toggle('on', on);
+      cell.querySelector('b')!.textContent = on ? n3(get()) : '—';
+    }
+    (el('run') as HTMLButtonElement).textContent = S.playing ? 'Pause' : 'Run';
+    drawLoss();
+  }
+
+  const lossCanvas = document.getElementById('losscurve') as HTMLCanvasElement;
+  const lc = setupCanvas(lossCanvas, () => drawLoss());
+  function drawLoss() {
+    const c = lc.ctx, Ws = lc.W, Hs = lc.H;
+    const pad = { l: 10, r: 10, t: 12, b: 14 };
+    c.clearRect(0, 0, Ws, Hs);
+    if (hist.length === 0) return;
+    const hi = Math.max(...hist, 1e-6) * 1.08;
+    const sx = (i: number) =>
+      pad.l + (hist.length <= 1 ? 0 : i / (hist.length - 1)) * (Ws - pad.l - pad.r);
+    const sy = (v: number) => pad.t + (1 - v / hi) * (Hs - pad.t - pad.b);
+    c.strokeStyle = ink(0.16);
+    c.lineWidth = 1;
+    c.beginPath(); c.moveTo(pad.l, sy(0)); c.lineTo(Ws - pad.r, sy(0)); c.stroke();
+    c.strokeStyle = accent();
+    c.lineWidth = 2;
+    c.beginPath();
+    hist.forEach((v, i) => (i ? c.lineTo(sx(i), sy(v)) : c.moveTo(sx(i), sy(v))));
+    c.stroke();
+    c.fillStyle = accent();
+    c.beginPath();
+    c.arc(sx(hist.length - 1), sy(hist[hist.length - 1]), 3, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  // --- driving ---------------------------------------------------------------
+  function step() {
+    if (S.k === 8) applyUpdate();
+    else if (S.k === 9) S.k = 0;
+    else S.k += 1;
+  }
+
+  function reset() {
+    S.playing = false;
+    S.k = -1;
+    S.pass = 0;
+    snap = null;
+    P = clone(START);
+    C = compute(P);
+    hist = [C.L];
+  }
+
+  /** Changing the example or the activation invalidates the pass in progress. */
+  function restart(clearHistory: boolean) {
+    S.k = -1;
+    snap = null;
+    C = compute(P);
+    if (clearHistory) hist = [C.L];
+  }
+
+  let last = performance.now();
+  const STEP_MS = 780;
+  function frame(t: number) {
+    if (S.playing && t - last >= STEP_MS) {
+      last = t;
+      step();
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  el('run').addEventListener('click', () => {
+    S.playing = !S.playing;
+    last = performance.now();
+  });
+  el('step').addEventListener('click', () => {
+    S.playing = false;
+    step();
+  });
+  el('reset').addEventListener('click', reset);
+  el('fast').addEventListener('click', () => {
+    S.playing = false;
+    for (let n = 0; n < 100; n++) applyUpdate();
+    S.k = 9;
+  });
+
+  const bindRange = (id: string, out: string, set: (v: number) => void) => {
+    const r = document.getElementById(id) as HTMLInputElement;
+    r.addEventListener('input', () => {
+      const v = +r.value;
+      set(v);
+      el(out).textContent = v.toFixed(2);
+    });
+  };
+  bindRange('x1', 'x1val', (v) => { S.x[0] = v; restart(true); });
+  bindRange('x2', 'x2val', (v) => { S.x[1] = v; restart(true); });
+  bindRange('lr', 'lrval', (v) => { S.lr = v; });
+
+  const bindSeg = (id: string, set: (b: HTMLElement) => void) => {
+    el(id).addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('button');
+      if (!btn) return;
+      el(id).querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      set(btn);
+    });
+  };
+  bindSeg('target', (b) => { S.y = +b.dataset.y!; restart(true); });
+  bindSeg('act', (b) => { S.act = b.dataset.a!; restart(true); });
+
+  // clicking the strip rewinds inside the current pass; nothing has changed yet
+  canvas.addEventListener('click', (ev) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width) * W;
+    const y = ((ev.clientY - r.top) / r.height) * H;
+    if (y < BAR.y - 8 || y > BAR.y + BAR.h + 8) return;
+    const gap = 6;
+    const cw = (BAR.w - gap * (BAR.n - 1)) / BAR.n;
+    const i = Math.floor((x - BAR.x) / (cw + gap));
+    if (i < 0 || i >= BAR.n) return;
+    S.playing = false;
+    if (i <= 8) S.k = i;
+    else if (S.k === 8) applyUpdate();
+  });
+
+  canvas.addEventListener('mousemove', (ev) => {
+    const r = canvas.getBoundingClientRect();
+    const y = ((ev.clientY - r.top) / r.height) * H;
+    canvas.style.cursor = y > BAR.y - 8 && y < BAR.y + BAR.h + 8 ? 'pointer' : 'default';
+  });
+
+  reset();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .now {
+    padding: 10px 12px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+  }
+  .now span {
+    display: block;
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 3px;
+  }
+  .now b {
+    display: block;
+    /* two lines always, so the panel below does not jump between steps */
+    min-height: 37px;
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.35;
+  }
+  /* The header carries the rule for the current step. Each of its three lines
+     reserves the room the tallest step needs, so the picture underneath never
+     moves when the step changes. */
+  .sim-stage :global(.sim-eq .eq-line) {
+    gap: 0.34em;
+  }
+  .sim-stage :global(.sim-eq .eq-0) {
+    min-height: 34px;
+  }
+  .sim-stage :global(.sim-eq .eq-1) {
+    min-height: 28px;
+  }
+  .sim-stage :global(.sim-eq .eq-2) {
+    min-height: 37px;
+  }
+  .grads {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .g {
+    padding: 5px 7px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .g span {
+    display: block;
+    font-size: 0.62rem;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .g b {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    font-weight: 500;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .g.on {
+    border-color: rgba(251, 191, 36, 0.35);
+  }
+  .g.on b {
+    color: #fbbf24;
+  }
+  :global(:root[data-theme='light']) .g.on b {
+    color: #b45309;
+  }
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0;
+    line-height: 1.55;
+  }
+</style>
