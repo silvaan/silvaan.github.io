@@ -460,16 +460,8 @@ export const AREAS: Area[] = [
         slug: 'neural-net',
         title: 'Neuron Activations',
         description:
-          'A network trains itself in front of you, then you draw a shape and watch it go through: every wire lit by what it carries, every neuron opened up to show the picture it looks for.',
+          'Draw a digit and watch it cross a network that already knows how to read one. Every wire is lit by what it carries, every neuron by how hard it fires, and clicking one shows the picture it looks for.',
         href: '/simulations/deep-learning/neural-net',
-        status: 'live',
-      },
-      {
-        slug: 'mnist-classifier',
-        title: 'Inside an MNIST Classifier',
-        description:
-          'Draw a digit and watch it travel through a network trained beforehand on the real MNIST set. Switch between a plain stack of layers and a convolutional one and compare what each stage sees.',
-        href: '/simulations/deep-learning/mnist-classifier',
         status: 'live',
       },
       {

@@ -18,6 +18,7 @@ export default defineConfig({
     '/simulations/calculus/product-rule': '/simulations/calculus/derivative-rules',
     '/simulations/calculus/chain-rule': '/simulations/calculus/derivative-rules',
     '/simulations/deep-learning/softmax-cross-entropy': '/simulations/deep-learning/softmax',
+    '/simulations/deep-learning/mnist-classifier': '/simulations/deep-learning/neural-net',
   },
   markdown: {
     // Keep authored punctuation literal so `--`/`---` never become en/em dashes.

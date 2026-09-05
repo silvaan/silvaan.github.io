@@ -79,6 +79,14 @@ export function mlpUnitImage(unit: number): Float32Array {
   return out;
 }
 
+/** The weights arriving at one unit, for the deeper layers where they are not a picture. */
+export function mlpWeightsInto(layer: number, unit: number): Float32Array {
+  if (layer === 1) return M[2].slice(unit * MLP_ARCH[1], (unit + 1) * MLP_ARCH[1]);
+  if (layer === 2) return M[4].slice(unit * MLP_ARCH[2], (unit + 1) * MLP_ARCH[2]);
+  // layer -1: the dense layer that ends the convolutional network
+  return C[4].slice(unit * CNN.flat, (unit + 1) * CNN.flat);
+}
+
 export type CnnRun = {
   a1: Float32Array; // c1 × h1 × h1, after ReLU
   p1: Float32Array; // c1 × p1 × p1, after max pooling
@@ -143,6 +151,12 @@ export function cnnForward(x: Float32Array): CnnRun {
 /** One first-layer filter as a 3 by 3 picture. */
 export function cnnFilter(c: number): Float32Array {
   return C[0].slice(c * 9, c * 9 + 9);
+}
+
+/** The kernel a second-layer map applies to one of the maps below it. */
+export function cnnFilter2(out: number, into: number): Float32Array {
+  const off = (out * CNN.c1 + into) * 9;
+  return C[2].slice(off, off + 9);
 }
 
 /**

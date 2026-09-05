@@ -40,6 +40,16 @@ import Readout from '../../../components/sim/Readout.astro';
       <Seg id="pic" label="Photo" attr="p" options={[{ value: 'astronaut', label: 'Astronaut' }, { value: 'cat', label: 'Cat' }, { value: 'coffee', label: 'Coffee' }]} />
       <Seg id="mode" label="Channels" attr="c" options={[{ value: 'grey', label: 'Grayscale' }, { value: 'rgb', label: 'Colour' }]} />
       <Seg
+        id="res"
+        label="Resolution"
+        attr="r"
+        options={[
+          { value: '160', label: '160 px' },
+          { value: '32', label: '32 px' },
+          { value: '16', label: '16 px' },
+        ]}
+      />
+      <Seg
         id="kernel"
         label="Kernel"
         attr="k"
@@ -129,9 +139,10 @@ import Readout from '../../../components/sim/Readout.astro';
   const CH = ['R', 'G', 'B'];
   const CH_COLOUR = ['#f87171', '#5eead4', '#60a5fa'];
   const FIELD = '#f59e0b';
-  const K = 3, IMG = 160;
+  const K = 3, FULL = 160;
+  let IMG = FULL;
 
-  const state = { pic: 'astronaut', mode: 'grey', kernel: 'edge', perchan: false, stride: 1, pad: 0, dil: 1, running: false, cell: -1 };
+  const state = { pic: 'astronaut', mode: 'grey', kernel: 'edge', res: FULL, perchan: false, stride: 1, pad: 0, dil: 1, running: false, cell: -1 };
 
   const canvas = el('conv') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -142,9 +153,38 @@ import Readout from '../../../components/sim/Readout.astro';
   const setRows = readout();
 
   // --- the photograph --------------------------------------------------------
-  let src: Float32Array[] = [new Float32Array(IMG * IMG), new Float32Array(IMG * IMG), new Float32Array(IMG * IMG)];
-  let grey = new Float32Array(IMG * IMG);
+  let full: Float32Array[] = [new Float32Array(FULL * FULL), new Float32Array(FULL * FULL), new Float32Array(FULL * FULL)];
+  let src: Float32Array[] = full;
+  let grey = new Float32Array(FULL * FULL);
   let ready = false;
+
+  /**
+   * The coarse sizes are the same photograph, area-averaged down. Nine numbers
+   * sliding over 160 pixels is true to life but too small to follow, so the same
+   * nine over 16 pixels is there to be watched rather than admired.
+   */
+  function resample() {
+    IMG = state.res;
+    const n = IMG;
+    src = [0, 1, 2].map((c) => {
+      if (n === FULL) return full[c];
+      const out = new Float32Array(n * n);
+      const step = FULL / n;
+      for (let y = 0; y < n; y++)
+        for (let x = 0; x < n; x++) {
+          let sum = 0, count = 0;
+          for (let yy = Math.floor(y * step); yy < Math.ceil((y + 1) * step); yy++)
+            for (let xx = Math.floor(x * step); xx < Math.ceil((x + 1) * step); xx++) {
+              sum += full[c][yy * FULL + xx];
+              count++;
+            }
+          out[y * n + x] = count ? sum / count : 0;
+        }
+      return out;
+    });
+    grey = new Float32Array(n * n);
+    for (let i = 0; i < n * n; i++) grey[i] = 0.299 * src[0][i] + 0.587 * src[1][i] + 0.114 * src[2][i];
+  }
 
   function loadPhoto(name: string) {
     ready = false;
@@ -152,20 +192,18 @@ import Readout from '../../../components/sim/Readout.astro';
     const img = new Image();
     img.onload = () => {
       const off = document.createElement('canvas');
-      off.width = IMG;
-      off.height = IMG;
+      off.width = FULL;
+      off.height = FULL;
       const c = off.getContext('2d', { willReadFrequently: true })!;
-      c.drawImage(img, 0, 0, IMG, IMG);
-      const d = c.getImageData(0, 0, IMG, IMG).data;
-      src = [new Float32Array(IMG * IMG), new Float32Array(IMG * IMG), new Float32Array(IMG * IMG)];
-      grey = new Float32Array(IMG * IMG);
-      for (let i = 0; i < IMG * IMG; i++) {
-        const r = d[i * 4] / 255, g = d[i * 4 + 1] / 255, b = d[i * 4 + 2] / 255;
-        src[0][i] = r;
-        src[1][i] = g;
-        src[2][i] = b;
-        grey[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+      c.drawImage(img, 0, 0, FULL, FULL);
+      const d = c.getImageData(0, 0, FULL, FULL).data;
+      full = [new Float32Array(FULL * FULL), new Float32Array(FULL * FULL), new Float32Array(FULL * FULL)];
+      for (let i = 0; i < FULL * FULL; i++) {
+        full[0][i] = d[i * 4] / 255;
+        full[1][i] = d[i * 4 + 1] / 255;
+        full[2][i] = d[i * 4 + 2] / 255;
       }
+      resample();
       ready = true;
       compute();
     };
@@ -250,6 +288,20 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.save();
     roundRect(ctx, x, y, s, s, 10);
     ctx.clip();
+  }
+  /** Faint rules between pixels, so a coarse picture reads as cells and not as blur. */
+  function grid(x: number, y: number, s: number, n: number) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    for (let i = 1; i < n; i++) {
+      const t = (i * s) / n;
+      ctx.moveTo(x + t, y);
+      ctx.lineTo(x + t, y + s);
+      ctx.moveTo(x, y + t);
+      ctx.lineTo(x + s, y + t);
+    }
+    ctx.stroke();
   }
   function frame(x: number, y: number, s: number) {
     ctx.restore();
@@ -347,6 +399,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.clip();
     paintSource();
     ctx.restore();
+    if (IMG <= 48) grid(IN.x, IN.y, IN.s, IMG);
     frame(IN.x, IN.y, IN.s);
     ctx.save();
     ctx.shadowColor = FIELD;
@@ -369,6 +422,7 @@ import Readout from '../../../components/sim/Readout.astro';
       }
       ctx.fillRect(OUT.x + x * cellOut, OUT.y + y * cellOut, cellOut + 0.6, cellOut + 0.6);
     }
+    if (N <= 48) grid(OUT.x, OUT.y, OUT.s, N);
     frame(OUT.x, OUT.y, OUT.s);
     ctx.save();
     ctx.shadowColor = FIELD;
@@ -475,8 +529,9 @@ import Readout from '../../../components/sim/Readout.astro';
     if (state.running && ready) {
       acc += dt;
       let moved = false;
-      while (acc >= 0.012) {
-        acc -= 0.012;
+      const per = N * N > 4000 ? 0.012 : N * N > 600 ? 0.05 : 0.12;
+      while (acc >= per) {
+        acc -= per;
         state.cell = (state.cell + 1) % (N * N);
         moved = true;
       }
@@ -487,6 +542,7 @@ import Readout from '../../../components/sim/Readout.astro';
 
   segmented('pic', (p) => { state.pic = p; loadPhoto(p); });
   segmented('mode', (m) => { state.mode = m; compute(); });
+  segmented('res', (r) => { state.res = Number(r); state.cell = -1; if (ready) resample(); compute(); });
   segmented('kernel', (k) => { state.kernel = k; compute(); });
   check('perchan', (on) => { state.perchan = on; compute(); });
   slider('s', (v) => { state.stride = v; state.cell = -1; compute(); });
