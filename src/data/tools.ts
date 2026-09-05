@@ -465,6 +465,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'mnist-classifier',
+        title: 'Inside an MNIST Classifier',
+        description:
+          'Draw a digit and watch it travel through a network trained beforehand on the real MNIST set. Switch between a plain stack of layers and a convolutional one and compare what each stage sees.',
+        href: '/simulations/deep-learning/mnist-classifier',
+        status: 'live',
+      },
+      {
         slug: 'cosine-similarity',
         title: 'Embeddings & Cosine Similarity',
         description:
@@ -500,7 +508,7 @@ export const AREAS: Area[] = [
         slug: 'image-convolution',
         title: 'Image Convolution',
         description:
-          'Slide a kernel over an image to detect edges, blur or sharpen, and see how stride, padding and dilation reshape the output feature map.',
+          'Slide a kernel over a photograph with the mouse. Filter one grey channel or all three colour ones, give each channel a kernel of its own, and watch stride, padding and dilation reshape the output.',
         href: '/simulations/deep-learning/image-convolution',
         status: 'live',
       },
