@@ -1,54 +1,60 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+
+const LOSS = '#5eead4', STEP = '#7c8cff';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
   title="Gradient Descent"
-  description="The workhorse of training neural nets. Set a learning rate and a starting point, then watch the parameter roll downhill: converge, oscillate, or diverge."
+  description="Pick a learning rate and a starting point, then watch x roll downhill: converge, oscillate or diverge."
+  standard
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="gd" width="900" height="520"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="gd"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A loss curve with the path of gradient descent steps on it, and the loss at each step underneath."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'loss f(x)', color: LOSS }, { label: 'steps x<sub>k</sub>', color: STEP }]}
+        hint="Run, or take one step at a time"
+      />
+      <Result label="Loss f(x)" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>Loss surface</label>
-        <div class="seg" id="fn">
-          <button data-fn="bowl" class="active">Convex</button>
-          <button data-fn="double">Double well</button>
-          <button data-fn="wavy">Wavy</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Learning rate <b id="lrval">0.10</b></label>
-        <input type="range" id="lr" min="0.01" max="2.5" step="0.01" value="0.1" />
-      </div>
-
-      <div class="control">
-        <label>Start x <b id="x0val">2.40</b></label>
-        <input type="range" id="x0" min="-3" max="3" step="0.05" value="2.4" />
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Run</button>
-        <button class="btn ghost" id="step">Step</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Iteration</span><b id="iter">0</b></div>
-        <div class="row"><span>x</span><b id="x">—</b></div>
-        <div class="row"><span>loss f(x)</span><b id="loss">—</b></div>
-        <div class="row"><span>gradient</span><b id="grad">—</b></div>
-      </div>
-
-      <div class="control">
-        <label>Loss over iterations</label>
-        <canvas id="losscurve" class="mini-canvas" width="300" height="150"></canvas>
-      </div>
+      <Transport step />
+      <Seg
+        id="fn"
+        label="Loss surface"
+        attr="fn"
+        options={[
+          { value: 'bowl', label: 'Convex' },
+          { value: 'double', label: 'Double well' },
+          { value: 'wavy', label: 'Wavy' },
+        ]}
+      />
+      <Slider id="lr" label="Learning rate η" min={0.01} max={2.5} step={0.01} value={0.1} display="0.10" />
+      <Slider id="x0" label="Start x<sub>0</sub>" min={-3} max={3} step={0.05} value={2.4} display="2.40" />
+      <Readout
+        rows={[
+          { id: 'r-x', label: 'x' },
+          { id: 'r-grad', label: 'gradient f′(x)' },
+          { id: 'r-iter', label: 'iteration' },
+        ]}
+      />
     </div>
   </div>
 
@@ -59,9 +65,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       past <b>η = 2</b> the loss curve turns upward and it <b>diverges</b>.
     </li>
     <li>
-      The loss plot is the "training curve" you will meet everywhere in deep
-      learning: down and flattening means converging, up means the step is too
-      big.
+      The strip under the curve is the "training curve" you will meet everywhere
+      in deep learning: down and flattening means converging, up means the step
+      is too big.
     </li>
     <li>
       Switch to <b>Double well</b> and drag the start point across the hump. The
@@ -72,215 +78,214 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+
   type Fn = { f: (x: number) => number; g: (x: number) => number };
   const FNS: Record<string, Fn> = {
     bowl: { f: (x) => 0.5 * x * x, g: (x) => x },
     double: { f: (x) => 0.12 * x ** 4 - x * x + 0.4 * x + 1.2, g: (x) => 0.48 * x ** 3 - 2 * x + 0.4 },
     wavy: { f: (x) => 0.25 * x * x + Math.sin(3 * x), g: (x) => 0.5 * x + 3 * Math.cos(3 * x) },
   };
+  const LOSS = '#5eead4', STEP = '#7c8cff', BAD = '#f87171';
 
   const state = { fn: 'bowl', lr: 0.1, x0: 2.4, x: 2.4, iter: 0, path: [] as number[] };
   let raf = 0;
 
-  const canvas = document.getElementById('gd') as HTMLCanvasElement;
+  const canvas = el('gd') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const PAD = { l: 48, r: 24, t: 24, b: 40 };
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // the surface on top, the loss at each step in a strip underneath
+  const TOP = { x: 48, y: 20, w: W - 72, h: 360 };
+  const STRIP = { x: 48, y: 430, w: W - 72, h: 140 };
   const X = { min: -3.2, max: 3.2 };
-  const css = (v: string) =>
-    getComputedStyle(canvas).getPropertyValue(v).trim();
-
-  const lossCanvas = document.getElementById('losscurve') as HTMLCanvasElement;
-  const lc = setupCanvas(lossCanvas, () => drawLoss());
-
-  // Loss (training) curve: f(x) at each iterate. Rising = diverging.
-  function drawLoss() {
-    const fn = FNS[state.fn];
-    const c = lc.ctx, Ws = lc.W, Hs = lc.H;
-    const pad = { l: 10, r: 10, t: 12, b: 14 };
-    c.clearRect(0, 0, Ws, Hs);
-    const losses = state.path.map((x) => fn.f(x));
-    if (losses.length === 0) return;
-    let lo = Math.min(0, ...losses);
-    let hi = Math.max(...losses);
-    if (hi - lo < 1e-6) hi = lo + 1;
-    const sx = (i: number) =>
-      pad.l + (losses.length <= 1 ? 0 : i / (losses.length - 1)) * (Ws - pad.l - pad.r);
-    const sy = (v: number) => pad.t + (1 - (v - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
-
-    c.strokeStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.16)`;
-    c.lineWidth = 1;
-    c.beginPath();
-    c.moveTo(pad.l, sy(0));
-    c.lineTo(Ws - pad.r, sy(0));
-    c.stroke();
-
-    c.strokeStyle = css('--accent') || '#7c8cff';
-    c.lineWidth = 2;
-    c.beginPath();
-    losses.forEach((v, i) => (i ? c.lineTo(sx(i), sy(v)) : c.moveTo(sx(i), sy(v))));
-    c.stroke();
-
-    const last = losses.length - 1;
-    c.fillStyle = css('--accent') || '#7c8cff';
-    c.beginPath();
-    c.arc(sx(last), sy(losses[last]), 3, 0, Math.PI * 2);
-    c.fill();
-  }
 
   function yRange(fn: Fn) {
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i <= 200; i++) {
-      const x = X.min + ((X.max - X.min) * i) / 200;
-      const y = fn.f(x);
+      const y = fn.f(X.min + ((X.max - X.min) * i) / 200);
       lo = Math.min(lo, y);
       hi = Math.max(hi, y);
     }
     return { lo: lo - 0.3, hi: hi + 0.4 };
   }
 
-  function draw() {
+  function drawSurface() {
     const fn = FNS[state.fn];
     const { lo, hi } = yRange(fn);
-    const accent = css('--accent') || '#7c8cff';
-    const teal = css('--accent-2') || '#5eead4';
-    const grid = css('--border') || '#262a32';
-    const faint = css('--text-faint') || '#6b7280';
+    const sx = (x: number) => TOP.x + ((x - X.min) / (X.max - X.min)) * TOP.w;
+    const sy = (y: number) => TOP.y + TOP.h - ((y - lo) / (hi - lo)) * TOP.h;
 
-    const sx = (x: number) => PAD.l + ((x - X.min) / (X.max - X.min)) * (W - PAD.l - PAD.r);
-    const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
-
-    ctx.clearRect(0, 0, W, H);
-
-    // grid
-    ctx.strokeStyle = grid;
+    ctx.strokeStyle = ink(0.07);
     ctx.lineWidth = 1;
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
     for (let i = 0; i <= 8; i++) {
       const xv = X.min + ((X.max - X.min) * i) / 8;
-      const px = sx(xv);
-      ctx.globalAlpha = 0.4;
       ctx.beginPath();
-      ctx.moveTo(px, PAD.t);
-      ctx.lineTo(px, H - PAD.b);
+      ctx.moveTo(sx(xv), TOP.y);
+      ctx.lineTo(sx(xv), TOP.y + TOP.h);
       ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+      label(xv.toFixed(1), sx(xv), TOP.y + TOP.h + 18, 0.3, 'center', 10.5);
     }
+    label('x', TOP.x + TOP.w + 14, TOP.y + TOP.h + 4, 0.4, 'center', 11);
 
-    // curve
-    ctx.strokeStyle = teal;
+    ctx.strokeStyle = LOSS;
     ctx.lineWidth = 2.4;
     ctx.beginPath();
     for (let i = 0; i <= 400; i++) {
       const x = X.min + ((X.max - X.min) * i) / 400;
-      const px = sx(x);
-      const py = sy(fn.f(x));
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      i ? ctx.lineTo(sx(x), sy(fn.f(x))) : ctx.moveTo(sx(x), sy(fn.f(x)));
     }
     ctx.stroke();
 
-    // path of iterates
-    ctx.fillStyle = accent;
-    state.path.forEach((xv, idx) => {
-      const px = sx(xv);
-      const py = sy(fn.f(xv));
-      ctx.globalAlpha = 0.25 + (0.75 * idx) / Math.max(1, state.path.length - 1);
+    // the path so far, fading in towards the present
+    ctx.strokeStyle = `rgba(124,140,255,0.35)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    state.path.forEach((xv, i) => (i ? ctx.lineTo(sx(xv), sy(fn.f(xv))) : ctx.moveTo(sx(xv), sy(fn.f(xv)))));
+    ctx.stroke();
+    ctx.fillStyle = STEP;
+    state.path.forEach((xv, i) => {
+      ctx.globalAlpha = 0.25 + (0.75 * i) / Math.max(1, state.path.length - 1);
       ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.arc(sx(xv), sy(fn.f(xv)), 3, 0, Math.PI * 2);
       ctx.fill();
     });
     ctx.globalAlpha = 1;
 
-    // current point
-    const cx = sx(state.x);
-    const cy = sy(fn.f(state.x));
-    ctx.fillStyle = accent;
-    ctx.strokeStyle = '#0b0c0e';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // tangent (gradient direction)
-    const gr = fn.g(state.x);
+    // the tangent at the current point, which is the direction of the next step
+    const gr = fn.g(state.x), dx = 0.7;
     ctx.strokeStyle = 'rgba(124,140,255,0.6)';
     ctx.lineWidth = 1.5;
-    const dx = 0.7;
     ctx.beginPath();
     ctx.moveTo(sx(state.x - dx), sy(fn.f(state.x) - gr * dx));
     ctx.lineTo(sx(state.x + dx), sy(fn.f(state.x) + gr * dx));
     ctx.stroke();
 
-    (document.getElementById('iter') as HTMLElement).textContent = String(state.iter);
-    (document.getElementById('x') as HTMLElement).textContent = state.x.toFixed(4);
-    (document.getElementById('loss') as HTMLElement).textContent = fn.f(state.x).toFixed(4);
-    (document.getElementById('grad') as HTMLElement).textContent = gr.toFixed(4);
-    drawLoss();
+    ctx.fillStyle = STEP;
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx(state.x), sy(fn.f(state.x)), 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
+
+  function drawStrip() {
+    const fn = FNS[state.fn];
+    const losses = state.path.map((x) => fn.f(x));
+    label('loss at each step', STRIP.x, STRIP.y - 10, 0.45, 'left', 10.5);
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(STRIP.x, STRIP.y + STRIP.h);
+    ctx.lineTo(STRIP.x + STRIP.w, STRIP.y + STRIP.h);
+    ctx.stroke();
+    if (losses.length < 1) return;
+    const lo = Math.min(0, ...losses);
+    let hi = Math.max(...losses);
+    if (hi - lo < 1e-6) hi = lo + 1;
+    const n = Math.max(2, losses.length);
+    const sx = (i: number) => STRIP.x + (i / (n - 1)) * STRIP.w;
+    const sy = (v: number) => STRIP.y + (1 - (v - lo) / (hi - lo)) * STRIP.h;
+
+    const rising = losses.length > 2 && losses[losses.length - 1] > losses[losses.length - 3];
+    ctx.strokeStyle = rising ? BAD : STEP;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    losses.forEach((v, i) => (i ? ctx.lineTo(sx(i), sy(v)) : ctx.moveTo(sx(i), sy(v))));
+    ctx.stroke();
+    const last = losses.length - 1;
+    ctx.fillStyle = rising ? BAD : STEP;
+    ctx.beginPath();
+    ctx.arc(sx(last), sy(losses[last]), 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    label(fixed(losses[last], 3), sx(last) + 8, sy(losses[last]) + 4, 1, 'left', 10.5, rising ? BAD : STEP);
+    label(`k = ${state.iter}`, STRIP.x + STRIP.w, STRIP.y + STRIP.h + 16, 0.4, 'right', 10.5);
+  }
+
+  /** What the last few steps have been doing, in one word. */
+  function verdict() {
+    const fn = FNS[state.fn];
+    const g = fn.g(state.x);
+    const p = state.path;
+    if (Math.abs(g) < 1e-3 && p.length > 1) return { word: 'at a minimum', why: 'The gradient is zero, so the next step goes nowhere.' };
+    if (p.length < 3) return { word: 'starting', why: 'Each step moves x against the gradient, scaled by η.' };
+    const l = p.slice(-4).map((x) => fn.f(x));
+    if (l[l.length - 1] > l[0] && l[l.length - 1] > 1.5 * l[0]) return { word: 'diverging', why: 'The loss is climbing: η is too big for the curvature here.' };
+    const d = p.slice(-4).map((x, i, a) => (i ? Math.sign(x - a[i - 1]) : 0)).slice(1);
+    if (d[0] !== 0 && d.every((s, i, a) => i === 0 || s === -a[i - 1])) return { word: 'oscillating', why: 'x overshoots the valley and bounces from side to side.' };
+    return { word: 'converging', why: 'The loss falls and the steps shrink with the gradient.' };
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawSurface();
+    drawStrip();
+
+    const fn = FNS[state.fn];
+    const g = fn.g(state.x);
+    const next = state.x - state.lr * g;
+    const v = verdict();
+    const S = (t: string) => `\\textcolor{${STEP}}{${t}}`, L = (t: string) => `\\textcolor{${LOSS}}{${t}}`;
+    setEq({
+      rule: [`${S('x_{k+1}')} = ${S('x_k')} - \\eta\\, ${L("f'(x_k)")}`],
+      live: [
+        `${S(`x_{${state.iter + 1}}`)} = ${S(fixed(state.x, 3))} - ${state.lr.toFixed(2)} \\times ${L(`(${fixed(g, 3)})`)} = ${S(fixed(next, 3))}`,
+      ],
+    });
+    setResult({
+      value: fixed(fn.f(state.x), 4),
+      colour: v.word === 'diverging' ? BAD : undefined,
+      status: `Iteration ${state.iter} · ${v.word}`,
+      note: v.why,
+    });
+    setRows({ 'r-x': fixed(state.x, 4), 'r-grad': fixed(g, 4), 'r-iter': String(state.iter) });
+  }
+
+  // --- the algorithm ---------------------------------------------------------------
 
   function step() {
     const fn = FNS[state.fn];
-    const g = fn.g(state.x);
-    state.x = state.x - state.lr * g;
-    state.x = Math.max(X.min, Math.min(X.max, state.x));
+    state.x = Math.max(X.min, Math.min(X.max, state.x - state.lr * fn.g(state.x)));
     state.iter++;
     state.path.push(state.x);
     if (state.path.length > 200) state.path.shift();
     draw();
   }
-
   function reset() {
-    cancelAnimationFrame(raf);
-    raf = 0;
+    stop();
     state.x = state.x0;
     state.iter = 0;
     state.path = [state.x0];
-    (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
     draw();
   }
-
   function loop() {
     step();
     raf = requestAnimationFrame(() => setTimeout(loop, 120));
   }
+  function stop() {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    controls.setRunning(false);
+  }
 
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    if (raf) {
-      cancelAnimationFrame(raf);
-      raf = 0;
-      runBtn.textContent = 'Run';
-    } else {
-      runBtn.textContent = 'Pause';
-      loop();
-    }
-  });
-  document.getElementById('step')!.addEventListener('click', step);
-  document.getElementById('reset')!.addEventListener('click', reset);
+  // --- controls ------------------------------------------------------------------------
 
-  const lr = document.getElementById('lr') as HTMLInputElement;
-  lr.addEventListener('input', () => {
-    state.lr = +lr.value;
-    (document.getElementById('lrval') as HTMLElement).textContent = state.lr.toFixed(2);
+  const controls = transport({
+    onRun: (running) => (running ? loop() : stop()),
+    onStep: () => { stop(); step(); },
+    onReset: reset,
   });
-  const x0 = document.getElementById('x0') as HTMLInputElement;
-  x0.addEventListener('input', () => {
-    state.x0 = +x0.value;
-    (document.getElementById('x0val') as HTMLElement).textContent = state.x0.toFixed(2);
-    reset();
-  });
-
-  document.getElementById('fn')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#fn button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.fn = btn.dataset.fn!;
-    reset();
-  });
+  segmented('fn', (fn) => { state.fn = fn; reset(); });
+  slider('lr', (v) => { state.lr = v; draw(); }, (v) => v.toFixed(2));
+  slider('x0', (v) => { state.x0 = v; reset(); }, (v) => v.toFixed(2));
 
   reset();
 </script>

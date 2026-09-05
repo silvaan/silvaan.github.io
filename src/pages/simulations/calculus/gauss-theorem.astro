@@ -1,65 +1,43 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Gauss's Divergence Theorem"
-  description="Fill a lumpy region with little boxes and ask each one the same question: how much more flow leaves you than enters you? Every inner wall is shared by two boxes, so whatever leaves one enters the other and the pair cancels. Add every box and only the outer skin is left."
+  description="Fill a lumpy region with little boxes and ask each one how much more flow leaves it than enters it. Every inner wall is shared by two boxes, so whatever leaves one enters the other and the pair cancels. Add every box and only the outer skin is left."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="gauss" class="gs-canvas" width="900" height="546"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="gauss" class="gs-canvas" width="900" height="546" role="img" aria-label="A lumpy region filled with boxes, flat or as a solid, each tinted by the sign of its divergence, with the picked box opened up on the right showing the flow through each wall."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'flow leaving', color: '#ff7a5c' }, { label: 'flow entering', color: '#60a5fa' }, { label: 'the box you picked', color: '#f59e0b' }]}
+        hint="Click any box to open it up · in the solid view, drag to orbit"
+      />
+      <Result label="Box you picked" />
     </div>
 
     <div class="sim-panel">
+      <Seg id="view" label="View" attr="v" options={[{ value: '2d', label: 'Flat' }, { value: '3d', label: 'Solid' }]} />
+      <Seg id="field" label="Field" attr="f" active="blob" options={[{ value: 'blob', label: 'Hot spot' }, { value: 'source', label: 'Source' }, { value: 'uniform', label: 'Uniform' }, { value: 'swirl', label: 'Swirl' }]} />
+      <Slider id="mesh" label="Boxes" min={6} max={24} step={2} value={14} hint={['a few big ones', 'hundreds of tiny ones']} />
       <div class="control">
-        <label>View</label>
-        <div class="seg" id="view">
-          <button data-v="2d" class="active">Flat</button>
-          <button data-v="3d">Solid</button>
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="cancel" /> <span>Cancel the shared walls</span></label>
+          <label class="check" id="cutwrap" hidden><input type="checkbox" id="cut" checked /> <span>Cut it open</span></label>
+          <label class="check"><input type="checkbox" id="showfield" checked /> <span>Show the field</span></label>
         </div>
       </div>
-
-      <div class="control">
-        <label>Field</label>
-        <div class="seg" id="field">
-          <button data-f="source" class="active">Source</button>
-          <button data-f="uniform">Uniform</button>
-          <button data-f="swirl">Swirl</button>
-          <button data-f="blob">Hot spot</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Boxes <b id="nval">—</b></label>
-        <input type="range" id="mesh" min="6" max="24" step="2" value="14" />
-        <div class="scale-hint"><span>a few big ones</span><span>hundreds of tiny ones</span></div>
-      </div>
-
-      <label class="check"
-        ><input type="checkbox" id="cancel" /> Cancel the shared walls</label
-      >
-      <label class="check" id="cutwrap"
-        ><input type="checkbox" id="cut" checked /> Cut it open</label
-      >
-      <label class="check"
-        ><input type="checkbox" id="showfield" checked /> Show the field</label
-      >
-
-      <div class="readout">
-        <div class="row"><span>Flow out through the skin</span><b id="skin">—</b></div>
-        <div class="row"><span>Leak added over the boxes</span><b id="sum">—</b></div>
-        <div class="row"><span>Box you picked</span><b id="pflux">—</b></div>
-        <div class="row"><span>…its divergence</span><b id="pdiv">—</b></div>
-        <div class="row"><span>Gap between the two</span><b id="gap">—</b></div>
-      </div>
-
-      <p class="note">
-        Click any box to open it up on the right. Red walls are flow leaving,
-        blue walls are flow entering, and both numbers are measured from the
-        field itself.
-      </p>
+      <Readout rows={[{ id: 'skin', label: 'flow out through the skin' }, { id: 'sum', label: 'leak added over the boxes' }, { id: 'gap', label: 'gap between the two' }]} />
     </div>
   </div>
 
@@ -105,7 +83,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+  import { stageInk } from '../../../lib/draw';
   import {
     HUE,
     V2,
@@ -140,7 +120,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const state = {
     view: '2d' as '2d' | '3d',
-    field: 'source' as Field,
+    field: 'blob' as Field,
     mesh: 14,
     cancel: false,
     cut: true,
@@ -366,12 +346,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   // --- canvas ---------------------------------------------------------------
-  const setEq = equationBar();
-  const canvas = document.getElementById('gauss') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('gauss') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (n: string, f = '') =>
-    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
-  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { css, ink } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const accent = () => css('--accent', '#7c8cff');
   const fmt = (v: number) => (Math.abs(v) < 5e-5 ? '0.0000' : v.toFixed(4));
@@ -590,7 +570,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.restore();
       return;
     }
-    label('ONE BOX, OPENED UP', CARD.x + 16, CARD.y + 24, 0.45, 'left', 11);
+    label('one box, opened up', CARD.x + 16, CARD.y + 24, 0.45, 'left', 11);
     const area = { x: CARD.x + 24, y: CARD.y + 42, w: CARD.w - 48, h: 146 };
     const cx = area.x + area.w / 2,
       cy = area.y + area.h / 2;
@@ -741,50 +721,35 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     else drawSolid();
     ctx.restore();
     drawCard();
-    label(
-      state.view === '2d'
-        ? 'click any box · red arrows leave the region, blue arrows enter it'
-        : 'drag to orbit · a quarter is cut away so you can see inside',
-      24,
-      520,
-      0.4,
-      'left',
-      11
-    );
     sync();
   }
 
   function sync() {
-    setEq([
-      [
-        ['\\oiint_S\\mathbf{F}\\cdot\\mathbf{n}\\,dA', accent()],
-        '=',
-        ['\\iiint_V(\\nabla\\cdot\\mathbf{F})\\,dV', HUE.out],
-      ],
-      [
-        [`\\text{through the skin }${fmt(skinFlux)}`, accent()],
-        '\\approx',
-        [`\\text{${count} boxes }${fmt(cellSum)}`, HUE.out],
-        `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`,
-      ],
-      [
-        'the flow is measured on the region, not on the boxes · every inner wall is shared by two of them, so what leaves one enters the next and only the skin is left',
-      ],
-    ]);
+    setEq({
+      rule: [['\\oiint_S\\mathbf{F}\\cdot\\mathbf{n}\\,dA', accent()], '=', ['\\iiint_V(\\nabla\\cdot\\mathbf{F})\\,dV', HUE.out]],
+      live: [[`${fmt(skinFlux)}\\text{ through the skin}`, accent()], '\\approx', [`${fmt(cellSum)}\\text{ over ${count} boxes}`, HUE.out], `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`],
+    });
     const t = selTile(),
       b = selBox();
-    const set = (id: string, v: string) =>
-      ((document.getElementById(id) as HTMLElement).textContent = v);
-    set('skin', fmt(skinFlux));
-    set('sum', fmt(cellSum));
+    setRows({ skin: fmt(skinFlux), sum: fmt(cellSum), gap: `${(100 * gap()).toFixed(2)}%` });
+    el('meshval').textContent = `${count} boxes`;
     const f = t ? t.flux : b ? b.flux : null;
     const d = t ? t.div : b ? b.div : null;
-    set('pflux', f === null ? '—' : `${f >= 0 ? '+' : ''}${fmt(f)}`);
-    set('pdiv', d === null ? '—' : d.toFixed(3));
-    set('nval', String(count));
-    set('gap', `${(100 * gap()).toFixed(2)}%`);
-    (document.getElementById('cutwrap') as HTMLElement).style.display =
-      state.view === '3d' ? '' : 'none';
+    const c = t ? t.c : b ? b.c : null;
+    const uniform = state.field === 'source' || state.field === 'uniform' || state.field === 'swirl';
+    setResult({
+      value: f === null ? '—' : `${f >= 0 ? '+' : ''}${fmt(f)}`,
+      colour: f === null ? undefined : f >= 0 ? HUE.out : HUE.in,
+      status: f === null || d === null || !c
+        ? 'click any box to open it up'
+        : `net flow out · divergence ${d.toFixed(3)} · centred at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}${'z' in c ? `, ${(c as { z: number }).z.toFixed(2)}` : ''})`,
+      note: uniform
+        ? state.field === 'source'
+          ? 'A source spreads the same everywhere, so every full box reports the same divergence; only the boxes cut by the skin differ. Pick Hot spot to see it vary.'
+          : 'Nothing accumulates anywhere in this field: every box is balanced, and the skin reports zero. Spinning is not spreading.'
+        : 'Only the boxes covering the lump light up, but the skin far away still reports every drop of it, because there is nowhere else for the flow to go.',
+    });
+    el('cutwrap').hidden = state.view !== '3d';
   }
 
   // --- cancelling animation -------------------------------------------------
@@ -837,48 +802,36 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     onTap: pick,
   });
 
-  const $ = (id: string) => document.getElementById(id) as HTMLElement;
-  const segment = (id: string, fn: (v: string) => void) =>
-    $(id).addEventListener('click', (e) => {
-      const b = (e.target as HTMLElement).closest('button');
-      if (!b) return;
-      $(id)
-        .querySelectorAll('button')
-        .forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      fn(Object.values(b.dataset)[0] as string);
-    });
-
-  segment('view', (v) => {
+  segmented('view', (v) => {
     state.view = v as '2d' | '3d';
     state.sel = -1;
     build();
     pickDefault();
     draw();
   });
-  segment('field', (f) => {
+  segmented('field', (f) => {
     state.field = f as Field;
     build();
     draw();
   });
-  $('mesh').addEventListener('input', (e) => {
-    state.mesh = +(e.target as HTMLInputElement).value;
+  slider('mesh', (v) => {
+    state.mesh = v;
     build();
     pickDefault();
     draw();
-  });
-  ($('cancel') as HTMLInputElement).addEventListener('change', (e) => {
-    state.cancel = (e.target as HTMLInputElement).checked;
+  }, (v) => `${v} × ${v} grid`);
+  check('cancel', (on) => {
+    state.cancel = on;
     kick();
   });
-  ($('cut') as HTMLInputElement).addEventListener('change', (e) => {
-    state.cut = (e.target as HTMLInputElement).checked;
+  check('cut', (on) => {
+    state.cut = on;
     build();
     if (state.sel >= 0 && boxes[state.sel]?.hidden) pickDefault();
     draw();
   });
-  ($('showfield') as HTMLInputElement).addEventListener('change', (e) => {
-    state.showField = (e.target as HTMLInputElement).checked;
+  check('showfield', (on) => {
+    state.showField = on;
     draw();
   });
 
@@ -891,25 +844,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .gs-canvas {
     cursor: pointer;
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 4px;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .note {
-    font-size: 0.82rem;
-    color: var(--text-faint);
-    margin: 0;
-    line-height: 1.55;
   }
 </style>

@@ -1,22 +1,26 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="electronics"
   title="Memristor"
-  description="A resistor that remembers how much charge went through it. Inside is a thin film with a boundary you can watch move: push current one way and the conducting layer grows, push it back and it shrinks, stop pushing and it stays exactly where you left it. Drive it with a sine wave and the current-voltage curve is not a line but a loop pinched at the origin, the fingerprint no resistor, capacitor or inductor can produce."
+  description="A resistor that remembers how much charge went through it. Push current one way and the conducting layer grows, push it back and it shrinks, stop and it stays where you left it. Drive it with a sine and the I–V curve is a loop pinched at the origin."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="mr" class="mr-canvas" width="1000" height="880"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="mr" class="mr-canvas" width="1000" height="880" role="img" aria-label="A thin film with a moving boundary between doped and undoped halves, oxygen vacancies as dots, and the current–voltage curve tracing a pinched loop."></canvas>
+      </div>
+      <Caption hint="Each dot is an oxygen vacancy you can count; the boundary between the halves is the device's entire memory" />
+      <Result label="Resistance right now" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
+      <Transport running />
 
       <div class="control">
         <label>Source</label>
@@ -83,11 +87,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span id="l7">—</span><b id="r7">—</b></div>
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Each dot is an oxygen vacancy you can count, and the boundary between the
-        doped and undoped halves is the device's entire memory. Everything else on
-        screen is measured from it.
-      </p>
     </div>
   </div>
 
@@ -146,6 +145,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { transport, result } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // The HP / Strukov thin-film model. A film of thickness D is split into a
@@ -784,6 +784,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- readouts --------------------------------------------------------------
 
   const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setResult = result();
   const setRow = (n: number, lab: string, val: string) => {
     el('l' + n).innerHTML = subHtml(lab);
     el('r' + n).textContent = val;
@@ -798,13 +799,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     setRow(5, 'Charge through q', eng(q, 'C'));
     setRow(6, 'Flux linkage Φ', eng(phi, 'Wb'));
     setRow(7, 'On/off ratio', (state.roff / state.ron).toFixed(0) + '×');
+    setResult({
+      value: fmtR(mem()),
+      status: `V = ${v.toFixed(3)} V · I = ${eng(i, 'A')} · state w/D = ${x.toFixed(3)} · ${eng(q, 'C')} has passed through`,
+      note: state.src === 'manual'
+        ? 'Stop pushing and the boundary stays exactly where it is: the resistance you read now depends on everything that has flowed before.'
+        : 'The current–voltage curve is a loop pinched at the origin, the fingerprint no resistor, capacitor or inductor can produce.',
+    });
   }
 
   // --- loop ------------------------------------------------------------------
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label('Memristor', 20, 30, 0.85, 'left', 14);
     label(
       state.src === 'manual'
         ? 'push charge through and the boundary keeps a record of it'
@@ -812,7 +819,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           ? 'drive it back and forth and the loop closes, pinched at the origin'
           : 'pulses latch it between a low and a high resistance',
       20,
-      52,
+      34,
       0.5,
       'left',
       11,
@@ -854,12 +861,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: reset,
   });
-  el('reset').addEventListener('click', reset);
 
   let ready = false;
   function bindRange(id: string, apply: (n: number) => void, restart = false) {
@@ -937,12 +942,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <style>
   .mr-canvas {
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
   }
 </style>

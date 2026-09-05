@@ -254,11 +254,15 @@ export function orbit(
   let dragging = false;
   let moved = 0;
   let last = { x: 0, y: 0 };
+  // setupCanvas scales the bitmap by the device pixel ratio and sets that
+  // scale as the context transform, so the drawing coordinates a tap has to
+  // land in are the bitmap size divided by that factor.
   const local = (e: PointerEvent) => {
     const b = canvas.getBoundingClientRect();
+    const dpr = canvas.getContext('2d')?.getTransform().a || 1;
     return {
-      x: ((e.clientX - b.left) / b.width) * canvas.width * (canvas.clientWidth ? 1 : 1),
-      y: ((e.clientY - b.top) / b.height) * canvas.height,
+      x: (((e.clientX - b.left) / b.width) * canvas.width) / dpr,
+      y: (((e.clientY - b.top) / b.height) * canvas.height) / dpr,
     };
   };
   const down = (e: PointerEvent) => {
@@ -284,11 +288,8 @@ export function orbit(
   };
   const up = (e: PointerEvent) => {
     if (dragging && moved < 6 && opts.onTap) {
-      const b = canvas.getBoundingClientRect();
-      opts.onTap(
-        ((e.clientX - b.left) / b.width) * canvas.width,
-        ((e.clientY - b.top) / b.height) * canvas.height
-      );
+      const p = local(e);
+      opts.onTap(p.x, p.y);
     }
     dragging = false;
   };

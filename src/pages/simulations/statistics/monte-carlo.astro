@@ -1,39 +1,49 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Monte Carlo"
-  description="Throw darts at random into a square with a circle inside it. The fraction that land in the circle is π/4, so counting darts estimates π. It converges slowly, but it needs no calculus at all."
+  description="Throw darts at random into a square with a circle inside it. The fraction that land in the circle estimates π, with no calculus at all."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="mc" width="560" height="560"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="mc"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Random darts on a square with an inscribed circle, and a plot of the running estimate of pi."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'inside the circle', color: '#2dd4bf' },
+          { label: 'outside', color: '#f87171' },
+          { label: 'estimate over time', color: '#5eead4' },
+        ]}
+      />
+      <Result label="Estimate of π" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
-
-      <div class="control">
-        <label>Darts / frame <b id="rateval">50</b></label>
-        <input type="range" id="rate" min="1" max="500" value="50" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Darts thrown</span><b id="total">0</b></div>
-        <div class="row"><span>Inside circle</span><b id="inside">0</b></div>
-        <div class="row"><span>Estimate of π</span><b id="est">—</b></div>
-        <div class="row"><span>Error</span><b id="err">—</b></div>
-      </div>
-
-      <div class="control">
-        <label>Estimate vs. darts</label>
-        <canvas id="conv" class="mini-canvas" width="300" height="150"></canvas>
-      </div>
+      <Transport running />
+      <Slider id="rate" label="Darts per frame" min={1} max={500} value={50} />
+      <Readout
+        rows={[
+          { id: 'r-total', label: 'darts thrown' },
+          { id: 'r-inside', label: 'inside the circle' },
+          { id: 'r-err', label: 'error' },
+        ]}
+      />
     </div>
   </div>
 
@@ -57,27 +67,31 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, slider, transport, result, readout } from '../../../lib/panel';
 
+  const IN = '#2dd4bf', OUT = '#f87171', EST = '#5eead4';
   const state = { rate: 50, playing: true };
-  let total = 0;
-  let inside = 0;
+  let total = 0, inside = 0;
   const dots: { x: number; y: number; hit: boolean }[] = [];
   const DOT_CAP = 5000;
   const history: number[] = [];
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('mc') as HTMLCanvasElement;
+  const canvas = el('mc') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const convCanvas = document.getElementById('conv') as HTMLCanvasElement;
-  const cv = setupCanvas(convCanvas, () => drawConv());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
-  const PAD = 16;
-  const S = Math.min(W, H) - 2 * PAD;
-  const mapX = (x: number) => PAD + ((x + 1) / 2) * S;
-  const mapY = (y: number) => PAD + ((1 - y) / 2) * S;
+  // the board on the left, the running estimate on the right
+  const BOARD = { x: 20, y: 20, s: 560 };
+  const PLOT = { x: 660, y: 60, w: 300, h: 480 };
+  const mapX = (x: number) => BOARD.x + ((x + 1) / 2) * BOARD.s;
+  const mapY = (y: number) => BOARD.y + ((1 - y) / 2) * BOARD.s;
 
   function reset() {
     total = 0;
@@ -88,8 +102,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   function throwDarts(n: number) {
     for (let i = 0; i < n; i++) {
-      const x = Math.random() * 2 - 1;
-      const y = Math.random() * 2 - 1;
+      const x = Math.random() * 2 - 1, y = Math.random() * 2 - 1;
       const hit = x * x + y * y <= 1;
       if (hit) inside++;
       total++;
@@ -99,110 +112,84 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     if (total > 0) {
       const est = (4 * inside) / total;
       const last = history[history.length - 1];
-      if (last === undefined || Math.abs(est - last) > 1e-4 || history.length < 300)
-        history.push(est);
+      if (last === undefined || Math.abs(est - last) > 1e-4 || history.length < 300) history.push(est);
       if (history.length > 400) history.shift();
     }
   }
 
-  function draw() {
-    const grid = css('--border-strong') || '#343a45';
-    const ink = css('--stage-ink') || '232,233,236';
-    ctx.clearRect(0, 0, W, H);
-
-    // square + circle
-    ctx.strokeStyle = grid;
+  function drawBoard() {
+    ctx.strokeStyle = ink(0.25);
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(mapX(-1), mapY(1), S, S);
-    ctx.strokeStyle = `rgba(${ink},0.55)`;
+    ctx.strokeRect(mapX(-1), mapY(1), BOARD.s, BOARD.s);
+    ctx.strokeStyle = ink(0.55);
     ctx.beginPath();
-    ctx.arc(mapX(0), mapY(0), S / 2, 0, Math.PI * 2);
+    ctx.arc(mapX(0), mapY(0), BOARD.s / 2, 0, Math.PI * 2);
     ctx.stroke();
-
     for (const d of dots) {
       ctx.fillStyle = d.hit ? 'rgba(45,212,191,0.8)' : 'rgba(248,113,113,0.8)';
       ctx.beginPath();
       ctx.arc(mapX(d.x), mapY(d.y), 1.7, 0, Math.PI * 2);
       ctx.fill();
     }
-
-    const est = total > 0 ? (4 * inside) / total : 0;
-    (document.getElementById('total') as HTMLElement).textContent = String(total);
-    (document.getElementById('inside') as HTMLElement).textContent = String(inside);
-    (document.getElementById('est') as HTMLElement).textContent = total ? est.toFixed(5) : '—';
-    setEq([
-      [
-        '\\pi \\approx 4\\times',
-        ['\\dfrac{\\text{darts inside}}{\\text{darts thrown}}', '#5eead4'],
-        '\\quad\\text{the quarter disc fills }\\pi/4\\text{ of the square}',
-      ],
-      [
-        [`\\pi \\approx 4\\times\\dfrac{${inside}}{${total}} = ${total ? est.toFixed(5) : '\\text{--}'}`, '#5eead4'],
-        `\\quad\\text{off by }${total ? Math.abs(est - Math.PI).toFixed(5) : '\\text{--}'}`,
-      ],
-      [
-        'the error falls like 1/√n, so every extra digit costs a hundred times more darts',
-      ],
-    ]);
-    (document.getElementById('err') as HTMLElement).textContent = total
-      ? Math.abs(est - Math.PI).toFixed(5)
-      : '—';
   }
 
-  function drawConv() {
-    const c = cv.ctx, Ws = cv.W, Hs = cv.H;
-    const ink = css('--stage-ink') || '232,233,236';
-    const pad = { l: 30, r: 8, t: 10, b: 8 };
-    const lo = Math.PI - 0.9;
-    const hi = Math.PI + 0.9;
-    const sy = (v: number) => pad.t + (1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
-    c.clearRect(0, 0, Ws, Hs);
-
-    // pi line
-    c.strokeStyle = `rgba(${ink},0.35)`;
-    c.setLineDash([4, 4]);
-    c.lineWidth = 1;
-    c.beginPath();
-    c.moveTo(pad.l, sy(Math.PI));
-    c.lineTo(Ws - pad.r, sy(Math.PI));
-    c.stroke();
-    c.setLineDash([]);
-    c.fillStyle = css('--text-faint') || '#8b93a5';
-    c.font = "10px 'JetBrains Mono', monospace";
-    c.fillText('π', 6, sy(Math.PI) + 3);
-
+  function drawPlot() {
+    const lo = Math.PI - 0.9, hi = Math.PI + 0.9;
+    const sy = (v: number) => PLOT.y + (1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * PLOT.h;
+    label('estimate, dart by dart', PLOT.x, PLOT.y - 14, 0.45, 'left', 10.5);
+    ctx.strokeStyle = ink(0.35);
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PLOT.x, sy(Math.PI));
+    ctx.lineTo(PLOT.x + PLOT.w, sy(Math.PI));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('π', PLOT.x - 10, sy(Math.PI) + 4, 0.6, 'right', 11);
+    label((Math.PI + 0.9).toFixed(1), PLOT.x - 10, PLOT.y + 4, 0.3, 'right', 10);
+    label((Math.PI - 0.9).toFixed(1), PLOT.x - 10, PLOT.y + PLOT.h + 4, 0.3, 'right', 10);
     if (history.length > 1) {
-      c.strokeStyle = css('--accent-2') || '#5eead4';
-      c.lineWidth = 2;
-      c.beginPath();
+      ctx.strokeStyle = EST;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
       const n = history.length;
       for (let i = 0; i < n; i++) {
-        const x = pad.l + (i / (n - 1)) * (Ws - pad.l - pad.r);
-        const y = sy(history[i]);
-        i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+        const x = PLOT.x + (i / (n - 1)) * PLOT.w;
+        i === 0 ? ctx.moveTo(x, sy(history[i])) : ctx.lineTo(x, sy(history[i]));
       }
-      c.stroke();
+      ctx.stroke();
     }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawBoard();
+    drawPlot();
+
+    const est = total > 0 ? (4 * inside) / total : 0;
+    const err = Math.abs(est - Math.PI);
+    setEq({
+      rule: ['\\pi \\approx 4\\times', ['\\dfrac{\\text{darts inside}}{\\text{darts thrown}}', IN]],
+      live: [[`\\pi \\approx 4\\times\\dfrac{${inside}}{${total}} = ${total ? est.toFixed(5) : '\\text{--}'}`, IN]],
+    });
+    setResult({
+      value: total ? est.toFixed(5) : '—',
+      colour: EST,
+      status: total ? `off by ${err.toFixed(5)} after ${total} darts` : 'no darts yet',
+      note: 'The quarter disc fills π/4 of the square. The error falls like 1/√n, so every extra digit costs a hundred times more darts.',
+    });
+    setRows({ 'r-total': String(total), 'r-inside': String(inside), 'r-err': total ? err.toFixed(5) : '—' });
   }
 
   function loop() {
     if (state.playing) throwDarts(state.rate);
     draw();
-    drawConv();
     requestAnimationFrame(loop);
   }
 
-  const rateEl = document.getElementById('rate') as HTMLInputElement;
-  rateEl.addEventListener('input', () => {
-    state.rate = +rateEl.value;
-    (document.getElementById('rateval') as HTMLElement).textContent = rateEl.value;
-  });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    runBtn.textContent = state.playing ? 'Pause' : 'Run';
-  });
-  document.getElementById('reset')!.addEventListener('click', reset);
+  slider('rate', (v) => (state.rate = v));
+  transport({ onRun: (running) => (state.playing = running), onReset: reset });
+  void OUT;
 
   reset();
   requestAnimationFrame(loop);

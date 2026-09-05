@@ -1,46 +1,60 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+
+const TP = '#2dd4bf', FP = '#f87171';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Bayes' Theorem"
-  description="A test that is 90% accurate can still be wrong most of the time it says 'positive'. Picture 1,000 people as dots: the ones who test positive split into truly sick (teal) and false alarms (red), and when the disease is rare the false alarms win."
+  description="A 90% accurate test can still be wrong most of the time it says positive. A thousand people as dots show why."
+  shortcuts={['fullscreen']}
+  standard
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="bayes" width="760" height="470"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="bayes"
+          width="1000"
+          height="440"
+          role="img"
+          aria-label="One thousand dots, one per person, coloured by whether they are sick and whether the test caught them."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'truly sick, caught', color: TP },
+          { label: 'healthy, false alarm', color: FP },
+          { label: 'sick, missed', color: 'rgba(45,212,191,0.4)' },
+          { label: 'healthy, cleared', color: 'rgba(130,140,155,0.4)' },
+        ]}
+      />
+      <Result label="P(disease | positive)" />
     </div>
 
     <div class="sim-panel">
+      <Seg
+        id="view"
+        label="Show"
+        options={[{ value: 'all', label: 'Everyone' }, { value: 'pos', label: 'Positive tests only' }]}
+      />
+      <Slider id="pr" label="Prevalence (base rate)" min={1} max={500} value={10} display="1.0%" />
+      <Slider id="se" label="Sensitivity (true positive)" min={50} max={100} value={90} display="90%" />
+      <Slider id="sp" label="Specificity (true negative)" min={50} max={100} value={90} display="90%" />
+      <Readout
+        rows={[
+          { id: 'r-post', label: 'P(disease | positive)' },
+          { id: 'r-postneg', label: 'P(disease | negative)' },
+        ]}
+      />
       <div class="control">
-        <label>View</label>
-        <div class="seg" id="view">
-          <button data-v="all" class="active">Everyone (1,000)</button>
-          <button data-v="pos">Positive tests only</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Prevalence (base rate) <b id="prval">1.0%</b></label>
-        <input type="range" id="pr" min="1" max="500" value="10" />
-      </div>
-      <div class="control">
-        <label>Sensitivity (true positive) <b id="seval">90%</b></label>
-        <input type="range" id="se" min="50" max="100" value="90" />
-      </div>
-      <div class="control">
-        <label>Specificity (true negative) <b id="spval">90%</b></label>
-        <input type="range" id="sp" min="50" max="100" value="90" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>P(disease | positive)</span><b id="post">—</b></div>
-        <div class="row"><span>P(disease | negative)</span><b id="postneg">—</b></div>
-      </div>
-
-      <div class="control">
-        <label>Per 1,000 people</label>
+        <span class="section-label">Per 1,000 people</span>
         <div class="tally" id="tally"></div>
       </div>
     </div>
@@ -67,14 +81,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { segmented, slider, result, readout, el } from '../../../lib/panel';
 
   const state = { prev: 0.01, sens: 0.9, spec: 0.9, view: 'all' };
-
-  const setEq = equationBar();
-  const canvas = document.getElementById('bayes') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
   const COL = {
     tp: '#2dd4bf',
@@ -82,10 +92,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     fnDark: 'rgba(45,212,191,0.30)',
     tnDark: 'rgba(130,140,155,0.28)',
   };
+  const COLS = 50, ROWS = 20, N = COLS * ROWS; // 1000 people
 
-  const COLS = 50;
-  const ROWS = 20;
-  const N = COLS * ROWS; // 1000
+  const canvas = el('bayes') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
   function counts() {
     const diseased = state.prev * N;
@@ -93,132 +106,75 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const fn = Math.round(diseased * (1 - state.sens));
     const healthy = N - Math.round(diseased);
     const fp = Math.round(healthy * (1 - state.spec));
-    const tn = N - tp - fn - fp;
-    return { tp, fn, fp, tn: Math.max(0, tn) };
+    return { tp, fn, fp, tn: Math.max(0, N - tp - fn - fp) };
   }
 
   function draw() {
-    const ink = css('--stage-ink') || '232,233,236';
-    const faint = css('--text-faint') || '#6b7280';
     ctx.clearRect(0, 0, W, H);
-
     const { tp, fn, fp, tn } = counts();
-    const cell = 13;
-    const gridW = COLS * cell;
-    const gx0 = (W - gridW) / 2;
-    const gy0 = 64;
-    const r = 4;
 
-    // Build the colour sequence. Positives (tp, fp) come first so they form a
-    // single contiguous block you can read like a bar chart.
+    // Positives (tp, fp) come first so they form one contiguous block that
+    // reads like a bar chart; the negatives fade behind them.
     const seq: string[] = [];
-    const push = (n: number, c: string) => {
-      for (let i = 0; i < n; i++) seq.push(c);
-    };
-    let total = N;
-    if (state.view === 'pos') {
-      push(tp, COL.tp);
-      push(fp, COL.fp);
-      total = tp + fp;
-    } else {
-      push(tp, COL.tp);
-      push(fp, COL.fp);
+    const push = (n: number, c: string) => { for (let i = 0; i < n; i++) seq.push(c); };
+    push(tp, COL.tp);
+    push(fp, COL.fp);
+    if (state.view === 'all') {
       push(fn, COL.fnDark);
       push(tn, COL.tnDark);
     }
 
-    // headline
-    const tpA = state.prev * state.sens;
-    const fpA = (1 - state.prev) * (1 - state.spec);
-    const post = tpA + fpA > 0 ? tpA / (tpA + fpA) : 0;
-    ctx.fillStyle = `rgba(${ink},1)`;
-    ctx.font = "700 18px 'JetBrains Mono', monospace";
-    ctx.textAlign = 'center';
-    ctx.fillText(
-      state.view === 'pos'
-        ? `${(post * 100).toFixed(1)}% of positive tests are truly sick`
-        : `A positive test → ${(post * 100).toFixed(1)}% chance of disease`,
-      W / 2,
-      32
-    );
-    ctx.textAlign = 'left';
-
-    // dots
-    for (let i = 0; i < total; i++) {
-      const col = Math.floor(i / ROWS);
-      const row = i % ROWS;
-      const cx = gx0 + col * cell + cell / 2;
-      const cy = gy0 + row * cell + cell / 2;
+    const cell = 18, r = 5.5;
+    const gx0 = (W - COLS * cell) / 2, gy0 = (H - ROWS * cell) / 2;
+    for (let i = 0; i < seq.length; i++) {
+      const cx = gx0 + Math.floor(i / ROWS) * cell + cell / 2;
+      const cy = gy0 + (i % ROWS) * cell + cell / 2;
       ctx.fillStyle = seq[i];
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // caption under grid
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.textAlign = 'center';
-    const capY = gy0 + ROWS * cell + 22;
-    if (state.view === 'pos') {
-      ctx.fillText(`${tp} truly sick (teal)   ·   ${fp} false alarms (red)`, W / 2, capY);
-    } else {
-      ctx.fillText('each dot is one person · teal = correctly caught · red = false alarm · faded = negatives', W / 2, capY);
-    }
-    ctx.textAlign = 'left';
+    const tpA = state.prev * state.sens;
+    const fpA = (1 - state.prev) * (1 - state.spec);
+    const post = tpA + fpA > 0 ? tpA / (tpA + fpA) : 0;
+    const fnA = state.prev * (1 - state.sens);
+    const tnA = (1 - state.prev) * state.spec;
+    const postNeg = fnA + tnA > 0 ? fnA / (fnA + tnA) : 0;
 
-    // readouts
-    const postNeg = (() => {
-      const a = state.prev * (1 - state.sens);
-      const b = (1 - state.prev) * state.spec;
-      return a + b > 0 ? a / (a + b) : 0;
-    })();
-    (document.getElementById('post') as HTMLElement).textContent = (post * 100).toFixed(1) + '%';
     const T = (x: string) => `\\textcolor{${COL.tp}}{${x}}`;
     const F = (x: string) => `\\textcolor{${COL.fp}}{${x}}`;
-    setEq([
-      [
+    setEq({
+      rule: [
         'P(D\\mid +) =',
         `\\dfrac{${T('P(+\\mid D)\\,P(D)')}}{${T('P(+\\mid D)P(D)')}+${F('P(+\\mid\\lnot D)P(\\lnot D)')}}`,
       ],
-      [
+      live: [
         `P(D\\mid +) = ${(post * 100).toFixed(1)}\\%`,
         `\\quad = \\dfrac{${T(tpA.toFixed(4))}}{${T(tpA.toFixed(4))}+${F(fpA.toFixed(4))}}`,
       ],
-      [
-        'the false alarms are drawn from the huge healthy group, which is how they outnumber the true catches',
-      ],
-    ]);
-    (document.getElementById('postneg') as HTMLElement).textContent = (postNeg * 100).toFixed(2) + '%';
-
-    const r2 = (n: number) => String(n);
-    (document.getElementById('tally') as HTMLElement).innerHTML =
-      `<span class="t tp">${r2(tp)} true +</span>` +
-      `<span class="t fp">${r2(fp)} false +</span>` +
-      `<span class="t fn">${r2(fn)} false −</span>` +
-      `<span class="t tn">${r2(tn)} true −</span>`;
-  }
-
-  document.getElementById('view')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#view button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.view = btn.dataset.v!;
-    draw();
-  });
-
-  function bind(id: string, key: 'prev' | 'sens' | 'spec', scale: number, fmt: (v: number) => string) {
-    const el = document.getElementById(id) as HTMLInputElement;
-    el.addEventListener('input', () => {
-      state[key] = +el.value / scale;
-      (document.getElementById(id.slice(0, 2) + 'val') as HTMLElement).textContent = fmt(state[key]);
-      draw();
     });
+    setResult({
+      value: `${(post * 100).toFixed(1)}%`,
+      colour: post >= 0.5 ? COL.tp : COL.fp,
+      status: `${tp} of the ${tp + fp} positive tests are truly sick`,
+      note: 'The false alarms are drawn from the huge healthy group, which is how they can outnumber the true catches.',
+    });
+    setRows({
+      'r-post': `${(post * 100).toFixed(1)}%`,
+      'r-postneg': `${(postNeg * 100).toFixed(2)}%`,
+    });
+    el('tally').innerHTML =
+      `<span class="t tp">${tp} true +</span>` +
+      `<span class="t fp">${fp} false +</span>` +
+      `<span class="t fn">${fn} false −</span>` +
+      `<span class="t tn">${tn} true −</span>`;
   }
-  bind('pr', 'prev', 1000, (v) => (v * 100).toFixed(1) + '%');
-  bind('se', 'sens', 100, (v) => Math.round(v * 100) + '%');
-  bind('sp', 'spec', 100, (v) => Math.round(v * 100) + '%');
+
+  segmented('view', (v) => { state.view = v; draw(); });
+  slider('pr', (v) => { state.prev = v / 1000; draw(); }, (v) => `${(v / 10).toFixed(1)}%`);
+  slider('se', (v) => { state.sens = v / 100; draw(); }, (v) => `${v}%`);
+  slider('sp', (v) => { state.spec = v / 100; draw(); }, (v) => `${v}%`);
 
   draw();
 </script>
@@ -228,7 +184,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px;
-    margin-top: 4px;
   }
   .tally .t {
     font-family: var(--font-mono);
@@ -236,15 +191,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     padding: 5px 8px;
     border-radius: 6px;
     border-left: 3px solid;
+    color: var(--text);
   }
   .tally .tp {
     border-color: #2dd4bf;
-    color: var(--text);
     background: rgba(45, 212, 191, 0.1);
   }
   .tally .fp {
     border-color: #f87171;
-    color: var(--text);
     background: rgba(248, 113, 113, 0.1);
   }
   .tally .fn {

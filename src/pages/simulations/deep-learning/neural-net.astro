@@ -1,58 +1,42 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
   title="Neuron Activations"
-  description="A network is trained here, in front of you, on shapes drawn with the same brush you are about to use. Then draw one yourself and watch it go through: every pixel you light up sends its value down a hundred wires, each wire multiplies it by its own weight, and every neuron adds up what reaches it. Click any neuron to see the picture it has learned to look for."
+  description="A network trains in front of you on shapes drawn with the brush you are about to use. Draw one, watch it go through, and click any neuron to see the picture it has learned to look for."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="nn" class="nn-canvas" width="1000" height="600"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="nn" class="nn-canvas" width="1000" height="600" role="img" aria-label="A 10 by 10 drawing grid, its pixels wired through two hidden layers of ReLU units to six softmax outputs, and the weights of the selected neuron drawn as a picture."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'a wire carrying a positive value', color: '#5eead4' }, { label: 'a wire carrying a negative value', color: '#f87171' }, { label: 'the selected neuron', color: '#7c8cff' }]}
+        hint="Drag on the grid to draw · click a neuron to open it"
+      />
+      <Result label="It says" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="step">Random shape</button>
-        <button class="btn ghost" id="reset">Clear</button>
-      </div>
-
-      <div class="control">
-        <label>Brush</label>
-        <div class="seg" id="brush">
-          <button data-b="draw" class="active">draw</button>
-          <button data-b="erase">erase</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Connections drawn <b id="edgeval">18%</b></label>
-        <input type="range" id="edges" min="2" max="100" value="18" />
-        <div class="scale-hint"><span>only the loudest</span><span>all of them</span></div>
-      </div>
-
-      <label class="check"
-        ><input type="checkbox" id="signed" checked /> Colour a wire by the sign
-        of what it carries</label
-      >
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn ghost" id="retrain">Train again from scratch</button>
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Epoch</span><b id="epoch">—</b></div>
-        <div class="row"><span>Loss</span><b id="loss">—</b></div>
-        <div class="row"><span>Accuracy, unseen</span><b id="acc">—</b></div>
-        <div class="row"><span>It says</span><b id="pred">—</b></div>
-      </div>
-
-      <p class="note">
-        Drag on the grid to draw. Click any neuron to open it up: a hidden unit
-        of the first layer shows the whole picture it is looking for, deeper
-        ones show which units below they listen to.
-      </p>
+      <Actions>
+        <button type="button" class="btn" id="step">Random shape</button>
+        <button type="button" class="btn ghost" id="reset">Clear</button>
+        <button type="button" class="btn ghost" id="retrain">Train again</button>
+      </Actions>
+      <Seg id="brush" label="Brush" attr="b" options={[{ value: 'draw', label: 'draw' }, { value: 'erase', label: 'erase' }]} />
+      <Slider id="edges" label="Connections drawn" min={2} max={100} value={18} display="18%" hint={['only the loudest', 'all of them']} />
+      <Checks items={[{ id: 'signed', label: 'Colour a wire by the sign of what it carries', checked: true }]} />
+      <Readout rows={[{ id: 'epoch', label: 'epoch' }, { id: 'loss', label: 'loss' }, { id: 'acc', label: 'accuracy on unseen shapes' }]} />
     </div>
   </div>
 
@@ -106,8 +90,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
   import { roundRect } from '../../../lib/theorem';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // A 10x10 drawing, three layers of weights, six shapes. The training set is
@@ -422,12 +408,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   // --- layout ----------------------------------------------------------------
-  const setEq = equationBar();
-  const canvas = document.getElementById('nn') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('nn') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (k: string, f = '') =>
-    getComputedStyle(canvas).getPropertyValue(k).trim() || f;
-  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { css, ink } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const accent = () => css('--accent', '#7c8cff');
   const POS = '#5eead4';
@@ -435,7 +421,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const IMG = { x: 44, y: 96, s: 200 };
   const CELL = IMG.s / G;
-  const INS = { x: 44, y: 348, s: 176 };
+  const INS = { x: 44, y: 372, s: 176 };
   const COL = [
     { x: 470, n: SZ[1], gap: 40, r: 13 },
     { x: 680, n: SZ[2], gap: 48, r: 15 },
@@ -455,8 +441,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- the picture -----------------------------------------------------------
   function drawImage() {
-    label('DRAW A SHAPE HERE', IMG.x, IMG.y - 32, 0.45, 'left', 12);
-    label('drag on the grid', IMG.x, IMG.y - 15, 0.28, 'left', 10.5);
+    label('draw a shape here', IMG.x, IMG.y - 14, 0.45, 'left', 11);
     for (let i = 0; i < G * G; i++) {
       const x = IMG.x + (i % G) * CELL;
       const y = IMG.y + Math.floor(i / G) * CELL;
@@ -510,7 +495,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function drawNodes() {
-    const names = ['HIDDEN 1', 'HIDDEN 2', 'OUT'];
+    const names = ['hidden 1', 'hidden 2', 'output'];
     for (let l = 0; l < 3; l++) {
       const a = A[l + 1];
       let mx = 1e-9;
@@ -576,7 +561,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   /** What the selected neuron is looking for, drawn at its own scale. */
   function drawInspector() {
-    label('INSIDE ONE NEURON', INS.x, INS.y - 28, 0.45, 'left', 12);
+    label('inside one neuron', INS.x, INS.y - 28, 0.45, 'left', 11);
     if (!state.sel) {
       label('click any neuron on the right', INS.x, INS.y - 11, 0.28, 'left', 10.5);
       ctx.strokeStyle = ink(0.1);
@@ -700,34 +685,31 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const p = A[L];
     let best = 0;
     for (let j = 1; j < 6; j++) if (p[j] > p[best]) best = j;
-    const set = (id: string, v: string) =>
-      ((document.getElementById(id) as HTMLElement).textContent = v);
-    set('epoch', `${run.epoch} / ${EPOCHS}`);
-    set('loss', run.loss ? run.loss.toFixed(3) : '—');
-    set('acc', run.acc ? `${(run.acc * 100).toFixed(1)}%` : '—');
     let lit = 0;
     for (const v of drawing) if (v > 0.02) lit++;
-    set('pred', lit ? `${CLASSES[best].name} ${(p[best] * 100).toFixed(0)}%` : 'nothing drawn');
-
-    setEq([
-      [
-        ['a^{(l)}', POS],
-        '=\\operatorname{ReLU}\\!\\big(W^{(l)}',
-        ['a^{(l-1)}', POS],
-        '+\\,b^{(l)}\\big)',
-        '\\quad\\text{one wire is one term of that sum}',
-      ],
-      [
+    setRows({
+      epoch: `${run.epoch} / ${EPOCHS}`,
+      loss: run.loss ? run.loss.toFixed(3) : '—',
+      acc: run.acc ? `${(run.acc * 100).toFixed(1)}%` : '—',
+    });
+    setEq({
+      rule: [['a^{(l)}', POS], '=\\operatorname{ReLU}\\!\\big(W^{(l)}', ['a^{(l-1)}', POS], '+\\,b^{(l)}\\big)', '\\qquad p = \\operatorname{softmax}(z^{(3)})'],
+      live: [
         `${SZ[0]}\\to${SZ[1]}\\to${SZ[2]}\\to${SZ[3]}`,
         `\\quad ${SZ[0] * SZ[1] + SZ[1] * SZ[2] + SZ[2] * SZ[3]}\\text{ weights}`,
-        run.acc ? `\\quad ${(run.acc * 100).toFixed(1)}\\%\\text{ on shapes it never saw}` : '',
+        [`\\quad p_{\\text{${CLASSES[best].name}}} = ${p[best].toFixed(2)}`, accent()],
       ],
-      [
-        run.done
-          ? 'nothing in here was designed: every picture below the grid is a leftover of minimising one loss'
-          : 'watch the wires while it learns: nearly all the movement happens in the first two or three epochs',
-      ],
-    ]);
+    });
+    setResult({
+      value: lit ? CLASSES[best].name : 'nothing drawn',
+      colour: lit ? accent() : undefined,
+      status: lit
+        ? `${(p[best] * 100).toFixed(0)}% confident · ${run.done ? 'training finished' : `training, epoch ${run.epoch + 1} of ${EPOCHS}`}`
+        : 'draw on the grid, or press Random shape',
+      note: run.done
+        ? 'Nothing in here was designed: every picture inside a neuron is a leftover of minimising one loss.'
+        : 'Watch the wires while it learns: nearly all the movement happens in the first two or three epochs.',
+    });
   }
 
   // --- interaction -----------------------------------------------------------
@@ -785,35 +767,18 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
-  const seg = (id: string, fn: (v: string) => void) =>
-    document.getElementById(id)!.addEventListener('click', (e) => {
-      const b = (e.target as HTMLElement).closest('button');
-      if (!b) return;
-      document
-        .querySelectorAll(`#${id} button`)
-        .forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      fn(Object.values(b.dataset)[0] as string);
-    });
+  segmented('brush', (v) => (state.brush = v as 'draw' | 'erase'));
+  slider('edges', (v) => (state.edges = v / 100), (v) => `${v}%`);
+  check('signed', (on) => (state.signed = on));
 
-  seg('brush', (v) => (state.brush = v as 'draw' | 'erase'));
-
-  const eEl = document.getElementById('edges') as HTMLInputElement;
-  eEl.addEventListener('input', () => {
-    state.edges = +eEl.value / 100;
-    (document.getElementById('edgeval') as HTMLElement).textContent = `${eEl.value}%`;
-  });
-  const sEl = document.getElementById('signed') as HTMLInputElement;
-  sEl.addEventListener('change', () => (state.signed = sEl.checked));
-
-  document.getElementById('reset')!.addEventListener('click', () => drawing.fill(0));
-  document.getElementById('step')!.addEventListener('click', () => {
+  el('reset').addEventListener('click', () => drawing.fill(0));
+  el('step').addEventListener('click', () => {
     const keep = rnd;
     rnd = mulberry32((Math.random() * 1e9) | 0);
     drawing.set(sample(Math.floor(Math.random() * CLASSES.length)));
     rnd = keep;
   });
-  document.getElementById('retrain')!.addEventListener('click', () => {
+  el('retrain').addEventListener('click', () => {
     build((Math.random() * 1e9) | 0);
   });
 
@@ -833,26 +798,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .nn-canvas {
     cursor: crosshair;
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
-  }
-  .check {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    line-height: 1.4;
-  }
-  .note {
-    font-size: 0.82rem;
-    color: var(--text-faint);
-    margin: 0;
-    line-height: 1.55;
   }
 </style>

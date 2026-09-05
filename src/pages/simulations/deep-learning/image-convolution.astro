@@ -1,49 +1,56 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
   title="Image Convolution"
-  description="A convolutional layer is just a small window of weights sliding over an image, multiplying and summing as it goes. Change the kernel and it detects edges, blurs, or sharpens; change the stride, padding and dilation and you reshape the output itself."
+  description="A small window of weights slides over an image, multiplying and summing. Change the kernel and it detects edges, blurs or sharpens; change stride, padding and dilation and the output itself reshapes."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="conv" width="900" height="480"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="conv"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A grayscale input image with the kernel's receptive field outlined, and the feature map being filled in cell by cell beside it."
+        ></canvas>
+      </div>
+      <Caption legend={[{ label: 'the patch under the kernel', color: '#f59e0b' }, { label: 'the output cell being computed', color: '#f59e0b' }]} hint="Step or run to watch the window slide" />
+      <Result label="Output size" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Run</button>
-        <button class="btn ghost" id="step">Step</button>
-        <button class="btn ghost" id="reset">Restart</button>
-      </div>
-
+      <Transport step />
+      <Seg
+        id="kernel"
+        label="Kernel"
+        attr="k"
+        options={[
+          { value: 'edge', label: 'Edge' },
+          { value: 'sobelx', label: 'Sobel X' },
+          { value: 'sharpen', label: 'Sharpen' },
+          { value: 'blur', label: 'Blur' },
+          { value: 'emboss', label: 'Emboss' },
+          { value: 'identity', label: 'Identity' },
+        ]}
+      />
       <div class="control">
-        <label>Kernel</label>
-        <div class="seg" id="kernel">
-          <button data-k="edge" class="active">Edge</button>
-          <button data-k="sobelx">Sobel X</button>
-          <button data-k="sharpen">Sharpen</button>
-          <button data-k="blur">Blur</button>
-          <button data-k="emboss">Emboss</button>
-          <button data-k="identity">Identity</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Kernel weights</label>
+        <span class="section-label">Kernel weights</span>
         <div class="kernel-grid" id="kgrid"></div>
       </div>
-
-      <div class="control"><label>Stride <b id="sval">1</b></label><input type="range" id="s" min="1" max="4" value="1" /></div>
-      <div class="control"><label>Padding <b id="pval">0</b></label><input type="range" id="p" min="0" max="3" value="0" /></div>
-      <div class="control"><label>Dilation <b id="dval">1</b></label><input type="range" id="d" min="1" max="4" value="1" /></div>
-
-      <div class="readout">
-        <div class="row"><span>Input</span><b id="insize">—</b></div>
-        <div class="row"><span>Output</span><b id="outsize">—</b></div>
-      </div>
+      <Slider id="s" label="Stride" min={1} max={4} value={1} />
+      <Slider id="p" label="Padding" min={0} max={3} value={0} />
+      <Slider id="d" label="Dilation" min={1} max={4} value={1} />
+      <Readout rows={[{ id: 'r-in', label: 'input' }, { id: 'r-out', label: 'output' }, { id: 'r-span', label: 'kernel footprint' }]} />
     </div>
   </div>
 
@@ -67,23 +74,30 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
 
-  const KERNELS: Record<string, number[][]> = {
-    edge: [[0, 1, 0], [1, -4, 1], [0, 1, 0]],
-    sobelx: [[1, 0, -1], [2, 0, -2], [1, 0, -1]],
-    sharpen: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]],
-    blur: [[1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9]],
-    emboss: [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]],
-    identity: [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+  const KERNELS: Record<string, { k: number[][]; name: string; note: string }> = {
+    edge: { k: [[0, 1, 0], [1, -4, 1], [0, 1, 0]], name: 'edge', note: 'The Laplacian: a flat patch sums to zero, so only places where brightness changes light up.' },
+    sobelx: { k: [[1, 0, -1], [2, 0, -2], [1, 0, -1]], name: 'Sobel X', note: 'Left minus right: it fires on vertical edges and stays silent on horizontal ones.' },
+    sharpen: { k: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]], name: 'sharpen', note: 'Five times the centre minus the neighbours: it exaggerates whatever the pixel does differently from its surroundings.' },
+    blur: { k: [[1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9]], name: 'blur', note: 'Every weight is 1/9: the output is the average of the patch, so detail is smoothed away.' },
+    emboss: { k: [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]], name: 'emboss', note: 'Asymmetric weights compare one diagonal with the other, which reads like light from one side.' },
+    identity: { k: [[0, 0, 0], [0, 1, 0], [0, 0, 0]], name: 'identity', note: 'Only the centre weight is nonzero, so the output copies the input, cropped where the window cannot fit.' },
   };
-  const K = 3;
-  const GI = 20;
+  const K = 3, GI = 20;
   const state = { kernel: 'edge', stride: 1, pad: 0, dil: 1, running: false };
+  const FIELD = '#f59e0b';
 
-  const canvas = document.getElementById('conv') as HTMLCanvasElement;
+  const canvas = el('conv') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
   // procedural grayscale input with clear edges
   const input: number[][] = [];
@@ -97,19 +111,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       input[y][x] = Math.max(0, Math.min(1, v));
     }
   }
-
   let out: number[][] = [];
   let outN = 0, outMin = 0, outMax = 1, reveal = 0;
-
   const span = () => state.dil * (K - 1) + 1;
   const outSize = () => Math.max(1, Math.floor((GI + 2 * state.pad - span()) / state.stride) + 1);
+  const sampleIn = (iy: number, ix: number) => (iy < 0 || ix < 0 || iy >= GI || ix >= GI ? 0 : input[iy][ix]);
 
-  function sampleIn(iy: number, ix: number) {
-    if (iy < 0 || ix < 0 || iy >= GI || ix >= GI) return 0; // zero padding
-    return input[iy][ix];
-  }
   function compute() {
-    const ker = KERNELS[state.kernel];
+    const ker = KERNELS[state.kernel].k;
     outN = outSize();
     out = [];
     outMin = Infinity;
@@ -117,12 +126,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (let oy = 0; oy < outN; oy++) {
       out[oy] = [];
       for (let ox = 0; ox < outN; ox++) {
-        const iy0 = oy * state.stride - state.pad;
-        const ix0 = ox * state.stride - state.pad;
+        const iy0 = oy * state.stride - state.pad, ix0 = ox * state.stride - state.pad;
         let s = 0;
-        for (let dy = 0; dy < K; dy++)
-          for (let dx = 0; dx < K; dx++)
-            s += sampleIn(iy0 + dy * state.dil, ix0 + dx * state.dil) * ker[dy][dx];
+        for (let dy = 0; dy < K; dy++) for (let dx = 0; dx < K; dx++) s += sampleIn(iy0 + dy * state.dil, ix0 + dx * state.dil) * ker[dy][dx];
         out[oy][ox] = s;
         outMin = Math.min(outMin, s);
         outMax = Math.max(outMax, s);
@@ -130,89 +136,70 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     if (outMax - outMin < 1e-6) outMax = outMin + 1;
     reveal = 0;
-    updateReadout();
   }
-
-  function updateReadout() {
-    (document.getElementById('insize') as HTMLElement).textContent = `${GI}×${GI}`;
-    (document.getElementById('outsize') as HTMLElement).textContent = `${outN}×${outN}`;
-  }
-
   function renderKernelGrid() {
-    const ker = KERNELS[state.kernel];
-    const grid = document.getElementById('kgrid')!;
-    grid.innerHTML = ker
-      .flat()
-      .map((v) => `<span>${Number.isInteger(v) ? v : v.toFixed(2)}</span>`)
-      .join('');
+    el('kgrid').innerHTML = KERNELS[state.kernel].k.flat().map((v) => `<span>${Number.isInteger(v) ? v : v.toFixed(2)}</span>`).join('');
   }
-
-  function gray(v: number) {
-    const g = Math.round(v * 255);
-    return `rgb(${g},${g},${g})`;
-  }
+  const gray = (v: number) => { const g = Math.round(v * 255); return `rgb(${g},${g},${g})`; };
 
   function draw() {
-    const ink = css('--stage-ink') || '232,233,236';
-    const faint = css('--text-faint') || '#6b7280';
     ctx.clearRect(0, 0, W, H);
-
-    const inBox = 260;
-    const cellIn = inBox / GI;
-    const ix0 = 30, iy0 = 70;
-    const outBox = 260;
-    const cellOut = outBox / outN;
-    const ox0 = W - outBox - 30, oy0 = 70;
-
-    // current output cell
-    const cy = Math.floor(reveal / outN);
-    const cx = reveal % outN;
+    const box = 400;
+    const cellIn = box / GI, cellOut = box / outN;
+    const ix0 = 40, iy0 = 110, ox0 = W - box - 40, oy0 = 110;
     const cur = Math.min(reveal, outN * outN - 1);
     const ccy = Math.floor(cur / outN), ccx = cur % outN;
 
-    // input image
+    label('input', ix0, iy0 - 14, 0.5, 'left', 11);
+    label('feature map', ox0, oy0 - 14, 0.5, 'left', 11);
+    label('⊛', W / 2, iy0 + box / 2 - 6, 0.6, 'center', 22);
+    label(`${KERNELS[state.kernel].name}`, W / 2, iy0 + box / 2 + 18, 0.45, 'center', 11);
+    label(`s ${state.stride} · p ${state.pad} · d ${state.dil}`, W / 2, iy0 + box / 2 + 34, 0.3, 'center', 10);
     for (let y = 0; y < GI; y++)
       for (let x = 0; x < GI; x++) {
         ctx.fillStyle = gray(input[y][x]);
         ctx.fillRect(ix0 + x * cellIn, iy0 + y * cellIn, cellIn + 0.5, cellIn + 0.5);
       }
-    // receptive field for current cell
-    const riy0 = ccy * state.stride - state.pad;
-    const rix0 = ccx * state.stride - state.pad;
-    ctx.strokeStyle = '#f59e0b';
+    const riy0 = ccy * state.stride - state.pad, rix0 = ccx * state.stride - state.pad;
+    ctx.strokeStyle = FIELD;
     ctx.lineWidth = 2;
     for (let dy = 0; dy < K; dy++)
       for (let dx = 0; dx < K; dx++) {
-        const iy = riy0 + dy * state.dil;
-        const ix = rix0 + dx * state.dil;
+        const iy = riy0 + dy * state.dil, ix = rix0 + dx * state.dil;
         ctx.strokeRect(ix0 + ix * cellIn + 1, iy0 + iy * cellIn + 1, cellIn - 2, cellIn - 2);
       }
     ctx.strokeStyle = 'rgba(245,158,11,0.5)';
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(ix0 + rix0 * cellIn, iy0 + riy0 * cellIn, (span()) * cellIn, (span()) * cellIn);
+    ctx.strokeRect(ix0 + rix0 * cellIn, iy0 + riy0 * cellIn, span() * cellIn, span() * cellIn);
 
-    // output image (revealed cells)
     for (let i = 0; i < reveal; i++) {
       const y = Math.floor(i / outN), x = i % outN;
-      const nv = (out[y][x] - outMin) / (outMax - outMin);
-      ctx.fillStyle = gray(nv);
+      ctx.fillStyle = gray((out[y][x] - outMin) / (outMax - outMin));
       ctx.fillRect(ox0 + x * cellOut, oy0 + y * cellOut, cellOut + 0.5, cellOut + 0.5);
     }
-    ctx.strokeStyle = `rgba(${ink},0.3)`;
+    ctx.strokeStyle = ink(0.3);
     ctx.lineWidth = 1;
-    ctx.strokeRect(ox0, oy0, outBox, outBox);
+    ctx.strokeRect(ox0, oy0, box, box);
     if (reveal < outN * outN) {
-      ctx.strokeStyle = '#f59e0b';
+      ctx.strokeStyle = FIELD;
       ctx.lineWidth = 2;
-      ctx.strokeRect(ox0 + cx * cellOut, oy0 + cy * cellOut, cellOut, cellOut);
+      ctx.strokeRect(ox0 + ccx * cellOut, oy0 + ccy * cellOut, cellOut, cellOut);
     }
+    words();
+  }
 
-    // arrow between
-    ctx.fillStyle = faint;
-    ctx.font = "13px 'JetBrains Mono', monospace";
-    ctx.fillText('input', ix0, iy0 - 12);
-    ctx.fillText('⊛ kernel  →  output', ix0 + inBox + 18, iy0 + inBox / 2);
-    ctx.fillText('feature map', ox0, oy0 - 12);
+  function words() {
+    const kd = KERNELS[state.kernel];
+    setEq({
+      rule: [['Y[i,j] = \\sum_{u,v} K[u,v]\\, X[si + du,\\ sj + dv]', FIELD], '\\qquad', 'W_{\\text{out}} = \\lfloor (W + 2p - d(k-1) - 1)/s \\rfloor + 1'],
+      live: [`W_{\\text{out}} = \\lfloor (${GI} + ${2 * state.pad} - ${state.dil * (K - 1)} - 1)/${state.stride} \\rfloor + 1 = ${outN}`, [`\\quad ${Math.min(reveal, outN * outN)}\\text{ of }${outN * outN}\\text{ cells}`, FIELD]],
+    });
+    setResult({
+      value: `${outN} × ${outN}`,
+      status: `${GI} × ${GI} input · ${kd.name} kernel · stride ${state.stride}, padding ${state.pad}, dilation ${state.dil}`,
+      note: kd.note,
+    });
+    setRows({ 'r-in': `${GI} × ${GI}`, 'r-out': `${outN} × ${outN}`, 'r-span': `${span()} × ${span()} pixels` });
   }
 
   let acc = 0, last = 0;
@@ -225,53 +212,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       while (acc >= 0.05) {
         acc -= 0.05;
         if (reveal < outN * outN) reveal++;
-        else {
-          state.running = false;
-          (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
-        }
+        else { state.running = false; controls.setRunning(false); }
       }
     }
     draw();
     requestAnimationFrame(loop);
   }
 
-  document.getElementById('kernel')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#kernel button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.kernel = btn.dataset.k!;
-    renderKernelGrid();
-    compute();
-  });
-  const bindSlider = (id: string, key: 'stride' | 'pad' | 'dil') => {
-    const el = document.getElementById(id) as HTMLInputElement;
-    el.addEventListener('input', () => {
-      state[key] = +el.value;
-      (document.getElementById(id + 'val') as HTMLElement).textContent = el.value;
-      compute();
-    });
-  };
-  bindSlider('s', 'stride');
-  bindSlider('p', 'pad');
-  bindSlider('d', 'dil');
-
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    if (reveal >= outN * outN) reveal = 0;
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-  document.getElementById('step')!.addEventListener('click', () => {
-    if (reveal >= outN * outN) reveal = 0;
-    else reveal++;
-    draw();
-  });
-  document.getElementById('reset')!.addEventListener('click', () => {
-    reveal = 0;
-    state.running = false;
-    runBtn.textContent = 'Run';
-    draw();
+  segmented('kernel', (k) => { state.kernel = k; renderKernelGrid(); compute(); reveal = outN * outN; });
+  slider('s', (v) => { state.stride = v; compute(); reveal = outN * outN; });
+  slider('p', (v) => { state.pad = v; compute(); reveal = outN * outN; });
+  slider('d', (v) => { state.dil = v; compute(); reveal = outN * outN; });
+  const controls = transport({
+    onRun: (running) => { if (running && reveal >= outN * outN) reveal = 0; state.running = running; },
+    onStep: () => { if (reveal >= outN * outN) reveal = 0; else reveal++; },
+    onReset: () => { reveal = 0; state.running = false; controls.setRunning(false); },
   });
 
   renderKernelGrid();
@@ -287,7 +242,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     gap: 4px;
     max-width: 160px;
   }
-  .kernel-grid span {
+  .kernel-grid :global(span) {
     display: grid;
     place-items: center;
     aspect-ratio: 1;

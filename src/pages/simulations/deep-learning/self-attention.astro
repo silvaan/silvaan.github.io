@@ -1,63 +1,38 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
   title="Self-Attention"
-  description="The softmax at the centre of attention is taken apart on its own page. The question here is narrower and stranger: where do the queries, the keys and the values come from? All three are projections of the same X, so the sentence is querying itself. Switch to the vector view for the actual columns of numbers and every multiplication that turns them into an output."
+  description="Where do the queries, keys and values come from? All three are projections of the same X, so the sentence is querying itself. The vector view shows the actual columns of numbers and every multiplication."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="sa" class="sa-canvas" width="900" height="690"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="sa" class="sa-canvas" width="1000" height="690" role="img" aria-label="A sentence with arcs from the asking token to every other, the full attention matrix, and the softmax weights and blended value for the asking token; or the same as columns of numbers."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the token asking', color: '#7c8cff' }, { label: 'every token, in the colour of its value', color: '#5eead4' }]}
+        hint="Click a token or a matrix row to move the question · in the vector view, click a column to expand its dot product"
+      />
+      <Result label="Looks hardest at" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>View</label>
-        <div class="seg" id="view">
-          <button data-v="map" class="active">The sentence</button>
-          <button data-v="vec">The vectors</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Sentence</label>
-        <div class="seg" id="sent">
-          <button data-s="0" class="active">the cat…</button>
-          <button data-s="1">the boy…</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Head</label>
-        <div class="seg" id="head">
-          <button data-h="0" class="active">meaning</button>
-          <button data-h="1">one before</button>
-          <button data-h="2">verb → noun</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Token asking <b id="qval">cat</b></label>
-        <input type="range" id="q" min="0" max="7" value="2" />
-      </div>
-
-      <label class="check"
-        ><input type="checkbox" id="causal" /> Causal mask: no looking ahead</label
-      >
-
-      <div class="readout">
-        <div class="row"><span>Q, K and V</span><b id="src">3 views of X</b></div>
-        <div class="row"><span>d_k, and its scale</span><b id="dk">—</b></div>
-        <div class="row"><span>Looks hardest at</span><b id="best">—</b></div>
-        <div class="row"><span>Keeps of itself</span><b id="diag">—</b></div>
-      </div>
-
-      <p class="note">
-        Click a token or a row of the matrix to move the question. In the vector
-        view, click a column to expand its dot product term by term.
-      </p>
+      <Seg id="view" label="View" attr="v" options={[{ value: 'map', label: 'The sentence' }, { value: 'vec', label: 'The vectors' }]} />
+      <Seg id="sent" label="Sentence" attr="s" options={[{ value: '0', label: 'the cat…' }, { value: '1', label: 'the boy…' }]} />
+      <Seg id="head" label="Head" attr="h" options={[{ value: '0', label: 'meaning' }, { value: '1', label: 'one before' }, { value: '2', label: 'verb → noun' }]} />
+      <Slider id="q" label="Token asking" min={0} max={7} value={2} display="cat" />
+      <Checks items={[{ id: 'causal', label: 'Causal mask: no looking ahead' }]} />
+      <Readout rows={[{ id: 'src', label: 'Q, K and V' }, { id: 'dk', label: 'd_k, and its scale' }, { id: 'diag', label: 'keeps of itself' }]} />
     </div>
   </div>
 
@@ -103,8 +78,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
   import { roundRect } from '../../../lib/theorem';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
 
   type Tok = {
     t: string;
@@ -149,13 +126,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const toks = () => SENTENCES[state.s];
   const n = () => toks().length;
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('sa') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('sa') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (k: string, f = '') =>
-    getComputedStyle(canvas).getPropertyValue(k).trim() || f;
-  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
-  const inv = (a: number) => `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
+  const { css, ink, inv } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const accent = () => css('--accent', '#7c8cff');
   const rgb = (c: number[], a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
@@ -250,14 +226,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- layout ---------------------------------------------------------------
   const ROW = { y: 168, h: 34 };
-  const MAT = { x: 128, y: 322, cell: 36 };
-  const CARD = { x: 452, y: 276, w: 424, h: 384 };
+  const MAT = { x: 128, y: 322, cell: 38 };
+  const CARD = { x: 500, y: 276, w: 476, h: 384 };
   const tx = (i: number) => 62 + (i * (W - 150)) / (n() - 1);
   const tw = () => Math.min(94, (W - 150) / n() - 6);
 
   // --- view 1: the sentence, and what the chosen token looks at -------------
   function drawSentence(w: number[]) {
-    label('THE SENTENCE ASKING ITSELF', 24, 44, 0.45, 'left', 12);
+    label('the sentence asking itself', 24, 44, 0.45, 'left', 11);
     label(
       `head: ${HEADS[state.head]}${state.causal ? ' · causal' : ''}`,
       W - 24,
@@ -323,7 +299,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function drawMatrix() {
     const N = n(),
       c = MAT.cell;
-    label('EVERY TOKEN, EVERY OTHER TOKEN', 24, MAT.y - 40, 0.45, 'left', 12);
+    label('every token, every other token', 24, MAT.y - 40, 0.45, 'left', 11);
     label(
       'rows ask · columns answer · each row adds to 1',
       24,
@@ -391,12 +367,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.clip();
 
     label(
-      `“${toks()[state.q].t}” ASKS, EVERY TOKEN ANSWERS`,
+      `“${toks()[state.q].t}” asks, every token answers`,
       CARD.x + 18,
       CARD.y + 26,
       1,
       'left',
-      11,
+      11.5,
       accent()
     );
     label('q·k / √d', CARD.x + 148, CARD.y + 48, 0.35, 'left', 10);
@@ -420,7 +396,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         10.5
       );
       const bx = CARD.x + 236,
-        bw = 118;
+        bw = 150;
       ctx.fillStyle = ink(0.07);
       roundRect(ctx, bx, y - 9, bw, 11, 4);
       ctx.fill();
@@ -448,7 +424,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.lineTo(CARD.x + CARD.w - 18, oy - 12);
     ctx.stroke();
     label(
-      'IT TAKES HOME A BLEND OF THE VALUES',
+      'it takes home a blend of the values',
       CARD.x + 18,
       oy + 8,
       0.45,
@@ -485,9 +461,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     qx: 94,
     qw: 54,
     x0: 160,
-    w: 636,
-    ox: 806,
-    ow: 70,
+    w: 720,
+    ox: 900,
+    ow: 74,
     pitch: 21,
   };
   const colX = (j: number) => VEC.x0 + (j * VEC.w) / n();
@@ -528,7 +504,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     let jf = state.jf;
     if (state.causal && jf > i) jf = i;
 
-    label('EVERY VECTOR, AND EVERY MULTIPLICATION', 24, 44, 0.45, 'left', 12);
+    label('every vector, and every multiplication', 24, 44, 0.45, 'left', 11);
     label(
       `head: ${HEADS[state.head]}${state.causal ? ' · causal' : ''} · d_k = ${DK} · one column per token`,
       W - 24,
@@ -707,39 +683,36 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     w.forEach((v, i) => {
       if (v > w[bi]) bi = i;
     });
-    const set = (id: string, v: string) =>
-      ((document.getElementById(id) as HTMLElement).textContent = v);
-    set('dk', `${DK} → √${DK} = ${Math.sqrt(DK).toFixed(2)}`);
-    set('best', `${toks()[bi].t} ${(w[bi] * 100).toFixed(0)}%`);
-    set('diag', `${(w[state.q] * 100).toFixed(1)}%`);
-    set('qval', toks()[state.q].t);
-
-    setEq([
-      [
-        ['Q,\\,K,\\,V', accent()],
-        '= X W_q,\\; X W_k,\\; X W_v',
-        '\\quad\\text{all three from the same }X',
+    el('qval').textContent = toks()[state.q].t;
+    setRows({
+      src: '3 projections of X',
+      dk: `${DK} → √${DK} = ${Math.sqrt(DK).toFixed(2)}`,
+      diag: `${(w[state.q] * 100).toFixed(1)}%`,
+    });
+    const bc = `rgb(${vcol(bi).join(',')})`;
+    setEq({
+      rule: [['Q, K, V', accent()], '= X W_q,\\; X W_k,\\; X W_v', '\\qquad', [`A = \\operatorname{softmax}\\!\\Big(\\dfrac{QK^{\\mathsf T}}{\\sqrt{d_k}}\\Big)`, accent()], ',\\quad \\text{out} = A\\,V'],
+      live: [
+        `\\text{out}_{${state.q}} = \\sum_j A_{${state.q}j}\\,v_j`,
+        [`\\quad A_{${state.q},${bi}} = ${w[bi].toFixed(2)}\\text{ on “${toks()[bi].t}”}`, bc],
+        [`\\quad A_{${state.q},${state.q}} = ${w[state.q].toFixed(2)}\\text{ on itself}`, `rgb(${outcol(w).join(',')})`],
       ],
-      [
-        [
-          `A = \\operatorname{softmax}\\!\\Big(\\dfrac{QK^{\\mathsf T}}{\\sqrt{d_k}}\\Big)`,
-          accent(),
-        ],
-        `\\quad\\text{out}_{${state.q}} = \\sum_j A_{${state.q}j}\\,v_j`,
-        [
-          `\\quad A_{${state.q},${bi}} = ${w[bi].toFixed(2)}\\text{ on “${toks()[bi].t}”}`,
-          `rgb(${vcol(bi).join(',')})`,
-        ],
-        [`\\quad\\text{out}`, `rgb(${outcol(w).join(',')})`],
-      ],
-      [
-        'the queries and the keys decide who listens to whom; the values are what actually moves',
-      ],
-    ]);
+    });
+    setResult({
+      value: toks()[bi].t,
+      colour: bc,
+      status: `“${toks()[state.q].t}” gives it ${(w[bi] * 100).toFixed(0)}% of its attention · head: ${HEADS[state.head]}${state.causal ? ' · causal mask on' : ''}`,
+      note:
+        state.head === 1
+          ? 'This head reads position only: its meaning rows are all zero, and it still uses the same dot product as every other head.'
+          : state.head === 2
+            ? 'A verb reaching back past the determiner to its noun: the output column turns noun-coloured.'
+            : 'The queries and the keys decide who listens to whom; the values are what actually moves.',
+    });
   }
 
   // --- interaction ---------------------------------------------------------
-  const qEl = () => document.getElementById('q') as HTMLInputElement;
+  const qEl = () => el('q') as HTMLInputElement;
   function setQ(i: number) {
     state.q = Math.max(0, Math.min(n() - 1, i));
     qEl().value = String(state.q);
@@ -772,34 +745,23 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       setQ(Math.floor((y - MAT.y) / MAT.cell));
   });
 
-  const seg = (id: string, fn: (v: string) => void) =>
-    document.getElementById(id)!.addEventListener('click', (e) => {
-      const b = (e.target as HTMLElement).closest('button');
-      if (!b) return;
-      document
-        .querySelectorAll(`#${id} button`)
-        .forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      fn(Object.values(b.dataset)[0] as string);
-    });
-  seg('view', (v) => {
+  segmented('view', (v) => {
     state.view = v as 'map' | 'vec';
     draw();
   });
-  seg('sent', (v) => {
+  segmented('sent', (v) => {
     state.s = +v;
     qEl().max = String(n() - 1);
     state.jf = Math.min(state.jf, n() - 1);
     setQ(Math.min(state.q, n() - 1));
   });
-  seg('head', (v) => {
+  segmented('head', (v) => {
     state.head = +v;
     draw();
   });
-  qEl().addEventListener('input', () => setQ(+qEl().value));
-  const cEl = document.getElementById('causal') as HTMLInputElement;
-  cEl.addEventListener('change', () => {
-    state.causal = cEl.checked;
+  slider('q', (v) => setQ(v), (v) => toks()[Math.min(v, n() - 1)].t);
+  check('causal', (on) => {
+    state.causal = on;
     draw();
   });
 
@@ -811,19 +773,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .sa-canvas {
     cursor: pointer;
     touch-action: none;
-  }
-  .check {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    line-height: 1.4;
-  }
-  .note {
-    font-size: 0.82rem;
-    color: var(--text-faint);
-    margin: 0;
-    line-height: 1.55;
   }
 </style>

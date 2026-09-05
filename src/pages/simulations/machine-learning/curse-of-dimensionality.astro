@@ -1,58 +1,63 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="machine-learning"
   title="The Curse of Dimensionality"
-  description="Space stops behaving as soon as you add axes. Data spreads out until every point is alone, a ball abandons its middle for a paper-thin crust, every distance becomes the same distance, and any two directions you pick are almost certainly at right angles. Five different curses, one slider."
+  description="Add axes and space stops behaving: data spreads until every point is alone, a ball becomes all crust, and every distance becomes the same distance."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="cod" width="900" height="462"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="cod"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A picture of one high-dimensional effect on the left and the curve of how it grows with the number of dimensions on the right."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'sampled points', color: '#5eead4' },
+          { label: 'the current d', color: '#7c8cff' },
+          { label: 'what the formula predicts', color: 'rgba(94,234,212,0.9)' },
+        ]}
+      />
+      <Result label="Empty space" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>Which curse</label>
-        <div class="seg vert" id="mode">
-          <button data-m="sparsity" class="active">Empty space</button>
-          <button data-m="shell">Volume in the crust</button>
-          <button data-m="distance">All distances equal</button>
-          <button data-m="angles">Everything orthogonal</button>
-          <button data-m="corners">Nothing but corners</button>
-        </div>
+      <Seg
+        id="mode"
+        label="Which curse"
+        attr="m"
+        options={[
+          { value: 'sparsity', label: 'Empty space' },
+          { value: 'shell', label: 'Volume in the crust' },
+          { value: 'distance', label: 'All distances equal' },
+          { value: 'angles', label: 'Everything orthogonal' },
+          { value: 'corners', label: 'Nothing but corners' },
+        ]}
+      />
+      <Slider id="d" label="Dimensions d" min={1} max={120} value={2} />
+      <Transport step />
+      <div data-for="sparsity">
+        <Slider id="frac" label="Fraction of data to capture" min={1} max={50} value={10} display="10%" />
       </div>
-
-      <div class="control">
-        <label>Dimensions d <b id="dval">2</b></label>
-        <input type="range" id="d" min="1" max="120" value="2" />
+      <div data-for="shell">
+        <Slider id="eps" label="Crust thickness" min={1} max={40} value={5} display="5%" />
       </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Sweep d</button>
-        <button class="btn ghost" id="step">+1</button>
-        <button class="btn ghost" id="reset">Reset</button>
+      <div data-for="sparsity shell distance angles">
+        <Slider id="n" label="Sample points n" min={100} max={1200} step={50} value={600} />
       </div>
-
-      <div class="control" data-for="sparsity">
-        <label>Fraction of data to capture <b id="fracval">10%</b></label>
-        <input type="range" id="frac" min="1" max="50" value="10" />
-      </div>
-
-      <div class="control" data-for="shell">
-        <label>Crust thickness <b id="epsval">5%</b></label>
-        <input type="range" id="eps" min="1" max="40" value="5" />
-      </div>
-
-      <div class="control" data-for="sparsity shell distance angles">
-        <label>Sample points n <b id="nval">600</b></label>
-        <input type="range" id="n" min="100" max="1200" step="50" value="600" />
-      </div>
-
       <div class="readout" id="readout"></div>
-
-      <p class="note" id="note"></p>
     </div>
   </div>
 
@@ -101,26 +106,24 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result } from '../../../lib/panel';
 
-  const canvas = document.getElementById('cod') as HTMLCanvasElement;
+  const canvas = el('cod') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string, f = '') =>
-    getComputedStyle(canvas).getPropertyValue(v).trim() || f;
-  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { ink } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
 
-  const AMBER = '#f59e0b';
-  const accent = () => css('--accent', '#7c8cff');
-  const teal = () => css('--accent-2', '#5eead4');
+  const AMBER = '#f59e0b', ACCENT = '#7c8cff', TEAL = '#5eead4';
 
   // ---------------------------------------------------------------------------
   // Random bank. Every sample is drawn once per seed and stored column-wise, so
-  // raising d only appends coordinates to vectors that already exist. The
-  // pictures then evolve continuously as the slider moves instead of reshuffling.
+  // raising d only appends coordinates to vectors that already exist.
   // ---------------------------------------------------------------------------
-  const DMAX = 120;
-  const NMAX = 1200;
-
+  const DMAX = 120, NMAX = 1200;
   function mulberry32(seed: number) {
     let a = seed >>> 0;
     return () => {
@@ -130,89 +133,59 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-
   function buildBank(seed: number) {
     const r = mulberry32(seed);
-    const gauss = () => {
-      const u = Math.max(1e-12, r());
-      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r());
-    };
-    const nrm = new Float32Array(2 * NMAX * DMAX); // vector pairs, for angles
+    const gauss = () => Math.sqrt(-2 * Math.log(Math.max(1e-12, r()))) * Math.cos(2 * Math.PI * r());
+    const nrm = new Float32Array(2 * NMAX * DMAX);
     for (let i = 0; i < nrm.length; i++) nrm[i] = gauss();
-    const uni = new Float32Array(NMAX * DMAX); // points in the unit cube
+    const uni = new Float32Array(NMAX * DMAX);
     for (let i = 0; i < uni.length; i++) uni[i] = r();
-    const q = new Float32Array(DMAX); // the query point
+    const q = new Float32Array(DMAX);
     for (let i = 0; i < DMAX; i++) q[i] = r();
-    const u1 = new Float64Array(NMAX); // one uniform per point, for ball radii
-    const ang = new Float64Array(NMAX); // display angle, no maths attached
-    for (let i = 0; i < NMAX; i++) {
-      u1[i] = r();
-      ang[i] = r() * Math.PI * 2;
-    }
+    const u1 = new Float64Array(NMAX), ang = new Float64Array(NMAX);
+    for (let i = 0; i < NMAX; i++) { u1[i] = r(); ang[i] = r() * Math.PI * 2; }
     return { nrm, uni, q, u1, ang };
   }
-
   let bank = buildBank(7);
 
-  // --- the five quantities the pictures are built from -----------------------
   const ballRadii = (d: number, n: number) => {
     const out = new Float64Array(n);
     for (let i = 0; i < n; i++) out[i] = Math.pow(bank.u1[i], 1 / d);
     return out;
   };
-
   const cosPairs = (d: number, n: number) => {
     const out = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      let ab = 0,
-        aa = 0,
-        bb = 0;
-      const oa = 2 * i * DMAX,
-        ob = (2 * i + 1) * DMAX;
+      let ab = 0, aa = 0, bb = 0;
+      const oa = 2 * i * DMAX, ob = (2 * i + 1) * DMAX;
       for (let j = 0; j < d; j++) {
-        const a = bank.nrm[oa + j],
-          b = bank.nrm[ob + j];
-        ab += a * b;
-        aa += a * a;
-        bb += b * b;
+        const a = bank.nrm[oa + j], b = bank.nrm[ob + j];
+        ab += a * b; aa += a * a; bb += b * b;
       }
       out[i] = ab / Math.sqrt(aa * bb);
     }
     return out;
   };
-
   const queryDistances = (d: number, n: number) => {
     const out = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       let s = 0;
-      for (let j = 0; j < d; j++) {
-        const t = bank.uni[i * DMAX + j] - bank.q[j];
-        s += t * t;
-      }
+      for (let j = 0; j < d; j++) { const t = bank.uni[i * DMAX + j] - bank.q[j]; s += t * t; }
       out[i] = Math.sqrt(s);
     }
     return out;
   };
-
-  /** How many of the 10^d grid cells the n points actually land in. */
   const occupiedCells = (d: number, n: number) => {
     const seen = new Set<string>();
     for (let i = 0; i < n; i++) {
       let key = '';
-      for (let j = 0; j < d; j++)
-        key += String.fromCharCode(48 + ((bank.uni[i * DMAX + j] * 10) | 0));
+      for (let j = 0; j < d; j++) key += String.fromCharCode(48 + ((bank.uni[i * DMAX + j] * 10) | 0));
       seen.add(key);
     }
     return seen.size;
   };
-
-  // Volume of the unit ball, in logs: ln V_d = (d/2) ln π − ln Γ(d/2 + 1).
   function lgamma(x: number): number {
-    const c = [
-      0.99999999999980993, 676.5203681218851, -1259.1392167224028,
-      771.32342877765313, -176.61502916214059, 12.507343278686905,
-      -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
-    ];
+    const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
     if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
     x -= 1;
     let a = c[0];
@@ -220,28 +193,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     for (let i = 1; i < 9; i++) a += c[i] / (x + i);
     return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
   }
-  /** log10 of ball volume ÷ enclosing cube volume, for a radius-1 ball. */
-  const log10BallOverCube = (d: number) =>
-    ((d / 2) * Math.log(Math.PI) - lgamma(d / 2 + 1)) / Math.LN10 -
-    d * Math.log10(2);
+  const log10BallOverCube = (d: number) => ((d / 2) * Math.log(Math.PI) - lgamma(d / 2 + 1)) / Math.LN10 - d * Math.log10(2);
 
-  // --- state -----------------------------------------------------------------
-  const state = {
-    mode: 'sparsity',
-    d: 2,
-    n: 600,
-    frac: 10,
-    eps: 5,
-    playing: false,
-  };
-
-  let cache: any = null;
-  let cacheKey = '';
+  const state = { mode: 'sparsity', d: 2, n: 600, frac: 10, eps: 5, playing: false };
+  let cache: any = null, cacheKey = '';
   function data() {
     const key = `${state.mode}|${state.d}|${state.n}`;
     if (key === cacheKey && cache) return cache;
-    const d = state.d,
-      n = state.n;
+    const d = state.d, n = state.n;
     let val: any = {};
     if (state.mode === 'sparsity') val = { occ: occupiedCells(d, n) };
     else if (state.mode === 'shell') val = { r: ballRadii(d, n) };
@@ -253,26 +212,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   // ---------------------------------------------------------------------------
-  // Drawing scaffolding: a square picture on the left, a chart on the right and
-  // two caption lines underneath, shared by all five modes.
+  // Drawing scaffolding: a square picture on the left, a chart on the right.
   // ---------------------------------------------------------------------------
-  const pic = { x: 32, y: 66, w: 344, h: 344 };
-  const chart = { x: 468, y: 86, w: 396, h: 288 };
+  const pic = { x: 40, y: 60, w: 420, h: 420 };
+  const chart = { x: 560, y: 80, w: 400, h: 380 };
   const dom = { x: [0, 1], y: [0, 1] };
-  const mx = (v: number) =>
-    chart.x + ((v - dom.x[0]) / (dom.x[1] - dom.x[0])) * chart.w;
-  const my = (v: number) =>
-    chart.y + chart.h - ((v - dom.y[0]) / (dom.y[1] - dom.y[0])) * chart.h;
+  const mx = (v: number) => chart.x + ((v - dom.x[0]) / (dom.x[1] - dom.x[0])) * chart.w;
+  const my = (v: number) => chart.y + chart.h - ((v - dom.y[0]) / (dom.y[1] - dom.y[0])) * chart.h;
 
   type Tick = { v: number; t: string };
-  function chartFrame(
-    xd: [number, number],
-    yd: [number, number],
-    xTicks: Tick[],
-    yTicks: Tick[],
-    xTitle: string,
-    yTitle: string
-  ) {
+  function chartFrame(xd: [number, number], yd: [number, number], xTicks: Tick[], yTicks: Tick[], xTitle: string, yTitle: string) {
     dom.x = xd;
     dom.y = yd;
     ctx.strokeStyle = ink(0.16);
@@ -296,19 +245,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.stroke();
       label(t.t, x, chart.y + chart.h + 20, 0.45, 'center', 10.5);
     }
-    label(yTitle, chart.x, chart.y - 12, 0.42, 'left', 10.5);
-    label(xTitle, chart.x + chart.w, chart.y + chart.h + 38, 0.42, 'right', 10.5);
+    label(yTitle, chart.x, chart.y - 12, 0.45, 'left', 10.5);
+    label(xTitle, chart.x + chart.w, chart.y + chart.h + 38, 0.45, 'right', 10.5);
   }
-
-  const dTicks: Tick[] = [
-    { v: 1, t: '1' },
-    { v: 20, t: '20' },
-    { v: 40, t: '40' },
-    { v: 60, t: '60' },
-    { v: 80, t: '80' },
-    { v: 100, t: '100' },
-    { v: 120, t: '120' },
-  ];
+  const dTicks: Tick[] = [1, 20, 40, 60, 80, 100, 120].map((v) => ({ v, t: String(v) }));
 
   function curve(f: (x: number) => number, x0: number, x1: number, colour: string) {
     ctx.strokeStyle = colour;
@@ -316,14 +256,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.beginPath();
     for (let i = 0; i <= 240; i++) {
       const x = x0 + ((x1 - x0) * i) / 240;
-      const y = f(x);
-      if (i === 0) ctx.moveTo(mx(x), my(y));
-      else ctx.lineTo(mx(x), my(y));
+      i === 0 ? ctx.moveTo(mx(x), my(f(x))) : ctx.lineTo(mx(x), my(f(x)));
     }
     ctx.stroke();
   }
-
-  /** Marks the current d on a curve against dimensions. */
   function dMarker(y: number, text: string) {
     const x = mx(state.d);
     ctx.strokeStyle = ink(0.3);
@@ -334,57 +270,39 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.lineTo(x, chart.y + chart.h);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = accent();
+    ctx.fillStyle = ACCENT;
     ctx.beginPath();
     ctx.arc(x, my(y), 5, 0, Math.PI * 2);
     ctx.fill();
     const flip = x > chart.x + chart.w - 90;
-    label(
-      text,
-      flip ? x - 10 : x + 10,
-      Math.max(chart.y + 16, my(y) - 12),
-      0.95,
-      flip ? 'right' : 'left',
-      11,
-      accent()
-    );
+    label(text, flip ? x - 10 : x + 10, Math.max(chart.y + 16, my(y) - 12), 0.95, flip ? 'right' : 'left', 11, ACCENT);
   }
-
-  /** Three readable percentage gridlines for a histogram axis. */
   function pctTicks(max: number): Tick[] {
     const step = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5].find((s) => max / s <= 4) ?? 1;
     const out: Tick[] = [];
-    for (let v = 0; v <= max + 1e-9; v += step)
-      out.push({ v, t: `${Math.round(v * 100)}%` });
+    for (let v = 0; v <= max + 1e-9; v += step) out.push({ v, t: `${Math.round(v * 100)}%` });
     return out;
   }
-
   function histogram(v: ArrayLike<number>, lo: number, hi: number, bins: number) {
     const counts = new Float64Array(bins);
     let n = 0;
     for (let i = 0; i < v.length; i++) {
       const b = Math.floor(((v[i] - lo) / (hi - lo)) * bins);
-      if (b >= 0 && b < bins) {
-        counts[b]++;
-        n++;
-      }
+      if (b >= 0 && b < bins) { counts[b]++; n++; }
     }
     if (n) for (let i = 0; i < bins; i++) counts[i] /= n;
     return counts;
   }
-
   function drawBars(counts: Float64Array, lo: number, hi: number, colour: string) {
     const bw = (hi - lo) / counts.length;
     ctx.fillStyle = colour;
     for (let i = 0; i < counts.length; i++) {
       if (counts[i] <= 0) continue;
-      const x0 = mx(lo + i * bw),
-        x1 = mx(lo + (i + 1) * bw);
+      const x0 = mx(lo + i * bw), x1 = mx(lo + (i + 1) * bw);
       const y = my(counts[i]);
       ctx.fillRect(x0 + 0.5, y, Math.max(1, x1 - x0 - 1), chart.y + chart.h - y);
     }
   }
-
   function vline(x: number, colour: string, text: string, up = 0) {
     const px = mx(x);
     ctx.strokeStyle = colour;
@@ -397,63 +315,45 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.setLineDash([]);
     if (!text) return;
     const room = chart.x + chart.w - px;
-    label(
-      text,
-      room < 90 ? px - 8 : px,
-      chart.y + 18 + up,
-      0.95,
-      room < 90 ? 'right' : 'center',
-      10.5,
-      colour
-    );
+    label(text, room < 90 ? px - 8 : px, chart.y + 18 + up, 0.95, room < 90 ? 'right' : 'center', 10.5, colour);
   }
+  const picCentre = () => ({ x: pic.x + pic.w / 2, y: pic.y + pic.h / 2, R: pic.w * 0.45 });
+  const picTitle = (text: string) => label(text, pic.x, pic.y - 12, 0.45, 'left', 10.5);
+  const picCaption = (text: string) => label(text, pic.x, pic.y + pic.h + 24, 0.42, 'left', 10.5);
 
-  const picCentre = () => ({
-    x: pic.x + pic.w / 2,
-    y: pic.y + pic.h / 2,
-    R: pic.w * 0.45,
-  });
-
-  function picCaption(text: string) {
-    label(text, pic.x, pic.y + pic.h + 24, 0.42, 'left', 10.5);
-  }
-
-  // --- number formatting -----------------------------------------------------
   function fromLog10(l: number) {
     if (!isFinite(l)) return '—';
     if (l >= -3 && l < 6) {
       const v = Math.pow(10, l);
-      return v >= 1000
-        ? Math.round(v).toLocaleString()
-        : String(+v.toPrecision(3));
+      return v >= 1000 ? Math.round(v).toLocaleString() : String(+v.toPrecision(3));
     }
     const p = Math.floor(l);
-    const m = Math.pow(10, l - p);
-    return `${m.toFixed(1)}×10^${p}`;
+    return `${Math.pow(10, l - p).toFixed(1)}×10^${p}`;
   }
   const pct = (x: number, dp = 1) => `${(100 * x).toFixed(dp)}%`;
   const sup = (s: string) => s.replace(/\^(-?\d+)/g, '<sup>$1</sup>');
+  const plain = (s: string) => s.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
-  const readoutEl = document.getElementById('readout') as HTMLElement;
-  const noteEl = document.getElementById('note') as HTMLElement;
-  function setPanel(rows: [string, string][], note: string) {
-    readoutEl.innerHTML = rows
-      .map(([k, v]) => `<div class="row"><span>${k}</span><b>${sup(v)}</b></div>`)
-      .join('');
-    noteEl.innerHTML = note;
+  const readoutEl = el('readout');
+  /** Rows for the panel, and the headline for the result strip. */
+  function setPanel(rows: [string, string][], headline: { label: string; value: string; note: string }) {
+    readoutEl.innerHTML = rows.map(([k, v]) => `<div class="row"><span>${k}</span><b>${sup(v)}</b></div>`).join('');
+    el('result-label').textContent = headline.label;
+    setResult({ value: headline.value, colour: ACCENT, status: `d = ${state.d} · ${TAGLINE[state.mode]}`, note: plain(headline.note) });
   }
+  const TAGLINE: Record<string, string> = {
+    sparsity: 'data thins out faster than you can sample it',
+    shell: 'the middle of a ball is a rounding error',
+    distance: 'near and far stop being different',
+    angles: 'random directions meet at 90°',
+    corners: 'a cube is really a spiky urchin',
+  };
 
-  // ---------------------------------------------------------------------------
-  // Mode 1: empty space
-  // ---------------------------------------------------------------------------
+  // --- Mode 1: empty space -----------------------------------------------------
   function drawSparsity() {
-    const d = state.d,
-      n = state.n,
-      f = state.frac / 100;
+    const d = state.d, n = state.n, f = state.frac / 100;
     const { occ } = data();
     const cell = pic.w / 10;
-
-    // which of the 100 visible cells the projected points fall into
     const hit = new Set<number>();
     const pts: [number, number][] = [];
     for (let i = 0; i < n; i++) {
@@ -462,11 +362,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       pts.push([x, y]);
       hit.add(Math.min(9, (x * 10) | 0) * 10 + Math.min(9, (y * 10) | 0));
     }
-
-    ctx.fillStyle = `${accent()}22`;
+    ctx.fillStyle = `${ACCENT}22`;
     for (const k of hit) {
-      const cx = Math.floor(k / 10),
-        cy = k % 10;
+      const cx = Math.floor(k / 10), cy = k % 10;
       ctx.fillRect(pic.x + cx * cell, pic.y + pic.h - (cy + 1) * cell, cell, cell);
     }
     ctx.strokeStyle = ink(0.14);
@@ -479,39 +377,16 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.lineTo(pic.x + pic.w, pic.y + i * cell);
       ctx.stroke();
     }
-    ctx.fillStyle = teal();
+    ctx.fillStyle = TEAL;
     for (const [x, y] of pts) {
       ctx.beginPath();
       ctx.arc(pic.x + x * pic.w, pic.y + pic.h - y * pic.h, 1.7, 0, Math.PI * 2);
       ctx.fill();
     }
+    picTitle(`${n} points seen through their first two axes`);
+    picCaption(`${hit.size} of these 100 cells are hit · in d = ${d} it is ${occ} of ${fromLog10(d)}`);
 
-    label(
-      `${n} POINTS SEEN THROUGH THEIR FIRST TWO AXES`,
-      pic.x,
-      pic.y - 16,
-      0.5,
-      'left',
-      11
-    );
-    picCaption(
-      `${hit.size} of these 100 cells are hit · in d = ${d} it is ${occ} of ${fromLog10(d)}`
-    );
-
-    chartFrame(
-      [1, DMAX],
-      [0, 1.05],
-      dTicks,
-      [
-        { v: 0, t: '0' },
-        { v: 0.25, t: '25%' },
-        { v: 0.5, t: '50%' },
-        { v: 0.75, t: '75%' },
-        { v: 1, t: '100%' },
-      ],
-      'dimensions d',
-      `SIDE OF THE BOX THAT HOLDS ${state.frac}% OF THE DATA`
-    );
+    chartFrame([1, DMAX], [0, 1.05], dTicks, [0, 0.25, 0.5, 0.75, 1].map((v) => ({ v, t: v ? `${v * 100}%` : '0' })), 'dimensions d', `side of the box that holds ${state.frac}% of the data`);
     ctx.strokeStyle = ink(0.25);
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
@@ -520,11 +395,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.stroke();
     ctx.setLineDash([]);
     label('the whole axis', mx(DMAX) - 8, my(1) - 8, 0.4, 'right', 10.5);
-
     const edge = (dd: number) => Math.pow(f, 1 / dd);
-    curve(edge, 1, DMAX, teal());
+    curve(edge, 1, DMAX, TEAL);
     dMarker(edge(d), `${pct(edge(d), 0)} of each axis`);
 
+    setEq({
+      rule: ['\\text{cells} = 10^{d}', '\\qquad', [`\\text{side holding a fraction } f = f^{1/d}`, TEAL]],
+      live: [`10^{${d}} \\text{ cells}`, `\\quad ${occ}\\text{ occupied}`, [`\\quad ${f}^{1/${d}} = ${edge(d).toFixed(3)}`, TEAL]],
+    });
     setPanel(
       [
         ['Cells, 10 per axis', fromLog10(d)],
@@ -533,22 +411,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         [`Axis span for ${state.frac}%`, pct(edge(d), 1)],
         ['Points to match d = 1 density', fromLog10(d * Math.log10(n))],
       ],
-      `A neighbourhood holding ${state.frac}% of the data needs
-       <b>${pct(edge(d), 0)}</b> of every axis at d = ${d}. Past a handful of
-       dimensions, "nearby" means "most of the dataset".`
+      { label: `Axis span to hold ${state.frac}% of the data`, value: pct(edge(d), 0), note: `A neighbourhood holding ${state.frac}% of the data needs ${pct(edge(d), 0)} of every axis at d = ${d}. Past a handful of dimensions, "nearby" means "most of the dataset".` }
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Mode 2: volume in the crust
-  // ---------------------------------------------------------------------------
+  // --- Mode 2: volume in the crust ---------------------------------------------
   function drawShell() {
-    const d = state.d,
-      n = state.n,
-      eps = state.eps / 100;
+    const d = state.d, n = state.n, eps = state.eps / 100;
     const { r } = data();
     const c = picCentre();
-
     ctx.fillStyle = `${AMBER}1f`;
     ctx.beginPath();
     ctx.arc(c.x, c.y, c.R, 0, Math.PI * 2);
@@ -566,63 +437,40 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.arc(c.x, c.y, c.R * (1 - eps), 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
-
-    ctx.fillStyle = teal();
+    ctx.fillStyle = TEAL;
     for (let i = 0; i < n; i++) {
       const rad = r[i] * c.R;
       ctx.beginPath();
-      ctx.arc(
-        c.x + rad * Math.cos(bank.ang[i]),
-        c.y + rad * Math.sin(bank.ang[i]),
-        1.7,
-        0,
-        Math.PI * 2
-      );
+      ctx.arc(c.x + rad * Math.cos(bank.ang[i]), c.y + rad * Math.sin(bank.ang[i]), 1.7, 0, Math.PI * 2);
       ctx.fill();
     }
-
-    label('UNIFORM POINTS INSIDE THE BALL', pic.x, pic.y - 16, 0.5, 'left', 11);
-    label(`outer ${state.eps}%`, c.x, c.y - c.R - 10, 0.75, 'center', 10.5, AMBER);
-    picCaption(
-      'each dot sits at its true distance from the centre, at an arbitrary angle'
-    );
+    picTitle('uniform points inside the ball');
+    label(`outer ${state.eps}%`, c.x, c.y - c.R - 10, 1, 'center', 10.5, AMBER);
+    picCaption('each dot sits at its true distance from the centre, at an arbitrary angle');
 
     const bins = 40;
     const counts = histogram(r, 0, 1, bins);
     let maxc = 0;
     for (let i = 0; i < bins; i++) maxc = Math.max(maxc, counts[i]);
     const top = Math.max(0.06, maxc * 1.2);
-    chartFrame(
-      [0, 1],
-      [0, top],
-      [
-        { v: 0, t: '0' },
-        { v: 0.25, t: '0.25' },
-        { v: 0.5, t: '0.5' },
-        { v: 0.75, t: '0.75' },
-        { v: 1, t: '1' },
-      ],
-      pctTicks(top),
-      'distance from the centre, r',
-      'SHARE OF THE POINTS'
-    );
-    drawBars(counts, 0, 1, `${teal()}66`);
-    // exact bin probabilities: P(r ∈ [a,b]) = b^d − a^d
-    ctx.strokeStyle = teal();
+    chartFrame([0, 1], [0, top], [0, 0.25, 0.5, 0.75, 1].map((v) => ({ v, t: String(v) })), pctTicks(top), 'distance from the centre, r', 'share of the points');
+    drawBars(counts, 0, 1, `${TEAL}66`);
+    ctx.strokeStyle = TEAL;
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (let i = 0; i < bins; i++) {
-      const a = i / bins,
-        b = (i + 1) / bins;
+      const a = i / bins, b = (i + 1) / bins;
       const p = Math.pow(b, d) - Math.pow(a, d);
-      const x = mx((a + b) / 2);
-      if (i === 0) ctx.moveTo(x, my(p));
-      else ctx.lineTo(x, my(p));
+      i === 0 ? ctx.moveTo(mx((a + b) / 2), my(p)) : ctx.lineTo(mx((a + b) / 2), my(p));
     }
     ctx.stroke();
-    vline(Math.pow(0.5, 1 / d), accent(), 'half the volume is past here');
+    vline(Math.pow(0.5, 1 / d), ACCENT, 'half the volume is past here');
 
     const inCrust = 1 - Math.pow(1 - eps, d);
+    setEq({
+      rule: ['V(r) \\propto r^{d}', '\\qquad', ['\\text{crust} = 1 - (1-\\varepsilon)^{d}', AMBER]],
+      live: [`d = ${d}`, `\\quad\\varepsilon = ${eps}`, [`\\quad 1 - ${(1 - eps).toFixed(2)}^{${d}} = ${inCrust.toFixed(4)}`, AMBER]],
+    });
     setPanel(
       [
         [`Volume in the outer ${state.eps}%`, pct(inCrust, 2)],
@@ -630,35 +478,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         ['Mean distance to the centre', (d / (d + 1)).toFixed(4)],
         ['Volume inside half the radius', `1 in ${fromLog10(d * Math.log10(2))}`],
       ],
-      `Volume grows like r<sup>d</sup>, so a shell of the last
-       <b>${state.eps}%</b> of the radius carries <b>${pct(inCrust, 1)}</b> of the
-       ball at d = ${d}. The interior is essentially empty.`
+      { label: `Volume in the outer ${state.eps}%`, value: pct(inCrust, 1), note: `Volume grows like r^d, so a shell of the last ${state.eps}% of the radius carries ${pct(inCrust, 1)} of the ball at d = ${d}. The interior is essentially empty.` }
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Mode 3: all distances equal
-  // ---------------------------------------------------------------------------
+  // --- Mode 3: all distances equal ---------------------------------------------
   function drawDistance() {
-    const d = state.d,
-      n = state.n;
+    const d = state.d, n = state.n;
     const { dist } = data();
     const c = picCentre();
-    const scale = Math.sqrt(d); // the longest distance possible in the cube
-    let lo = Infinity,
-      hi = 0,
-      sum = 0,
-      sum2 = 0;
+    const scale = Math.sqrt(d);
+    let lo = Infinity, hi = 0, sum = 0, sum2 = 0;
     for (let i = 0; i < n; i++) {
       const u = dist[i] / scale;
-      lo = Math.min(lo, u);
-      hi = Math.max(hi, u);
-      sum += u;
-      sum2 += u * u;
+      lo = Math.min(lo, u); hi = Math.max(hi, u); sum += u; sum2 += u * u;
     }
-    const mean = sum / n;
-    const sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
-
+    const mean = sum / n, sd = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
     ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     for (const f of [0.25, 0.5, 0.75, 1]) {
@@ -666,68 +501,44 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.arc(c.x, c.y, c.R * f, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.fillStyle = teal();
+    ctx.fillStyle = TEAL;
     for (let i = 0; i < n; i++) {
       const rad = (dist[i] / scale) * c.R;
       ctx.beginPath();
-      ctx.arc(
-        c.x + rad * Math.cos(bank.ang[i]),
-        c.y + rad * Math.sin(bank.ang[i]),
-        1.7,
-        0,
-        Math.PI * 2
-      );
+      ctx.arc(c.x + rad * Math.cos(bank.ang[i]), c.y + rad * Math.sin(bank.ang[i]), 1.7, 0, Math.PI * 2);
       ctx.fill();
     }
-    for (const [v, col] of [
-      [lo, accent()],
-      [hi, AMBER],
-    ] as [number, string][]) {
+    for (const [v, col] of [[lo, ACCENT], [hi, AMBER]] as [number, string][]) {
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(c.x, c.y, v * c.R, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.fillStyle = accent();
+    ctx.fillStyle = ACCENT;
     ctx.beginPath();
     ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
     ctx.fill();
-
-    label('DISTANCE FROM ONE QUERY POINT', pic.x, pic.y - 16, 0.5, 'left', 11);
-    label('nearest', c.x, c.y + lo * c.R + 16, 0.9, 'center', 10.5, accent());
-    label('farthest', c.x, c.y - hi * c.R - 8, 0.9, 'center', 10.5, AMBER);
+    picTitle('distance from one query point');
+    label('nearest', c.x, c.y + lo * c.R + 16, 1, 'center', 10.5, ACCENT);
+    label('farthest', c.x, c.y - hi * c.R - 8, 1, 'center', 10.5, AMBER);
     picCaption('every dot at its true distance, angle chosen at random');
 
     const bins = 44;
-    const counts = histogram(
-      Array.from({ length: n }, (_, i) => dist[i] / scale),
-      0,
-      1,
-      bins
-    );
+    const counts = histogram(Array.from({ length: n }, (_, i) => dist[i] / scale), 0, 1, bins);
     let maxc = 0;
     for (let i = 0; i < bins; i++) maxc = Math.max(maxc, counts[i]);
     const top = Math.max(0.06, maxc * 1.25);
-    chartFrame(
-      [0, 1],
-      [0, top],
-      [
-        { v: 0, t: '0' },
-        { v: 0.25, t: '0.25' },
-        { v: 0.5, t: '0.5' },
-        { v: 0.75, t: '0.75' },
-        { v: 1, t: '1' },
-      ],
-      pctTicks(top),
-      'distance ÷ √d',
-      'SHARE OF THE POINTS'
-    );
-    drawBars(counts, 0, 1, `${teal()}77`);
-    vline(lo, accent(), '');
+    chartFrame([0, 1], [0, top], [0, 0.25, 0.5, 0.75, 1].map((v) => ({ v, t: String(v) })), pctTicks(top), 'distance ÷ √d', 'share of the points');
+    drawBars(counts, 0, 1, `${TEAL}77`);
+    vline(lo, ACCENT, '');
     vline(hi, AMBER, '');
 
     const contrast = (hi - lo) / lo;
+    setEq({
+      rule: [['\\dfrac{\\sigma(\\text{dist})}{\\mu(\\text{dist})} \\sim \\dfrac{1}{\\sqrt d}', TEAL], '\\qquad', ['\\dfrac{d_{\\max} - d_{\\min}}{d_{\\min}} \\to 0', AMBER]],
+      live: [`d = ${d}`, [`\\quad\\sigma/\\mu = ${(sd / mean).toFixed(3)}`, TEAL], [`\\quad (d_{\\max}-d_{\\min})/d_{\\min} = ${contrast.toFixed(2)}`, AMBER]],
+    });
     setPanel(
       [
         ['Nearest neighbour', (lo * scale).toFixed(3)],
@@ -735,21 +546,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         ['(far − near) ÷ near', pct(contrast, 1)],
         ['Spread ÷ mean', pct(sd / mean, 2)],
       ],
-      `The farthest of ${n} points is only <b>${pct(contrast, 0)}</b> further away
-       than the nearest at d = ${d}. Distances still exist, but they stop
-       <b>ranking</b> anything.`
+      { label: 'Farthest is further than nearest by', value: pct(contrast, 0), note: `The farthest of ${n} points is only ${pct(contrast, 0)} further away than the nearest at d = ${d}. Distances still exist, but they stop ranking anything.` }
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Mode 4: everything orthogonal
-  // ---------------------------------------------------------------------------
+  // --- Mode 4: everything orthogonal -------------------------------------------
   function drawAngles() {
-    const d = state.d,
-      n = state.n;
+    const d = state.d, n = state.n;
     const { cos } = data();
     const c = picCentre();
-
     ctx.strokeStyle = ink(0.16);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -762,27 +567,25 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.lineTo(c.x, c.y + c.R);
     ctx.stroke();
     ctx.setLineDash([]);
-
     const shown = Math.min(n, 160);
     ctx.lineWidth = 1;
     for (let i = 0; i < shown; i++) {
       const th = Math.acos(Math.max(-1, Math.min(1, cos[i])));
       const s = bank.ang[i] > Math.PI ? 1 : -1;
-      ctx.strokeStyle = `${teal()}66`;
+      ctx.strokeStyle = `${TEAL}66`;
       ctx.beginPath();
       ctx.moveTo(c.x, c.y);
       ctx.lineTo(c.x + c.R * Math.cos(th), c.y + s * c.R * Math.sin(th));
       ctx.stroke();
     }
-    ctx.strokeStyle = accent();
+    ctx.strokeStyle = ACCENT;
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(c.x, c.y);
     ctx.lineTo(c.x + c.R, c.y);
     ctx.stroke();
-
-    label('ANGLE TO ONE FIXED DIRECTION', pic.x, pic.y - 16, 0.5, 'left', 11);
-    label('reference', c.x + c.R, c.y - 10, 0.9, 'right', 10.5, accent());
+    picTitle('angle to one fixed direction');
+    label('reference', c.x + c.R, c.y - 10, 1, 'right', 10.5, ACCENT);
     label('90°', c.x + 14, c.y - c.R - 8, 0.45, 'left', 10.5);
     picCaption('160 random directions, each drawn at its true angle');
 
@@ -792,53 +595,31 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     let maxc = 0;
     for (let i = 0; i < bins; i++) maxc = Math.max(maxc, counts[i]);
     const top = Math.max(0.08, maxc * 1.25);
-    chartFrame(
-      [0, 180],
-      [0, top],
-      [
-        { v: 0, t: '0°' },
-        { v: 45, t: '45°' },
-        { v: 90, t: '90°' },
-        { v: 135, t: '135°' },
-        { v: 180, t: '180°' },
-      ],
-      pctTicks(top),
-      'angle between two random vectors',
-      'SHARE OF THE PAIRS'
-    );
-    drawBars(counts, 0, 180, `${teal()}66`);
-
-    // theoretical density, ∝ sin^(d−2)θ, normalised to per-bin probability.
-    // Below d = 3 it is flat or degenerate, so there is nothing to draw.
+    chartFrame([0, 180], [0, top], [0, 45, 90, 135, 180].map((v) => ({ v, t: `${v}°` })), pctTicks(top), 'angle between two random vectors', 'share of the pairs');
+    drawBars(counts, 0, 180, `${TEAL}66`);
     if (d >= 3) {
       const G = 360;
       const f = new Float64Array(G + 1);
       let tot = 0;
-      for (let i = 0; i <= G; i++) {
-        const th = (Math.PI * i) / G;
-        f[i] = Math.pow(Math.sin(th), d - 2);
-        tot += f[i];
-      }
-      ctx.strokeStyle = teal();
+      for (let i = 0; i <= G; i++) { f[i] = Math.pow(Math.sin((Math.PI * i) / G), d - 2); tot += f[i]; }
+      ctx.strokeStyle = TEAL;
       ctx.lineWidth = 2;
       ctx.beginPath();
       for (let i = 0; i <= G; i++) {
-        const x = (180 * i) / G;
-        const y = (f[i] / tot) * (G / bins);
-        if (i === 0) ctx.moveTo(mx(x), my(y));
-        else ctx.lineTo(mx(x), my(y));
+        const x = (180 * i) / G, y = (f[i] / tot) * (G / bins);
+        i === 0 ? ctx.moveTo(mx(x), my(y)) : ctx.lineTo(mx(x), my(y));
       }
       ctx.stroke();
     }
-    vline(90, accent(), 'orthogonal');
+    vline(90, ACCENT, 'orthogonal');
 
-    let near = 0,
-      absSum = 0;
-    for (let i = 0; i < n; i++) {
-      absSum += Math.abs(cos[i]);
-      if (theta[i] > 80 && theta[i] < 100) near++;
-    }
+    let near = 0, absSum = 0;
+    for (let i = 0; i < n; i++) { absSum += Math.abs(cos[i]); if (theta[i] > 80 && theta[i] < 100) near++; }
     const sdDeg = (180 / Math.PI) * (1 / Math.sqrt(d));
+    setEq({
+      rule: [['\\cos\\theta \\approx \\mathcal N\\!\\big(0,\\ \\tfrac{1}{d}\\big)', TEAL], '\\qquad', ['\\sigma_{\\cos\\theta} = 1/\\sqrt d', ACCENT]],
+      live: [`d = ${d}`, [`\\quad 1/\\sqrt{${d}} = ${(1 / Math.sqrt(d)).toFixed(3)}`, ACCENT], `\\quad\\theta \\approx 90^\\circ \\pm ${sdDeg.toFixed(1)}^\\circ`],
+    });
     setPanel(
       [
         ['Mean cos θ', '0 exactly'],
@@ -847,44 +628,35 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         ['Typical angle', `90° ± ${sdDeg.toFixed(1)}°`],
         ['Pairs within 80°–100°', pct(near / n, 1)],
       ],
-      `cos θ has mean 0 and standard deviation <b>1/√d</b>, so two random
-       directions in ${d} dimensions land <b>${pct(near / n, 0)}</b> of the time
-       within 10° of a right angle.`
+      { label: 'Pairs within 10° of a right angle', value: pct(near / n, 0), note: `cos θ has mean 0 and standard deviation 1/√d, so two random directions in ${d} dimensions land ${pct(near / n, 0)} of the time within 10° of a right angle.` }
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Mode 5: nothing but corners
-  // ---------------------------------------------------------------------------
+  // --- Mode 5: nothing but corners ---------------------------------------------
   function drawCorners() {
     const d = state.d;
     const c = picCentre();
     const R = c.R;
-
-    // the cube minus the ball: everything left over is corner
     ctx.beginPath();
     ctx.rect(c.x - R, c.y - R, 2 * R, 2 * R);
     ctx.moveTo(c.x + R, c.y);
     ctx.arc(c.x, c.y, R, 0, Math.PI * 2, true);
     ctx.fillStyle = `${AMBER}30`;
     ctx.fill('evenodd');
-
     ctx.strokeStyle = ink(0.35);
     ctx.lineWidth = 1.5;
     ctx.strokeRect(c.x - R, c.y - R, 2 * R, 2 * R);
-    ctx.strokeStyle = teal();
+    ctx.strokeStyle = TEAL;
     ctx.beginPath();
     ctx.arc(c.x, c.y, R, 0, Math.PI * 2);
     ctx.stroke();
-
-    // inradius, always 1, against the half-diagonal, which runs off as √d
-    ctx.strokeStyle = teal();
+    ctx.strokeStyle = TEAL;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(c.x, c.y);
     ctx.lineTo(c.x + R, c.y);
     ctx.stroke();
-    ctx.strokeStyle = accent();
+    ctx.strokeStyle = ACCENT;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);
     ctx.beginPath();
@@ -892,73 +664,39 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.lineTo(c.x + R, c.y - R);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = accent();
+    ctx.fillStyle = ACCENT;
     ctx.beginPath();
     ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
     ctx.fill();
-
-    label('BALL INSCRIBED IN A CUBE', pic.x, pic.y - 16, 0.5, 'left', 11);
-    label('radius 1', c.x + R / 2, c.y + 18, 0.9, 'center', 11, teal());
-    label(
-      `√d = ${Math.sqrt(d).toFixed(2)}`,
-      c.x + R - 6,
-      c.y - R - 8,
-      0.9,
-      'right',
-      11,
-      accent()
-    );
-    label('corners', c.x - R + 10, c.y + R - 12, 0.9, 'left', 11, AMBER);
+    picTitle('ball inscribed in a cube');
+    label('radius 1', c.x + R / 2, c.y + 18, 1, 'center', 11, TEAL);
+    label(`√d = ${Math.sqrt(d).toFixed(2)}`, c.x + R - 6, c.y - R - 8, 1, 'right', 11, ACCENT);
+    label('corners', c.x - R + 10, c.y + R - 12, 1, 'left', 11, AMBER);
     picCaption('the shaded part of the box lies outside the ball');
 
     const lo = -95;
-    chartFrame(
-      [1, DMAX],
-      [lo, 2],
-      dTicks,
-      [
-        { v: 0, t: '1' },
-        { v: -20, t: '10^-20' },
-        { v: -40, t: '10^-40' },
-        { v: -60, t: '10^-60' },
-        { v: -80, t: '10^-80' },
-      ],
-      'dimensions d',
-      'BALL VOLUME ÷ CUBE VOLUME'
-    );
-    curve((dd) => Math.max(lo, log10BallOverCube(dd)), 1, DMAX, teal());
+    chartFrame([1, DMAX], [lo, 2], dTicks, [{ v: 0, t: '1' }, { v: -20, t: '10^-20' }, { v: -40, t: '10^-40' }, { v: -60, t: '10^-60' }, { v: -80, t: '10^-80' }], 'dimensions d', 'ball volume ÷ cube volume');
+    curve((dd) => Math.max(lo, log10BallOverCube(dd)), 1, DMAX, TEAL);
     const ratioLog = log10BallOverCube(d);
     dMarker(Math.max(lo, ratioLog), `1 in ${fromLog10(-ratioLog)}`);
 
+    setEq({
+      rule: [['\\dfrac{V_{\\text{ball}}}{V_{\\text{cube}}} = \\dfrac{\\pi^{d/2}}{\\Gamma(d/2+1)\\,2^{d}}', TEAL], '\\qquad', ['\\text{half-diagonal} = \\sqrt d', ACCENT]],
+      live: [`d = ${d}`, [`\\quad V_{\\text{ball}}/V_{\\text{cube}} = 10^{${ratioLog.toFixed(1)}}`, TEAL], [`\\quad\\sqrt{${d}} = ${Math.sqrt(d).toFixed(2)}`, ACCENT]],
+    });
     setPanel(
       [
         ['Ball ÷ cube volume', `1 in ${fromLog10(-ratioLog)}`],
-        [
-          'Cube volume in the corners',
-          ratioLog < -6 ? '99.9999…%' : pct(1 - Math.pow(10, ratioLog), 4),
-        ],
+        ['Cube volume in the corners', ratioLog < -6 ? '99.9999…%' : pct(1 - Math.pow(10, ratioLog), 4)],
         ['Number of corners', fromLog10(d * Math.log10(2))],
         ['Half-diagonal ÷ inradius', `${Math.sqrt(d).toFixed(2)} : 1`],
       ],
-      `The ball still touches all ${2 * d} faces, yet at d = ${d} it holds
-       <b>1 part in ${fromLog10(-ratioLog).replace(/\^(-?\d+)/, '<sup>$1</sup>')}</b>
-       of the box. Corners run off to distance √d while the faces stay at 1.`
+      { label: 'Share of the cube inside the ball', value: `1 in ${fromLog10(-ratioLog).replace(/\^(-?\d+)/, '^$1')}`, note: `The ball still touches all ${2 * d} faces, yet at d = ${d} it holds 1 part in ${fromLog10(-ratioLog)} of the box. Corners run off to distance √d while the faces stay at 1.` }
     );
   }
 
-  // ---------------------------------------------------------------------------
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    const titles: Record<string, string> = {
-      sparsity: 'EMPTY SPACE · data thins out faster than you can sample it',
-      shell: 'VOLUME IN THE CRUST · the middle of a ball is a rounding error',
-      distance: 'ALL DISTANCES EQUAL · near and far stop being different',
-      angles: 'EVERYTHING ORTHOGONAL · random directions meet at 90°',
-      corners: 'NOTHING BUT CORNERS · a cube is really a spiky urchin',
-    };
-    label(titles[state.mode], 32, 34, 0.55, 'left', 12);
-    label(`d = ${state.d}`, W - 32, 34, 0.95, 'right', 13, accent());
-
     if (state.mode === 'sparsity') drawSparsity();
     else if (state.mode === 'shell') drawShell();
     else if (state.mode === 'distance') drawDistance();
@@ -967,76 +705,33 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   // --- controls --------------------------------------------------------------
-  const $ = (id: string) => document.getElementById(id) as HTMLElement;
-  const dSlider = $('d') as HTMLInputElement;
-  const runBtn = $('run');
-
   function syncContext() {
-    document.querySelectorAll<HTMLElement>('[data-for]').forEach((el) => {
-      el.style.display = el.dataset.for!.split(' ').includes(state.mode)
-        ? ''
-        : 'none';
+    document.querySelectorAll<HTMLElement>('[data-for]').forEach((node) => {
+      node.hidden = !node.dataset.for!.split(' ').includes(state.mode);
     });
   }
-
-  function sync() {
-    $('dval').textContent = String(state.d);
-    $('nval').textContent = String(state.n);
-    $('fracval').textContent = `${state.frac}%`;
-    $('epsval').textContent = `${state.eps}%`;
-    dSlider.value = String(state.d);
-    draw();
-  }
-
-  $('mode').addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button');
-    if (!b) return;
-    document
-      .querySelectorAll('#mode button')
-      .forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-    state.mode = b.dataset.m!;
-    syncContext();
-    sync();
-  });
-  dSlider.addEventListener('input', () => {
-    state.d = +dSlider.value;
-    sync();
-  });
-  $('n').addEventListener('input', (e) => {
-    state.n = +(e.target as HTMLInputElement).value;
-    sync();
-  });
-  $('frac').addEventListener('input', (e) => {
-    state.frac = +(e.target as HTMLInputElement).value;
-    sync();
-  });
-  $('eps').addEventListener('input', (e) => {
-    state.eps = +(e.target as HTMLInputElement).value;
-    sync();
-  });
-  $('step').addEventListener('click', () => {
-    state.d = state.d >= DMAX ? 1 : state.d + 1;
-    sync();
-  });
-  $('reset').addEventListener('click', () => {
-    state.playing = false;
-    runBtn.textContent = 'Sweep d';
-    state.d = 2;
-    bank = buildBank(7);
-    cacheKey = '';
-    sync();
-  });
-  runBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    runBtn.textContent = state.playing ? 'Pause' : 'Sweep d';
-    if (state.playing) requestAnimationFrame(tick);
+  const setD = slider('d', (v) => { state.d = v; draw(); });
+  slider('n', (v) => { state.n = v; draw(); });
+  slider('frac', (v) => { state.frac = v; draw(); }, (v) => `${v}%`);
+  slider('eps', (v) => { state.eps = v; draw(); }, (v) => `${v}%`);
+  segmented('mode', (m) => { state.mode = m; syncContext(); draw(); });
+  const controls = transport({
+    onRun: (running) => { state.playing = running; if (running) requestAnimationFrame(tick); },
+    onStep: () => { state.d = state.d >= DMAX ? 1 : state.d + 1; setD(state.d); draw(); },
+    onReset: () => {
+      state.playing = false;
+      controls.setRunning(false);
+      state.d = 2;
+      bank = buildBank(7);
+      cacheKey = '';
+      setD(state.d);
+      draw();
+    },
   });
 
-  let acc = 0;
-  let last = 0;
+  let acc = 0, last = 0;
   function tick(t: number) {
-    if (!state.playing) return;
+    if (!state.playing) { last = 0; return; }
     const dt = last ? Math.min(0.1, (t - last) / 1000) : 0;
     last = t;
     acc += dt * 26; // dimensions per second
@@ -1044,32 +739,22 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       const step = Math.floor(acc);
       acc -= step;
       state.d = state.d + step > DMAX ? 1 : state.d + step;
-      sync();
+      setD(state.d);
+      draw();
     }
     requestAnimationFrame(tick);
   }
 
   syncContext();
-  sync();
+  draw();
 </script>
 
 <style>
-  .seg.vert {
+  :global(#mode.seg) {
     flex-direction: column;
     align-items: stretch;
-    width: 100%;
   }
-  .seg.vert button {
+  :global(#mode.seg button) {
     text-align: left;
-  }
-  .note {
-    font-size: 0.82rem;
-    color: var(--text-faint);
-    margin: 0;
-    line-height: 1.55;
-  }
-  .note :global(b) {
-    color: var(--text-muted);
-    font-weight: 600;
   }
 </style>

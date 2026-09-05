@@ -1,39 +1,54 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Wasserstein Distance"
-  description="How far apart are two distributions? The Wasserstein (earth mover's) distance measures the least work needed to reshape one pile of probability into the other: mass times distance moved. Unlike overlap, it still knows two distant bumps are far apart."
+  description="The least work needed to reshape one pile of probability into another: mass times distance moved. Unlike overlap, it still knows two distant bumps are far apart."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="ws" class="ws-canvas" width="900" height="480"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ws"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Two distributions as histograms, and below them their cumulative curves with the area between them shaded."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'P', color: '#5eead4' },
+          { label: 'Q', color: '#f59e0b' },
+          { label: 'area between the CDFs = W₁', color: 'rgba(245,158,11,0.45)' },
+        ]}
+        hint="Drag the top plot to move Q"
+      />
+      <Result label="Wasserstein distance W<sub>1</sub>" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>Distribution P</label>
-        <div class="seg" id="pshape">
-          <button data-s="bimodal" class="active">Bimodal</button>
-          <button data-s="gauss">Gaussian</button>
-          <button data-s="uniform">Uniform</button>
-        </div>
-      </div>
-
-      <div class="control"><label>Q mean <b id="mval">3.0</b></label><input type="range" id="m" min="5" max="95" value="30" /></div>
-      <div class="control"><label>Q spread <b id="sval">1.0</b></label><input type="range" id="s" min="3" max="30" value="10" /></div>
-
-      <div class="readout">
-        <div class="row"><span>Wasserstein W₁</span><b id="w1">—</b></div>
-        <div class="row"><span>Overlap</span><b id="ovl">—</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Top: the two distributions. Bottom: their running totals (CDFs). The
-        shaded area between the CDFs is exactly W₁. Drag the top panel to move Q.
-      </p>
+      <Seg
+        id="pshape"
+        label="Distribution P"
+        attr="s"
+        options={[
+          { value: 'bimodal', label: 'Bimodal' },
+          { value: 'gauss', label: 'Gaussian' },
+          { value: 'uniform', label: 'Uniform' },
+        ]}
+      />
+      <Slider id="m" label="Q mean" min={5} max={95} value={30} display="3.0" />
+      <Slider id="s" label="Q spread" min={3} max={30} value={10} display="1.0" />
+      <Readout rows={[{ id: 'r-w1', label: 'W<sub>1</sub>' }, { id: 'r-ovl', label: 'overlap' }]} />
     </div>
   </div>
 
@@ -56,26 +71,32 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
 
-  const NB = 70;
-  const XMAX = 10;
-  const dx = XMAX / NB;
+  const NB = 70, XMAX = 10, dx = XMAX / NB;
+  const TEAL = '#5eead4', AMBER = '#f59e0b';
   const state = { shape: 'bimodal', mean: 3, spread: 1 };
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('ws') as HTMLCanvasElement;
+  const canvas = el('ws') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
-  const PAD = { l: 40, r: 20 };
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const PAD = { l: 40, r: 30 };
+  const TOP = { y: 30, h: 220 };
+  const BOT = { y: 320, h: 220 };
   const sx = (x: number) => PAD.l + (x / XMAX) * (W - PAD.l - PAD.r);
+  const bw = (W - PAD.l - PAD.r) / NB;
 
   function normalize(a: number[]) {
-    let s = 0;
-    for (const v of a) s += v;
-    if (s > 0) for (let i = 0; i < a.length; i++) a[i] /= s;
-    return a;
+    const s = a.reduce((p, v) => p + v, 0);
+    return s > 0 ? a.map((v) => v / s) : a;
   }
   function pDist() {
     const a = new Array(NB).fill(0);
@@ -97,59 +118,41 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function draw() {
-    const teal = css('--accent-2') || '#5eead4';
-    const amber = '#f59e0b';
-    const grid = css('--border') || '#262a32';
-    const faint = css('--text-faint') || '#6b7280';
-    const ink = css('--stage-ink') || '232,233,236';
     ctx.clearRect(0, 0, W, H);
-
-    const p = pDist();
-    const q = qDist();
-    const cumP: number[] = [];
-    const cumQ: number[] = [];
+    const p = pDist(), q = qDist();
+    const cumP: number[] = [], cumQ: number[] = [];
     let cp = 0, cq = 0;
     for (let i = 0; i < NB; i++) { cp += p[i]; cq += q[i]; cumP.push(cp); cumQ.push(cq); }
 
-    // ---- histograms (top) ----
-    const topY = 40, topH = 190;
+    // the two piles
+    label('the two distributions', PAD.l, TOP.y - 10, 0.45, 'left', 10.5);
     const pmax = Math.max(...p, ...q) * 1.1;
-    const bw = (W - PAD.l - PAD.r) / NB;
-    ctx.strokeStyle = grid;
+    ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(PAD.l, topY + topH);
-    ctx.lineTo(W - PAD.r, topY + topH);
+    ctx.moveTo(PAD.l, TOP.y + TOP.h);
+    ctx.lineTo(W - PAD.r, TOP.y + TOP.h);
     ctx.stroke();
     for (let i = 0; i < NB; i++) {
       const x = PAD.l + i * bw;
-      const hp = (p[i] / pmax) * topH;
-      const hq = (q[i] / pmax) * topH;
-      ctx.fillStyle = teal + '99';
-      ctx.fillRect(x, topY + topH - hp, bw - 0.5, hp);
-      ctx.fillStyle = amber + '99';
-      ctx.fillRect(x, topY + topH - hq, bw - 0.5, hq);
+      ctx.fillStyle = TEAL + '99';
+      ctx.fillRect(x, TOP.y + TOP.h - (p[i] / pmax) * TOP.h, bw - 0.5, (p[i] / pmax) * TOP.h);
+      ctx.fillStyle = AMBER + '99';
+      ctx.fillRect(x, TOP.y + TOP.h - (q[i] / pmax) * TOP.h, bw - 0.5, (q[i] / pmax) * TOP.h);
     }
-    ctx.fillStyle = teal;
-    ctx.font = "600 13px 'JetBrains Mono', monospace";
-    ctx.fillText('P', PAD.l + 4, topY + 2);
-    ctx.fillStyle = amber;
-    ctx.fillText('Q', PAD.l + 22, topY + 2);
 
-    // ---- CDFs (bottom) with shaded W1 area ----
-    const botY = 268, botH = 180;
-    const cy = (c: number) => botY + botH - c * botH;
-    // shade area between CDFs
+    // their running totals, with the work between them shaded
+    label('running totals, the CDFs', PAD.l, BOT.y - 10, 0.45, 'left', 10.5);
+    const cy = (c: number) => BOT.y + BOT.h - c * BOT.h;
     for (let i = 0; i < NB; i++) {
-      const x = PAD.l + i * bw;
       const y1 = cy(cumP[i]), y2 = cy(cumQ[i]);
-      ctx.fillStyle = `rgba(245,158,11,0.16)`;
-      ctx.fillRect(x, Math.min(y1, y2), bw + 0.5, Math.abs(y1 - y2));
+      ctx.fillStyle = 'rgba(245,158,11,0.16)';
+      ctx.fillRect(PAD.l + i * bw, Math.min(y1, y2), bw + 0.5, Math.abs(y1 - y2));
     }
-    ctx.strokeStyle = grid;
+    ctx.strokeStyle = ink(0.14);
     ctx.beginPath();
-    ctx.moveTo(PAD.l, botY + botH);
-    ctx.lineTo(W - PAD.r, botY + botH);
+    ctx.moveTo(PAD.l, BOT.y + BOT.h);
+    ctx.lineTo(W - PAD.r, BOT.y + BOT.h);
     ctx.stroke();
     const drawCDF = (cum: number[], color: string) => {
       ctx.strokeStyle = color;
@@ -161,86 +164,53 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
       ctx.stroke();
     };
-    drawCDF(cumP, teal);
-    drawCDF(cumQ, amber);
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('CDFs · shaded area = W₁', PAD.l + 4, botY - 18);
+    drawCDF(cumP, TEAL);
+    drawCDF(cumQ, AMBER);
+    for (let t = 0; t <= 10; t += 2) label(String(t), sx(t), BOT.y + BOT.h + 16, 0.3, 'center', 10);
+    label('1', PAD.l - 8, cy(1) + 4, 0.3, 'right', 10);
 
-    // x-axis labels
-    ctx.fillStyle = faint;
-    for (let t = 0; t <= 10; t += 2) ctx.fillText(String(t), sx(t) - 4, botY + botH + 8);
-
-    // metrics
     let w1 = 0, ovl = 0;
     for (let i = 0; i < NB; i++) {
       w1 += Math.abs(cumP[i] - cumQ[i]) * dx;
       ovl += Math.min(p[i], q[i]);
     }
-    (document.getElementById('w1') as HTMLElement).textContent = w1.toFixed(3);
-    setEq([
-      [
-        'W_1(p,q) = \\int \\big|',
-        [`F_p(x)`, teal],
-        '-',
-        [`F_q(x)`, amber],
-        '\\big|\\,dx',
-        '\\quad\\text{the area between them}',
-      ],
-      [
-        `W_1 = ${w1.toFixed(3)}`,
-        `\\quad\\text{overlap} = ${ovl.toFixed(3)}`,
-      ],
-      [
-        'move the piles apart and W₁ keeps growing, long after the overlap has hit zero',
-      ],
-    ]);
-    (document.getElementById('ovl') as HTMLElement).textContent = (ovl * 100).toFixed(1) + '%';
-    void ink;
+    setEq({
+      rule: ['W_1(p,q) = \\int \\big|', ['F_p(x)', TEAL], '-', ['F_q(x)', AMBER], '\\big|\\,dx'],
+      live: [[`W_1 = ${w1.toFixed(3)}`, AMBER], `\\quad\\text{overlap} = ${ovl.toFixed(3)}`],
+    });
+    setResult({
+      value: w1.toFixed(3),
+      colour: AMBER,
+      status: `Overlap ${(ovl * 100).toFixed(1)}%`,
+      note: 'Move the piles apart and W₁ keeps growing, long after the overlap has hit zero.',
+    });
+    setRows({ 'r-w1': w1.toFixed(3), 'r-ovl': `${(ovl * 100).toFixed(1)}%` });
   }
 
-  // drag to move Q's mean
+  // drag the top plot to move Q's mean
+  const setMean = slider('m', (v) => { state.mean = v / 10; draw(); }, (v) => (v / 10).toFixed(1));
+  slider('s', (v) => { state.spread = v / 10; draw(); }, (v) => (v / 10).toFixed(1));
+  segmented('pshape', (s) => { state.shape = s; draw(); });
+
   let dragging = false;
-  function setMean(e: PointerEvent) {
+  function dragTo(e: PointerEvent) {
     const rect = canvas.getBoundingClientRect();
-    const x = (((e.clientX - rect.left) / rect.width) * W - PAD.l) / (W - PAD.l - PAD.r) * XMAX;
+    const x = ((((e.clientX - rect.left) / rect.width) * W - PAD.l) / (W - PAD.l - PAD.r)) * XMAX;
     state.mean = Math.max(0.5, Math.min(9.5, x));
-    (document.getElementById('m') as HTMLInputElement).value = String(Math.round(state.mean * 10));
-    (document.getElementById('mval') as HTMLElement).textContent = state.mean.toFixed(1);
+    setMean(Math.round(state.mean * 10));
     draw();
   }
-  canvas.addEventListener('pointerdown', (e) => { dragging = true; canvas.setPointerCapture(e.pointerId); setMean(e); });
-  canvas.addEventListener('pointermove', (e) => dragging && setMean(e));
+  canvas.addEventListener('pointerdown', (e) => { dragging = true; canvas.setPointerCapture(e.pointerId); dragTo(e); });
+  canvas.addEventListener('pointermove', (e) => dragging && dragTo(e));
   const stop = () => (dragging = false);
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
-
-  document.getElementById('pshape')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#pshape button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.shape = btn.dataset.s!;
-    draw();
-  });
-  const mEl = document.getElementById('m') as HTMLInputElement;
-  mEl.addEventListener('input', () => {
-    state.mean = +mEl.value / 10;
-    (document.getElementById('mval') as HTMLElement).textContent = state.mean.toFixed(1);
-    draw();
-  });
-  const sEl = document.getElementById('s') as HTMLInputElement;
-  sEl.addEventListener('input', () => {
-    state.spread = +sEl.value / 10;
-    (document.getElementById('sval') as HTMLElement).textContent = state.spread.toFixed(1);
-    draw();
-  });
 
   draw();
 </script>
 
 <style>
-  .ws-canvas {
+  #ws {
     cursor: ew-resize;
     touch-action: none;
   }

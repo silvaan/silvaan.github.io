@@ -1,53 +1,36 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Green's Theorem"
-  description="Take any wobbly loop, chop the region inside it into little squares, and give each square its own tiny walk around its rim. Neighbours share every inner edge and walk it in opposite directions, so all of it cancels. What survives is one walk around the outside, and it equals all the spin inside."
+  description="Chop the region inside a loop into little squares and give each one its own walk around its rim. Neighbours share every inner edge and walk it in opposite directions, so all of it cancels: what survives is one walk around the outside, and it equals all the spin inside."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="green" class="gt-canvas" width="900" height="546"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="green" class="gt-canvas" width="900" height="546" role="img" aria-label="A wobbly region chopped into squares, each tinted by the sign of its curl, with the picked square opened up on the right showing the field along each of its four edges."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'spins anticlockwise', color: '#34d399' }, { label: 'spins clockwise', color: '#ff7a5c' }, { label: 'the square you picked', color: '#f59e0b' }]}
+        hint="Click any square to open it up on the right"
+      />
+      <Result label="Square you picked" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>Field</label>
-        <div class="seg" id="field">
-          <button data-f="rot" class="active">Rotation</button>
-          <button data-f="source">Source</button>
-          <button data-f="eddy">Eddy</button>
-          <button data-f="two">Two-sided</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Squares <b id="nval">—</b></label>
-        <input type="range" id="mesh" min="6" max="28" step="2" value="14" />
-        <div class="scale-hint"><span>a few big ones</span><span>hundreds of tiny ones</span></div>
-      </div>
-
-      <label class="check"
-        ><input type="checkbox" id="cancel" /> Cancel the shared edges</label
-      >
-      <label class="check"
-        ><input type="checkbox" id="showfield" checked /> Show the field</label
-      >
-
-      <div class="readout">
-        <div class="row"><span>Walk around the loop</span><b id="rim">—</b></div>
-        <div class="row"><span>Spin added over the squares</span><b id="sum">—</b></div>
-        <div class="row"><span>Square you picked</span><b id="pcirc">—</b></div>
-        <div class="row"><span>…its curl</span><b id="pcurl">—</b></div>
-        <div class="row"><span>Gap between the two</span><b id="gap">—</b></div>
-      </div>
-
-      <p class="note">
-        Click any square to open it up on the right. Both numbers are measured
-        from the field by brute force, never assumed equal.
-      </p>
+      <Seg id="field" label="Field" attr="f" active="eddy" options={[{ value: 'eddy', label: 'Eddy' }, { value: 'rot', label: 'Rotation' }, { value: 'source', label: 'Source' }, { value: 'two', label: 'Two-sided' }]} />
+      <Slider id="mesh" label="Squares" min={6} max={28} step={2} value={14} hint={['a few big ones', 'hundreds of tiny ones']} />
+      <Checks items={[{ id: 'cancel', label: 'Cancel the shared edges' }, { id: 'showfield', label: 'Show the field', checked: true }]} />
+      <Readout rows={[{ id: 'rim', label: 'walk around the loop' }, { id: 'sum', label: 'spin added over the squares' }, { id: 'gap', label: 'gap between the two' }]} />
     </div>
   </div>
 
@@ -89,7 +72,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+  import { stageInk } from '../../../lib/draw';
   import {
     HUE,
     V2,
@@ -111,7 +96,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   type Field = 'rot' | 'source' | 'eddy' | 'two';
 
   const state = {
-    field: 'rot' as Field,
+    field: 'eddy' as Field,
     mesh: 14,
     cancel: false,
     showField: true,
@@ -180,12 +165,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const gap = () => Math.abs(tileSum - rimCirc) / Math.max(absSum, 1e-9);
 
   // --- canvas ---------------------------------------------------------------
-  const setEq = equationBar();
-  const canvas = document.getElementById('green') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('green') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (n: string, f = '') =>
-    getComputedStyle(canvas).getPropertyValue(n).trim() || f;
-  const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
+  const { css, ink } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const accent = () => css('--accent', '#7c8cff');
   const fmt = (v: number) => (Math.abs(v) < 5e-5 ? '0.0000' : v.toFixed(4));
@@ -300,14 +285,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.restore();
 
     drawCard();
-    label(
-      'click any square · teal spins anticlockwise, orange clockwise',
-      24,
-      520,
-      0.4,
-      'left',
-      11
-    );
     sync();
   }
 
@@ -335,7 +312,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       return;
     }
 
-    label('ONE SQUARE, OPENED UP', CARD.x + 16, CARD.y + 24, 0.45, 'left', 11);
+    label('one square, opened up', CARD.x + 16, CARD.y + 24, 0.45, 'left', 11);
 
     let x0 = Infinity,
       x1 = -Infinity,
@@ -418,33 +395,25 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   function sync() {
     const sel = selected();
-    setEq([
-      [
-        ['\\oint_{\\partial R}\\mathbf{F}\\cdot d\\mathbf{r}', accent()],
-        '=',
-        [
-          '\\iint_R\\Big(\\frac{\\partial Q}{\\partial x}-\\frac{\\partial P}{\\partial y}\\Big)dA',
-          HUE.with,
-        ],
-      ],
-      [
-        [`\\text{round the loop }${fmt(rimCirc)}`, accent()],
-        '\\approx',
-        [`\\text{${tiles.length} squares }${fmt(tileSum)}`, HUE.with],
-        `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`,
-      ],
-      [
-        'the walk is measured on the true loop, not on the grid · every shared edge is walked twice in opposite directions and cancels, so only the rim survives',
-      ],
-    ]);
-    const set = (id: string, v: string) =>
-      ((document.getElementById(id) as HTMLElement).textContent = v);
-    set('rim', fmt(rimCirc));
-    set('sum', fmt(tileSum));
-    set('pcirc', sel ? `${sel.circ >= 0 ? '+' : ''}${fmt(sel.circ)}` : '—');
-    set('pcurl', sel ? sel.curl.toFixed(3) : '—');
-    set('nval', String(tiles.length));
-    set('gap', `${(100 * gap()).toFixed(2)}%`);
+    setEq({
+      rule: [['\\oint_{\\partial R}\\mathbf{F}\\cdot d\\mathbf{r}', accent()], '=', ['\\iint_R\\Big(\\frac{\\partial Q}{\\partial x}-\\frac{\\partial P}{\\partial y}\\Big)dA', HUE.with]],
+      live: [[`${fmt(rimCirc)}\\text{ round the loop}`, accent()], '\\approx', [`${fmt(tileSum)}\\text{ over ${tiles.length} squares}`, HUE.with], `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`],
+    });
+    setRows({ rim: fmt(rimCirc), sum: fmt(tileSum), gap: `${(100 * gap()).toFixed(2)}%` });
+    el('meshval').textContent = `${tiles.length} squares`;
+    const uniform = state.field === 'rot' || state.field === 'source';
+    setResult({
+      value: sel ? `${sel.circ >= 0 ? '+' : ''}${fmt(sel.circ)}` : '—',
+      colour: sel ? (sel.circ >= 0 ? HUE.with : HUE.against) : undefined,
+      status: sel
+        ? `its circulation · curl ${sel.curl.toFixed(3)} · centred at (${sel.c.x.toFixed(2)}, ${sel.c.y.toFixed(2)})${sel.full ? '' : ' · cut by the rim'}`
+        : 'click any square to open it up',
+      note: uniform
+        ? state.field === 'rot'
+          ? 'This field spins the same everywhere, so every full square reports the same curl; only the squares cut by the rim differ. Pick Eddy to see it vary.'
+          : 'A pure source has no spin at all: every square reports zero, and so does the walk round the loop.'
+        : 'The walk is measured on the true loop, not on the grid. Every shared edge is walked twice in opposite directions and cancels, so only the rim survives.',
+    });
   }
 
   // --- cancelling animation -------------------------------------------------
@@ -481,30 +450,23 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     draw();
   });
 
-  const $ = (id: string) => document.getElementById(id) as HTMLElement;
-  $('field').addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button');
-    if (!b) return;
-    $('field')
-      .querySelectorAll('button')
-      .forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-    state.field = b.dataset.f as Field;
+  segmented('field', (f) => {
+    state.field = f as Field;
     build();
     draw();
   });
-  $('mesh').addEventListener('input', (e) => {
-    state.mesh = +(e.target as HTMLInputElement).value;
+  slider('mesh', (v) => {
+    state.mesh = v;
     state.sel = -1;
     build();
     draw();
-  });
-  ($('cancel') as HTMLInputElement).addEventListener('change', (e) => {
-    state.cancel = (e.target as HTMLInputElement).checked;
+  }, (v) => `${v} × ${v} grid`);
+  check('cancel', (on) => {
+    state.cancel = on;
     kick();
   });
-  ($('showfield') as HTMLInputElement).addEventListener('change', (e) => {
-    state.showField = (e.target as HTMLInputElement).checked;
+  check('showfield', (on) => {
+    state.showField = on;
     draw();
   });
 
@@ -517,25 +479,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .gt-canvas {
     cursor: pointer;
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 4px;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .note {
-    font-size: 0.82rem;
-    color: var(--text-faint);
-    margin: 0;
-    line-height: 1.55;
   }
 </style>

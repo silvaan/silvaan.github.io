@@ -149,9 +149,10 @@ export function subHtml(text: string) {
 // Called once per sim page from SimLayout.
 // ---------------------------------------------------------------------------
 
+/** Fullscreen takes the whole experiment, control panel included. */
 function toggleFullscreen(stage: Element) {
   if (document.fullscreenElement) document.exitFullscreen();
-  else (stage as HTMLElement).requestFullscreen?.();
+  else ((stage.closest('.sim') ?? stage) as HTMLElement).requestFullscreen?.();
 }
 
 function clickIfPresent(id: string): boolean {
@@ -304,7 +305,26 @@ function buildToolbar(stage: Element) {
   bar.innerHTML =
     `<button type="button" data-share aria-label="Copy shareable link" title="Copy link to this setup">${SHARE_ICON}<span class="share-label">Link</span></button>` +
     `<button type="button" data-fullscreen aria-label="Toggle fullscreen" title="Fullscreen (f)">${FULLSCREEN_ICON}</button>`;
-  stage.appendChild(bar);
+
+  // The standard format puts the tools in a header row above the canvas, with
+  // the equation on the left; the older format floats them over the corner.
+  const standard = (stage.closest('[data-sim-format]') as HTMLElement | null)?.dataset.simFormat === 'standard';
+  if (!standard) {
+    stage.appendChild(bar);
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'stage-head';
+  const eq = document.createElement('div');
+  eq.className = 'stage-eq';
+  head.append(eq, bar);
+  stage.insertBefore(head, stage.firstChild);
+  // mirror the toolbar's width on the left so the equation sits on the centre
+  const mirror = () => head.style.setProperty('--tools-w', `${bar.getBoundingClientRect().width}px`);
+  mirror();
+  new ResizeObserver(mirror).observe(bar);
+  // an equation bar that mounted before the header existed moves into it
+  stage.querySelectorAll(':scope > .sim-eq').forEach((b) => eq.appendChild(b));
 }
 
 /** Wire up fullscreen button, keyboard shortcuts and link sharing. */
@@ -313,6 +333,13 @@ export function initStageChrome() {
   if (!stage) return;
 
   buildToolbar(stage);
+
+  // Every canvas is a picture; name it after the page unless the sim already did.
+  const title = document.querySelector('h1')?.textContent?.trim();
+  (stage.closest('.sim') ?? stage).querySelectorAll('canvas:not([aria-label])').forEach((c) => {
+    c.setAttribute('role', 'img');
+    if (title) c.setAttribute('aria-label', `${title} simulation`);
+  });
 
   const fsBtn = stage.querySelector('[data-fullscreen]') as HTMLButtonElement | null;
   fsBtn?.addEventListener('click', () => toggleFullscreen(stage));

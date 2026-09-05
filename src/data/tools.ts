@@ -49,27 +49,11 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'sum-rule',
-        title: 'The Sum Rule',
+        slug: 'derivative-rules',
+        title: 'Derivative Rules',
         description:
-          'Add two functions and their graphs stack. Stack the heights and you stack the growths, so the slopes simply add, with no leftover term anywhere.',
-        href: '/simulations/calculus/sum-rule',
-        status: 'live',
-      },
-      {
-        slug: 'product-rule',
-        title: 'The Product Rule',
-        description:
-          'A product is the area of a rectangle. Growing it adds two strips and one small corner, and only the corner is small enough to vanish in the limit.',
-        href: '/simulations/calculus/product-rule',
-        status: 'live',
-      },
-      {
-        slug: 'chain-rule',
-        title: 'The Chain Rule',
-        description:
-          'Each stage stretches a small step by its own factor, so stretching twice multiplies the factors. Watch why f′ has to be read at g(x) and nowhere else.',
-        href: '/simulations/calculus/chain-rule',
+          'Sum, product and chain in one place. Stacked graphs make the slopes add, a growing rectangle leaves two strips and a doomed corner, and a step stretched twice multiplies the factors.',
+        href: '/simulations/calculus/derivative-rules',
         status: 'live',
       },
       {
@@ -218,7 +202,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'dot-product',
-        title: 'The Dot Product',
+        title: 'Dot Product',
         description:
           'One length times the shadow the other casts on it, with the component formula falling straight out of that one picture.',
         href: '/simulations/linear-algebra/dot-product',
@@ -226,7 +210,7 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'cross-product',
-        title: 'The Cross Product',
+        title: 'Cross Product',
         description:
           'Two vectors span a patch of area. Its size is the length of the answer, its tilt is the direction, and each component is a shadow of that patch.',
         href: '/simulations/linear-algebra/cross-product',

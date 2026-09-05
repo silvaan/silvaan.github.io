@@ -1,22 +1,26 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="electronics"
   title="Diodes & Transistors"
-  description="Pick a device, turn the supply up and watch the two kinds of charge that run every chip: electrons and the holes they leave behind. A diode is a one-way valve, a transistor is a valve with a knob, and both are just doped silicon with a barrier you can raise and lower."
+  description="Pick a device, turn the supply up and watch the two kinds of charge that run every chip: electrons and the holes they leave behind. A diode is a one-way valve, a transistor is a valve with a knob, and both are doped silicon with a barrier you can raise and lower."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="sc" class="sc-canvas" width="1000" height="880"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="sc" class="sc-canvas" width="1000" height="880" role="img" aria-label="A doped-silicon device with electrons and holes moving through it, the depletion region and barrier, and the current-voltage curve with the operating point marked."></canvas>
+      </div>
+      <Caption legend={[{ label: 'electrons', color: '#60a5fa' }, { label: 'holes', color: '#f87171' }]} hint="The pale circled charges are dopant ions bolted into the crystal: they never move, they only set up the built-in field" />
+      <Result label="Current" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
+      <Transport running />
 
       <div class="control">
         <label>Device</label>
@@ -119,11 +123,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span id="l7">Power in the device</span><b id="r7">—</b></div>
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Blue dots are electrons, red dots are holes. The pale circled charges are
-        dopant atoms bolted into the crystal: they never move, they only set up
-        the built-in field.
-      </p>
     </div>
   </div>
 
@@ -205,6 +204,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { transport, result } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // Devices are simulated at two levels at once: a compact-model DC solve that
@@ -1904,13 +1904,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.fill();
       x -= tw + 30;
     }
-    label(deviceTitle(), 20, 30, 0.85, 'left', 14);
-    label(op.region, 20, 52, 0.5, 'left', 11, GREEN);
+    label(op.region, 20, 34, 0.5, 'left', 11, GREEN);
   }
 
   // --- readouts --------------------------------------------------------------
 
   const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setResult = result();
   const setRow = (n: number, lab: string, val: string) => {
     el('l' + n).innerHTML = subHtml(lab);
     el('r' + n).textContent = val;
@@ -1941,6 +1941,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       setRow(5, 'Gate current', '0.00 A');
       setRow(6, 'Transconductance g_m', (gm * 1000).toFixed(2) + ' mA/V');
     }
+    setResult({
+      value: fmtI(s * op.i),
+      status: `${op.region} · ${isDiode() ? 'across the diode' : isBJT() ? 'V_CE' : 'V_DS'} ${(s * op.v1).toFixed(3)} V · ${fmtP(Math.abs(op.i * op.v1))} dissipated`,
+      note: isDiode()
+        ? 'Forward bias lowers the barrier and carriers pour across; reverse bias raises it and only a trickle leaks, which is what makes a diode a one-way valve.'
+        : isBJT()
+          ? 'A small base current lets a much larger collector current through: most carriers injected into the base are swept across before they can recombine.'
+          : 'The gate voltage sets how many carriers sit in the channel; the gate itself passes no current at all.',
+    });
   }
 
   // --- loop ------------------------------------------------------------------
@@ -1971,13 +1980,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-  el('reset').addEventListener('click', () => {
-    buildCarriers();
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: () => buildCarriers(),
   });
 
   function bindRange(id: string, apply: (v: number) => void) {
@@ -2092,23 +2097,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <style>
   .sc-canvas {
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .check input {
-    accent-color: var(--accent);
   }
   .select {
     width: 100%;

@@ -1,47 +1,36 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Fourier Series"
-  description="Any periodic wave is a sum of pure sines. Stack them as rotating circles (epicycles) and the tip traces out a square, sawtooth or triangle wave as you add harmonics."
+  description="Any periodic wave is a sum of pure sines. Stack them as turning wheels and the tip traces a square, sawtooth or triangle wave as you add harmonics."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="fourier" width="900" height="460"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="fourier" width="900" height="460" role="img" aria-label="A chain of turning circles, one per harmonic, whose final tip draws the target wave on the right."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the wheels, one per harmonic', color: '#7c8cff' }, { label: 'the wave their tip draws', color: '#5eead4' }]}
+        hint="Each wheel's radius is that sine's amplitude, and it spins k times as fast as the first"
+      />
+      <Result label="Harmonics" />
     </div>
-
     <div class="sim-panel">
-      <div class="control">
-        <label>Target wave</label>
-        <div class="seg" id="wave">
-          <button data-w="square" class="active">Square</button>
-          <button data-w="saw">Sawtooth</button>
-          <button data-w="triangle">Triangle</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Harmonics <b id="nval">4</b></label>
-        <input type="range" id="n" min="1" max="40" value="4" />
-      </div>
-
-      <div class="control">
-        <label>Speed <b id="spval">1.0</b></label>
-        <input type="range" id="sp" min="0" max="30" value="10" />
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Each circle is one harmonic: its radius is that sine's amplitude and it
-        spins at an integer multiple of the base frequency. The stacked tip draws
-        the wave on the right.
-      </p>
+      <Seg id="wave" label="Target wave" attr="w" options={[{ value: 'square', label: 'Square' }, { value: 'saw', label: 'Sawtooth' }, { value: 'triangle', label: 'Triangle' }]} />
+      <Transport running />
+      <Slider id="n" label="Harmonics" min={1} max={40} value={4} />
+      <Slider id="sp" label="Speed" min={0} max={30} value={10} display="1.0" />
     </div>
   </div>
 
@@ -64,7 +53,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
 
   type Harm = { k: number; amp: number };
   function harmonics(wave: string, N: number): Harm[] {
@@ -91,8 +81,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   let t = 0;
   let history: number[] = [];
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('fourier') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const canvas = el('fourier') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas);
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
@@ -115,21 +106,18 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     const SCALE = 108 / firstAmp();
     const hs = harmonics(state.wave, state.n);
-    setEq([
-      [
-        ['f(t)', teal],
-        '=',
-        ['\\sum_k a_k\\sin(k\\,t)', accent],
-        '\\quad\\text{one turning wheel per }k',
-      ],
-      [
-        `\\text{${state.wave} wave, ${state.n} wheel${state.n > 1 ? 's' : ''}: }k=` +
-          hs.map((h) => h.k).join(','),
-      ],
-      [
-        'each wheel is one pure sine; the tip of the last one draws the wave on the right',
-      ],
-    ]);
+    setEq({
+      rule: [['f(t)', teal], '=', ['\\sum_k a_k\\sin(k\\,t)', accent], '\\quad\\text{one turning wheel per }k'],
+      live: [[`k = ${hs.slice(0, 8).map((h) => h.k).join(',\\,')}${hs.length > 8 ? ',\\,\\dots' : ''}`, accent], `\\quad a_k \\propto ${state.wave === 'triangle' ? '1/k^2' : '1/k'}`],
+    });
+    setResult({
+      value: String(state.n),
+      colour: accent,
+      status: `${state.wave} wave · ${state.n} wheel${state.n > 1 ? 's' : ''}, the largest turning once per cycle and the smallest ${hs[hs.length - 1].k} times`,
+      note: state.n < 4
+        ? 'With only a few sines the corners are soft and the flat parts wobble. Add harmonics and watch the wave sharpen.'
+        : 'Every wheel is one pure sine. The overshoot next to a jump never fully goes away however many you add: that is the Gibbs phenomenon.',
+    });
 
     // baseline
     ctx.strokeStyle = grid;
@@ -202,36 +190,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     requestAnimationFrame(frame);
   }
 
-  document.getElementById('wave')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#wave button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.wave = btn.dataset.w!;
+  segmented('wave', (w) => {
+    state.wave = w;
     history = [];
     t = 0;
   });
-
-  const nEl = document.getElementById('n') as HTMLInputElement;
-  nEl.addEventListener('input', () => {
-    state.n = +nEl.value;
-    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
-  });
-
-  const spEl = document.getElementById('sp') as HTMLInputElement;
-  spEl.addEventListener('input', () => {
-    state.speed = +spEl.value / 10;
-    (document.getElementById('spval') as HTMLElement).textContent = state.speed.toFixed(1);
-  });
-
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-  document.getElementById('reset')!.addEventListener('click', () => {
-    history = [];
-    t = 0;
+  slider('n', (v) => (state.n = v));
+  slider('sp', (v) => (state.speed = v / 10), (v) => (v / 10).toFixed(1));
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: () => {
+      history = [];
+      t = 0;
+    },
   });
 
   requestAnimationFrame(frame);

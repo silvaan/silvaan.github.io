@@ -1,22 +1,26 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="electronics"
   title="Capacitor"
-  description="Every charge is a ball you can count. Drive the source by hand and watch electrons get dragged off one plate, all the way around the circuit, onto the other one, until the field they build pushes back exactly as hard as you are pushing."
+  description="Every charge is a ball you can count. Drive the source by hand and watch electrons get dragged off one plate, around the circuit and onto the other, until the field they build pushes back exactly as hard as you push."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="cp" class="cp-canvas" width="1000" height="880"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="cp" class="cp-canvas" width="1000" height="880" role="img" aria-label="A capacitor circuit with countable charge balls moving between the plates, field lines between them, and traces of voltage and current over time."></canvas>
+      </div>
+      <Caption hint="Each ball is a real packet of charge; the number on the plates is exactly Q divided by that packet" />
+      <Result label="Charge on the plates" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
+      <Transport running />
 
       <div class="control">
         <label>Source</label>
@@ -87,11 +91,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span id="l7">Energy stored</span><b id="r7">—</b></div>
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Each ball is a real packet of charge, and the number sitting on the
-        plates is exactly Q divided by that packet. One field line is drawn per
-        pair.
-      </p>
     </div>
   </div>
 
@@ -150,6 +149,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { transport, result } from '../../../lib/panel';
 
   const EPS0 = 8.854e-12;
 
@@ -811,6 +811,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- readouts --------------------------------------------------------------
 
   const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setResult = result();
   const setRow = (n: number, lab: string, val: string) => {
     el('l' + n).innerHTML = subHtml(lab);
     el('r' + n).textContent = val;
@@ -830,13 +831,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       setRow(6, 'Field E = V/d', eng(v / state.d, 'V/m'));
     }
     setRow(7, 'Energy ½CV²', eng(0.5 * cap() * v * v, 'J'));
+    setResult({
+      value: eng(q, 'C'),
+      status: `V_C = ${v.toFixed(3)} V · I = ${eng(current(), 'A')} · C = ${eng(cap(), 'F')} · energy ${eng(0.5 * cap() * v * v, 'J')}`,
+      note: state.src === 'manual'
+        ? 'Push the source up and down: current only flows while the voltage is changing, because that is the only time charge has anywhere new to go.'
+        : state.src === 'ac'
+          ? 'Driven by a sine, the current leads the voltage by a quarter cycle: the plates fill fastest when the voltage is passing through zero.'
+          : 'Charging follows an exponential with time constant τ = RC: the closer the plates get to the battery voltage, the less push is left to move more charge.',
+    });
   }
 
   // --- loop ------------------------------------------------------------------
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label('Capacitor', 20, 30, 0.85, 'left', 14);
     label(
       state.src === 'manual'
         ? 'drive the source yourself and watch the charge follow'
@@ -844,7 +853,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           ? 'the charge sloshes back and forth, and never crosses'
           : 'a battery, a switch, and a queue of electrons',
       20,
-      52,
+      34,
       0.5,
       'left',
       11,
@@ -895,12 +904,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: reset,
   });
-  el('reset').addEventListener('click', reset);
 
   let ready = false;
   function bindRange(id: string, apply: (n: number) => void, restart = false) {
@@ -990,22 +997,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <style>
   .cp-canvas {
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .check input {
-    accent-color: var(--accent);
   }
 </style>

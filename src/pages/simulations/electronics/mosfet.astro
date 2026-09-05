@@ -1,22 +1,26 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="electronics"
   title="MOSFET & CMOS Logic"
-  description="A plate of metal over an insulator, close enough to a slab of silicon to pull a conducting layer into existence underneath it. Nothing crosses the insulator, so the control costs no current at all, and that is the whole reason a chip can hold billions of these. Wire a p-type one above an n-type one and you have an inverter that draws power only while it is changing its mind."
+  description="A metal plate over an insulator, close enough to a slab of silicon to pull a conducting channel into existence underneath. Nothing crosses the insulator, so control costs no current, and that is why a chip can hold billions of these. Stack a p-type over an n-type and you have an inverter."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="mos" width="1040" height="620"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="mos" width="1040" height="620" role="img" aria-label="A MOSFET cross-section with its channel of carriers and the drain-current curves, or a CMOS logic gate schematic with its inputs and output."></canvas>
+      </div>
+      <Caption hint="In the device view the channel appears only above threshold; in the gate view, click an input on the schematic to flip it" />
+      <Result label="Drain current" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
+      <Transport running />
 
       <div class="control">
         <label>View</label>
@@ -104,10 +108,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span id="l7">—</span><b id="r7">—</b></div>
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        In the gate view you can click the input labels on the schematic as well
-        as the boxes here. The green wire is the one actually conducting.
-      </p>
     </div>
   </div>
 
@@ -172,6 +172,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { transport, result } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // The square-law MOSFET, drawn where it happens. The gate is one plate of a
@@ -969,6 +970,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- readouts --------------------------------------------------------------
 
   const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setResult = result();
   const setRow = (n: number, lab: string, val: string) => {
     el('l' + n).innerHTML = subHtml(lab);
     el('r' + n).textContent = val;
@@ -997,13 +999,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       setRow(6, 'Supply current', state.gate === 'inv' ? eng(invIdd(vin), 'A') : 'about zero');
       setRow(7, 'Static power', state.gate === 'inv' ? eng(invIdd(vin) * state.vdd, 'W') : 'about zero');
     }
+    if (state.view === 'device') {
+      const idNow = idOf(state.vgs, state.vds);
+      el('result-label').textContent = 'Drain current';
+      setResult({
+        value: eng(idNow, 'A'),
+        status: `${regime()} · overdrive ${ov().toFixed(2)} V · ${state.type === 'n' ? 'V_GS' : 'V_SG'} = ${state.vgs.toFixed(2)} V, ${state.type === 'n' ? 'V_DS' : 'V_SD'} = ${state.vds.toFixed(2)} V`,
+        note: ov() <= 0
+          ? 'Below threshold there is no channel: the gate has not pulled enough carriers under the insulator to connect source to drain.'
+          : 'The gate draws no current at all. It only sets how many carriers sit in the channel, and the drain voltage decides how hard they are pulled along it.',
+      });
+    } else {
+      const vinR = vinNow();
+      const AR = state.gate === 'inv' ? vinR > state.vdd / 2 : state.a;
+      const outR = state.gate === 'inv' ? !AR : state.gate === 'nand' ? !(AR && state.b) : !(AR || state.b);
+      const voutR = state.gate === 'inv' ? invOut(vinR) : outR ? state.vdd : 0;
+      el('result-label').textContent = 'Output';
+      setResult({
+        value: outR ? '1' : '0',
+        status: `${state.gate === 'inv' ? 'NOT' : state.gate.toUpperCase()} · A = ${AR ? 1 : 0}${state.gate === 'inv' ? '' : `, B = ${state.b ? 1 : 0}`} · output ${voutR.toFixed(2)} V · supply current ${state.gate === 'inv' ? eng(invIdd(vinR), 'A') : 'about zero'}`,
+        note: 'One transistor of the pair is always off, so the gate draws power only while it is changing its mind: that is why CMOS runs cool.',
+      });
+    }
   }
 
   // --- frame -----------------------------------------------------------------
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label(state.view === 'device' ? 'MOSFET' : 'CMOS logic', 20, 30, 0.85, 'left', 14);
     if (state.view === 'device') {
       drawCross();
       if (state.curve === 'xfer') drawTransfer();
@@ -1027,13 +1050,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-  el('reset').addEventListener('click', () => {
-    seedCarriers();
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: () => seedCarriers(),
   });
 
   function bindRange(id: string, apply: (n: number) => void) {
@@ -1157,27 +1176,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <style>
   #mos {
     touch-action: none;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.86rem;
-    color: var(--text-muted);
-    cursor: pointer;
-    margin-bottom: 6px;
-  }
-  .check input {
-    accent-color: var(--accent);
-    width: 15px;
-    height: 15px;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
   }
   .dev-only,
   .gate-only {

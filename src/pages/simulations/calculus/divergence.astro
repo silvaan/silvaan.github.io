@@ -1,58 +1,38 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Divergence"
-  description="Divergence measures the net flow out of an infinitesimal region. Drop a tiny material patch into the flow: positive divergence makes it swell, negative divergence squeezes it, and zero divergence keeps its area fixed even as the flow stretches and shears it."
+  description="Divergence is the net flow out of a tiny region. Drop a small material patch into the flow: positive divergence makes it swell, negative squeezes it, and zero keeps its area fixed even while the flow stretches and shears it."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="div" width="900" height="520"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="div" width="900" height="520" role="img" aria-label="A vector field with a draggable probe ring and a small material patch carried along by the flow, swelling or shrinking with the divergence."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the patch swells', color: '#34d399' }, { label: 'the patch is squeezed', color: '#f59e0b' }]}
+        hint="Drag the ring to move the probe"
+      />
+      <Result label="Divergence at the probe" />
     </div>
-
     <div class="sim-panel">
-      <div class="control">
-        <label>Vector field</label>
-        <div class="seg" id="field">
-          <button data-f="source" class="active">Source</button>
-          <button data-f="sink">Sink</button>
-          <button data-f="saddle">Saddle</button>
-          <button data-f="wave">Variable</button>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset patch</button>
-      </div>
-
-      <div class="control">
-        <label>Strength <b id="strength-val">1.00</b></label>
-        <input id="strength" type="range" min="-150" max="150" value="100" />
-      </div>
-      <div class="control">
-        <label>Flow speed <b id="speed-val">1.0×</b></label>
-        <input id="speed" type="range" min="0" max="200" value="100" />
-      </div>
-      <div class="control">
-        <label>Patch radius ε <b id="radius-val">0.18</b></label>
-        <input id="radius" type="range" min="8" max="35" value="18" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>∇ · F at probe</span><b id="value">+2.00</b></div>
-        <div class="row"><span>Flux ÷ area</span><b id="flux">+2.00</b></div>
-        <div class="row"><span>Patch area</span><b id="area">1.00×</b></div>
-        <div class="row"><span>Local behavior</span><b id="behavior">expanding</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag the ring to move the probe. The teal blob is a small material patch
-        carried along by the flow, not a bundle of field arrows. Its area change
-        is the divergence.
-      </p>
+      <Seg id="field" label="Vector field" attr="f" options={[{ value: 'source', label: 'Source' }, { value: 'sink', label: 'Sink' }, { value: 'saddle', label: 'Saddle' }, { value: 'wave', label: 'Variable' }]} />
+      <Transport running />
+      <Slider id="strength" label="Strength" min={-150} max={150} value={100} display="1.00" />
+      <Slider id="speed" label="Flow speed" min={0} max={200} value={100} display="1.0×" />
+      <Slider id="radius" label="Patch radius ε" min={8} max={35} value={18} display="0.18" />
+      <Readout rows={[{ id: 'flux', label: 'flux ÷ area' }, { id: 'area', label: 'patch area now' }]} />
     </div>
   </div>
 
@@ -78,10 +58,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('div') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('div') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
@@ -252,25 +235,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       poly += p.x * q.y - q.x * p.y;
     }
     const factor = Math.abs(poly / 2) / (Math.PI * baseR * baseR);
-    (document.getElementById('value') as HTMLElement).textContent = (d >= 0 ? '+' : '') + d.toFixed(2);
-    (document.getElementById('flux') as HTMLElement).textContent = (fe >= 0 ? '+' : '') + fe.toFixed(2);
-    (document.getElementById('area') as HTMLElement).textContent = factor.toFixed(2) + '×';
     const SIGN = Math.abs(d) < 0.03 ? faint : d > 0 ? teal : '#f59e0b';
-    setEq([
-      [
-        ['\\nabla\\cdot\\mathbf{F}', SIGN],
-        '=\\frac{\\partial P}{\\partial x}+\\frac{\\partial Q}{\\partial y}=',
-        ['\\lim\\limits_{A\\to 0}\\frac{\\text{flux out}}{A}', SIGN],
-      ],
-      [
-        [`\\nabla\\cdot\\mathbf{F} = ${(d >= 0 ? '+' : '') + d.toFixed(2)}`, SIGN],
-        `\\quad\\text{the patch is now }${factor.toFixed(2)}\\times\\text{ its area}`,
-      ],
-      ['teal is where a patch swells, amber where it is squeezed'],
-    ]);
-    const b = document.getElementById('behavior') as HTMLElement;
-    b.textContent = Math.abs(d) < 0.03 ? 'area preserving' : d > 0 ? 'expanding' : 'contracting';
-    b.style.color = Math.abs(d) < 0.03 ? faint : d > 0 ? teal : '#f59e0b';
+    const sign = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(2);
+    setRows({ flux: sign(fe), area: `${factor.toFixed(2)}×` });
+    setEq({
+      rule: [['\\nabla\\cdot\\mathbf{F}', SIGN], '=\\frac{\\partial P}{\\partial x}+\\frac{\\partial Q}{\\partial y}=', ['\\lim\\limits_{A\\to 0}\\frac{\\text{flux out}}{A}', SIGN]],
+      live: [[`\\nabla\\cdot\\mathbf{F} = ${sign(d)}`, SIGN], `\\quad\\text{flux}/A = ${sign(fe)}`, `\\quad\\text{area now }${factor.toFixed(2)}\\times`],
+    });
+    const flat = Math.abs(d) < 0.03;
+    setResult({
+      value: sign(d),
+      colour: flat ? undefined : d > 0 ? teal : '#f59e0b',
+      status: flat ? 'area preserving: the patch is stretched and sheared but keeps its size' : `the patch is ${d > 0 ? 'expanding' : 'contracting'} · at (${state.px.toFixed(2)}, ${state.py.toFixed(2)})`,
+      note: 'The blob is a small material patch carried along by the flow, not a bundle of field arrows. Its change of area is the divergence.',
+    });
   }
 
   function loop(t: number) {
@@ -296,31 +274,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   canvas.addEventListener('pointerup', () => (drag = false));
   canvas.addEventListener('pointercancel', () => (drag = false));
 
-  document.getElementById('field')!.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button');
-    if (!b) return;
-    document.querySelectorAll('#field button').forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-    state.field = b.dataset.f!;
+  segmented('field', (f) => {
+    state.field = f;
     state.time = 0;
   });
-  document.getElementById('strength')!.addEventListener('input', (e) => {
-    state.strength = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('strength-val') as HTMLElement).textContent = state.strength.toFixed(2);
-    state.time = 0;
+  slider('strength', (v) => { state.strength = v / 100; state.time = 0; }, (v) => (v / 100).toFixed(2));
+  slider('speed', (v) => (state.speed = v / 100), (v) => `${(v / 100).toFixed(1)}×`);
+  slider('radius', (v) => { state.radius = v / 100; state.time = 0; }, (v) => (v / 100).toFixed(2));
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: () => { state.time = 0; state.px = 0; state.py = 0; },
   });
-  document.getElementById('speed')!.addEventListener('input', (e) => {
-    state.speed = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('speed-val') as HTMLElement).textContent = state.speed.toFixed(1) + '×';
-  });
-  document.getElementById('radius')!.addEventListener('input', (e) => {
-    state.radius = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('radius-val') as HTMLElement).textContent = state.radius.toFixed(2);
-    state.time = 0;
-  });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => { state.running = !state.running; runBtn.textContent = state.running ? 'Pause' : 'Run'; });
-  document.getElementById('reset')!.addEventListener('click', () => { state.time = 0; state.px = 0; state.py = 0; });
 
   requestAnimationFrame(loop);
 </script>

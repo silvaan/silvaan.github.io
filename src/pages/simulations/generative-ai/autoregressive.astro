@@ -1,70 +1,66 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="generative-ai"
   title="Autoregressive Models"
-  description="One loop, repeated forever: give every word in the vocabulary a probability, cut the unlikely tail, pick one, append it. The vocabulary here is 40 words instead of 100,000, so you can watch temperature, top-k and top-p act on all of it at once."
+  description="Give every word a probability, cut the unlikely tail, pick one, append it, repeat. A 40-word vocabulary, so you can watch temperature, top-k and top-p act on all of it."
 >
   <div class="sim" id="wrap">
-    <div class="sim-stage">
-      <canvas id="ar" width="1000" height="936"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ar"
+          width="1000"
+          height="780"
+          role="img"
+          aria-label="The text generated so far, the probability of every word for the next position with the cut-off drawn in, the strip the random number lands on, and the whole vocabulary as bars."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'kept by the cut, sampled from', color: '#7c8cff' },
+          { label: 'the word that was written', color: '#34d399' },
+          { label: 'the random number', color: '#fbbf24' },
+          { label: 'the tail that was cut', color: '#f9736a' },
+        ]}
+        hint="Every word gets a probability at every step, never zero"
+      />
+      <Result label="Kept by the cut" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Run</button>
-        <button class="btn ghost" id="step">Next word</button>
-        <button class="btn ghost" id="reset">Restart</button>
+      <Transport step />
+      <Seg id="mode" label="Decoding" attr="m" options={[{ value: 'sample', label: 'Sampling' }, { value: 'greedy', label: 'Greedy' }]} />
+      <div class="tunes">
+        <Slider id="t" label="Temperature" min={5} max={200} value={80} display="0.80" />
       </div>
-
-      <div class="control">
-        <div class="seg" id="mode">
-          <button data-m="sample" class="active">Sampling</button>
-          <button data-m="greedy">Greedy</button>
-        </div>
+      <div class="tunes">
+        <Slider id="k" label="Top-k" min={1} max={40} value={40} display="off" />
       </div>
-
-      <div class="control tunes">
-        <label>Temperature <b id="tval">0.80</b></label>
-        <input type="range" id="t" min="5" max="200" value="80" />
+      <div class="tunes">
+        <Slider id="p" label="Top-p" min={5} max={100} value={100} display="off" />
       </div>
-
-      <div class="control tunes">
-        <label>Top-k <b id="kval">off</b></label>
-        <input type="range" id="k" min="1" max="40" value="40" />
-      </div>
-
-      <div class="control tunes">
-        <label>Top-p <b id="pval">off</b></label>
-        <input type="range" id="p" min="5" max="100" value="100" />
-      </div>
-
-      <div class="control">
-        <label>Context length (words) <b id="nval">2</b></label>
-        <input type="range" id="n" min="1" max="3" value="2" />
-      </div>
-
-      <div class="control">
-        <label>Speed <b id="spval">3</b></label>
-        <input type="range" id="sp" min="1" max="16" value="3" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Vocabulary</span><b id="vocab">—</b></div>
-        <div class="row"><span>Seen after this context</span><b id="seen">—</b></div>
-        <div class="row"><span>Kept by the cut</span><b id="kept">—</b></div>
-        <div class="row"><span>Mass kept</span><b id="mass">—</b></div>
-        <div class="row"><span>Last pick</span><b id="pick">—</b></div>
-        <div class="row"><span>Surprise of that pick</span><b id="bits">—</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Every word of the vocabulary gets a probability at every step, never
-        zero, exactly as in a real model. Top-k and top-p decide how much of
-        that tail is allowed to win.
-      </p>
+      <Slider id="n" label="Context length, words" min={1} max={3} value={2} />
+      <Slider id="sp" label="Speed" min={1} max={16} value={3} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'vocab', label: 'vocabulary' },
+          { id: 'seen', label: 'seen after this context' },
+          { id: 'kept', label: 'kept by the cut' },
+          { id: 'mass', label: 'mass kept' },
+          { id: 'pick', label: 'last pick' },
+          { id: 'bits', label: 'surprise of that pick' },
+        ]}
+      />
     </div>
   </div>
 
@@ -118,7 +114,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // The next-token loop, one panel per stage: the text so far, a probability for
@@ -369,18 +366,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.closePath();
   }
   function panel(b: Box, title: string) {
-    ctx.strokeStyle = inkA(0.1);
-    ctx.lineWidth = 1;
-    rr(b.x, b.y, b.w, b.h, 10);
-    ctx.stroke();
-    text(title, b.x + 2, b.y - 9, 11, inkA(0.5), 'left', true);
+    text(title, b.x + 2, b.y - 9, 11, inkA(0.45), 'left', true);
   }
 
-  const TEXTP: Box = { x: 20, y: 32, w: 960, h: 148 };
-  const DIST: Box = { x: 20, y: 214, w: 604, h: 326 };
-  const SIDE: Box = { x: 644, y: 214, w: 336, h: 326 };
-  const DARTP: Box = { x: 20, y: 574, w: 960, h: 96 };
-  const VOC: Box = { x: 20, y: 704, w: 960, h: 212 };
+  const TEXTP: Box = { x: 20, y: 28, w: 960, h: 118 };
+  const DIST: Box = { x: 20, y: 178, w: 960, h: 290 };
+  const DARTP: Box = { x: 20, y: 500, w: 960, h: 90 };
+  const VOC: Box = { x: 20, y: 622, w: 960, h: 150 };
 
   // --- 1. the text so far ------------------------------------------------------
 
@@ -407,7 +399,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function drawText() {
-    panel(TEXTP, 'THE TEXT SO FAR, AND THE CONTEXT THE MODEL READS');
+    panel(TEXTP, 'the text so far; highlighted = the words being conditioned on');
     const x0 = TEXTP.x + 18, rowH = 25, maxW = TEXTP.w - 36;
     const maxRows = Math.floor((TEXTP.h - 50) / rowH);
     let from = 0;
@@ -439,15 +431,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.fillStyle = CHOSEN;
     ctx.fillRect(lay.endX + lay.spaceW, y0 + lastRow * rowH + 2, 2, rowH - 8);
 
-    text(
-      'highlighted = the words being conditioned on',
-      TEXTP.x + 18,
-      TEXTP.y + TEXTP.h - 13,
-      11,
-      inkA(0.4),
-      'left',
-      true
-    );
   }
 
   // --- 2. the distribution ------------------------------------------------------
@@ -461,7 +444,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function drawDist(cands: Cand[]) {
-    panel(DIST, 'A PROBABILITY FOR EVERY WORD, BEST FIRST');
+    panel(DIST, 'a probability for every word, best first · pale bar = the model’s own probability, solid = after temperature and the cut');
     text(
       `P(next word | "${contextString()}")`,
       DIST.x + 16,
@@ -477,9 +460,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const rest = cands.slice(ROWS);
     const keptN = cands.filter((c) => c.kept).length;
 
-    const lx = DIST.x + 16, labelW = 92;
+    const lx = DIST.x + 16, labelW = 110;
     const bx = lx + labelW + 12;
-    const numW = 112, cumW = 56;
+    const numW = 150, cumW = 70;
     const barMax = DIST.w - 32 - labelW - 12 - numW - cumW;
     let maxP = 0.02;
     for (const c of shownRows) maxP = Math.max(maxP, c.base, c.final);
@@ -536,77 +519,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       );
     }
 
-    text(
-      'pale bar = the model\'s own probability · solid bar = after temperature and the cut',
-      DIST.x + 16,
-      DIST.y + DIST.h - 13,
-      10,
-      inkA(0.4),
-      'left',
-      true
-    );
-  }
-
-  // --- 3. what the cut did --------------------------------------------------------
-
-  function drawSide(cands: Cand[]) {
-    panel(SIDE, 'WHAT THE CUT DID');
-    const x0 = SIDE.x + 18, maxW = SIDE.w - 36;
-
-    const keptN = cands.filter((c) => c.kept).length;
-    const keptMass = cands.reduce((s, c) => s + (c.kept ? c.q : 0), 0);
-    const headline = state.greedy
-      ? 'Greedy: the top word, always'
-      : keptN === cands.length
-        ? 'Nothing is cut'
-        : `${keptN} words survive, ${cands.length - keptN} are gone`;
-    text(headline, x0, SIDE.y + 34, 16, state.greedy ? CHOSEN : KEEP, 'left', false, 600);
-    text(
-      state.greedy
-        ? 'no dart, so the same context always gives the same word'
-        : keptN === cands.length
-          ? 'the whole vocabulary can win, tail included'
-          : 'the dart only sees what is left, renormalised',
-      x0,
-      SIDE.y + 56,
-      12,
-      inkA(0.55)
-    );
-
-    const by = SIDE.y + 96;
-    text('probability kept by the cut', x0, by - 10, 11, inkA(0.5), 'left', true);
-    ctx.fillStyle = inkA(0.12);
-    ctx.fillRect(x0, by, maxW, 22);
-    ctx.fillStyle = hexA(KEEP, 0.8);
-    ctx.fillRect(x0, by, Math.max(2, keptMass * maxW), 22);
-    text(`${(keptMass * 100).toFixed(1)}%`, x0 + 8, by + 16, 12, inkA(0.95), 'left', true);
-    if (keptMass < 0.999)
-      text(`${((1 - keptMass) * 100).toFixed(1)}% thrown away`, x0 + maxW, by + 38, 11, inkA(0.45), 'right', true);
-
-    const seen = cands.filter((c) => c.n > 0).length;
-    const rows: [string, string][] = [
-      ['words in the vocabulary', String(cands.length)],
-      ['seen after this context', String(seen)],
-      ['given a share anyway', String(cands.length - seen)],
-      ['kept by the cut', `${keptN} of ${cands.length}`],
-      [
-        'last pick',
-        shot
-          ? `${shot.word}  ${(shot.prob * 100).toFixed(1)}%  ${(-Math.log2(Math.max(1e-9, shot.base))).toFixed(1)} bits`
-          : 'nothing yet',
-      ],
-    ];
-    rows.forEach(([k, v], i) => {
-      const y = SIDE.y + 190 + i * 25;
-      text(k, x0, y, 11, inkA(0.5), 'left', true);
-      text(v, x0 + maxW, y, 12, i === 4 && shot ? CHOSEN : inkA(0.9), 'right', true);
-    });
   }
 
   // --- 4. the dart ----------------------------------------------------------------
 
   function drawDart() {
-    panel(DARTP, 'THE DART THAT PICKED THE LAST WORD');
+    panel(DARTP, 'the dart that picked the last word');
     if (!shot) {
       text(
         'press Next word (or the s key) and watch where the dart lands',
@@ -678,13 +596,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- 5. the whole vocabulary -----------------------------------------------------
 
   function drawVocab(cands: Cand[]) {
-    panel(VOC, `THE WHOLE VOCABULARY: ALL ${V} WORDS, EVERY ONE WITH A PROBABILITY`);
+    panel(VOC, `the whole vocabulary: all ${V} words, every one with a probability · filled part = its probability`);
     const byWord = new Map(cands.map((c) => [c.w, c]));
     let maxBase = 0;
     for (const c of cands) maxBase = Math.max(maxBase, c.base);
 
     const x0 = VOC.x + 16, areaW = VOC.w - 32, areaH = VOC.h - 48;
-    const cols = Math.max(1, Math.floor(areaW / 132));
+    const cols = Math.max(1, Math.floor(areaW / 118));
     const rows = Math.ceil(V / cols);
     const gap = 3;
     const cw = areaW / cols;
@@ -729,42 +647,41 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       );
     });
 
-    text(
-      'filled part = its probability · blue = kept by the cut · red = in the tail that was thrown away',
-      VOC.x + 16,
-      VOC.y + VOC.h - 12,
-      10,
-      inkA(0.4),
-      'left',
-      true
-    );
   }
 
   // --- readouts ---------------------------------------------------------------------
 
-  const el = (id: string) => document.getElementById(id) as HTMLElement;
-  const setEq = equationBar();
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
   function updateHud(cands: Cand[]) {
     const keptN = cands.filter((c) => c.kept).length;
     const keptMass = cands.reduce((s, c) => s + (c.kept ? c.q : 0), 0);
-    el('vocab').textContent = String(V);
-    el('seen').textContent = String(cands.filter((c) => c.n > 0).length);
-    el('kept').textContent = `${keptN} of ${V}`;
-    el('mass').textContent = `${(keptMass * 100).toFixed(1)}%`;
-    el('pick').textContent = shot ? `${shot.word} (${(shot.prob * 100).toFixed(1)}%)` : '—';
-    el('bits').textContent = shot ? `${(-Math.log2(Math.max(1e-9, shot.base))).toFixed(2)} bits` : '—';
-
-    setEq([
-      ['x_{t+1}\\sim P(\\,\\cdot\\mid x_1\\dots x_t)'],
-      [
-        [`T = ${state.temp.toFixed(2)}`, DART],
-        [`\\quad k = ${state.greedy ? 1 : state.k}`, KEEP],
-        [`\\quad p = ${state.p.toFixed(2)}`, KEEP],
-        [`\\quad |S| = ${keptN}\\ \\text{of}\\ ${V}`, KEEP],
-      ],
-      ['score every word, reshape with temperature, cut the tail, throw a dart'],
-    ]);
+    const seen = cands.filter((c) => c.n > 0).length;
+    const bits = shot ? (-Math.log2(Math.max(1e-9, shot.base))).toFixed(2) : null;
+    setRows({
+      vocab: String(V),
+      seen: String(seen),
+      kept: `${keptN} of ${V}`,
+      mass: `${(keptMass * 100).toFixed(1)}%`,
+      pick: shot ? `${shot.word} (${(shot.prob * 100).toFixed(1)}%)` : '—',
+      bits: bits ? `${bits} bits` : '—',
+    });
+    setEq({
+      rule: ['x_{t+1}\\sim P(\\,\\cdot\\mid x_1\\dots x_t)', '\\qquad', [`P_T(w) \\propto P(w)^{1/T}`, DART]],
+      live: [[`T = ${state.temp.toFixed(2)}`, DART], [`\\quad k = ${state.greedy ? 1 : state.k}`, KEEP], [`\\quad p = ${state.p.toFixed(2)}`, KEEP], [`\\quad |S| = ${keptN}\\ \\text{of}\\ ${V}`, KEEP]],
+    });
+    setResult({
+      value: `${keptN} of ${V}`,
+      colour: state.greedy ? CHOSEN : KEEP,
+      status: state.greedy
+        ? 'Greedy: the top word, always, so the same context always gives the same word'
+        : `${(keptMass * 100).toFixed(1)}% of the probability kept · ${seen} words were ever seen after this context${shot ? ` · last pick: ${shot.word} (${(shot.prob * 100).toFixed(1)}%, ${bits} bits)` : ''}`,
+      note: keptN === cands.length
+        ? 'Nothing is cut: the whole vocabulary can win, tail included, so sooner or later a sliver word derails the sentence.'
+        : 'The dart only sees what survived the cut, renormalised. Top-k keeps a fixed count; top-p keeps the fewest words whose probabilities add up to p.',
+    });
   }
 
   // --- loop ------------------------------------------------------------------------
@@ -775,7 +692,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const cands = candidates();
     drawText();
     drawDist(cands);
-    drawSide(cands);
     drawDart();
     drawVocab(cands);
     updateHud(cands);
@@ -798,44 +714,24 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- controls ----------------------------------------------------------------------
 
   const wrapEl = el('wrap');
-  function setGreedy(g: boolean) {
+  const setGreedy = (g: boolean) => {
     state.greedy = g;
-    wrapEl.className = g ? 'sim greedy' : 'sim';
-    document
-      .querySelectorAll('#mode button')
-      .forEach((b) =>
-        b.classList.toggle('active', ((b as HTMLElement).dataset.m === 'greedy') === g)
-      );
-  }
-  el('mode').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (btn) setGreedy(btn.dataset.m === 'greedy');
-  });
-
-  const bind = (id: string, f: (v: number) => void, fmt: (v: number) => string) => {
-    const inp = el(id) as HTMLInputElement;
-    const apply = () => {
-      f(+inp.value);
-      el(id + 'val').textContent = fmt(+inp.value);
-    };
-    inp.addEventListener('input', apply);
-    apply();
+    wrapEl.classList.toggle('greedy', g);
   };
+  segmented('mode', (m) => setGreedy(m === 'greedy'));
+
   (el('k') as HTMLInputElement).max = String(V);
   (el('k') as HTMLInputElement).value = String(V);
-  bind('n', (v) => (state.n = v), String);
-  bind('t', (v) => (state.temp = v / 100), (v) => (v / 100).toFixed(2));
-  bind('k', (v) => (state.k = v), (v) => (v >= V ? 'off' : v === 1 ? '1 (greedy)' : String(v)));
-  bind('p', (v) => (state.p = v / 100), (v) => (v >= 100 ? 'off' : (v / 100).toFixed(2)));
-  bind('sp', (v) => (state.speed = v), String);
-
-  const runBtn = el('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  slider('n', (v) => (state.n = v));
+  slider('t', (v) => (state.temp = v / 100), (v) => (v / 100).toFixed(2));
+  slider('k', (v) => (state.k = v), (v) => (v >= V ? 'off' : v === 1 ? '1 (greedy)' : String(v)));
+  slider('p', (v) => (state.p = v / 100), (v) => (v >= 100 ? 'off' : (v / 100).toFixed(2)));
+  slider('sp', (v) => (state.speed = v));
+  transport({
+    onRun: (running) => (state.running = running),
+    onStep: () => stepOnce(),
+    onReset: () => seed(),
   });
-  el('step').addEventListener('click', () => stepOnce());
-  el('reset').addEventListener('click', () => seed());
 
   buildModels();
   setGreedy(false);

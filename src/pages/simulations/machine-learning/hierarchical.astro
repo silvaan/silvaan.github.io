@@ -1,46 +1,50 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="machine-learning"
   title="Hierarchical Clustering"
-  description="Instead of committing to a number of clusters, merge the two closest groups over and over until everything is one. Step through the merges and watch the dendrogram grow branch by branch, or drop your own points and cluster them."
+  description="Merge the two closest groups over and over until everything is one, and watch the dendrogram grow branch by branch."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="hc" width="900" height="470"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="hc"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Points coloured by their current cluster on the left, and the dendrogram of merges growing on the right."
+        ></canvas>
+      </div>
+      <Caption hint="Click the left half to add points" />
+      <Result label="Clusters" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Run</button>
-        <button class="btn ghost" id="step">Step</button>
-        <button class="btn ghost" id="reset">Restart</button>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn ghost" id="regen">Random points</button>
-        <button class="btn ghost" id="clear">Clear</button>
-      </div>
-
-      <div class="control">
-        <label>Linkage</label>
-        <div class="seg" id="link">
-          <button data-l="average" class="active">Average</button>
-          <button data-l="single">Single</button>
-          <button data-l="complete">Complete</button>
-        </div>
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Merges done</span><b id="mdone">0</b></div>
-        <div class="row"><span>Clusters</span><b id="nclust">—</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Click the left half to add points. Restart, then Step, to merge the two
-        nearest groups one at a time.
-      </p>
+      <Transport step />
+      <Actions>
+        <button type="button" class="btn ghost" id="regen">Random points</button>
+        <button type="button" class="btn ghost" id="clear">Clear</button>
+      </Actions>
+      <Seg
+        id="link"
+        label="Linkage"
+        attr="l"
+        options={[
+          { value: 'average', label: 'Average' },
+          { value: 'single', label: 'Single' },
+          { value: 'complete', label: 'Complete' },
+        ]}
+      />
+      <Readout rows={[{ id: 'r-merges', label: 'merges done' }, { id: 'r-clusters', label: 'clusters' }, { id: 'r-last', label: 'last merge distance' }]} />
     </div>
   </div>
 
@@ -63,17 +67,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, transport, result, readout } from '../../../lib/panel';
 
-  type Node = {
-    x: number;
-    height: number;
-    members: number[];
-    left?: Node;
-    right?: Node;
-    repL?: number;
-    repR?: number;
-  };
+  type Node = { x: number; height: number; members: number[]; left?: Node; right?: Node; repL?: number; repR?: number };
   const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399', '#f472b6', '#38bdf8'];
 
   const state = { link: 'average', merges: 0, running: false };
@@ -83,24 +82,25 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   let root: Node | null = null;
   let maxH = 1;
 
-  const canvas = document.getElementById('hc') as HTMLCanvasElement;
+  const canvas = el('hc') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
   const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
-  const LEFT = { x0: 36, x1: 410, y0: 40, y1: 430 };
-  const RIGHT = { x0: 468, x1: 876, y0: 46, y1: 420 };
+  const LEFT = { x0: 40, x1: 460, y0: 40, y1: 540 };
+  const RIGHT = { x0: 540, x1: 960, y0: 60, y1: 520 };
 
   function gen() {
     pts = [];
     const nb = 4;
-    const bc = Array.from({ length: nb }, () => ({
-      x: rnd(LEFT.x0 + 50, LEFT.x1 - 50),
-      y: rnd(LEFT.y0 + 50, LEFT.y1 - 50),
-    }));
+    const bc = Array.from({ length: nb }, () => ({ x: rnd(LEFT.x0 + 60, LEFT.x1 - 60), y: rnd(LEFT.y0 + 60, LEFT.y1 - 60) }));
     for (let i = 0; i < 26; i++) {
       const b = bc[i % nb];
-      pts.push({ x: b.x + rnd(-34, 34), y: b.y + rnd(-34, 34) });
+      pts.push({ x: b.x + rnd(-38, 38), y: b.y + rnd(-38, 38) });
     }
   }
 
@@ -130,10 +130,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           if (d < bd) { bd = d; bi = i; bj = j; }
         }
       const a = clusters[bi], b = clusters[bj];
-      const node: Node = {
-        x: 0, height: bd, members: [...a.members, ...b.members],
-        left: a, right: b, repL: a.members[0], repR: b.members[0],
-      };
+      const node: Node = { x: 0, height: bd, members: [...a.members, ...b.members], left: a, right: b, repL: a.members[0], repR: b.members[0] };
       clusters = clusters.filter((_, k) => k !== bi && k !== bj);
       clusters.push(node);
       mergeNodes.push(node);
@@ -173,42 +170,48 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     return { find, rootColor, nClusters: groups.size };
   }
 
+  const RULES: Record<string, string> = {
+    average: 'd(A,B) = \\frac{1}{|A|\\,|B|}\\sum_{a\\in A}\\sum_{b\\in B} \\lVert a - b\\rVert',
+    single: 'd(A,B) = \\min_{a\\in A,\\,b\\in B} \\lVert a - b\\rVert',
+    complete: 'd(A,B) = \\max_{a\\in A,\\,b\\in B} \\lVert a - b\\rVert',
+  };
+
   function draw() {
-    const ink = css('--stage-ink') || '232,233,236';
-    const faint = css('--text-faint') || '#6b7280';
     ctx.clearRect(0, 0, W, H);
+    label('the points', LEFT.x0, LEFT.y0 - 12, 0.45, 'left', 10.5);
+    label('the dendrogram: bar height is the merge distance', RIGHT.x0, RIGHT.y0 - 30, 0.45, 'left', 10.5);
 
     if (pts.length === 0) {
-      ctx.fillStyle = faint;
-      ctx.font = "13px 'JetBrains Mono', monospace";
-      ctx.fillText('click the left half to add points', LEFT.x0, LEFT.y0 + 20);
-      (document.getElementById('mdone') as HTMLElement).textContent = '0';
-      (document.getElementById('nclust') as HTMLElement).textContent = '0';
+      label('click here to add points', LEFT.x0 + 10, LEFT.y0 + 24, 0.4, 'left', 12);
+      words(null, 0);
       return;
     }
-
     const cl = clustersAt(state.merges);
-
-    // scatter
     for (let i = 0; i < pts.length; i++) {
-      const col = cl.rootColor.get(cl.find(i));
-      ctx.fillStyle = col || `rgba(${ink},0.4)`;
-      ctx.strokeStyle = `rgba(${ink},0.5)`;
+      ctx.fillStyle = cl.rootColor.get(cl.find(i)) || ink(0.4);
+      ctx.strokeStyle = ink(0.5);
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(pts[i].x, pts[i].y, 5, 0, Math.PI * 2);
+      ctx.arc(pts[i].x, pts[i].y, 5.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
 
-    // dendrogram (reveal first `merges` connectors)
     if (root && pts.length > 1) {
       const L = pts.length;
       const dx = (x: number) => RIGHT.x0 + (x / (L - 1)) * (RIGHT.x1 - RIGHT.x0);
       const dy = (ht: number) => RIGHT.y1 - (ht / maxH) * (RIGHT.y1 - RIGHT.y0);
+      ctx.strokeStyle = ink(0.12);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(RIGHT.x0 - 10, RIGHT.y1);
+      ctx.lineTo(RIGHT.x1 + 10, RIGHT.y1);
+      ctx.stroke();
+      label('0', RIGHT.x0 - 16, RIGHT.y1 + 4, 0.3, 'right', 10);
+      label(maxH.toFixed(0), RIGHT.x0 - 16, RIGHT.y0 + 4, 0.3, 'right', 10);
       for (let k = 0; k < state.merges; k++) {
         const n = mergeNodes[k];
-        const col = cl.rootColor.get(cl.find(n.repL!)) || `rgba(${ink},0.4)`;
+        const col = cl.rootColor.get(cl.find(n.repL!)) || ink(0.4);
         const yTop = dy(n.height);
         const lx = dx(n.left!.x), rx = dx(n.right!.x);
         ctx.strokeStyle = col;
@@ -220,31 +223,38 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         ctx.lineTo(rx, dy(n.right!.height));
         ctx.stroke();
       }
-      // baseline ticks for leaves
-      ctx.fillStyle = `rgba(${ink},0.3)`;
+      ctx.fillStyle = ink(0.3);
       for (const leaf of leafNodes) {
         ctx.beginPath();
-        ctx.arc(dx(leaf.x), dy(0), 1.6, 0, Math.PI * 2);
+        ctx.arc(dx(leaf.x), dy(0), 1.8, 0, Math.PI * 2);
         ctx.fill();
       }
     }
+    words(cl, cl.nClusters);
+  }
 
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('points', LEFT.x0, LEFT.y1 + 22);
-    ctx.fillText('dendrogram', RIGHT.x0, RIGHT.y1 + 26);
-
-    (document.getElementById('mdone') as HTMLElement).textContent = String(state.merges);
-    (document.getElementById('nclust') as HTMLElement).textContent = String(cl.nClusters);
+  function words(cl: { nClusters: number } | null, nClusters: number) {
+    const last = state.merges > 0 ? mergeNodes[state.merges - 1].height : null;
+    setEq({
+      rule: [[RULES[state.link], PALETTE[0]]],
+      live: [`\\text{merges} = ${state.merges}`, `\\quad\\text{clusters} = ${nClusters}`, last !== null ? `\\quad\\text{last } d = ${last.toFixed(1)}` : ''],
+    });
+    setResult({
+      value: cl ? String(nClusters) : '—',
+      status: cl
+        ? state.merges >= mergeNodes.length && mergeNodes.length ? `All ${mergeNodes.length} merges done: everything is one cluster` : `${state.merges} of ${mergeNodes.length} merges done`
+        : 'No points yet',
+      note: last !== null
+        ? `The last merge joined two groups ${last.toFixed(1)} px apart, under ${state.link} linkage. Every merge takes the two closest groups left.`
+        : 'Step joins the two nearest groups; the height of each bar in the dendrogram is how far apart they were.',
+    });
+    setRows({ 'r-merges': String(state.merges), 'r-clusters': String(nClusters), 'r-last': last !== null ? last.toFixed(1) : '—' });
   }
 
   function loop() {
     if (state.running) {
       if (state.merges < mergeNodes.length) state.merges++;
-      else {
-        state.running = false;
-        (document.getElementById('run') as HTMLButtonElement).textContent = 'Run';
-      }
+      else { state.running = false; controls.setRunning(false); }
     }
     draw();
     if (state.running) setTimeout(() => requestAnimationFrame(loop), 260);
@@ -255,54 +265,35 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const rect = canvas.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * W;
     const y = ((e.clientY - rect.top) / rect.height) * H;
-    if (x > LEFT.x1 + 20) return; // only the scatter half
+    if (x > LEFT.x1 + 20) return;
     pts.push({ x: Math.max(LEFT.x0, Math.min(LEFT.x1, x)), y: Math.max(LEFT.y0, Math.min(LEFT.y1, y)) });
     build();
-    draw();
   });
 
-  document.getElementById('link')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#link button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.link = btn.dataset.l!;
-    build();
-    draw();
+  segmented('link', (l) => { state.link = l; build(); });
+  const controls = transport({
+    onRun: (running) => {
+      if (running && state.merges >= mergeNodes.length) state.merges = 0;
+      state.running = running;
+    },
+    onStep: () => { if (state.merges < mergeNodes.length) state.merges++; },
+    onReset: () => { state.merges = 0; state.running = false; controls.setRunning(false); },
   });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    if (state.merges >= mergeNodes.length) state.merges = 0;
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-  document.getElementById('step')!.addEventListener('click', () => {
-    if (state.merges < mergeNodes.length) state.merges++;
-    draw();
-  });
-  document.getElementById('reset')!.addEventListener('click', () => {
+  el('regen').addEventListener('click', () => { gen(); build(); });
+  el('clear').addEventListener('click', () => {
+    pts = []; mergeNodes = []; leafNodes = []; root = null;
     state.merges = 0;
     state.running = false;
-    runBtn.textContent = 'Run';
-    draw();
-  });
-  document.getElementById('regen')!.addEventListener('click', () => {
-    gen();
-    build();
-    draw();
-  });
-  document.getElementById('clear')!.addEventListener('click', () => {
-    pts = [];
-    mergeNodes = [];
-    leafNodes = [];
-    root = null;
-    state.merges = 0;
-    state.running = false;
-    runBtn.textContent = 'Run';
-    draw();
+    controls.setRunning(false);
   });
 
   gen();
   build();
   requestAnimationFrame(loop);
 </script>
+
+<style>
+  #hc {
+    cursor: crosshair;
+  }
+</style>

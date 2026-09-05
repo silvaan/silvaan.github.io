@@ -1,93 +1,99 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="machine-learning"
   title="DBSCAN"
-  description="Density-based clustering that needs no k. It grows clusters wherever points are packed tightly, follows whatever shape they take, and labels the sparse leftovers as noise. Watch it flood-fill your own blobs in the first view, then open the second one, where the three relations the algorithm is actually built on (directly reachable, reachable through a chain, and connected) are worked out on small cases you can read point by point."
+  description="Density-based clustering that needs no k: it floods outward wherever points are packed tightly and labels the sparse leftovers as noise."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="db" width="600" height="600"></canvas>
-      <canvas id="rc" width="900" height="640" hidden></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="db" width="1000" height="600" role="img" aria-label="Points coloured by the cluster DBSCAN has flooded them into, with noise in grey and a dashed circle showing the radius epsilon."></canvas>
+        <canvas id="rc" width="1000" height="600" hidden role="img" aria-label="A handful of points chosen so that one reachability relation holds and another fails, with the verdicts written out."></canvas>
+      </div>
+      <div id="cl-caption">
+        <Caption hint="Click the canvas to add points" />
+      </div>
+      <div id="rc-caption" hidden>
+        <Caption
+          legend={[
+            { label: 'core', color: 'rgba(232,233,236,0.75)' },
+            { label: 'border', color: 'rgba(232,233,236,0.45)' },
+            { label: 'noise', color: 'rgba(232,233,236,0.25)' },
+            { label: 'everything p reaches', color: 'rgba(124,140,255,0.6)' },
+            { label: 'the core that connects them', color: '#5eead4' },
+          ]}
+          hint="Click a point to move q, then p · dashed circles are ε"
+          hintId="rc-hint"
+        />
+      </div>
+      <Result label="Clusters found" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>View</label>
-        <div class="seg" id="mode">
-          <button data-m="clusters" class="active">Clusters</button>
-          <button data-m="reach">Reachability</button>
-        </div>
+      <Seg id="mode" label="View" attr="m" options={[{ value: 'clusters', label: 'Clusters' }, { value: 'reach', label: 'Reachability' }]} />
+
+      <div id="cl-controls" class="stack">
+        <Transport step />
+        <Actions>
+          <button type="button" class="btn ghost" id="regen">Random points</button>
+          <button type="button" class="btn ghost" id="clear">Clear</button>
+        </Actions>
+        <Seg
+          id="data"
+          label="Random data"
+          attr="d"
+          options={[{ value: 'moons', label: 'Moons' }, { value: 'blobs', label: 'Blobs' }, { value: 'noise', label: 'Blobs + noise' }]}
+        />
       </div>
 
-      <div id="cl-controls">
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn" id="run">Run</button>
-          <button class="btn ghost" id="step">Step</button>
-          <button class="btn ghost" id="reset">Restart</button>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn ghost" id="regen">Random points</button>
-          <button class="btn ghost" id="clear">Clear</button>
-        </div>
-
-        <div class="control">
-          <label>Random data</label>
-          <div class="seg" id="data">
-            <button data-d="moons" class="active">Moons</button>
-            <button data-d="blobs">Blobs</button>
-            <button data-d="noise">Blobs + noise</button>
-          </div>
-        </div>
+      <div id="rc-controls" class="stack" hidden>
+        <Seg
+          id="rcase"
+          label="Case"
+          attr="c"
+          options={[
+            { value: '0', label: 'Both ways' },
+            { value: '1', label: 'One way' },
+            { value: '2', label: 'Blocked' },
+            { value: '3', label: 'Two borders' },
+            { value: '4', label: 'Noise' },
+            { value: '5', label: 'Not core' },
+          ]}
+        />
       </div>
 
-      <div id="rc-controls" hidden>
-        <div class="control">
-          <label>Case</label>
-          <div class="seg" id="rcase">
-            <button data-c="0" class="active">Both ways</button>
-            <button data-c="1">One way</button>
-            <button data-c="2">Blocked</button>
-            <button data-c="3">Two borders</button>
-            <button data-c="4">Noise</button>
-            <button data-c="5">Not core</button>
-          </div>
-        </div>
-      </div>
+      <Slider id="eps" label="Neighborhood ε" min={12} max={90} value={42} />
+      <Slider id="mp" label="Min points" min={2} max={12} value={5} />
 
-      <div class="control">
-        <label>Neighborhood ε <b id="epsval">42</b></label>
-        <input type="range" id="eps" min="12" max="90" value="42" />
+      <div id="cl-readout">
+        <Readout rows={[{ id: 'r-clusters', label: 'clusters found' }, { id: 'r-noise', label: 'noise points' }]} />
       </div>
-      <div class="control">
-        <label>Min points <b id="mpval">5</b></label>
-        <input type="range" id="mp" min="2" max="12" value="5" />
+      <div id="rc-readout" hidden>
+        <Readout
+          rows={[
+            { id: 'r-p', label: 'p is' },
+            { id: 'r-q', label: 'q is' },
+            { id: 'r-same', label: 'same cluster' },
+            { id: 'r-next', label: 'next click sets' },
+          ]}
+        />
       </div>
-
-      <div class="readout" id="cl-readout">
-        <div class="row"><span>Clusters found</span><b id="nclust">—</b></div>
-        <div class="row"><span>Noise points</span><b id="nnoise">—</b></div>
-      </div>
-
-      <div class="readout" id="rc-readout" hidden>
-        <div class="row"><span>p is</span><b id="pkind">—</b></div>
-        <div class="row"><span>q is</span><b id="qkind">—</b></div>
-        <div class="row"><span>Same cluster</span><b id="samec">—</b></div>
-        <div class="row"><span>Next click sets</span><b id="nextsel">q</b></div>
-      </div>
-
-      <p class="note" id="note">
-        Click the canvas to add points. Restart, then Step, to watch clusters
-        flood outward from dense cores.
-      </p>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Hit <b>Restart</b> then <b>Step</b>. DBSCAN picks a dense point and
+      Hit <b>Reset</b> then <b>Step</b>. DBSCAN picks a dense point and
       <b>floods outward</b> through neighbors within ε, so a cluster takes on
       whatever shape the data has, even a long crescent.
     </li>
@@ -143,9 +149,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { arrow, roundRect } from '../../../lib/theorem';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
 
   type P = { x: number; y: number };
   const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399', '#f472b6', '#38bdf8'];
+  const ACC = '#7c8cff', TEAL = '#5eead4', BAD = '#f87171';
 
   const state = { data: 'moons', eps: 42, minPts: 5, running: false };
   let mode: 'clusters' | 'reach' = 'clusters';
@@ -153,9 +163,13 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   let labels: number[] = [];
   let oi = 0, cid = -1, seeds: number[] = [], done = false;
 
-  const canvas = document.getElementById('db') as HTMLCanvasElement;
+  const canvas = el('db') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink, css } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
   const PAD = 44;
   const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -165,18 +179,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       for (let i = 0; i < 130; i++) {
         const t = Math.PI * (i / 130);
         const r = 190 + rnd(-12, 12);
-        pts.push({ x: W / 2 + r * Math.cos(t) - 80, y: H / 2 - r * Math.sin(t) + 55 });
-        pts.push({ x: W / 2 + r * Math.cos(t) + 80, y: H / 2 + r * Math.sin(t) - 55 });
+        pts.push({ x: W / 2 + r * Math.cos(t) - 90, y: H / 2 - r * Math.sin(t) + 55 });
+        pts.push({ x: W / 2 + r * Math.cos(t) + 90, y: H / 2 + r * Math.sin(t) - 55 });
       }
     } else {
       const nb = 4;
-      const bc = Array.from({ length: nb }, () => ({ x: rnd(PAD + 70, W - PAD - 70), y: rnd(PAD + 70, H - PAD - 70) }));
+      const bc = Array.from({ length: nb }, () => ({ x: rnd(PAD + 90, W - PAD - 90), y: rnd(PAD + 70, H - PAD - 70) }));
       for (let i = 0; i < 240; i++) {
         const b = bc[i % nb];
         pts.push({ x: b.x + rnd(-40, 40) + rnd(-14, 14), y: b.y + rnd(-40, 40) + rnd(-14, 14) });
       }
-      if (state.data === 'noise')
-        for (let i = 0; i < 70; i++) pts.push({ x: rnd(PAD, W - PAD), y: rnd(PAD, H - PAD) });
+      if (state.data === 'noise') for (let i = 0; i < 70; i++) pts.push({ x: rnd(PAD, W - PAD), y: rnd(PAD, H - PAD) });
     }
   }
 
@@ -185,13 +198,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const out: number[] = [];
     for (let j = 0; j < pts.length; j++) {
       if (j === i) continue;
-      const dx = pts[i].x - pts[j].x;
-      const dy = pts[i].y - pts[j].y;
+      const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
       if (dx * dx + dy * dy <= eps2) out.push(j);
     }
     return out;
   }
-
   function restart() {
     labels = new Array(pts.length).fill(-2); // -2 unvisited, -1 noise, >=0 cluster
     oi = 0;
@@ -199,7 +210,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     seeds = [];
     done = pts.length === 0;
   }
-
   function stepOnce() {
     if (seeds.length) {
       const q = seeds.shift()!;
@@ -212,94 +222,81 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       return;
     }
     while (oi < pts.length && labels[oi] !== -2) oi++;
-    if (oi >= pts.length) {
-      done = true;
-      return;
-    }
+    if (oi >= pts.length) { done = true; return; }
     const p = oi++;
     const nb = neighbors(p);
-    if (nb.length + 1 < state.minPts) {
-      labels[p] = -1;
-    } else {
+    if (nb.length + 1 < state.minPts) labels[p] = -1;
+    else {
       cid++;
       labels[p] = cid;
       seeds = nb.slice();
     }
   }
-
   function runFull() {
     restart();
     let guard = 0;
     while (!done && guard++ < 200000) stepOnce();
-    updateReadout();
-  }
-
-  function updateReadout() {
-    (document.getElementById('nclust') as HTMLElement).textContent = String(Math.max(0, cid + 1));
-    (document.getElementById('nnoise') as HTMLElement).textContent = String(labels.filter((l) => l === -1).length);
   }
 
   function draw() {
-    const ink = css('--stage-ink') || '232,233,236';
     ctx.clearRect(0, 0, W, H);
-
     const seedSet = new Set(seeds);
     for (let i = 0; i < pts.length; i++) {
       const l = labels[i];
       if (l === -2) {
-        ctx.strokeStyle = `rgba(${ink},0.35)`;
+        ctx.strokeStyle = ink(0.35);
         ctx.lineWidth = 1.3;
         ctx.beginPath();
         ctx.arc(pts[i].x, pts[i].y, 3.4, 0, Math.PI * 2);
         ctx.stroke();
       } else {
-        ctx.fillStyle = l === -1 ? `rgba(${ink},0.28)` : PALETTE[l % PALETTE.length];
+        ctx.fillStyle = l === -1 ? ink(0.28) : PALETTE[l % PALETTE.length];
         ctx.beginPath();
         ctx.arc(pts[i].x, pts[i].y, l === -1 ? 3 : 4.2, 0, Math.PI * 2);
         ctx.fill();
       }
       if (seedSet.has(i)) {
-        ctx.strokeStyle = `rgba(${ink},0.9)`;
+        ctx.strokeStyle = ink(0.9);
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(pts[i].x, pts[i].y, 7, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
-
-    // epsilon scale reference
-    ctx.strokeStyle = `rgba(${ink},0.5)`;
+    // ε, to scale
+    ctx.strokeStyle = ink(0.5);
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.arc(40, H - 40, state.eps, 0, Math.PI * 2);
+    ctx.arc(60, H - 60, state.eps, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = css('--text-faint') || '#6b7280';
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('ε', 37, H - 36);
+    label('ε', 60, H - 56, 0.6, 'center', 12);
+    wordsClusters();
+  }
+
+  function wordsClusters() {
+    const n = Math.max(0, cid + 1);
+    const noise = labels.filter((l) => l === -1).length;
+    const unvisited = labels.filter((l) => l === -2).length;
+    setEq({
+      rule: ['\\text{core}(p): |N_\\varepsilon(p)| \\ge \\text{minPts}', '\\qquad', [`p \\to q:\\ p\\text{ core},\\ q \\in N_\\varepsilon(p)`, ACC]],
+      live: [`\\varepsilon = ${state.eps}`, `\\quad\\text{minPts} = ${state.minPts}`, `\\quad n = ${pts.length}`],
+    });
+    el('result-label').textContent = 'Clusters found';
+    setResult({
+      value: pts.length ? String(n) : '—',
+      status: pts.length ? `${noise} noise points${unvisited ? ` · ${unvisited} still to visit` : ''} · ε = ${state.eps}, min points ${state.minPts}` : 'No points yet',
+      note: 'A cluster floods outward from a dense core through its ε-neighbours, so it takes whatever shape the data has. Points that never gather enough neighbours are noise.',
+    });
+    setRows({ 'r-clusters': String(n), 'r-noise': String(noise) });
   }
 
   // -------------------------------------------------------------------------
-  // Reachability and connectivity
-  //
-  // The clustering above is one long consequence of three relations, and on a
-  // few hundred points none of them can be checked by eye. So each case here is
-  // a hand-placed handful of points, chosen so that one relation holds and
-  // another fails for a reason you can read straight off the picture.
+  // Reachability and connectivity, on hand-placed cases small enough to read.
   // -------------------------------------------------------------------------
-  type RCase = {
-    label: string;
-    title: string;
-    sub: string;
-    eps: number;
-    minPts: number;
-    pts: P[];
-    p: number;
-    q: number;
-  };
+  type RCase = { title: string; sub: string; eps: number; minPts: number; pts: P[]; p: number; q: number };
 
-  /** Nine points inside a disc of radius 45: dense at any usable ε. */
   const blob = (cx: number, cy: number): P[] => {
     const out: P[] = [{ x: cx, y: cy }];
     for (let i = 0; i < 6; i++) {
@@ -309,86 +306,39 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     out.push({ x: cx, y: cy - 22 }, { x: cx, y: cy + 22 });
     return out;
   };
-  /** A tight seven-point clump, 120 wide, for the two-cluster cases. */
   const clump = (x0: number): P[] => [
     { x: x0, y: 245 }, { x: x0 + 30, y: 215 }, { x: x0 + 30, y: 275 },
     { x: x0 + 60, y: 245 }, { x: x0 + 90, y: 215 }, { x: x0 + 90, y: 275 },
     { x: x0 + 120, y: 245 },
   ];
-  /** A chain where every interior point is a core and both ends are borders. */
-  const chain: P[] = Array.from({ length: 9 }, (_, i) => ({
-    x: 120 + i * 75,
-    y: 245 + 55 * Math.sin(i * 0.75),
-  }));
+  const chain: P[] = Array.from({ length: 9 }, (_, i) => ({ x: 120 + i * 75, y: 245 + 55 * Math.sin(i * 0.75) }));
 
   const CASES: RCase[] = [
+    { title: 'Reachable in both directions', sub: 'Two cores with a chain of cores between them: the relation runs either way.', eps: 110, minPts: 3, pts: chain, p: 1, q: 7 },
+    { title: 'Reachable one way only', sub: 'A core reaches the border on its fringe, and the border reaches nothing back.', eps: 100, minPts: 5, pts: [...blob(330, 245), { x: 470, y: 245 }], p: 1, q: 9 },
+    { title: 'The chain stops at a border', sub: 'The middle point is reached, but no hop may leave it, so the clusters stay apart.', eps: 150, minPts: 6, pts: [...clump(200), { x: 465, y: 245 }, ...clump(610)], p: 3, q: 11 },
     {
-      label: 'Both ways',
-      title: 'REACHABLE IN BOTH DIRECTIONS',
-      sub: 'two cores with a chain of cores between them: the relation runs either way',
-      eps: 110, minPts: 3, pts: chain, p: 1, q: 7,
-    },
-    {
-      label: 'One way',
-      title: 'REACHABLE ONE WAY ONLY',
-      sub: 'a core reaches the border on its fringe, and the border reaches nothing back',
-      eps: 100, minPts: 5, pts: [...blob(330, 245), { x: 470, y: 245 }], p: 1, q: 9,
-    },
-    {
-      label: 'Blocked',
-      title: 'THE CHAIN STOPS AT A BORDER',
-      sub: 'the middle point is reached, but no hop may leave it, so the clusters stay apart',
-      eps: 150, minPts: 6, pts: [...clump(200), { x: 465, y: 245 }, ...clump(610)], p: 3, q: 11,
-    },
-    {
-      label: 'Two borders',
-      title: 'TWO BORDERS JOINED BY ONE CORE',
-      sub: 'neither reaches the other, and they are in one cluster all the same',
-      eps: 130, minPts: 5,
-      pts: [
-        { x: 450, y: 245 }, { x: 425, y: 205 }, { x: 475, y: 205 },
-        { x: 425, y: 285 }, { x: 475, y: 285 }, { x: 325, y: 245 }, { x: 575, y: 245 },
-      ],
+      title: 'Two borders joined by one core', sub: 'Neither reaches the other, and they are in one cluster all the same.', eps: 130, minPts: 5,
+      pts: [{ x: 450, y: 245 }, { x: 425, y: 205 }, { x: 475, y: 205 }, { x: 425, y: 285 }, { x: 475, y: 285 }, { x: 325, y: 245 }, { x: 575, y: 245 }],
       p: 5, q: 6,
     },
-    {
-      label: 'Noise',
-      title: 'NOISE',
-      sub: 'too far to be reached from any core, and too sparse to reach anything',
-      eps: 100, minPts: 5, pts: [...blob(330, 245), { x: 700, y: 245 }], p: 0, q: 9,
-    },
-    {
-      label: 'Not core',
-      title: 'INSIDE ε IS NOT ENOUGH',
-      sub: 'the two are well within ε of each other, and neither is a core, so nothing holds',
-      eps: 100, minPts: 5,
-      pts: [...blob(250, 245), { x: 600, y: 215 }, { x: 668, y: 260 }], p: 9, q: 10,
-    },
+    { title: 'Noise', sub: 'Too far to be reached from any core, and too sparse to reach anything.', eps: 100, minPts: 5, pts: [...blob(330, 245), { x: 700, y: 245 }], p: 0, q: 9 },
+    { title: 'Inside ε is not enough', sub: 'The two are well within ε of each other, and neither is a core, so nothing holds.', eps: 100, minPts: 5, pts: [...blob(250, 245), { x: 600, y: 215 }, { x: 668, y: 260 }], p: 9, q: 10 },
   ];
-
-  // clusters here are never drawn in the blue of reachability or the teal of
-  // connectivity, so a colour always means one thing
+  // clusters here never use the blue of reachability or the teal of connectivity
   const RPAL = ['#f59e0b', '#a78bfa', '#f472b6', '#22d3ee'];
-
-  // each case is laid out where its geometry was easiest to reason about, so
-  // slide it sideways to sit in the middle of the canvas
   for (const c of CASES) {
     let lo = Infinity, hi = -Infinity;
     for (const q of c.pts) { lo = Math.min(lo, q.x); hi = Math.max(hi, q.x); }
-    const dx = 450 - (lo + hi) / 2;
-    c.pts = c.pts.map((q) => ({ x: q.x + dx, y: q.y }));
+    const dx = 500 - (lo + hi) / 2;
+    c.pts = c.pts.map((q) => ({ x: q.x + dx, y: q.y - 40 }));
   }
 
   const rst = { ci: 0, eps: CASES[0].eps, minPts: CASES[0].minPts, p: CASES[0].p, q: CASES[0].q, next: 'q' as 'p' | 'q' };
-
-  const rcanvas = document.getElementById('rc') as HTMLCanvasElement;
+  const rcanvas = el('rc') as HTMLCanvasElement;
   const rc = setupCanvas(rcanvas, () => drawReach());
   const rctx = rc.ctx;
-  const rink = (a: number) => `rgba(${css('--stage-ink') || '232,233,236'},${a})`;
-  const { label: rlabel, textWidth: rwidth } = makeText(rctx, rink);
-  const ACC = () => css('--accent') || '#7c8cff';
-  const TEAL = () => css('--accent-2') || '#5eead4';
-  const BAD = () => css('--danger') || '#f87171';
+  const { label: rlabel, textWidth: rwidth } = makeText(rctx, ink);
 
   type Analysis = {
     c: RCase; N: number[][]; core: boolean[]; lab: number[];
@@ -399,7 +349,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     blocked: (a: number) => boolean;
     witness: number;
   };
-
   function analyse(): Analysis {
     const c = CASES[rst.ci];
     const pt = c.pts;
@@ -412,8 +361,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       })
     );
     const core = N.map((l) => l.length + 1 >= rst.minPts);
-
-    // the clusters themselves, so a case can show that two points share one
     const lab: number[] = new Array(pt.length).fill(-2);
     let cc = -1;
     for (let i = 0; i < pt.length; i++) {
@@ -431,7 +378,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         }
       }
     }
-
     const reach = (a: number) => {
       const parent = new Map<number, number>();
       const seen = new Set<number>([a]);
@@ -460,17 +406,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       const dx = pt[a].x - pt[b].x, dy = pt[a].y - pt[b].y;
       return dx * dx + dy * dy <= eps2;
     };
-    // a chain that ends at a border with a neighbour outside: the hop it would
-    // need to make is exactly the one the definition forbids
     const blocked = (a: number) => {
       const r = reach(a);
-      for (const m of r.seen)
-        if (m !== a && !core[m] && N[m].some((v) => !r.seen.has(v))) return true;
+      for (const m of r.seen) if (m !== a && !core[m] && N[m].some((v) => !r.seen.has(v))) return true;
       return false;
     };
-
-    let witness = -1;
-    let best = Infinity;
+    let witness = -1, best = Infinity;
     for (let o = 0; o < pt.length; o++) {
       if (!core[o]) continue;
       const r = reach(o);
@@ -478,13 +419,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       const cost = path(o, rst.p).length + path(o, rst.q).length;
       if (cost < best) { best = cost; witness = o; }
     }
-
     const kind = (i: number) => (core[i] ? 'core' : lab[i] >= 0 ? 'border' : 'noise');
     return { c, N, core, lab, kind, direct, reach, path, blocked, witness };
   }
 
   const dist = (a: P, b: P) => Math.hypot(a.x - b.x, a.y - b.y);
-
   function hop(a: P, b: P, colour: string, lw = 2) {
     const d = dist(a, b) || 1;
     const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
@@ -493,22 +432,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   function drawReach() {
     const A = analyse();
-    const c = A.c;
-    const pt = c.pts;
-    const RW = rc.W, RH = rc.H;
-    const acc = ACC(), teal = TEAL(), bad = BAD();
-    rctx.clearRect(0, 0, RW, RH);
-
-    rlabel(c.title, 60, 46, 0.75, 'left', 13, acc);
-    rlabel(c.sub, 60, 66, 0.34, 'left', 11);
-
+    const pt = A.c.pts;
+    rctx.clearRect(0, 0, rc.W, rc.H);
     const Rp = A.reach(rst.p);
     const pathPQ = A.path(rst.p, rst.q);
     const pathQP = A.path(rst.q, rst.p);
     const connected = A.witness >= 0;
 
-    // everything p can reach, as a soft halo
-    rctx.fillStyle = acc;
+    rctx.fillStyle = ACC;
     rctx.globalAlpha = 0.36;
     for (const i of Rp.seen) {
       rctx.beginPath();
@@ -516,32 +447,27 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       rctx.fill();
     }
     rctx.globalAlpha = 1;
-
-    // the ε that the two points under discussion actually see
     rctx.setLineDash([4, 5]);
     rctx.lineWidth = 1.2;
     for (const i of [rst.p, rst.q]) {
-      rctx.strokeStyle = rink(0.26);
+      rctx.strokeStyle = ink(0.26);
       rctx.beginPath();
       rctx.arc(pt[i].x, pt[i].y, rst.eps, 0, Math.PI * 2);
       rctx.stroke();
     }
     rctx.setLineDash([]);
 
-    // the chain, when there is one, or else the two chains that connect them
-    if (pathPQ.length > 1) for (let i = 0; i < pathPQ.length - 1; i++) hop(pt[pathPQ[i]], pt[pathPQ[i + 1]], acc, 2.2);
-    else if (pathQP.length > 1) for (let i = 0; i < pathQP.length - 1; i++) hop(pt[pathQP[i]], pt[pathQP[i + 1]], acc, 2.2);
-    else if (connected) {
+    if (pathPQ.length > 1) for (let i = 0; i < pathPQ.length - 1; i++) hop(pt[pathPQ[i]], pt[pathPQ[i + 1]], ACC, 2.2);
+    else if (pathQP.length > 1) for (let i = 0; i < pathQP.length - 1; i++) hop(pt[pathQP[i]], pt[pathQP[i + 1]], ACC, 2.2);
+    else if (connected)
       for (const t of [rst.p, rst.q]) {
         const pa = A.path(A.witness, t);
-        for (let i = 0; i < pa.length - 1; i++) hop(pt[pa[i]], pt[pa[i + 1]], teal, 2);
+        for (let i = 0; i < pa.length - 1; i++) hop(pt[pa[i]], pt[pa[i + 1]], TEAL, 2);
       }
-    }
 
-    // the points, drawn as what they are
     for (let i = 0; i < pt.length; i++) {
       const k = A.kind(i);
-      const col = A.lab[i] >= 0 ? RPAL[A.lab[i] % RPAL.length] : rink(0.34);
+      const col = A.lab[i] >= 0 ? RPAL[A.lab[i] % RPAL.length] : ink(0.34);
       if (k === 'core') {
         rctx.fillStyle = col;
         rctx.beginPath();
@@ -554,14 +480,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         rctx.arc(pt[i].x, pt[i].y, 5.5, 0, Math.PI * 2);
         rctx.stroke();
       } else {
-        rctx.fillStyle = rink(0.34);
+        rctx.fillStyle = ink(0.34);
         rctx.beginPath();
         rctx.arc(pt[i].x, pt[i].y, 3.4, 0, Math.PI * 2);
         rctx.fill();
       }
     }
-
-    // p, q and the core that connects them
     const mark = (i: number, name: string, colour: string, below = false) => {
       rctx.strokeStyle = colour;
       rctx.lineWidth = 1.8;
@@ -571,147 +495,109 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       const t = `${name} · ${A.kind(i)}`;
       const cy = pt[i].y + (below ? 36 : -28);
       const w = rwidth(t, 11.5) + 16;
-      rctx.fillStyle = css('--stage-bg') || '#0d0e12';
+      rctx.fillStyle = css('--stage-bg', '#0d0e12');
       rctx.globalAlpha = 0.92;
       roundRect(rctx, pt[i].x - w / 2, cy - 11, w, 20, 6);
       rctx.fill();
       rctx.globalAlpha = 1;
-      rctx.strokeStyle = rink(0.16);
+      rctx.strokeStyle = ink(0.16);
       rctx.lineWidth = 1;
       rctx.stroke();
       rlabel(t, pt[i].x, cy + 4, 0.9, 'center', 11.5, colour);
     };
-    if (connected && pathPQ.length < 2 && pathQP.length < 2 && A.witness !== rst.p && A.witness !== rst.q)
-      mark(A.witness, 'o', teal);
-    mark(rst.p, 'p', rink(0.9));
-    mark(rst.q, 'q', rink(0.9), true);
+    if (connected && pathPQ.length < 2 && pathQP.length < 2 && A.witness !== rst.p && A.witness !== rst.q) mark(A.witness, 'o', TEAL);
+    mark(rst.p, 'p', ink(0.9));
+    mark(rst.q, 'q', ink(0.9), true);
 
-    // legend
-    const ly = 384;
-    rctx.fillStyle = rink(0.75);
-    rctx.beginPath(); rctx.arc(66, ly - 4, 6, 0, Math.PI * 2); rctx.fill();
-    rlabel('core', 78, ly, 0.4, 'left', 11);
-    rctx.strokeStyle = rink(0.6); rctx.lineWidth = 2;
-    rctx.beginPath(); rctx.arc(146, ly - 4, 5.5, 0, Math.PI * 2); rctx.stroke();
-    rlabel('border', 158, ly, 0.4, 'left', 11);
-    rctx.fillStyle = rink(0.34);
-    rctx.beginPath(); rctx.arc(240, ly - 4, 3.4, 0, Math.PI * 2); rctx.fill();
-    rlabel('noise', 252, ly, 0.4, 'left', 11);
-    rlabel('dashed circle = ε · shaded = everything p reaches', 340, ly, 0.3, 'left', 11);
-
-    drawCard(A, pathPQ, pathQP, connected);
+    drawVerdicts(A, pathPQ, pathQP, connected);
   }
 
   /** The five verdicts, each with the reason it came out that way. */
-  function drawCard(A: Analysis, pathPQ: number[], pathQP: number[], connected: boolean) {
+  function drawVerdicts(A: Analysis, pathPQ: number[], pathQP: number[], connected: boolean) {
     const pt = A.c.pts;
-    const teal = TEAL(), bad = BAD();
-    const x0 = 60, x1 = 840, y0 = 410;
-    rctx.fillStyle = rink(0.03);
-    roundRect(rctx, x0, y0, x1 - x0, 218, 10);
-    rctx.fill();
-    rctx.strokeStyle = rink(0.12);
-    rctx.lineWidth = 1;
-    rctx.stroke();
-
-    rlabel('core: minPts points within ε, itself included', x0 + 26, y0 + 28, 0.42, 'left', 11);
-    rlabel('→ direct · ⇒ chain · ↔ connected', x1 - 26, y0 + 28, 0.42, 'right', 11);
-    rctx.strokeStyle = rink(0.1);
+    const x0 = 80, y0 = 400;
+    rlabel('core: minPts points within ε, itself included', x0, y0 - 12, 0.42, 'left', 11);
+    rlabel('→ direct · ⇒ chain · ↔ connected', rc.W - x0, y0 - 12, 0.42, 'right', 11);
+    rctx.strokeStyle = ink(0.1);
     rctx.beginPath();
-    rctx.moveTo(x0 + 20, y0 + 44);
-    rctx.lineTo(x1 - 20, y0 + 44);
+    rctx.moveTo(x0, y0);
+    rctx.lineTo(rc.W - x0, y0);
     rctx.stroke();
 
     const d = dist(pt[rst.p], pt[rst.q]);
     const dtxt = `d = ${Math.round(d)}`;
-    const directWhy = (a: number, b: number, an: string) =>
-      A.direct(a, b)
-        ? `${an} is a core and ${dtxt} ≤ ε`
-        : !A.core[a]
-          ? d <= rst.eps
-            ? `${an} is not a core, even though ${dtxt} ≤ ε`
-            : `${an} is not a core point`
-          : `${dtxt} > ε = ${rst.eps}`;
-    const reachWhy = (a: number, b: number, an: string, path: number[]) =>
-      path.length > 1
-        ? `${path.length - 1} hop${path.length > 2 ? 's' : ''}, every one of them leaving a core`
-        : !A.core[a]
-          ? `${an} is not a core, so no chain can leave it`
-          : A.blocked(a)
-            ? 'the chain is stopped at a border point'
-            : 'no chain of cores gets there';
-
+    const directWhy = (a: number, an: string) =>
+      A.direct(a, a === rst.p ? rst.q : rst.p) ? `${an} is a core and ${dtxt} ≤ ε`
+      : !A.core[a] ? (d <= rst.eps ? `${an} is not a core, even though ${dtxt} ≤ ε` : `${an} is not a core point`)
+      : `${dtxt} > ε = ${rst.eps}`;
+    const reachWhy = (a: number, an: string, path: number[]) =>
+      path.length > 1 ? `${path.length - 1} hop${path.length > 2 ? 's' : ''}, every one of them leaving a core`
+      : !A.core[a] ? `${an} is not a core, so no chain can leave it`
+      : A.blocked(a) ? 'the chain is stopped at a border point'
+      : 'no chain of cores gets there';
     const rows: [string, string, boolean, string][] = [
-      ['p → q', 'directly reachable', A.direct(rst.p, rst.q), directWhy(rst.p, rst.q, 'p')],
-      ['q → p', 'directly reachable', A.direct(rst.q, rst.p), directWhy(rst.q, rst.p, 'q')],
-      ['p ⇒ q', 'reachable', pathPQ.length > 1, reachWhy(rst.p, rst.q, 'p', pathPQ)],
-      ['q ⇒ p', 'reachable', pathQP.length > 1, reachWhy(rst.q, rst.p, 'q', pathQP)],
-      [
-        'p ↔ q', 'connected', connected,
+      ['p → q', 'directly reachable', A.direct(rst.p, rst.q), directWhy(rst.p, 'p')],
+      ['q → p', 'directly reachable', A.direct(rst.q, rst.p), directWhy(rst.q, 'q')],
+      ['p ⇒ q', 'reachable', pathPQ.length > 1, reachWhy(rst.p, 'p', pathPQ)],
+      ['q ⇒ p', 'reachable', pathQP.length > 1, reachWhy(rst.q, 'q', pathQP)],
+      ['p ↔ q', 'connected', connected,
         connected
-          ? A.witness === rst.p || A.witness === rst.q
-            ? 'one of them is itself the core that reaches both'
-            : 'the core marked o reaches both of them'
-          : A.core[rst.p] || A.core[rst.q]
-            ? 'no single core reaches both'
-            : 'neither of them is reached from any core',
-      ],
+          ? A.witness === rst.p || A.witness === rst.q ? 'one of them is itself the core that reaches both' : 'the core marked o reaches both of them'
+          : A.core[rst.p] || A.core[rst.q] ? 'no single core reaches both' : 'neither of them is reached from any core'],
     ];
-
     rows.forEach(([sym, name, ok, why], i) => {
-      const y = y0 + 78 + i * 32;
-      rlabel(sym, x0 + 26, y, 0.85, 'left', 13);
-      rlabel(name, x0 + 116, y, 0.55, 'left', 11.5);
-      rlabel(ok ? 'yes' : 'no', x0 + 300, y, 1, 'left', 12.5, ok ? teal : bad);
-      rlabel(why, x0 + 348, y, 0.38, 'left', 11);
+      const y = y0 + 32 + i * 32;
+      rlabel(sym, x0, y, 0.85, 'left', 13);
+      rlabel(name, x0 + 90, y, 0.55, 'left', 11.5);
+      rlabel(ok ? 'yes' : 'no', x0 + 270, y, 1, 'left', 12.5, ok ? TEAL : BAD);
+      rlabel(why, x0 + 318, y, 0.38, 'left', 11);
     });
+    wordsReach(A, connected);
   }
 
-  function syncReachPanel() {
-    const A = analyse();
-    (document.getElementById('pkind') as HTMLElement).textContent = A.kind(rst.p);
-    (document.getElementById('qkind') as HTMLElement).textContent = A.kind(rst.q);
-    (document.getElementById('samec') as HTMLElement).textContent =
-      A.lab[rst.p] >= 0 && A.lab[rst.p] === A.lab[rst.q] ? 'yes' : 'no';
-    (document.getElementById('nextsel') as HTMLElement).textContent = rst.next;
+  function wordsReach(A: Analysis, connected: boolean) {
+    setEq({
+      rule: ['\\text{core}(p): |N_\\varepsilon(p)| \\ge \\text{minPts}', '\\qquad', [`p \\to q:\\ p\\text{ core},\\ q \\in N_\\varepsilon(p)`, ACC]],
+      live: [`\\varepsilon = ${rst.eps}`, `\\quad\\text{minPts} = ${rst.minPts}`, [`\\quad p\\text{ is }${A.kind(rst.p)}`, ACC], `\\quad q\\text{ is }${A.kind(rst.q)}`],
+    });
+    el('result-label').textContent = 'p ↔ q connected';
+    setResult({
+      value: connected ? 'yes' : 'no',
+      colour: connected ? TEAL : BAD,
+      status: A.c.title,
+      note: A.c.sub,
+    });
+    setRows({
+      'r-p': A.kind(rst.p),
+      'r-q': A.kind(rst.q),
+      'r-same': A.lab[rst.p] >= 0 && A.lab[rst.p] === A.lab[rst.q] ? 'yes' : 'no',
+      'r-next': rst.next,
+    });
   }
 
   // -------------------------------------------------------------------------
   // wiring
   // -------------------------------------------------------------------------
-  const el = (id: string) => document.getElementById(id) as HTMLElement;
-  const epsEl = document.getElementById('eps') as HTMLInputElement;
-  const mpEl = document.getElementById('mp') as HTMLInputElement;
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-
-  const NOTES = {
-    clusters:
-      'Click the canvas to add points. Restart, then Step, to watch clusters flood outward from dense cores.',
-    reach:
-      'Click any point to move q, then p, and read the five verdicts. Each case brings its own ε and min points; drag either slider to break the case and watch which line flips first.',
-  };
+  const setEps = slider('eps', (v) => {
+    if (mode === 'clusters') { state.eps = v; runFull(); } else rst.eps = v;
+  });
+  const setMp = slider('mp', (v) => {
+    if (mode === 'clusters') { state.minPts = v; runFull(); } else rst.minPts = v;
+  });
+  const epsEl = el('eps') as HTMLInputElement;
 
   function showMode() {
     const cl = mode === 'clusters';
     canvas.hidden = !cl;
     rcanvas.hidden = cl;
-    el('cl-controls').hidden = !cl;
-    el('rc-controls').hidden = cl;
-    el('cl-readout').hidden = !cl;
-    el('rc-readout').hidden = cl;
-    el('note').textContent = cl ? NOTES.clusters : NOTES.reach;
-    const eps = cl ? state.eps : rst.eps;
-    const mp = cl ? state.minPts : rst.minPts;
+    for (const id of ['cl-controls', 'cl-readout', 'cl-caption']) el(id).hidden = !cl;
+    for (const id of ['rc-controls', 'rc-readout', 'rc-caption']) el(id).hidden = cl;
     // the two views work at different scales, so the slider keeps its own range
     epsEl.min = cl ? '12' : '40';
     epsEl.max = cl ? '90' : '200';
-    epsEl.value = String(eps);
-    mpEl.value = String(mp);
-    el('epsval').textContent = String(eps);
-    el('mpval').textContent = String(mp);
-    if (!cl) syncReachPanel();
+    setEps(cl ? state.eps : rst.eps);
+    setMp(cl ? state.minPts : rst.minPts);
   }
-
   function loadCase(i: number) {
     rst.ci = i;
     rst.eps = CASES[i].eps;
@@ -722,96 +608,46 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     showMode();
   }
 
-  el('mode').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    el('mode').querySelectorAll('button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    mode = btn.dataset.m as 'clusters' | 'reach';
+  segmented('mode', (m) => {
+    mode = m as 'clusters' | 'reach';
     state.running = false;
-    runBtn.textContent = 'Run';
+    controls.setRunning(false);
     showMode();
   });
+  segmented('rcase', (c) => loadCase(+c));
+  segmented('data', (d) => { state.data = d; gen(); runFull(); });
 
-  el('rcase').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    el('rcase').querySelectorAll('button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    loadCase(+btn.dataset.c!);
+  const controls = transport({
+    onRun: (running) => {
+      if (mode !== 'clusters') { controls.setRunning(false); return; }
+      if (done) restart();
+      state.running = running;
+    },
+    onStep: () => {
+      if (mode !== 'clusters') return;
+      if (done) restart();
+      stepOnce();
+    },
+    onReset: () => {
+      if (mode !== 'clusters') return;
+      state.running = false;
+      controls.setRunning(false);
+      restart();
+    },
   });
-
-  el('data').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    el('data').querySelectorAll('button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.data = btn.dataset.d!;
-    gen();
-    runFull();
-  });
-
-  epsEl.addEventListener('input', () => {
-    el('epsval').textContent = epsEl.value;
-    if (mode === 'clusters') {
-      state.eps = +epsEl.value;
-      runFull();
-    } else {
-      rst.eps = +epsEl.value;
-      syncReachPanel();
-    }
-  });
-  mpEl.addEventListener('input', () => {
-    el('mpval').textContent = mpEl.value;
-    if (mode === 'clusters') {
-      state.minPts = +mpEl.value;
-      runFull();
-    } else {
-      rst.minPts = +mpEl.value;
-      syncReachPanel();
-    }
-  });
-
-  runBtn.addEventListener('click', () => {
-    if (mode !== 'clusters') return;
-    if (done) restart();
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-  el('step').addEventListener('click', () => {
-    if (mode !== 'clusters') return;
-    if (done) restart();
-    stepOnce();
-    updateReadout();
-  });
-  el('reset').addEventListener('click', () => {
-    if (mode !== 'clusters') return;
-    state.running = false;
-    runBtn.textContent = 'Run';
-    restart();
-    updateReadout();
-  });
-  el('regen').addEventListener('click', () => {
-    gen();
-    runFull();
-  });
+  el('regen').addEventListener('click', () => { gen(); runFull(); });
   el('clear').addEventListener('click', () => {
     pts = [];
     state.running = false;
-    runBtn.textContent = 'Run';
+    controls.setRunning(false);
     restart();
-    updateReadout();
   });
 
   canvas.addEventListener('pointerdown', (e) => {
     const rect = canvas.getBoundingClientRect();
-    pts.push({
-      x: ((e.clientX - rect.left) / rect.width) * W,
-      y: ((e.clientY - rect.top) / rect.height) * H,
-    });
+    pts.push({ x: ((e.clientX - rect.left) / rect.width) * W, y: ((e.clientY - rect.top) / rect.height) * H });
     runFull();
   });
-
   const rcAt = (e: PointerEvent | MouseEvent) => {
     const rect = rcanvas.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * rc.W;
@@ -824,31 +660,21 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     return best;
   };
-
   rcanvas.addEventListener('pointerdown', (e) => {
     const i = rcAt(e);
     if (i < 0 || i === rst.p || i === rst.q) return;
     if (rst.next === 'q') { rst.q = i; rst.next = 'p'; } else { rst.p = i; rst.next = 'q'; }
-    syncReachPanel();
   });
-  rcanvas.addEventListener('mousemove', (e) => {
-    rcanvas.style.cursor = rcAt(e) >= 0 ? 'pointer' : 'default';
-  });
+  rcanvas.addEventListener('mousemove', (e) => { rcanvas.style.cursor = rcAt(e) >= 0 ? 'pointer' : 'default'; });
 
   function loop() {
     if (mode === 'clusters') {
       if (state.running) {
         for (let k = 0; k < 6 && !done; k++) stepOnce();
-        updateReadout();
-        if (done) {
-          state.running = false;
-          runBtn.textContent = 'Run';
-        }
+        if (done) { state.running = false; controls.setRunning(false); }
       }
       draw();
-    } else {
-      drawReach();
-    }
+    } else drawReach();
     requestAnimationFrame(loop);
   }
 
@@ -864,21 +690,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   .sim-stage canvas[hidden] {
     display: none;
   }
-  #cl-controls,
-  #rc-controls {
+  .stack {
     display: flex;
     flex-direction: column;
     gap: 18px;
   }
-  #cl-controls[hidden],
-  #rc-controls[hidden],
-  .readout[hidden] {
-    display: none;
-  }
-  .note {
-    font-size: 0.82rem;
-    color: var(--text-faint);
-    margin: 0;
-    line-height: 1.5;
+  #db {
+    cursor: crosshair;
   }
 </style>

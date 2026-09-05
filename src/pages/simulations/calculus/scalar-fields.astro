@@ -1,41 +1,39 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Scalar Fields & Gradients"
-  description="A scalar field assigns a number to every point in space, shown here as a 3D density cloud. Drag the small probe through it: an arrow points the way the field grows fastest, and its gradient magnitude is shown alongside."
+  description="A scalar field gives every point in space a number, drawn here as a density cloud. Drag the small probe through it: an arrow points the way the field grows fastest, and its length is how fast."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="cloud" class="probe-canvas" width="640" height="640"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="cloud" class="probe-canvas" width="640" height="640" role="img" aria-label="A three-dimensional density cloud with a small probe cube and the gradient arrow at the probe."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the gradient at the probe', color: '#f59e0b' }, { label: 'low density', color: '#3b4cc0' }, { label: 'high density', color: '#b40426' }]}
+        hint="Drag the cube to move the probe · drag the background to orbit · scroll to move it in depth"
+      />
+      <Result label="Steepest slope at the probe" />
     </div>
-
     <div class="sim-panel">
-      <div class="control">
-        <label>Probe size <b id="sizeval">0.18</b></label>
-        <input type="range" id="size" min="4" max="45" value="18" />
-      </div>
-
-      <div class="control">
-        <label>Point density <b id="ptval">3000</b></label>
-        <input type="range" id="pts" min="600" max="4500" step="150" value="3000" />
-      </div>
-
-      <button class="btn ghost" id="regen">New field</button>
-
-      <div class="readout">
-        <div class="row"><span>Density here</span><b id="dens">—</b></div>
-        <div class="row"><span>Gradient |∇f|</span><b id="grad">—</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag the cube to move the probe; drag the background to orbit; scroll to
-        move it in depth. The arrow points toward the steepest increase, longer
-        where the field changes faster. Shrink the cube to zoom into the local
-        derivative.
-      </p>
+      <Actions>
+        <button type="button" class="btn" id="regen">New field</button>
+      </Actions>
+      <Slider id="size" label="Probe size" min={4} max={45} value={18} display="0.18" />
+      <Slider id="pts" label="Point density" min={600} max={4500} step={150} value={3000} />
+      <Readout rows={[{ id: 'dens', label: 'density here' }, { id: 'grad', label: 'gradient |∇f|' }]} />
     </div>
   </div>
 
@@ -58,9 +56,12 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
-  const setEq = equationBar();
-  const canvas = document.getElementById('cloud') as HTMLCanvasElement;
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('cloud') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const isLight = () => css('--stage-light') === '1';
@@ -296,24 +297,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
     // readouts
     const ct = tAt(c.x, c.y, c.z);
-    (document.getElementById('dens') as HTMLElement).textContent =
-      ct < 0.34 ? 'low' : ct < 0.67 ? 'medium' : 'high';
-    (document.getElementById('grad') as HTMLElement).textContent = gm.toFixed(3);
-    const ARROW = css('--accent') || '#aab6ff';
-    setEq([
-      [
-        ['\\nabla f', ARROW],
-        '=\\Big(\\frac{\\partial f}{\\partial x},\\frac{\\partial f}{\\partial y},\\frac{\\partial f}{\\partial z}\\Big)',
-        '\\quad\\text{the way the density climbs fastest}',
-      ],
-      [
-        [`|\\nabla f| = ${gm.toFixed(3)}`, ARROW],
-        `\\quad\\text{density here: ${ct < 0.34 ? 'low' : ct < 0.67 ? 'medium' : 'high'}}`,
-      ],
-      [
-        'one number per point in, one arrow per point out: the arrow points up the steepest slope and its length is how steep',
-      ],
-    ]);
+    const ARROW = '#f59e0b';
+    const level = ct < 0.34 ? 'low' : ct < 0.67 ? 'medium' : 'high';
+    setRows({ dens: `${ct.toFixed(3)} (${level})`, grad: gm.toFixed(3) });
+    setEq({
+      rule: [['\\nabla f', ARROW], '=\\Big(\\frac{\\partial f}{\\partial x},\\frac{\\partial f}{\\partial y},\\frac{\\partial f}{\\partial z}\\Big)', '\\quad\\text{the way the density climbs fastest}'],
+      live: [[`|\\nabla f| = ${gm.toFixed(3)}`, ARROW], `\\quad f = ${ct.toFixed(3)}\\ (\\text{${level}})`],
+    });
+    setResult({
+      value: gm.toFixed(3),
+      colour: ARROW,
+      status: `density ${ct.toFixed(3)} here, ${level} · the arrow points where it climbs fastest`,
+      note: 'One number per point in, one arrow per point out: the arrow points up the steepest slope and its length is how steep.',
+    });
   }
 
   function draw() {
@@ -437,22 +433,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   );
 
   // ---- controls ----
-  const sizeEl = document.getElementById('size') as HTMLInputElement;
-  sizeEl.addEventListener('input', () => {
-    state.size = +sizeEl.value / 100;
-    (document.getElementById('sizeval') as HTMLElement).textContent = state.size.toFixed(2);
-    draw();
-  });
+  slider('size', (v) => { state.size = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  slider('pts', (v) => { state.count = v; draw(); });
+  el('regen').addEventListener('click', generate);
 
-  const ptsEl = document.getElementById('pts') as HTMLInputElement;
-  ptsEl.addEventListener('input', () => {
-    state.count = +ptsEl.value;
-    (document.getElementById('ptval') as HTMLElement).textContent = ptsEl.value;
-    draw();
-  });
-
-  document.getElementById('regen')!.addEventListener('click', generate);
-
+  generate();
   generate();
 </script>
 

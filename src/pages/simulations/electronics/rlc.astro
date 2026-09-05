@@ -1,22 +1,26 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="electronics"
   title="RC, RL and RLC Circuits"
-  description="Put a resistor with something that stores energy and the circuit stops answering instantly. A capacitor and a resistor give one time constant and a lazy approach to the answer; add an inductor and the two stores start passing energy back and forth, so the circuit rings, and how fast the ringing dies is a knob you can turn. The same two poles decide the transient, the ringing and which frequencies get through."
+  description="Put a resistor with something that stores energy and the circuit stops answering instantly. RC and RL give one time constant and a lazy approach; add an inductor and the two stores pass energy back and forth, so the circuit rings. The same two poles decide the transient, the ringing and which frequencies get through."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="rlc" width="1000" height="660"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="rlc" width="1000" height="660" role="img" aria-label="A series circuit with its source, current and capacitor voltage traced over time, beside a panel showing the energy, the poles in the s-plane or the Bode plot."></canvas>
+      </div>
+      <Caption hint="The poles panel is the same circuit seen from the Laplace side: move R and watch the two poles travel" />
+      <Result label="Current" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
+      <Transport running />
 
       <div class="control">
         <label>Circuit</label>
@@ -88,10 +92,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span id="l8">—</span><b id="r8">—</b></div>
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        The poles panel is the same circuit seen from the Laplace side. Move R
-        and watch the two poles travel; everything else on screen follows them.
-      </p>
     </div>
   </div>
 
@@ -149,6 +149,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { transport, result } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // One series loop, integrated in the two variables that carry the memory:
@@ -801,6 +802,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- readouts --------------------------------------------------------------
 
   const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setResult = result();
   const setRow = (n: number, lab: string, val: string) => {
     el('l' + n).innerHTML = subHtml(lab);
     el('r' + n).textContent = val;
@@ -821,6 +823,15 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       setRow(7, 'Quality Q', '—');
     }
     setRow(8, 'Heat burnt in R', eng(eDiss, 'J'));
+    setResult({
+      value: eng(i, 'A'),
+      status: `source ${vs.toFixed(2)} V · ${hasC() ? 'v_C' : 'v_L'} = ${(hasC() ? vC : vs - i * state.R).toFixed(2)} V · τ = ${eng(tauOf(), 's')}${state.mode === 'rlc' ? ` · ζ = ${zeta().toFixed(3)}, Q = ${(1 / (2 * zeta())).toFixed(2)}` : ''}`,
+      note: state.mode === 'rlc'
+        ? zeta() < 1
+          ? 'Underdamped: the capacitor and the inductor trade energy back and forth and the resistor bleeds a little away each swing.'
+          : 'Overdamped: the resistor takes the energy before the two stores can finish one exchange, so the circuit settles without ringing.'
+        : 'One store, one time constant: the response is an exponential and it never overshoots.',
+    });
   }
 
   // --- frame -----------------------------------------------------------------
@@ -828,14 +839,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   function draw() {
     const vs = vSource(clock);
     ctx.clearRect(0, 0, W, H);
-    label(
-      state.mode === 'rc' ? 'RC' : state.mode === 'rl' ? 'RL' : 'RLC',
-      20,
-      30,
-      0.85,
-      'left',
-      14
-    );
     drawCircuit(vs);
     if (state.aux === 'poles') drawPoles();
     else if (state.aux === 'bode') drawBode();
@@ -861,12 +864,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: reset,
   });
-  el('reset').addEventListener('click', reset);
 
   let ready = false;
   function bindRange(id: string, apply: (n: number) => void, restart = false) {
@@ -959,12 +960,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <style>
   #rlc {
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
   }
 </style>

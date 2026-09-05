@@ -1,0 +1,659 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Derivative Rules"
+  description="Three rules, one picture each. Add two functions and their graphs stack, so the slopes add. Multiply them and a rectangle grows two strips and one doomed corner. Compose them and a small step is stretched twice, so the factors multiply."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="dr"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="For the chosen rule: the stacked graphs and tower of the sum rule, the growing rectangle of the product rule, or the twice-stretched step of the chain rule, each with the change Δ drawn for the current step h."
+        ></canvas>
+      </div>
+      <div id="cap-sum">
+        <Caption legend={[{ label: 'u and its rise Δu', color: '#7c8cff' }, { label: 'v and its rise Δv', color: '#f59e0b' }, { label: 'u + v', color: 'rgba(232,233,236,0.9)' }]} hint="The tower grows twice: once for u, once for v" />
+      </div>
+      <div id="cap-product" hidden>
+        <Caption legend={[{ label: 'the side strip v·Δu', color: '#7c8cff' }, { label: 'the top strip u·Δv', color: '#f59e0b' }, { label: 'the corner Δu·Δv', color: '#ef4444' }]} hint="Each edge paints a strip as it moves; the corner is the only piece that dies" />
+      </div>
+      <div id="cap-chain" hidden>
+        <Caption legend={[{ label: 'g stretches the step', color: '#7c8cff' }, { label: 'f stretches that', color: '#f59e0b' }, { label: 'the whole chain', color: '#34d399' }]} hint="One scale for all three bars, so a longer bar really was stretched" />
+      </div>
+      <Result label="Slope of u + v" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg id="rule" label="Rule" attr="r" options={[{ value: 'sum', label: 'Sum' }, { value: 'product', label: 'Product' }, { value: 'chain', label: 'Chain' }]} />
+      <Transport animate="Watch the step">
+        <button type="button" class="btn ghost" id="shrink">Shrink h → 0</button>
+      </Transport>
+      <div id="pairs-sum">
+        <Seg id="pair0" label="The two functions" attr="p" options={[{ value: '0', label: 'x² and x' }, { value: '1', label: 'sin and x/2' }, { value: '2', label: 'x² and 2.4−x' }]} />
+      </div>
+      <div id="pairs-product" hidden>
+        <Seg id="pair1" label="The two factors" attr="p" options={[{ value: '0', label: 'x · x²' }, { value: '1', label: 'x · (1.5+sin x)' }, { value: '2', label: '(0.5+x) · (3−0.6x)' }]} />
+      </div>
+      <div id="pairs-chain" hidden>
+        <Seg id="pair2" label="The chain f(g(x))" attr="p" options={[{ value: '0', label: 'sin(x²)' }, { value: '1', label: '(1.4+sin x)²' }, { value: '2', label: '√(1+x²)' }]} />
+      </div>
+      <Slider id="x" label="Point x" min={0} max={100} value={40} display="1.00" />
+      <Slider id="h" label="Step h" min={0} max={100} value={20} display="0.253" hint={['a big step', 'a tiny one']} />
+      <div class="readout" id="rows"></div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      <b>Sum.</b> Press <b>Watch the step</b> and keep your eyes on the tower.
+      The bottom block pushes up by Δu, carrying the upper block with it, then
+      the upper block grows by Δv on its own. Divide the two rises by h and they
+      are slopes: <b>(u+v)′ = u′ + v′</b>. Shrink h and nothing has to be thrown
+      away, because Δ(u+v) = Δu + Δv is exactly true at every h.
+    </li>
+    <li>
+      <b>Product.</b> The right edge slides out and paints a strip of area
+      <b>v·Δu</b>, the top edge paints <b>u·Δv</b>, and the little square where
+      they meet belongs to neither. Halve h and each strip roughly halves, but
+      the corner <b>quarters</b>: it is short in two directions at once. That is
+      why <b>(uv)′ = u′v + uv′</b>, and why it is not u′v′, which is only that
+      doomed corner.
+    </li>
+    <li>
+      <b>Chain.</b> One step goes in at the top and comes out at the bottom
+      having been stretched <b>twice</b>. The second machine's dot sits at
+      <b>u = g(x)</b>, never at x: it only ever sees what the first one handed it,
+      which is why the rule says f′(g(x)). On sin(x²) slide x to about 1.25,
+      where f′ is zero, and the bottom bar collapses even though the middle one is
+      still growing: a chain is as dead as its deadest link.
+    </li>
+    <li>
+      Ask why the sum rule feels obvious and the other two do not. Stacking never
+      lets u and v <b>interact</b>; multiplying does, and that interaction is the
+      extra term. Composing makes them interact in the strongest way of all: the
+      second function is read at a point the first one chose.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import type { Part } from '../../../lib/equation';
+  import { roundRect } from '../../../lib/theorem';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result } from '../../../lib/panel';
+
+  type Rule = 'sum' | 'product' | 'chain';
+  type Fn = (x: number) => number;
+  type Pair = { u: Fn; du: Fn; ul: string; v: Fn; dv: Fn; vl: string; x0: number; x1: number };
+  type Chain = { g: Fn; dg: Fn; gl: string; f: Fn; df: Fn; fl: string; x0: number; x1: number };
+
+  const SUM: Pair[] = [
+    { u: (x) => x * x, du: (x) => 2 * x, ul: 'x²', v: (x) => x, dv: () => 1, vl: 'x', x0: 0.2, x1: 2 },
+    { u: (x) => 1.4 + Math.sin(x), du: (x) => Math.cos(x), ul: '1.4+sin x', v: (x) => x / 2, dv: () => 0.5, vl: 'x/2', x0: 0.2, x1: 4 },
+    { u: (x) => x * x, du: (x) => 2 * x, ul: 'x²', v: (x) => 2.4 - x, dv: () => -1, vl: '2.4−x', x0: 0.2, x1: 2 },
+  ];
+  const PRODUCT: Pair[] = [
+    { u: (x) => x, du: () => 1, ul: 'x', v: (x) => x * x, dv: (x) => 2 * x, vl: 'x²', x0: 0.25, x1: 2 },
+    { u: (x) => x, du: () => 1, ul: 'x', v: (x) => 1.5 + Math.sin(x), dv: (x) => Math.cos(x), vl: '1.5+sin x', x0: 0.25, x1: 4 },
+    { u: (x) => 0.5 + x, du: () => 1, ul: '0.5+x', v: (x) => 3 - 0.6 * x, dv: () => -0.6, vl: '3−0.6x', x0: 0.25, x1: 2.5 },
+  ];
+  const CHAIN: Chain[] = [
+    { g: (x) => x * x, dg: (x) => 2 * x, gl: 'g(x) = x²', f: (u) => Math.sin(u), df: (u) => Math.cos(u), fl: 'f(u) = sin u', x0: 0.3, x1: 2.2 },
+    { g: (x) => 1.4 + Math.sin(x), dg: (x) => Math.cos(x), gl: 'g(x) = 1.4 + sin x', f: (u) => u * u, df: (u) => 2 * u, fl: 'f(u) = u²', x0: 0.2, x1: 4 },
+    { g: (x) => 1 + x * x, dg: (x) => 2 * x, gl: 'g(x) = 1 + x²', f: (u) => Math.sqrt(u), df: (u) => 0.5 / Math.sqrt(u), fl: 'f(u) = √u', x0: 0.2, x1: 2 },
+  ];
+  // the biggest step each picture can hold, and how fast the slider shrinks it
+  const HMAX: Record<Rule, number> = { sum: 0.8, product: 0.5, chain: 0.3 };
+  const HDIV: Record<Rule, number> = { sum: 40, product: 40, chain: 50 };
+  const HDEF: Record<Rule, number> = { sum: 20, product: 10, chain: 50 };
+
+  const state = {
+    rule: 'sum' as Rule,
+    pi: { sum: 0, product: 0, chain: 0 } as Record<Rule, number>,
+    xs: 40,
+    hs: { ...HDEF } as Record<Rule, number>,
+    tau: 1,
+    playing: false,
+    shrinking: false,
+  };
+  const range = () => (state.rule === 'chain' ? CHAIN[state.pi.chain] : state.rule === 'sum' ? SUM[state.pi.sum] : PRODUCT[state.pi.product]);
+  const hFull = () => HMAX[state.rule] * Math.pow(10, -state.hs[state.rule] / HDIV[state.rule]);
+  const hOf = () => hFull() * state.tau;
+  const xOf = () => range().x0 + ((range().x1 - range().x0) * state.xs) / 100;
+
+  const canvas = el('dr') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { css, ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const ACC = '#7c8cff', WARM = '#f59e0b', CORNER = '#ef4444', TEAL = '#34d399';
+  const inkRGB = () => css('--stage-ink', '232,233,236');
+
+  function tint(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function text(t: string, x: number, y: number, a = 0.55, al: CanvasTextAlign = 'left', size = 12, weight = '') {
+    ctx.fillStyle = `rgba(${inkRGB()},${a})`;
+    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.textAlign = al;
+    ctx.fillText(t, x, y);
+    ctx.textAlign = 'left';
+  }
+  const f3 = (v: number) => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3).replace('-', '−');
+  const f4 = (v: number) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4).replace('-', '−');
+
+  // ===== sum: the graphs stack, the tower grows twice =========================
+  const G = { x: 56, y: 60, w: 520, h: 470 };
+  const ST = { x: 640, y: 60, w: 320, h: 240 };
+  const TRI = { x: 640, y: 390, w: 320, h: 150 };
+
+  function drawSum() {
+    const p = SUM[state.pi.sum], x = xOf(), h = hOf();
+    const f = (t: number) => p.u(t) + p.v(t);
+    const xEnd = p.x1 + HMAX.sum;
+    let lo = 0, hi = -Infinity;
+    for (let i = 0; i <= 160; i++) {
+      const t = p.x0 + ((xEnd - p.x0) * i) / 160;
+      hi = Math.max(hi, f(t));
+      lo = Math.min(lo, p.v(t), p.u(t), 0);
+    }
+    hi *= 1.08;
+    const X = (t: number) => G.x + ((t - p.x0) / (xEnd - p.x0)) * G.w;
+    const Y = (y: number) => G.y + G.h - ((y - lo) / (hi - lo)) * G.h;
+
+    text('the tall curve is the other two stacked', G.x, G.y - 24, 0.5, 'left', 11.5);
+    text(`u = ${p.ul}    v = ${p.vl}`, G.x, G.y - 8, 0.35, 'left', 11);
+    ctx.strokeStyle = ink(0.2);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(G.x, G.y, G.w, G.h);
+    if (lo < 0) {
+      ctx.strokeStyle = ink(0.25);
+      ctx.beginPath(); ctx.moveTo(G.x, Y(0)); ctx.lineTo(G.x + G.w, Y(0)); ctx.stroke();
+    }
+    ctx.strokeStyle = tint(WARM, 0.3);
+    for (let i = 1; i < 26; i++) {
+      const t = p.x0 + ((xEnd - p.x0) * i) / 26;
+      ctx.beginPath(); ctx.moveTo(X(t), Y(p.u(t))); ctx.lineTo(X(t), Y(p.u(t) + p.v(t))); ctx.stroke();
+    }
+    const curve = (g: Fn, color: string, wd: number, dash: number[] = []) => {
+      ctx.setLineDash(dash);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = wd;
+      ctx.beginPath();
+      for (let i = 0; i <= 240; i++) {
+        const t = p.x0 + ((xEnd - p.x0) * i) / 240;
+        i ? ctx.lineTo(X(t), Y(g(t))) : ctx.moveTo(X(t), Y(g(t)));
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    curve(p.v, WARM, 1.8, [5, 4]);
+    curve(p.u, ACC, 2);
+    curve(f, ink(0.92), 2.8);
+    text('u + v', X(xEnd) - 8, Y(f(xEnd)) - 9, 0.85, 'right', 12, '600');
+    label('u', X(xEnd) - 8, Y(p.u(xEnd)) - 9, 1, 'right', 12, ACC);
+    label('v', X(xEnd) - 8, Y(p.v(xEnd)) - 9, 1, 'right', 12, WARM);
+    for (const t of [x, x + h]) {
+      ctx.strokeStyle = ink(0.3);
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(t), G.y); ctx.lineTo(X(t), G.y + G.h); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = ink(0.95);
+      ctx.beginPath(); ctx.arc(X(t), Y(f(t)), 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = ACC;
+      ctx.beginPath(); ctx.arc(X(t), Y(p.u(t)), 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+    text('x', X(x), G.y + G.h + 17, 0.55, 'center', 11);
+    if (X(x + h) - X(x) > 24) text('x+h', X(x + h), G.y + G.h + 17, 0.55, 'center', 11);
+
+    // the tower, before and after the step
+    const u0 = p.u(x), v0 = p.v(x), u1 = p.u(x + h), v1 = p.v(x + h);
+    const uF = p.u(x + hFull()), vF = p.v(x + hFull());
+    text('the tower grows twice', ST.x, ST.y - 24, 0.5, 'left', 11.5);
+    text('once for u, once for v', ST.x, ST.y - 8, 0.35, 'left', 11);
+    const top = Math.max(u0 + v0, uF + vF, 0.001) * 1.12;
+    const base = ST.y + ST.h - 22;
+    const sc = (ST.h - 34) / top;
+    const bw = 84, gap = 130;
+    const bar = (bx: number, uu: number, vv: number, faded: boolean) => {
+      ctx.fillStyle = tint(ACC, faded ? 0.18 : 0.45);
+      ctx.fillRect(bx, base - uu * sc, bw, uu * sc);
+      ctx.strokeStyle = tint(ACC, faded ? 0.4 : 0.95);
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(bx + 0.5, base - uu * sc + 0.5, bw - 1, uu * sc - 1);
+      ctx.fillStyle = tint(WARM, faded ? 0.18 : 0.45);
+      ctx.fillRect(bx, base - (uu + vv) * sc, bw, vv * sc);
+      ctx.strokeStyle = tint(WARM, faded ? 0.4 : 0.95);
+      ctx.strokeRect(bx + 0.5, base - (uu + vv) * sc + 0.5, bw - 1, vv * sc - 1);
+    };
+    bar(ST.x, u0, v0, true);
+    bar(ST.x + gap, u1, v1, false);
+    const band = (y0: number, y1: number, color: string, lbl: string) => {
+      const a = base - y0 * sc, b = base - y1 * sc;
+      const hh = Math.abs(b - a);
+      ctx.fillStyle = tint(color, 0.95);
+      ctx.fillRect(ST.x + gap, Math.min(a, b), bw, Math.max(1.5, hh));
+      if (hh > 15) label(lbl, ST.x + gap + bw / 2, (a + b) / 2 + 4, 1, 'center', 12, 'rgba(10,11,14,0.9)');
+    };
+    band(u0, u1, ACC, 'Δu');
+    band(u1 + v0, u1 + v1, WARM, 'Δv');
+    text('at x', ST.x + bw / 2, base + 16, 0.45, 'center', 11);
+    text('at x + h', ST.x + gap + bw / 2, base + 16, 0.45, 'center', 11);
+    const yTop = base - (u1 + v1) * sc, yOld = base - (u0 + v0) * sc;
+    const bx = ST.x + gap + bw + 12;
+    ctx.strokeStyle = ink(0.65);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(bx - 5, yOld); ctx.lineTo(bx, yOld); ctx.lineTo(bx, yTop); ctx.lineTo(bx - 5, yTop); ctx.stroke();
+    text('Δu+Δv', bx + 5, (yTop + yOld) / 2 + 4, 0.85, 'left', 11, '600');
+
+    // three slope triangles on a common base: the third is the other two stacked
+    const du = u1 - u0, dv = v1 - v0;
+    text('same base h, heights stack', TRI.x, TRI.y - 24, 0.5, 'left', 11.5);
+    text('which is why the slopes add', TRI.x, TRI.y - 8, 0.35, 'left', 11);
+    const mx = Math.max(Math.abs(du), Math.abs(dv), Math.abs(du + dv), 1e-9);
+    const baseW = 58, tgap = 105, hMax = TRI.h - 40;
+    const yB = TRI.y + TRI.h - 22;
+    const tri = (tx: number, rises: [number, string][], lbl: string) => {
+      let acc = 0;
+      for (const [r, c] of rises) {
+        const y0 = yB - (acc / mx) * hMax, y1 = yB - ((acc + r) / mx) * hMax;
+        ctx.fillStyle = tint(c, 0.45);
+        ctx.beginPath(); ctx.moveTo(tx, y0); ctx.lineTo(tx + baseW, y0); ctx.lineTo(tx + baseW, y1); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = tint(c, 1);
+        ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(tx, y0); ctx.lineTo(tx + baseW, y1); ctx.stroke();
+        acc += r;
+      }
+      ctx.strokeStyle = ink(0.4);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(tx, yB); ctx.lineTo(tx + baseW, yB); ctx.stroke();
+      text(lbl, tx + baseW / 2, yB + 16, 0.6, 'center', 11, '600');
+    };
+    tri(TRI.x, [[du, ACC]], 'u');
+    tri(TRI.x + tgap, [[dv, WARM]], 'v');
+    tri(TRI.x + 2 * tgap, [[du, ACC], [dv, WARM]], 'u+v');
+    text('+', TRI.x + tgap - 23, yB - hMax / 2, 0.45, 'center', 17, '600');
+    text('=', TRI.x + 2 * tgap - 23, yB - hMax / 2, 0.45, 'center', 17, '600');
+
+    const rows = [
+      ['Δu', f4(du)], ['Δv', f4(dv)], ['Δ(u+v)', f4(du + dv)],
+      ['Δ(u+v)/h', h > 1e-9 ? f4((du + dv) / h) : '—'], ['u′ + v′', f4(p.du(x) + p.dv(x))], ['leftover terms', 'none, ever'],
+    ];
+    return {
+      rows,
+      rule: [["(u+v)'", ink(0.95)], '=', ["u'", ACC], '+', ["v'", WARM]] as Part[],
+      live: [f3(p.du(x) + p.dv(x)), '=', [f3(p.du(x)), ACC], '+', [f3(p.dv(x)), WARM]] as Part[],
+      label: 'Slope of u + v',
+      value: f3(p.du(x) + p.dv(x)),
+      colour: undefined as string | undefined,
+      status: `u = ${p.ul}, v = ${p.vl} at x = ${x.toFixed(2)} · step h = ${h.toFixed(3)}: u rises ${f3(du)}, v rises ${f3(dv)}, the top rises ${f3(du + dv)}`,
+      note: 'Stacking never lets u and v interact: how tall u is does not change how fast v grows, so the two rises simply add, exactly, at every h.',
+    };
+  }
+
+  // ===== product: each edge paints a strip, the corner dies ==================
+  const AREA = { x: 60, y: 60, w: 480, h: 480 };
+  const OX = AREA.x, OY = AREA.y + AREA.h;
+  const TERMS = { x: 620, y: 100, w: 340, h: 230 };
+  let pscale = 1;
+  function computeScale() {
+    const p = PRODUCT[state.pi.product];
+    let mu = 0, mv = 0;
+    for (let i = 0; i <= 200; i++) {
+      const x = p.x0 + ((p.x1 - p.x0) * i) / 200;
+      mu = Math.max(mu, p.u(x + HMAX.product));
+      mv = Math.max(mv, p.v(x + HMAX.product), p.v(x));
+    }
+    pscale = Math.min(AREA.w / (mu * 1.06), AREA.h / (mv * 1.06));
+  }
+  function valRect(u0: number, u1: number, v0: number, v1: number, color: string, negative: boolean) {
+    const x0 = OX + Math.min(u0, u1) * pscale, x1 = OX + Math.max(u0, u1) * pscale;
+    const y0 = OY - Math.max(v0, v1) * pscale, y1 = OY - Math.min(v0, v1) * pscale;
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return { x: x0, y: y0, w: Math.max(w, 0), h: Math.max(h, 0) };
+    ctx.fillStyle = tint(color, negative ? 0.16 : 0.42);
+    ctx.fillRect(x0, y0, w, h);
+    ctx.strokeStyle = tint(color, negative ? 0.75 : 0.95);
+    ctx.lineWidth = 1.4;
+    if (negative) ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
+    ctx.setLineDash([]);
+    return { x: x0, y: y0, w, h };
+  }
+
+  function drawProduct() {
+    const p = PRODUCT[state.pi.product], x = xOf(), h = hOf();
+    const u = p.u(x), v = p.v(x);
+    const du = p.u(x + h) - u, dv = p.v(x + h) - v;
+
+    text('each edge paints a strip as it moves', AREA.x, AREA.y - 24, 0.5, 'left', 11.5);
+    text(`u = ${p.ul}   v = ${p.vl}`, AREA.x, AREA.y - 8, 0.35, 'left', 11);
+    ctx.strokeStyle = ink(0.28);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(OX, OY - AREA.h); ctx.lineTo(OX, OY); ctx.lineTo(OX + AREA.w, OY); ctx.stroke();
+    ctx.fillStyle = ink(0.12);
+    ctx.fillRect(OX, OY - v * pscale, u * pscale, v * pscale);
+    ctx.strokeStyle = ink(0.5);
+    ctx.strokeRect(OX + 0.5, OY - v * pscale + 0.5, u * pscale - 1, v * pscale - 1);
+    if (u * pscale > 62 && v * pscale > 30) text('u · v', OX + (u * pscale) / 2, OY - (v * pscale) / 2, 0.6, 'center', 16, '600');
+
+    const rRight = valRect(u, u + du, 0, v, ACC, du < 0);
+    const rTop = valRect(0, u, v, v + dv, WARM, dv < 0);
+    const rCorner = valRect(u, u + du, v, v + dv, CORNER, du * dv < 0);
+    ctx.strokeStyle = ACC;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(OX + (u + du) * pscale, OY); ctx.lineTo(OX + (u + du) * pscale, OY - (v + dv) * pscale); ctx.stroke();
+    ctx.strokeStyle = WARM;
+    ctx.beginPath(); ctx.moveTo(OX, OY - (v + dv) * pscale); ctx.lineTo(OX + (u + du) * pscale, OY - (v + dv) * pscale); ctx.stroke();
+    if (rRight.w > 40 && rRight.h > 18) label('v·Δu', rRight.x + rRight.w / 2, rRight.y + rRight.h / 2 + 4, 1, 'center', 13, ACC);
+    if (rTop.w > 40 && rTop.h > 18) label('u·Δv', rTop.x + rTop.w / 2, rTop.y + rTop.h / 2 + 4, 1, 'center', 13, WARM);
+
+    const cx = rCorner.x + Math.max(1, rCorner.w) / 2, cy = rCorner.y + Math.max(1, rCorner.h) / 2;
+    const tx = Math.min(cx + 46, AREA.x + AREA.w - 104), ty = Math.max(AREA.y + 18, cy - 38);
+    ctx.strokeStyle = tint(CORNER, 0.85);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx + 5, cy - 5); ctx.lineTo(tx - 5, ty + 2); ctx.stroke();
+    label('Δu·Δv', tx, ty, 1, 'left', 13, CORNER);
+    text('the only piece that dies', tx, ty + 15, 0.5, 'left', 10);
+    text('u', OX + u * pscale, OY + 17, 0.5, 'center', 11);
+    if (Math.abs(du) * pscale > 14) text('u+Δu', OX + (u + du) * pscale, OY + 31, 0.7, 'center', 11);
+    text('v', OX - 9, OY - v * pscale + 4, 0.5, 'right', 11);
+    if (Math.abs(dv) * pscale > 14) text('v+Δv', OX - 9, OY - (v + dv) * pscale + 4, 0.7, 'right', 11);
+
+    // each piece divided by h, against where it lands as h → 0
+    text('each piece, divided by h', TERMS.x, TERMS.y - 24, 0.5, 'left', 11.5);
+    text('bar: at this h · line: where it lands', TERMS.x, TERMS.y - 8, 0.35, 'left', 11);
+    const safe = Math.max(h, 1e-9);
+    const items = [
+      { t: 'v·Δu/h', now: (v * du) / safe, lim: v * p.du(x), c: ACC },
+      { t: 'u·Δv/h', now: (u * dv) / safe, lim: u * p.dv(x), c: WARM },
+      { t: 'Δu·Δv/h', now: (du * dv) / safe, lim: 0, c: CORNER },
+    ];
+    let mx = 0.001;
+    for (const it of items) mx = Math.max(mx, Math.abs(it.now), Math.abs(it.lim));
+    mx *= 1.25;
+    const rowH = TERMS.h / items.length, lblW = 82;
+    const zero = TERMS.x + lblW + (TERMS.w - lblW) / 2, halfW = (TERMS.w - lblW) / 2 - 6;
+    items.forEach((it, i) => {
+      const cy2 = TERMS.y + rowH * (i + 0.5);
+      text(it.t, TERMS.x, cy2 - 4, 0.75, 'left', 12);
+      text(f3(it.now), TERMS.x, cy2 + 12, 0.5, 'left', 11);
+      ctx.strokeStyle = ink(0.18);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(zero, cy2 - 24); ctx.lineTo(zero, cy2 + 24); ctx.stroke();
+      const bw = (it.now / mx) * halfW;
+      ctx.fillStyle = tint(it.c, 0.55);
+      ctx.fillRect(Math.min(zero, zero + bw), cy2 - 13, Math.abs(bw), 26);
+      const lx = zero + (it.lim / mx) * halfW;
+      ctx.strokeStyle = tint(it.c, 1);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(lx, cy2 - 18); ctx.lineTo(lx, cy2 + 18); ctx.stroke();
+    });
+    const total = v * du + u * dv + du * dv;
+    const share = total !== 0 ? Math.abs((du * dv) / total) * 100 : 0;
+    const by = TERMS.y + TERMS.h + 80;
+    text('the corner is only', TERMS.x, by - 40, 0.5, 'left', 11.5);
+    label(`${share.toFixed(share < 1 ? 2 : 1)}%`, TERMS.x, by + 2, 1, 'left', 40, CORNER);
+    text('of all the new area', TERMS.x + 150, by - 14, 0.45, 'left', 12);
+    text('halve h and it quarters', TERMS.x + 150, by + 2, 0.45, 'left', 12);
+
+    const s1 = v * du, s2 = u * dv, cor = du * dv;
+    const slope = p.du(x) * v + u * p.dv(x);
+    return {
+      rows: [
+        ['u, v', `${f3(u)}, ${f3(v)}`], ['Δu, Δv', `${f4(du)}, ${f4(dv)}`], ['side strip v·Δu', f4(s1)], ['top strip u·Δv', f4(s2)],
+        ['corner Δu·Δv', cor.toFixed(5)], ['ΔA / h', h > 1e-9 ? f4((s1 + s2 + cor) / h) : '—'], ['u′v + uv′', f4(slope)],
+      ],
+      rule: [["(u\\cdot v)'", ink(0.95)], '=', ["u'v", ACC], '+', ["uv'", WARM]] as Part[],
+      live: [f3(slope), '=', [`${p.du(x).toFixed(2)}\\times${v.toFixed(2)}`, ACC], '+', [`${u.toFixed(2)}\\times${p.dv(x).toFixed(2)}`, WARM]] as Part[],
+      label: 'Slope of u · v',
+      value: f3(slope),
+      colour: undefined as string | undefined,
+      status: `u = ${p.ul}, v = ${p.vl} at x = ${x.toFixed(2)} · the side sweeps ${f3(s1)}, the top sweeps ${f3(s2)}, plus a corner of only ${f4(cor)}`,
+      note: 'The product of the two growths is only the doomed corner, the smallest piece on screen. The real growth is in the strips, each one an entire side times a small motion.',
+    };
+  }
+
+  // ===== chain: one step, pushed through both machines =======================
+  const ROW = [150, 300, 450];
+  const CX = 340;
+  const CARD = { x: 660, y: 30, w: 310, h: 540 };
+  const tiny = (v: number) => {
+    const a = Math.abs(v);
+    const s = a < 0.001 ? a.toExponential(1) : a.toPrecision(3);
+    return (v < 0 ? '−' : '') + s;
+  };
+  function bar(y: number, len: number, colour: string, name: string, value: string) {
+    const x1 = CX + len;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 16;
+    ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.moveTo(CX, y); ctx.lineTo(x1, y); ctx.stroke();
+    label(name, 152, y + 5, 0.85, 'right', 13);
+    label(value, (CX + x1) / 2, y - 16, 1, 'center', 11.5, colour);
+    return x1;
+  }
+  function funnel(yTop: number, yBot: number, xTop: number, xBot: number, colour: string, factor: number, caption: string) {
+    ctx.beginPath(); ctx.moveTo(CX, yTop + 8); ctx.lineTo(xTop, yTop + 8); ctx.lineTo(xBot, yBot - 8); ctx.lineTo(CX, yBot - 8); ctx.closePath();
+    ctx.fillStyle = tint(colour, 0.05);
+    ctx.fill();
+    ctx.strokeStyle = tint(colour, 0.5);
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(xTop, yTop + 8); ctx.lineTo(xBot, yBot - 8); ctx.moveTo(CX, yTop + 8); ctx.lineTo(CX, yBot - 8); ctx.stroke();
+    ctx.setLineDash([]);
+    const my = (yTop + yBot) / 2;
+    label(caption, 152, my - 8, 0.45, 'right', 11);
+    label(`× ${f3(factor)}`, 152, my + 16, 1, 'right', 18, colour);
+  }
+  function machine(box: { x: number; y: number; w: number; h: number }, fn: Fn, df: Fn, t0: number, t1: number, at: number, colour: string, title: string, formula: string, axis: string) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= 160; i++) { const v = fn(t0 + ((t1 - t0) * i) / 160); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const pad = (hi - lo) * 0.16 || 1;
+    lo -= pad; hi += pad;
+    const X = (t: number) => box.x + ((t - t0) / (t1 - t0)) * box.w;
+    const Y = (v: number) => box.y + box.h - ((v - lo) / (hi - lo)) * box.h;
+    label(title, box.x, box.y - 26, 0.42, 'left', 10.5);
+    label(formula, box.x, box.y - 8, 1, 'left', 12, colour);
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(box.x, box.y, box.w, box.h);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(box.x, box.y, box.w, box.h); ctx.clip();
+    ctx.strokeStyle = ink(0.55);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i <= 200; i++) { const t = t0 + ((t1 - t0) * i) / 200; i ? ctx.lineTo(X(t), Y(fn(t))) : ctx.moveTo(X(t), Y(fn(t))); }
+    ctx.stroke();
+    const m = df(at), v0 = fn(at);
+    const sxu = (t1 - t0) / box.w, syu = (hi - lo) / box.h;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(X(at) - 46, Y(v0) + (46 * (m * sxu)) / syu); ctx.lineTo(X(at) + 46, Y(v0) - (46 * (m * sxu)) / syu); ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = tint(colour, 0.5);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(X(at), Y(v0)); ctx.lineTo(X(at), box.y + box.h + 6); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = inv(0.7);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(X(at), Y(v0), 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    label(axis, box.x + box.w, box.y + box.h + 22, 0.45, 'right', 10.5);
+  }
+
+  function drawChain() {
+    const p = CHAIN[state.pi.chain], x = xOf(), h = hOf();
+    const u = p.g(x), du = p.g(x + h) - u;
+    const y = p.f(u), dy = p.f(u + du) - y;
+    const hF = hFull(), duF = p.g(x + hF) - u, dyF = p.f(u + duF) - p.f(u);
+    const S = 205 / Math.max(Math.abs(hF), Math.abs(duF), Math.abs(dyF), 1e-15);
+
+    label('one step, pushed through both machines', 24, 44, 0.5, 'left', 11.5);
+    label('one scale for all three, so a longer bar really was stretched', 24, 64, 0.32, 'left', 11);
+    const xh = CX + h * S, xu = CX + du * S, xy = CX + dy * S;
+    funnel(ROW[0], ROW[1], xh, xu, ACC, du / (h || 1e-15), 'g stretches it');
+    funnel(ROW[1], ROW[2], xu, xy, WARM, dy / (du || 1e-15), 'f stretches that');
+    bar(ROW[0], h * S, ink(0.9), 'the step h', tiny(h));
+    bar(ROW[1], du * S, ACC, 'Δu into f', tiny(du));
+    bar(ROW[2], dy * S, TEAL, 'Δy out', tiny(dy));
+    ctx.fillStyle = ink(0.5);
+    for (const yy of ROW) { ctx.beginPath(); ctx.arc(CX, yy, 3.5, 0, Math.PI * 2); ctx.fill(); }
+    label('start', CX, ROW[0] - 40, 0.3, 'center', 10.5);
+    label(`the whole chain: × ${f3(dy / (h || 1e-15))}`, 24, ROW[2] + 56, 1, 'left', 12, TEAL);
+    label(`heading for × ${f3(p.df(u) * p.dg(x))} as h → 0`, 24, ROW[2] + 76, 0.4, 'left', 11);
+
+    // the card: the two machines, each read at its own point
+    ctx.save();
+    roundRect(ctx, CARD.x, CARD.y, CARD.w, CARD.h, 12);
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.clip();
+    const bx = CARD.x + 18, bw = CARD.w - 36;
+    let ul = Infinity, uh = -Infinity;
+    for (let i = 0; i <= 120; i++) { const g = p.g(p.x0 + ((p.x1 + HMAX.chain - p.x0) * i) / 120); ul = Math.min(ul, g); uh = Math.max(uh, g); }
+    const upad = (uh - ul) * 0.07;
+    ul -= upad; uh += upad;
+    machine({ x: bx, y: CARD.y + 66, w: bw, h: 120 }, p.g, p.dg, p.x0, p.x1 + HMAX.chain, x, ACC, 'machine 1, read at x', p.gl, 'x');
+    label(`slope here = ${f3(p.dg(x))}`, bx, CARD.y + 216, 1, 'left', 11.5, ACC);
+    machine({ x: bx, y: CARD.y + 310, w: bw, h: 120 }, p.f, p.df, ul, uh, u, WARM, 'machine 2, read at u', p.fl, 'u');
+    label(`slope here = ${f3(p.df(u))}`, bx, CARD.y + 460, 1, 'left', 11.5, WARM);
+    label(`u = ${u.toFixed(2)} here, not x = ${x.toFixed(2)}`, bx, CARD.y + 486, 0.45, 'left', 10.5);
+    ctx.restore();
+
+    const g1 = p.dg(x), f1 = p.df(u);
+    return {
+      rows: [['u = g(x)', f4(u)], ['g stretches by g′(x)', f4(g1)], ['f stretches by f′(u)', f4(f1)], ['the two multiplied', f4(g1 * f1)], ['Δy / h at this step', h > 1e-9 ? f4(dy / h) : '—']],
+      rule: [["(f\\circ g)'(x)", TEAL], '=', ["f'(g(x))", WARM], '\\cdot', ["g'(x)", ACC]] as Part[],
+      live: [[f3(g1 * f1), TEAL], '=', [f3(f1), WARM], '\\times', [f3(g1), ACC]] as Part[],
+      label: 'Slope of f(g(x))',
+      value: f3(g1 * f1),
+      colour: TEAL as string | undefined,
+      status: `${p.gl}, ${p.fl} at x = ${x.toFixed(2)} · the step h = ${h.toFixed(3)} comes out as Δy = ${tiny(dy)}, stretched × ${f3(dy / (h || 1e-15))} in all`,
+      note: 'The second machine never sees x. It only sees u = g(x), so its slope is read there, and a chain is as dead as its deadest link: one zero factor kills the product.',
+    };
+  }
+
+  // ===== frame ================================================================
+  const rowsEl = el('rows');
+  let lastRows = '';
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const out = state.rule === 'sum' ? drawSum() : state.rule === 'product' ? drawProduct() : drawChain();
+    setEq({ rule: out.rule, live: out.live });
+    el('result-label').textContent = out.label;
+    setResult({ value: out.value, colour: out.colour, status: out.status, note: out.note });
+    const html = out.rows.map(([a, b]) => `<div class="row"><span>${a}</span><b>${b}</b></div>`).join('');
+    if (html !== lastRows) { rowsEl.innerHTML = html; lastRows = html; }
+  }
+
+  // ===== controls =============================================================
+  const runBtn = el('run');
+  let raf = 0, t0 = 0;
+  function stopAll() {
+    state.playing = false;
+    state.shrinking = false;
+    runBtn.textContent = 'Watch the step';
+    runBtn.setAttribute('aria-pressed', 'false');
+    cancelAnimationFrame(raf);
+  }
+  function loop(now: number) {
+    if (state.playing) {
+      // grow the step over 1.3 s, hold it a moment, then start over
+      const cycle = ((now - t0) / 1000) % 2.1;
+      state.tau = cycle < 1.3 ? 0.03 + 0.97 * (cycle / 1.3) : 1;
+      draw();
+      raf = requestAnimationFrame(loop);
+    } else if (state.shrinking) {
+      if (state.hs[state.rule] >= 100) { stopAll(); return; }
+      setH(Math.min(100, state.hs[state.rule] + 0.6));
+      raf = requestAnimationFrame(loop);
+    }
+  }
+  runBtn.addEventListener('click', () => {
+    if (state.playing) { stopAll(); state.tau = 1; draw(); return; }
+    stopAll();
+    state.playing = true;
+    runBtn.textContent = 'Stop';
+    runBtn.setAttribute('aria-pressed', 'true');
+    t0 = performance.now();
+    raf = requestAnimationFrame(loop);
+  });
+  el('shrink').addEventListener('click', () => {
+    const was = state.shrinking;
+    stopAll();
+    state.tau = 1;
+    if (was) { draw(); return; }
+    if (state.hs[state.rule] >= 100) setH(0);
+    state.shrinking = true;
+    raf = requestAnimationFrame(loop);
+  });
+  el('reset').addEventListener('click', () => {
+    stopAll();
+    state.tau = 1;
+    setX(40);
+    setH(HDEF[state.rule]);
+  });
+
+  const setX = slider('x', (v) => { state.xs = v; draw(); }, () => xOf().toFixed(2));
+  const hLabel = () => { const h = hFull(); return h < 0.01 ? h.toFixed(5) : h.toFixed(3); };
+  const setHSlider = slider('h', (v) => { state.tau = 1; state.hs[state.rule] = v; draw(); }, hLabel);
+  function setH(v: number) {
+    state.hs[state.rule] = v;
+    setHSlider(v);
+    draw();
+  }
+
+  const pairSeg = (id: string, rule: Rule) =>
+    segmented(id, (v) => { state.pi[rule] = +v; if (rule === 'product') computeScale(); setX(state.xs); draw(); });
+  pairSeg('pair0', 'sum');
+  pairSeg('pair1', 'product');
+  pairSeg('pair2', 'chain');
+
+  segmented('rule', (r) => {
+    stopAll();
+    state.tau = 1;
+    state.rule = r as Rule;
+    for (const k of ['sum', 'product', 'chain'] as Rule[]) {
+      el(`pairs-${k}`).hidden = k !== state.rule;
+      el(`cap-${k}`).hidden = k !== state.rule;
+    }
+    setX(state.xs);
+    setH(state.hs[state.rule]);
+  });
+
+  computeScale();
+  setX(40);
+  setH(HDEF.sum);
+</script>
+
+<style>
+  :global(#pair0 button),
+  :global(#pair1 button),
+  :global(#pair2 button) {
+    font-size: 0.76rem;
+    padding: 5px 8px;
+  }
+</style>

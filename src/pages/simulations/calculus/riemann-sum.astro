@@ -1,52 +1,40 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Riemann Sums"
-  description="Approximate the area under a curve with n rectangles (or trapezoids) and watch the estimate converge to the true integral."
+  description="Approximate the area under a curve with n rectangles or trapezoids and watch the estimate close in on the true integral."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="riemann" width="900" height="520"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="riemann" width="900" height="520" role="img" aria-label="A curve with the area under it filled by rectangles or trapezoids of the chosen method."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the true area', color: '#5eead4' }, { label: 'the pieces that approximate it', color: '#7c8cff' }]}
+        hint="Slide the number of pieces and watch the error fall"
+      />
+      <Result label="Approximation" />
     </div>
-
     <div class="sim-panel">
+      <Seg id="fn" label="Function" attr="fn" options={[{ value: 'quad', label: 'x²' }, { value: 'sine', label: 'sin x + 1.5' }, { value: 'gauss', label: 'e^(−x²)' }, { value: 'cubic', label: 'x³ − x' }]} />
+      <Seg id="method" label="Method" attr="method" active="mid" options={[{ value: 'left', label: 'Left' }, { value: 'mid', label: 'Midpoint' }, { value: 'right', label: 'Right' }, { value: 'trap', label: 'Trapezoid' }]} />
+      <Slider id="n" label="Pieces" min={1} max={120} value={12} />
+      <Readout rows={[{ id: 'approx', label: 'approximation' }, { id: 'exact', label: 'exact integral' }, { id: 'err', label: 'error' }]} />
       <div class="control">
-        <label>Function</label>
-        <div class="seg" id="fn">
-          <button data-fn="quad" class="active">x²</button>
-          <button data-fn="sine">sin x + 1.5</button>
-          <button data-fn="gauss">e^(−x²)</button>
-          <button data-fn="cubic">x³ − x</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Method</label>
-        <div class="seg" id="method">
-          <button data-method="left">Left</button>
-          <button data-method="mid" class="active">Midpoint</button>
-          <button data-method="right">Right</button>
-          <button data-method="trap">Trapezoid</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Rectangles <b id="nval">12</b></label>
-        <input type="range" id="n" min="1" max="120" value="12" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Approximation</span><b id="approx">—</b></div>
-        <div class="row"><span>Exact integral</span><b id="exact">—</b></div>
-        <div class="row"><span>Error</span><b id="err">—</b></div>
-      </div>
-
-      <div class="control">
-        <label>Error vs. rectangles (log–log)</label>
-        <canvas id="sweep" class="mini-canvas" width="300" height="190"></canvas>
+        <span class="section-label">Error against pieces, log–log</span>
+        <canvas id="sweep" class="mini-canvas" width="300" height="190" role="img" aria-label="Error of each method against the number of pieces, on log axes"></canvas>
         <div class="sweep-legend">
           <span style="--c:#f87171">left</span>
           <span style="--c:#fbbf24">right</span>
@@ -78,7 +66,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
   type Fn = { f: (x: number) => number; a: number; b: number };
   const FNS: Record<string, Fn> = {
     quad: { f: (x) => x * x, a: 0, b: 3 },
@@ -89,12 +78,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   const state = { fn: 'quad', method: 'mid', n: 12 };
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('riemann') as HTMLCanvasElement;
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('riemann') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const PAD = { l: 48, r: 24, t: 24, b: 40 };
 
-  const sweepCanvas = document.getElementById('sweep') as HTMLCanvasElement;
+  const sweepCanvas = el('sweep') as HTMLCanvasElement;
   const sw = setupCanvas(sweepCanvas, () => drawSweep());
 
   const css = (v: string) =>
@@ -212,27 +203,20 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     // readout
     const approx = approxIntegral(fn, state.n, state.method);
     const exact = exactIntegral(fn);
-    (document.getElementById('approx') as HTMLElement).textContent = approx.toFixed(5);
-    (document.getElementById('exact') as HTMLElement).textContent = exact.toFixed(5);
-    (document.getElementById('err') as HTMLElement).textContent = Math.abs(approx - exact).toFixed(5);
-    const NAME: Record<string, string> = {
-      left: 'left', right: 'right', mid: 'midpoint', trap: 'trapezoid',
-    };
-    setEq([
-      [
-        ['\\int_a^b f(x)\\,dx', teal],
-        '\\approx',
-        ['\\sum_i f(x_i^{*})\\,\\Delta x', accent],
-      ],
-      [
-        [`\\int_a^b f = ${exact.toFixed(5)}`, teal],
-        '\\approx',
-        [`\\sum = ${approx.toFixed(5)}`, accent],
-      ],
-      [
-        `${state.n} ${NAME[state.method]} pieces of width ${((fn.b - fn.a) / state.n).toFixed(3)}, off by ${Math.abs(approx - exact).toFixed(5)}`,
-      ],
-    ]);
+    const NAME: Record<string, string> = { left: 'left-hand', mid: 'midpoint', right: 'right-hand', trap: 'trapezoid' };
+    setRows({ approx: approx.toFixed(5), exact: exact.toFixed(5), err: Math.abs(approx - exact).toFixed(5) });
+    setEq({
+      rule: [['\\int_a^b f(x)\\,dx', teal], '\\approx', ['\\sum_i f(x_i^{*})\\,\\Delta x', accent]],
+      live: [[`${exact.toFixed(5)}`, teal], '\\approx', [`${approx.toFixed(5)}`, accent], `\\quad n = ${state.n},\\ \\Delta x = ${((fn.b - fn.a) / state.n).toFixed(3)}`],
+    });
+    setResult({
+      value: approx.toFixed(5),
+      colour: accent,
+      status: `${state.n} ${NAME[state.method]} piece${state.n > 1 ? 's' : ''} of width ${((fn.b - fn.a) / state.n).toFixed(3)} · exact ${exact.toFixed(5)} · off by ${Math.abs(approx - exact).toFixed(5)}`,
+      note: state.method === 'left' || state.method === 'right'
+        ? 'Left and right sums err by a whole triangle per piece, so their error halves when n doubles.'
+        : 'Midpoint and trapezoid errors cancel to first order, so the error quarters when n doubles: the lines in the small plot fall twice as steeply.',
+    });
   }
 
   // Convergence plot: |error| vs number of rectangles, log–log, for every
@@ -283,27 +267,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
-  function bindSeg(id: string, key: 'fn' | 'method') {
-    const group = document.getElementById(id)!;
-    group.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest('button');
-      if (!btn) return;
-      group.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      state[key] = btn.dataset[key === 'fn' ? 'fn' : 'method']!;
-      draw();
-      if (key === 'fn') drawSweep();
-    });
-  }
-  bindSeg('fn', 'fn');
-  bindSeg('method', 'method');
-
-  const nInput = document.getElementById('n') as HTMLInputElement;
-  nInput.addEventListener('input', () => {
-    state.n = +nInput.value;
-    (document.getElementById('nval') as HTMLElement).textContent = String(state.n);
-    draw();
-  });
+  segmented('fn', (v) => { state.fn = v; draw(); drawSweep(); });
+  segmented('method', (v) => { state.method = v; draw(); });
+  slider('n', (v) => { state.n = v; draw(); });
 
   draw();
   drawSweep();

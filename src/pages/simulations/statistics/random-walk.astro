@@ -1,44 +1,50 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Random Walk"
-  description="Give thousands of particles no goal at all, just a coin flip each step, and a shape still emerges. The crowd spreads into a bell whose width grows like the square root of time: the particle's-eye view of diffusion."
+  description="Thousands of particles with no goal, just a coin flip each step. The crowd spreads into a bell whose width grows like the square root of time."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="walk" width="900" height="460"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="walk"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Traced random walks fanning out from a shared start inside a square-root envelope, with the histogram of current positions and its predicted bell below."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'positions now', color: '#5eead4' },
+          { label: 'predicted bell, width √t', color: '#7c8cff' },
+          { label: '±√t and ±2√t', color: 'rgba(160,165,175,0.7)' },
+        ]}
+      />
+      <Result label="Measured spread σ" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
-
-      <div class="control">
-        <label>Walkers <b id="nval">2000</b></label>
-        <input type="range" id="n" min="200" max="6000" step="200" value="2000" />
-      </div>
-
-      <div class="control">
-        <label>Speed <b id="spval">4</b></label>
-        <input type="range" id="sp" min="1" max="20" value="4" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Steps t</span><b id="steps">0</b></div>
-        <div class="row"><span>Measured spread σ</span><b id="sd">0.0</b></div>
-        <div class="row"><span>Predicted √t</span><b id="pred">0.0</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Top: time runs downward from the shared start. A few walkers are traced
-        so you can see the jagged paths, and the curved cone is the ±√t spread.
-        Bottom: the histogram right now, with the predicted bell.
-      </p>
+      <Transport running />
+      <Slider id="n" label="Walkers" min={200} max={6000} step={200} value={2000} />
+      <Slider id="sp" label="Steps per frame" min={1} max={20} value={4} />
+      <Readout
+        rows={[
+          { id: 'r-steps', label: 'steps t' },
+          { id: 'r-sd', label: 'measured σ' },
+          { id: 'r-pred', label: 'predicted √t' },
+        ]}
+      />
     </div>
   </div>
 
@@ -49,7 +55,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       independent steps.
     </li>
     <li>
-      Watch the readouts: the spread <b>σ tracks √t</b>, not t. To reach twice as
+      Watch the numbers: the spread <b>σ tracks √t</b>, not t. To reach twice as
       far, the cloud needs <b>four times</b> the steps. That square-root law is
       the fingerprint of diffusion.
     </li>
@@ -61,29 +67,34 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, slider, transport, result, readout } from '../../../lib/panel';
 
   const NMAX = 6000;
   const pos = new Float32Array(NMAX);
-
   const state = { n: 2000, speed: 4, steps: 0, playing: true };
+  const TEAL = '#5eead4', ACCENT = '#7c8cff';
 
   // A handful of walkers whose whole path is remembered and drawn, so the crowd
   // statistics have visible individuals behind them.
   const TRACE = 5;
   const TRACE_COL = ['#f59e0b', '#7c8cff', '#5eead4', '#f472b6', '#e879f9'];
   let trails: number[][] = [];
-  const MAXROWS = 3000; // cap the stored history
+  const MAXROWS = 3000;
 
-  const setEq = equationBar();
-  const canvas = document.getElementById('walk') as HTMLCanvasElement;
+  const canvas = el('walk') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
-  const TOP = { y0: 28, y1: 210 };
-  const BOT = { y0: 250, y1: 430 };
-  const PADX = 30;
+  const TOP = { y0: 30, y1: 300 };
+  const BOT = { y0: 350, y1: 560 };
+  const PADX = 40;
   const BINS = 81;
 
   function reset() {
@@ -91,13 +102,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     state.steps = 0;
     trails = Array.from({ length: TRACE }, () => [0]);
   }
-
   function step() {
     for (let i = 0; i < state.n; i++) pos[i] += Math.random() < 0.5 ? -1 : 1;
     for (let k = 0; k < TRACE; k++) if (trails[k].length < MAXROWS) trails[k].push(pos[k]);
     state.steps++;
   }
-
   function stdOf() {
     let m = 0;
     for (let i = 0; i < state.n; i++) m += pos[i];
@@ -108,35 +117,26 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
 
   function draw() {
-    const teal = css('--accent-2') || '#5eead4';
-    const accent = css('--accent') || '#7c8cff';
-    const grid = css('--border') || '#262a32';
-    const faint = css('--text-faint') || '#6b7280';
-    const ink = css('--stage-ink') || '232,233,236';
     ctx.clearRect(0, 0, W, H);
-
     const sd = stdOf();
     const R = Math.max(12, 4 * Math.max(sd, Math.sqrt(state.steps)));
     const mapX = (x: number) => PADX + ((x + R) / (2 * R)) * (W - 2 * PADX);
     const steps = Math.max(1, state.steps);
-    // time axis: t = 0 (the shared start) at the top, now at the bottom
     const yOfT = (t: number) => TOP.y0 + (t / steps) * (TOP.y1 - TOP.y0);
 
-    // centre line
-    ctx.strokeStyle = grid;
+    label('time runs downward from the shared start', PADX, TOP.y0 - 12, 0.45, 'left', 10.5);
+    ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(mapX(0), TOP.y0);
     ctx.lineTo(mapX(0), BOT.y1);
     ctx.stroke();
 
-    // the ±√t and ±2√t envelope: the whole point is that these curve, so
-    // reaching twice as far takes four times as long.
+    // the ±√t and ±2√t envelope: it curves, so twice as far takes four times as long
     for (const [k, alpha] of [[1, 0.5], [2, 0.22]] as [number, number][]) {
       for (const sgn of [-1, 1]) {
-        ctx.strokeStyle = `rgba(${ink},${alpha})`;
+        ctx.strokeStyle = ink(alpha);
         ctx.setLineDash([4, 4]);
-        ctx.lineWidth = 1;
         ctx.beginPath();
         for (let t = 0; t <= steps; t += Math.max(1, steps / 120)) {
           const X = mapX(sgn * k * Math.sqrt(t));
@@ -146,16 +146,14 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
     }
     ctx.setLineDash([]);
-    ctx.fillStyle = faint;
-    ctx.font = "11px 'JetBrains Mono', monospace";
-    ctx.fillText('+√t', mapX(Math.sqrt(steps)) + 3, TOP.y1 - 3);
-    ctx.fillText('+2√t', mapX(2 * Math.sqrt(steps)) + 3, TOP.y1 - 18);
+    label('+√t', mapX(Math.sqrt(steps)) + 4, TOP.y1 - 4, 0.5, 'left', 10.5);
+    label('+2√t', mapX(2 * Math.sqrt(steps)) + 4, TOP.y1 - 20, 0.5, 'left', 10.5);
 
-    // a light dusting of all walkers at the current time, along the bottom edge
-    ctx.fillStyle = `rgba(${ink},0.4)`;
+    // every walker at the current time, along the bottom edge
+    ctx.fillStyle = ink(0.4);
     for (let i = TRACE; i < state.n; i++) ctx.fillRect(mapX(pos[i]), TOP.y1 - 1, 1.5, 2.5);
 
-    // the traced walkers' full jagged paths from the start down to now
+    // the traced walkers' full jagged paths
     for (let k = 0; k < TRACE; k++) {
       const tr = trails[k];
       ctx.strokeStyle = TRACE_COL[k];
@@ -164,114 +162,75 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       ctx.beginPath();
       const stride = Math.max(1, Math.floor(tr.length / (TOP.y1 - TOP.y0)));
       for (let t = 0; t < tr.length; t += stride) {
-        const X = mapX(tr[t]), Y = yOfT(t);
-        t === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+        t === 0 ? ctx.moveTo(mapX(tr[t]), yOfT(t)) : ctx.lineTo(mapX(tr[t]), yOfT(t));
       }
       ctx.lineTo(mapX(tr[tr.length - 1]), yOfT(tr.length - 1));
       ctx.stroke();
-      // a dot at the head
       ctx.fillStyle = TRACE_COL[k];
       ctx.beginPath();
       ctx.arc(mapX(tr[tr.length - 1]), TOP.y1 - 1, 3, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
-    ctx.fillStyle = faint;
-    ctx.fillText('start', mapX(0) + 5, TOP.y0 + 11);
-    ctx.fillText('now →', PADX, TOP.y1 + 14);
+    label('start', mapX(0) + 6, TOP.y0 + 12, 0.5, 'left', 10.5);
+    label('now', mapX(0) + 6, TOP.y1 + 14, 0.5, 'left', 10.5);
 
-    // histogram
+    // where everyone is right now
+    label('where the walkers are now', PADX, BOT.y0 - 12, 0.45, 'left', 10.5);
     const bins = new Float64Array(BINS);
     const lo = -R, hi = R;
     for (let i = 0; i < state.n; i++) {
-      let b = Math.floor(((pos[i] - lo) / (hi - lo)) * BINS);
-      b = Math.max(0, Math.min(BINS - 1, b));
-      bins[b]++;
+      bins[Math.max(0, Math.min(BINS - 1, Math.floor(((pos[i] - lo) / (hi - lo)) * BINS)))]++;
     }
-    const binW = (W - 2 * PADX) / BINS;
-    const binWidthX = (hi - lo) / BINS;
+    const binW = (W - 2 * PADX) / BINS, binWidthX = (hi - lo) / BINS;
     let maxDens = 1e-9;
-    for (let b = 0; b < BINS; b++) {
-      const d = bins[b] / (state.n * binWidthX);
-      if (d > maxDens) maxDens = d;
-    }
+    for (let b = 0; b < BINS; b++) maxDens = Math.max(maxDens, bins[b] / (state.n * binWidthX));
     const gPeak = 1 / (Math.max(sd, 1e-6) * Math.sqrt(2 * Math.PI));
     const yMax = Math.max(maxDens, gPeak) * 1.1;
     const yOf = (d: number) => BOT.y1 - (d / yMax) * (BOT.y1 - BOT.y0);
-
     ctx.fillStyle = 'rgba(94,234,212,0.5)';
     for (let b = 0; b < BINS; b++) {
       if (!bins[b]) continue;
       const d = bins[b] / (state.n * binWidthX);
-      const x = PADX + b * binW;
-      ctx.fillRect(x, yOf(d), binW - 0.5, BOT.y1 - yOf(d));
+      ctx.fillRect(PADX + b * binW, yOf(d), binW - 0.5, BOT.y1 - yOf(d));
     }
-
-    // gaussian overlay
     if (sd > 1e-6) {
-      ctx.strokeStyle = accent;
+      ctx.strokeStyle = ACCENT;
       ctx.lineWidth = 2.2;
       ctx.beginPath();
       for (let px = 0; px <= W - 2 * PADX; px += 2) {
         const xv = lo + (px / (W - 2 * PADX)) * (hi - lo);
         const d = gPeak * Math.exp(-(xv * xv) / (2 * sd * sd));
-        const X = PADX + px;
-        const Y = yOf(d);
-        px === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+        px === 0 ? ctx.moveTo(PADX + px, yOf(d)) : ctx.lineTo(PADX + px, yOf(d));
       }
       ctx.stroke();
     }
+    label('position', W - PADX, BOT.y1 + 18, 0.3, 'right', 10.5);
+    label(`−${R.toFixed(0)}`, PADX, BOT.y1 + 18, 0.3, 'left', 10.5);
 
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('position →', W - 96, BOT.y1 + 18);
-
-    (document.getElementById('steps') as HTMLElement).textContent = String(state.steps);
-    (document.getElementById('sd') as HTMLElement).textContent = sd.toFixed(1);
-    (document.getElementById('pred') as HTMLElement).textContent = Math.sqrt(state.steps).toFixed(1);
-    setEq([
-      [
-        ['\\langle x\\rangle = 0', accent],
-        '\\quad',
-        ['\\sigma(t) = \\sqrt{\\langle x^2\\rangle} = \\sqrt{t}', teal],
-        '\\quad\\text{no drift, but it does spread}',
-      ],
-      [
-        `t = ${state.steps}`,
-        [`\\quad\\text{measured }\\sigma = ${sd.toFixed(1)}`, accent],
-        [`\\quad\\sqrt{t} = ${Math.sqrt(state.steps).toFixed(1)}`, teal],
-      ],
-      [
-        'distance grows like the square root of time: four times as long to go twice as far',
-      ],
-    ]);
+    const pred = Math.sqrt(state.steps);
+    setEq({
+      rule: [['\\langle x\\rangle = 0', ACCENT], '\\qquad', ['\\sigma(t) = \\sqrt{\\langle x^2\\rangle} = \\sqrt{t}', TEAL]],
+      live: [`t = ${state.steps}`, [`\\quad\\sigma = ${sd.toFixed(1)}`, TEAL], [`\\quad\\sqrt{t} = ${pred.toFixed(1)}`, ACCENT]],
+    });
+    setResult({
+      value: sd.toFixed(1),
+      colour: TEAL,
+      status: `t = ${state.steps} steps · predicted √t = ${pred.toFixed(1)}`,
+      note: 'No drift, but it does spread: distance grows like the square root of time, so it takes four times as long to go twice as far.',
+    });
+    setRows({ 'r-steps': String(state.steps), 'r-sd': sd.toFixed(1), 'r-pred': pred.toFixed(1) });
   }
 
   function loop() {
-    if (state.playing) {
-      for (let k = 0; k < state.speed; k++) step();
-    }
+    if (state.playing) for (let k = 0; k < state.speed; k++) step();
     draw();
     requestAnimationFrame(loop);
   }
 
-  const nEl = document.getElementById('n') as HTMLInputElement;
-  nEl.addEventListener('input', () => {
-    state.n = +nEl.value;
-    (document.getElementById('nval') as HTMLElement).textContent = nEl.value;
-    reset();
-  });
-  const spEl = document.getElementById('sp') as HTMLInputElement;
-  spEl.addEventListener('input', () => {
-    state.speed = +spEl.value;
-    (document.getElementById('spval') as HTMLElement).textContent = spEl.value;
-  });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    runBtn.textContent = state.playing ? 'Pause' : 'Run';
-  });
-  document.getElementById('reset')!.addEventListener('click', reset);
+  slider('n', (v) => { state.n = v; reset(); });
+  slider('sp', (v) => (state.speed = v));
+  transport({ onRun: (running) => (state.playing = running), onReset: reset });
 
   reset();
   requestAnimationFrame(loop);

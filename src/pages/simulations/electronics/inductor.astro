@@ -1,22 +1,26 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
 ---
 
 <SimLayout
   areaSlug="electronics"
   title="Inductor"
-  description="A coil is a flywheel for charge. Drive it by hand and watch the electrons refuse to start, then refuse to stop, while the magnetic field they wind up around themselves stores every joule it takes to get them moving."
+  description="A coil is a flywheel for charge. Drive it by hand and watch the electrons refuse to start, then refuse to stop, while the magnetic field they wind up stores every joule it takes to get them moving."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="ind" class="ind-canvas" width="1000" height="880"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="ind" class="ind-canvas" width="1000" height="880" role="img" aria-label="An inductor circuit with electrons as balls whose speed is the current, the magnetic field inside the coil, and traces of current and voltage over time."></canvas>
+      </div>
+      <Caption hint="The balls are electrons and their speed is the current itself; nothing about them changes instantly" />
+      <Result label="Current through the coil" />
     </div>
 
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="reset">Reset</button>
-      </div>
+      <Transport running />
 
       <div class="control">
         <label>Source</label>
@@ -88,10 +92,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
         <div class="row"><span id="l7">Energy stored</span><b id="r7">—</b></div>
       </div>
 
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        The balls are electrons and their speed is the current itself. Nothing
-        about them changes instantly, which is the entire personality of a coil.
-      </p>
     </div>
   </div>
 
@@ -144,6 +144,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { transport, result } from '../../../lib/panel';
 
   const MU0 = 4 * Math.PI * 1e-7;
   const R_ARC = 5e4; // what an opening switch looks like: a big, lossy gap
@@ -811,6 +812,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   // --- readouts --------------------------------------------------------------
 
   const el = (id: string) => document.getElementById(id) as HTMLElement;
+  const setResult = result();
   const setRow = (n: number, lab: string, val: string) => {
     el('l' + n).innerHTML = subHtml(lab);
     el('r' + n).textContent = val;
@@ -828,13 +830,19 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     setRow(6, 'Flux linkage NΦ = LI', eng(ind() * i, 'Wb'));
     setRow(7, 'Energy ½LI²', eng(0.5 * ind() * i * i, 'J'));
+    setResult({
+      value: eng(i, 'A'),
+      status: `V_L = ${eng(vCoil(), 'V')} · L = ${eng(ind(), 'H')} · energy ½LI² = ${eng(0.5 * ind() * i * i, 'J')}`,
+      note: state.src === 'ac'
+        ? 'Driven by a sine, the current lags the voltage by a quarter cycle: the coil is still accelerating its electrons when the push has already started to fall.'
+        : 'The current builds with time constant τ = L/R and cannot jump. Open the switch and the coil forces the same current onward, at whatever voltage that takes.',
+    });
   }
 
   // --- loop ------------------------------------------------------------------
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label('Inductor', 20, 30, 0.85, 'left', 14);
     label(
       state.src === 'manual'
         ? 'drive it yourself: the current will not jump, only ramp'
@@ -842,7 +850,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
           ? 'the current is always a quarter cycle late'
           : 'a battery, a switch, and a coil that hates being cut off',
       20,
-      52,
+      34,
       0.5,
       'left',
       11,
@@ -888,12 +896,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
+  transport({
+    onRun: (running) => (state.running = running),
+    onReset: reset,
   });
-  el('reset').addEventListener('click', reset);
 
   let ready = false;
   function bindRange(id: string, apply: (n: number) => void, restart = false) {
@@ -987,22 +993,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 <style>
   .ind-canvas {
     touch-action: none;
-  }
-  .scale-hint {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-    margin-top: 3px;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .check input {
-    accent-color: var(--accent);
   }
 </style>

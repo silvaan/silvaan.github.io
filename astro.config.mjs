@@ -14,6 +14,9 @@ export default defineConfig({
     '/simulations/statistics/marginal-distribution':
       '/simulations/statistics/joint-distribution',
     '/simulations/deep-learning/optimizers-3d': '/simulations/deep-learning/optimizers',
+    '/simulations/calculus/sum-rule': '/simulations/calculus/derivative-rules',
+    '/simulations/calculus/product-rule': '/simulations/calculus/derivative-rules',
+    '/simulations/calculus/chain-rule': '/simulations/calculus/derivative-rules',
   },
   markdown: {
     // Keep authored punctuation literal so `--`/`---` never become en/em dashes.

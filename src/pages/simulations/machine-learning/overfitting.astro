@@ -1,39 +1,48 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="machine-learning"
   title="Overfitting"
-  description="Fit a polynomial to noisy data and raise its degree. A flexible enough curve can pass through every training point exactly, yet do worse on new data. That gap between memorizing and learning is the central tension in machine learning."
+  description="Fit a polynomial to noisy data and raise its degree. A flexible enough curve threads every training point, and does worse on new data."
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="of" width="900" height="470"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="of"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Noisy data points with a polynomial fit and the true function, and below them the training and test error against polynomial degree."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'training points', color: '#7c8cff' },
+          { label: 'test points', color: 'rgba(154,160,172,0.7)' },
+          { label: 'the fit', color: '#f59e0b' },
+          { label: 'true function', color: 'rgba(232,233,236,0.45)' },
+          { label: 'train error', color: '#5eead4' },
+        ]}
+      />
+      <Result label="Test error" />
     </div>
 
     <div class="sim-panel">
-      <div class="control">
-        <label>Polynomial degree <b id="dval">3</b></label>
-        <input type="range" id="d" min="0" max="12" value="3" />
-      </div>
-
-      <div class="control">
-        <label>Regularization λ <b id="lval">0.000</b></label>
-        <input type="range" id="l" min="0" max="100" value="0" />
-      </div>
-
-      <button class="btn ghost" id="regen">New data</button>
-
-      <div class="readout">
-        <div class="row"><span>Train error</span><b id="trainerr">—</b></div>
-        <div class="row"><span>Test error</span><b id="testerr">—</b></div>
-      </div>
-
-      <div class="control">
-        <label>Error vs. degree (teal train · amber test)</label>
-        <canvas id="curve" class="mini-canvas" width="300" height="160"></canvas>
-      </div>
+      <Slider id="d" label="Polynomial degree" min={0} max={12} value={3} />
+      <Slider id="l" label="Regularization λ" min={0} max={100} value={0} display="0.000" />
+      <Actions>
+        <button type="button" class="btn ghost" id="regen">New data</button>
+      </Actions>
+      <Readout rows={[{ id: 'r-train', label: 'train error' }, { id: 'r-test', label: 'test error' }]} />
     </div>
   </div>
 
@@ -44,9 +53,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       out, then climbs as the curve starts chasing noise.
     </li>
     <li>
-      That U-shape in the mini-plot is the <b>bias–variance tradeoff</b>. Too
-      simple underfits (high bias); too flexible overfits (high variance). The
-      sweet spot is in the middle.
+      That U-shape in the strip below the plot is the <b>bias–variance
+      tradeoff</b>. Too simple underfits (high bias); too flexible overfits (high
+      variance). The sweet spot is in the middle.
     </li>
     <li>
       Take a wiggly high-degree fit, then raise <b>λ</b>. Regularization penalizes
@@ -57,21 +66,27 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed } from '../../../lib/draw';
+  import { el, slider, result, readout } from '../../../lib/panel';
 
+  const TRAIN = '#7c8cff', FIT = '#f59e0b', TRAINERR = '#5eead4';
   const state = { degree: 3, lambda: 0 };
   let train: { x: number; y: number }[] = [];
   let test: { x: number; y: number }[] = [];
 
-  const canvas = document.getElementById('of') as HTMLCanvasElement;
+  const canvas = el('of') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const curveCanvas = document.getElementById('curve') as HTMLCanvasElement;
-  const mc = setupCanvas(curveCanvas, () => drawCurve());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
-  const PAD = { l: 20, r: 20, t: 20, b: 28 };
-  const XR = [-1, 1] as const;
-  const YR = [-1.7, 1.7] as const;
+  const TOP = { l: 30, r: 30, t: 20, bottom: 380, b: 26 };
+  const STRIP = { x: 60, y: 440, w: W - 150, h: 120 };
+  const XR = [-1, 1] as const, YR = [-1.7, 1.7] as const;
   const trueF = (x: number) => 0.85 * Math.sin(Math.PI * x) + 0.15 * x;
 
   function gen() {
@@ -88,7 +103,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
   }
 
-  // ridge polynomial fit via normal equations + Gaussian elimination
+  // ridge polynomial fit via the normal equations and Gaussian elimination
   function fit(degree: number, lambda: number): number[] {
     const m = degree + 1;
     const A = Array.from({ length: m }, () => new Array(m).fill(0));
@@ -102,7 +117,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       }
     }
     for (let i = 0; i < m; i++) A[i][i] += lambda + 1e-8;
-    // solve A w = b
     for (let c = 0; c < m; c++) {
       let piv = c;
       for (let r = c + 1; r < m; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
@@ -120,7 +134,6 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     }
     return b;
   }
-
   const evalPoly = (w: number[], x: number) => {
     let s = 0, p = 1;
     for (const c of w) { s += c * p; p *= x; }
@@ -129,36 +142,27 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   const mse = (w: number[], set: { x: number; y: number }[]) =>
     set.reduce((s, p) => s + (evalPoly(w, p.x) - p.y) ** 2, 0) / set.length;
 
-  const sx = (x: number) => PAD.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - PAD.l - PAD.r);
-  const sy = (y: number) => H - PAD.b - ((y - YR[0]) / (YR[1] - YR[0])) * (H - PAD.t - PAD.b);
+  const sx = (x: number) => TOP.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - TOP.l - TOP.r);
+  const sy = (y: number) => TOP.bottom - TOP.b - ((y - YR[0]) / (YR[1] - YR[0])) * (TOP.bottom - TOP.t - TOP.b);
 
-  function draw() {
-    const teal = css('--accent-2') || '#5eead4';
-    const accent = css('--accent') || '#7c8cff';
-    const grid = css('--border') || '#262a32';
-    const faint = css('--text-faint') || '#6b7280';
-    ctx.clearRect(0, 0, W, H);
-
-    // grid
-    ctx.strokeStyle = grid;
+  function drawFit(w: number[]) {
+    ctx.strokeStyle = ink(0.07);
     ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.35;
     for (let i = 0; i <= 8; i++) {
       const x = XR[0] + ((XR[1] - XR[0]) * i) / 8;
       ctx.beginPath();
-      ctx.moveTo(sx(x), PAD.t);
-      ctx.lineTo(sx(x), H - PAD.b);
+      ctx.moveTo(sx(x), TOP.t);
+      ctx.lineTo(sx(x), TOP.bottom - TOP.b);
       ctx.stroke();
+      label(x.toFixed(2), sx(x), TOP.bottom - TOP.b + 18, 0.3, 'center', 10.5);
     }
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.strokeStyle = ink(0.25);
     ctx.beginPath();
-    ctx.moveTo(PAD.l, sy(0));
-    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.moveTo(TOP.l, sy(0));
+    ctx.lineTo(W - TOP.r, sy(0));
     ctx.stroke();
 
-    // true function
-    ctx.strokeStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.35)`;
+    ctx.strokeStyle = ink(0.35);
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 5]);
     ctx.beginPath();
@@ -169,9 +173,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // fit
-    const w = fit(state.degree, state.lambda);
-    ctx.strokeStyle = '#f59e0b';
+    ctx.strokeStyle = FIT;
     ctx.lineWidth = 2.6;
     ctx.beginPath();
     let pen = false;
@@ -179,38 +181,29 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       const x = XR[0] + ((XR[1] - XR[0]) * i) / 400;
       const y = evalPoly(w, x);
       if (y < YR[0] - 1 || y > YR[1] + 1) { pen = false; continue; }
-      pen ? ctx.lineTo(sx(x), sy(y)) : ((ctx.moveTo(sx(x), sy(y))), (pen = true));
+      pen ? ctx.lineTo(sx(x), sy(y)) : (ctx.moveTo(sx(x), sy(y)), (pen = true));
     }
     ctx.stroke();
 
-    // test points (faint) + train points
     for (const p of test) {
-      ctx.fillStyle = faint;
+      ctx.fillStyle = ink(0.35);
       ctx.beginPath();
-      ctx.arc(sx(p.x), sy(p.y), 2, 0, Math.PI * 2);
+      ctx.arc(sx(p.x), sy(p.y), 2.2, 0, Math.PI * 2);
       ctx.fill();
     }
     for (const p of train) {
-      ctx.fillStyle = accent;
-      ctx.strokeStyle = '#0b0c0e';
+      ctx.fillStyle = TRAIN;
+      ctx.strokeStyle = inv(0.9);
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(sx(p.x), sy(p.y), 5, 0, Math.PI * 2);
+      ctx.arc(sx(p.x), sy(p.y), 5.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
-    void teal;
-
-    (document.getElementById('trainerr') as HTMLElement).textContent = mse(w, train).toFixed(4);
-    (document.getElementById('testerr') as HTMLElement).textContent = mse(w, test).toFixed(4);
   }
 
-  function drawCurve() {
-    const c = mc.ctx, Ws = mc.W, Hs = mc.H;
-    const ink = css('--stage-ink') || '232,233,236';
-    const pad = { l: 8, r: 8, t: 8, b: 16 };
-    c.clearRect(0, 0, Ws, Hs);
-
+  function drawStrip() {
+    label('error against degree, at this λ', STRIP.x, STRIP.y - 10, 0.45, 'left', 10.5);
     const maxD = 12;
     const tr: number[] = [], te: number[] = [];
     for (let d = 0; d <= maxD; d++) {
@@ -219,54 +212,64 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       te.push(Math.min(2, mse(w, test)));
     }
     const hi = Math.max(0.3, ...te, ...tr) * 1.1;
-    const gx = (d: number) => pad.l + (d / maxD) * (Ws - pad.l - pad.r);
-    const gy = (v: number) => pad.t + (1 - v / hi) * (Hs - pad.t - pad.b);
-
+    const gx = (d: number) => STRIP.x + (d / maxD) * STRIP.w;
+    const gy = (v: number) => STRIP.y + (1 - v / hi) * STRIP.h;
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(STRIP.x, STRIP.y + STRIP.h);
+    ctx.lineTo(STRIP.x + STRIP.w, STRIP.y + STRIP.h);
+    ctx.stroke();
+    for (let d = 0; d <= maxD; d += 2) label(String(d), gx(d), STRIP.y + STRIP.h + 16, 0.3, 'center', 10);
+    label('degree', STRIP.x + STRIP.w, STRIP.y + STRIP.h + 32, 0.3, 'right', 10);
     const plot = (arr: number[], color: string) => {
-      c.strokeStyle = color;
-      c.lineWidth = 2;
-      c.beginPath();
-      arr.forEach((v, d) => (d ? c.lineTo(gx(d), gy(v)) : c.moveTo(gx(d), gy(v))));
-      c.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      arr.forEach((v, d) => (d ? ctx.lineTo(gx(d), gy(v)) : ctx.moveTo(gx(d), gy(v))));
+      ctx.stroke();
     };
-    plot(tr, css('--accent-2') || '#5eead4');
-    plot(te, '#f59e0b');
-
-    // current degree marker
-    c.strokeStyle = `rgba(${ink},0.5)`;
-    c.setLineDash([4, 4]);
-    c.beginPath();
-    c.moveTo(gx(state.degree), pad.t);
-    c.lineTo(gx(state.degree), Hs - pad.b);
-    c.stroke();
-    c.setLineDash([]);
-    c.fillStyle = css('--text-faint') || '#8b93a5';
-    c.font = "10px 'JetBrains Mono', monospace";
-    c.fillText('degree →', Ws - 56, Hs - 4);
+    plot(tr, TRAINERR);
+    plot(te, FIT);
+    label('test', gx(maxD) + 8, gy(te[maxD]) + 4, 1, 'left', 10.5, FIT);
+    label('train', gx(maxD) + 8, gy(tr[maxD]) + 4, 1, 'left', 10.5, TRAINERR);
+    ctx.strokeStyle = ink(0.4);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(gx(state.degree), STRIP.y);
+    ctx.lineTo(gx(state.degree), STRIP.y + STRIP.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
-  function redraw() {
-    draw();
-    drawCurve();
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const w = fit(state.degree, state.lambda);
+    drawFit(w);
+    drawStrip();
+
+    const trainErr = mse(w, train), testErr = mse(w, test);
+    const verdict =
+      state.degree <= 1 && trainErr > 0.15 ? ['underfitting', 'The curve is too stiff to follow the trend, so both errors stay high: high bias.']
+      : testErr > 2 * trainErr && state.degree >= 5 ? ['overfitting', 'The curve chases the noise in the training points and pays for it on the test points: high variance.']
+      : ['fitting well', 'Train and test errors are close: the curve follows the trend without memorising the noise.'];
+    setEq({
+      rule: [['\\hat y = \\sum_{k=0}^{d} w_k x^k', FIT], '\\quad\\text{minimising}\\quad', ['\\sum_i (y_i - \\hat y_i)^2', TRAINERR], `+ \\lambda\\sum_k w_k^2`],
+      live: [`d = ${state.degree}`, `\\quad\\lambda = ${state.lambda.toFixed(3)}`, [`\\quad\\text{train} = ${fixed(trainErr, 4)}`, TRAINERR], [`\\quad\\text{test} = ${fixed(testErr, 4)}`, FIT]],
+    });
+    setResult({
+      value: fixed(testErr, 4),
+      colour: FIT,
+      status: `train error ${fixed(trainErr, 4)} · ${verdict[0]}`,
+      note: verdict[1],
+    });
+    setRows({ 'r-train': fixed(trainErr, 4), 'r-test': fixed(testErr, 4) });
   }
 
-  const dEl = document.getElementById('d') as HTMLInputElement;
-  dEl.addEventListener('input', () => {
-    state.degree = +dEl.value;
-    (document.getElementById('dval') as HTMLElement).textContent = dEl.value;
-    redraw();
-  });
-  const lEl = document.getElementById('l') as HTMLInputElement;
-  lEl.addEventListener('input', () => {
-    state.lambda = (+lEl.value / 100) ** 2 * 2; // 0 .. 2, eased
-    (document.getElementById('lval') as HTMLElement).textContent = state.lambda.toFixed(3);
-    redraw();
-  });
-  document.getElementById('regen')!.addEventListener('click', () => {
-    gen();
-    redraw();
-  });
+  slider('d', (v) => { state.degree = v; draw(); });
+  slider('l', (v) => { state.lambda = (v / 100) ** 2 * 2; draw(); }, (v) => ((v / 100) ** 2 * 2).toFixed(3));
+  el('regen').addEventListener('click', () => { gen(); draw(); });
 
   gen();
-  redraw();
+  draw();
 </script>

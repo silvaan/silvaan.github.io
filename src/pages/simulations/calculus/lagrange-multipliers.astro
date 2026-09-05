@@ -1,53 +1,38 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Lagrange Multipliers"
-  description="Stand the objective up as a hill and the constraint becomes a fence winding across it. Walk the fence to its highest point. There the ground below is tangent to a contour line, which is exactly the statement that the two gradients line up."
+  description="Stand the objective up as a hill and the constraint becomes a fence winding across it. Walk the fence to its highest point: there the ground is tangent to a contour line, which is exactly the statement that the two gradients line up."
 >
   <div class="sim">
-    <div class="sim-stage">
-      <canvas id="lag" class="lag-canvas" width="1000" height="720"></canvas>
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="lag" class="lag-canvas" width="1000" height="720" role="img" aria-label="The objective as a hill with the constraint circle drawn on it as a fence, a ball on the fence, the two gradient arrows at the ball, and the height along the fence plotted at the side."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the fence, f along the constraint', color: '#f59e0b' }, { label: '∇f', color: '#a78bfa' }, { label: '∇g', color: '#22d3ee' }, { label: 'the top of the fence', color: '#34d399' }]}
+        hint="Drag to orbit · scroll to zoom · the ball rolls to wherever the slope along the fence is zero"
+      />
+      <Result label="Slope along the fence" />
     </div>
-
     <div class="sim-panel">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" id="run">Pause</button>
-        <button class="btn ghost" id="snap">Walk to the top</button>
-      </div>
-
-      <div class="control">
-        <label>Objective f(x, y)</label>
-        <div class="seg" id="obj">
-          <button data-o="sum" class="active">x + y</button>
-          <button data-o="prod">x · y</button>
-          <button data-o="tilt">2x + y</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Where on the fence <b id="thval">40°</b></label>
-        <input type="range" id="theta" min="0" max="360" step="1" value="40" />
-      </div>
-
-      <label class="check"><input type="checkbox" id="wall" checked /> Show the constraint wall</label>
-      <label class="check"><input type="checkbox" id="spin" /> Spin the scene</label>
-
-      <div class="readout">
-        <div class="row"><span id="l1">Height f here</span><b id="r1">—</b></div>
-        <div class="row"><span id="l2">Slope along the fence</span><b id="r2">—</b></div>
-        <div class="row"><span id="l3">∠(∇f, ∇g)</span><b id="r3">—</b></div>
-        <div class="row"><span id="l4">Multiplier λ</span><b id="r4">—</b></div>
-        <div class="row"><span id="l5">Verdict</span><b id="r5">—</b></div>
-      </div>
-
-      <p style="font-size:.82rem;color:var(--text-faint);margin:0;line-height:1.5">
-        Drag to orbit, scroll to zoom. The hill is f, the amber loop is f along
-        the constraint circle, and the ball rolls to wherever the slope along the
-        fence is zero.
-      </p>
+      <Transport running reset={false}>
+        <button type="button" class="btn ghost" id="snap">Walk to the top</button>
+      </Transport>
+      <Seg id="obj" label="Objective f(x, y)" attr="o" options={[{ value: 'sum', label: 'x + y' }, { value: 'prod', label: 'x · y' }, { value: 'tilt', label: '2x + y' }]} />
+      <Slider id="theta" label="Where on the fence" min={0} max={360} value={40} display="40°" />
+      <Checks items={[{ id: 'wall', label: 'Show the constraint wall', checked: true }, { id: 'spin', label: 'Spin the scene' }]} />
+      <Readout rows={[{ id: 'r1', label: 'height f here' }, { id: 'r3', label: '∠(∇f, ∇g)' }, { id: 'r4', label: 'multiplier λ' }]} />
     </div>
   </div>
 
@@ -79,7 +64,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
 
   type Obj = {
     f: (x: number, y: number) => number;
@@ -102,7 +88,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     zoom: 1,
   };
 
-  const canvas = document.getElementById('lag') as HTMLCanvasElement;
+  const canvas = el('lag') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
@@ -324,7 +310,7 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     ctx.strokeStyle = inkA(0.1);
     ctx.lineWidth = 1;
     ctx.strokeRect(SIDE.x, SIDE.y, SIDE.w, SIDE.h);
-    label('HEIGHT ALONG THE FENCE', SIDE.x + 2, SIDE.y - 9, 0.5, 'left', 11);
+    label('height along the fence', SIDE.x + 2, SIDE.y - 9, 0.5, 'left', 11);
 
     const px = SIDE.x + 40, py = SIDE.y + 40, pw = SIDE.w - 62, ph = SIDE.h - 160;
     let lo = Infinity, hi = -Infinity;
@@ -406,14 +392,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- readouts ---------------------------------------------------------------
 
-  const el = (id: string) => document.getElementById(id) as HTMLElement;
-  const setRow = (n: number, val: string, col?: string) => {
-    const b = el('r' + n);
-    b.textContent = val;
-    if (col) b.style.color = col;
-    else b.style.removeProperty('color');
-  };
-  const setEq = equationBar();
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
 
   function updateReadout() {
     const th = state.theta, x = Math.cos(th), y = Math.sin(th);
@@ -424,56 +405,26 @@ import SimLayout from '../../../layouts/SimLayout.astro';
     const ang = (Math.atan2(Math.abs(crossv), dotv) * 180) / Math.PI;
     const aligned = Math.min(ang, 180 - ang);
     const lam = (gf[0] * x + gf[1] * y) / 2; // ∇f·∇g / |∇g|², with ∇g=(2x,2y), |∇g|²=4
-    setRow(1, f(x, y).toFixed(3));
-    setRow(2, slope.toFixed(3), Math.abs(slope) < 0.02 ? BALL : undefined);
-    setRow(3, aligned.toFixed(1) + '°');
-    setRow(4, lam.toFixed(3));
     const optimal = Math.abs(slope) < 0.02;
-    setRow(5, optimal ? (slope, dotv > 0 ? 'at a peak ✓' : 'at a dip') : 'can still climb', optimal ? BALL : inkA(0.6));
-    setEq([
-      [
-        ['\\nabla f', GRADF],
-        '=\\lambda',
-        ['\\nabla g', GRADG],
-        '\\quad\\text{at the best point on the fence}',
-      ],
-      [
-        [`\\angle(\\nabla f,\\nabla g)=${aligned.toFixed(1)}^{\\circ}`, aligned < 3 ? BALL : FENCE],
-        `\\quad\\lambda = ${lam.toFixed(3)}`,
-        [
-          `\\quad\\text{slope along the fence}=${slope.toFixed(3)}`,
-          optimal ? BALL : FENCE,
-        ],
-      ],
-      [
-        'while the two arrows disagree there is uphill left along the fence; when they line up there is none',
-      ],
-    ]);
+    setRows({ r1: f(x, y).toFixed(3), r3: `${aligned.toFixed(1)}°`, r4: lam.toFixed(3) });
+    setEq({
+      rule: [['\\nabla f', GRADF], '=\\lambda', ['\\nabla g', GRADG], '\\quad\\text{at the best point on the fence}'],
+      live: [[`\\angle(\\nabla f,\\nabla g)=${aligned.toFixed(1)}^{\\circ}`, aligned < 3 ? BALL : FENCE], `\\quad\\lambda = ${lam.toFixed(3)}`, [`\\quad\\text{slope along the fence}=${slope.toFixed(3)}`, optimal ? BALL : FENCE]],
+    });
+    setResult({
+      value: slope.toFixed(3),
+      colour: optimal ? BALL : FENCE,
+      status: optimal
+        ? `${dotv > 0 ? 'at a peak' : 'at a dip'} · the two gradients line up, ${aligned.toFixed(1)}° apart · λ = ${lam.toFixed(3)}`
+        : `can still climb · ∇f and ∇g are ${aligned.toFixed(1)}° apart · height ${f(x, y).toFixed(3)}`,
+      note: 'While the two arrows disagree there is uphill left along the fence; when they line up there is none. λ is how much of ∇g it takes to make ∇f.',
+    });
   }
 
   // --- loop -------------------------------------------------------------------
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label('Lagrange Multipliers', 20, 30, 0.85, 'left', 14);
-    label('walk the fence to its highest point', 20, 52, 0.5, 'left', 11, FENCE);
-    const legend: [string, string][] = [
-      [FENCE, 'the fence f|g'],
-      [GRADF, '∇f'],
-      [GRADG, '∇g'],
-    ];
-    let lx = W - 20;
-    for (let k = legend.length - 1; k >= 0; k--) {
-      const [c, t] = legend[k];
-      ctx.font = '13px ui-monospace, monospace';
-      const tw = ctx.measureText(t).width;
-      label(t, lx, 30, 0.6, 'right', 11);
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(lx - tw - 11, 26, 5, 0, Math.PI * 2);
-      ctx.fill();
-      lx -= tw + 30;
-    }
     ctx.save();
     ctx.beginPath();
     ctx.rect(SCENE.x, SCENE.y, SCENE.w, SCENE.h);
@@ -498,11 +449,8 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 
   // --- controls ---------------------------------------------------------------
 
-  const runBtn = el('run');
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
+  transport({ onRun: (running) => (state.running = running) });
+  const setTheta = slider('theta', (v) => (state.theta = (v * Math.PI) / 180), (v) => `${v}°`);
   el('snap').addEventListener('click', () => {
     let bestT = 0, bestV = -Infinity;
     for (let i = 0; i < 3600; i++) {
@@ -510,27 +458,11 @@ import SimLayout from '../../../layouts/SimLayout.astro';
       if (v > bestV) { bestV = v; bestT = t; }
     }
     state.theta = bestT;
-    (el('theta') as HTMLInputElement).value = String(Math.round((bestT * 180) / Math.PI));
-    el('thval').textContent = `${Math.round((bestT * 180) / Math.PI)}°`;
+    setTheta(Math.round((bestT * 180) / Math.PI));
   });
-  const thEl = el('theta') as HTMLInputElement;
-  thEl.addEventListener('input', () => {
-    state.theta = (+thEl.value * Math.PI) / 180;
-    el('thval').textContent = `${thEl.value}°`;
-  });
-  el('obj').addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest('button');
-    if (!b) return;
-    document.querySelectorAll('#obj button').forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-    state.obj = b.dataset.o!;
-  });
-  (el('wall') as HTMLInputElement).addEventListener('change', (e) => {
-    state.wall = (e.target as HTMLInputElement).checked;
-  });
-  (el('spin') as HTMLInputElement).addEventListener('change', (e) => {
-    state.spin = (e.target as HTMLInputElement).checked;
-  });
+  segmented('obj', (o) => (state.obj = o));
+  check('wall', (on) => (state.wall = on));
+  check('spin', (on) => (state.spin = on));
 
   let dragging = false, lx = 0, ly = 0;
   canvas.addEventListener('pointerdown', (e) => {
@@ -570,15 +502,5 @@ import SimLayout from '../../../layouts/SimLayout.astro';
   }
   .lag-canvas:active {
     cursor: grabbing;
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-muted);
-  }
-  .check input {
-    accent-color: var(--accent);
   }
 </style>
