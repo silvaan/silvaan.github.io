@@ -1,0 +1,375 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Softmax & Temperature"
+  description="A network ends in a row of raw scores that mean nothing on their own. Softmax turns them into probabilities, and one number decides how strong an opinion it forms: temperature takes the same scores from a single confident answer to a shrug."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="sm"
+          width="1000"
+          height="610"
+          role="img"
+          aria-label="Raw scores as draggable bars turning into probabilities, above a plot of how every probability moves as the temperature changes."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the winning class', color: '#5eead4' }, { label: 'the others', color: '#7c8cff' }]}
+        hint="Drag a score up or down"
+      />
+      <Result label="The winner takes" />
+    </div>
+
+    <div class="sim-panel">
+      <Slider id="temp" label="Temperature τ" min={10} max={400} value={100} display="1.00" hint={['picks one', 'gives up']} />
+      <Seg
+        id="preset"
+        label="Scores"
+        attr="p"
+        options={[
+          { value: 'clear', label: 'One stands out' },
+          { value: 'close', label: 'Two are close' },
+          { value: 'flat', label: 'All alike' },
+        ]}
+      />
+      <Slider id="shift" label="Add the same to every score" min={-300} max={300} value={0} display="0.00" />
+      <Readout
+        rows={[
+          { id: 'r-top', label: 'winner' },
+          { id: 'r-p', label: 'its probability' },
+          { id: 'r-eff', label: 'classes it really uses' },
+          { id: 'r-ent', label: 'entropy' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag <b>add the same to every score</b>. Every bar on the left slides, and
+      not one probability on the right moves. Softmax reads only the
+      <b>differences</b> between scores, so the absolute values carry no meaning
+      at all.
+    </li>
+    <li>
+      Now take <b>temperature</b> down towards 0.1. The gap between the scores is
+      divided by a smaller and smaller number, so it grows, and the winner
+      swallows everything. At the limit softmax is just <b>pick the largest</b>,
+      which is where the name comes from.
+    </li>
+    <li>
+      Take it up instead. The differences are divided away to nothing, every
+      class converges on 1/5, and the model has stopped saying anything. The
+      lower plot is that whole journey: every curve starts apart on the left and
+      meets in the middle on the right.
+    </li>
+    <li>
+      Watch <b>classes it really uses</b>, which is 1 over the sum of the squared
+      probabilities. Near τ = 0 it is 1, near the far end it is 5, and in between
+      it tells you how many options are genuinely in play, which no single
+      probability can.
+    </li>
+    <li>
+      Pick <b>two are close</b> and sweep the temperature. The two leaders trade
+      almost all of the mass between them while the rest stay near zero, so
+      temperature does not spread attention evenly: it spreads it among whatever
+      was already competitive.
+    </li>
+    <li>
+      This is the same knob everywhere. It is the sampling temperature of a
+      language model, it is the τ that sharpens or flattens
+      <a href="/simulations/deep-learning/attention">attention</a>, and it is the
+      √d in the attention formula, which exists precisely to stop the scores
+      arriving too large and freezing the distribution.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const WIN = '#5eead4', OTHER = '#7c8cff';
+  const NAMES = ['cat', 'dog', 'bird', 'fish', 'tree'];
+  const K = NAMES.length;
+  const PRESETS: Record<string, number[]> = {
+    clear: [0.3, 2.6, 0.1, -0.7, -1.2],
+    close: [0.2, 1.9, 1.7, -0.4, -0.9],
+    flat: [0.3, 0.5, 0.2, 0.1, -0.1],
+  };
+
+  const state = { base: PRESETS.clear.slice(), temp: 1, shift: 0 };
+
+  const canvas = el('sm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const logits = () => state.base.map((v) => v + state.shift);
+  /** softmax at a temperature, computed the stable way */
+  function probs(t = state.temp, z = logits()) {
+    const s = z.map((v) => v / Math.max(0.05, t));
+    const mx = Math.max(...s);
+    const e = s.map((v) => Math.exp(v - mx));
+    const sum = e.reduce((a, b) => a + b, 0);
+    return e.map((v) => v / sum);
+  }
+  const argmax = (v: number[]) => v.reduce((b, x, i) => (x > v[b] ? i : b), 0);
+
+  // --- layout ----------------------------------------------------------------
+  const Z = { x: 74, w: 350, mid: 206, half: 92 };
+  const P = { x: 566, w: 384, base: 298, tall: 186 };
+  const SW = { x: 74, y: 412, w: 876, h: 148 };
+  const slotZ = (i: number) => Z.x + ((i + 0.5) * Z.w) / K;
+  const slotP = (i: number) => P.x + ((i + 0.5) * P.w) / K;
+  const BARW = 44;
+
+  function scores(top: number) {
+    label('the raw scores', Z.x, 66, 0.55, 'left', 13);
+    label('what the last layer actually produces', Z.x, 84, 0.32, 'left', 11);
+    const z = logits();
+    const scale = Math.max(2.2, ...z.map(Math.abs)) * 1.12;
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Z.x - 8, Z.mid);
+    ctx.lineTo(Z.x + Z.w + 8, Z.mid);
+    ctx.stroke();
+    z.forEach((v, i) => {
+      const on = i === top;
+      const h = Math.max(2, (Math.abs(v) / scale) * Z.half);
+      const x = slotZ(i) - BARW / 2;
+      const y = v >= 0 ? Z.mid - h : Z.mid;
+      ctx.fillStyle = on ? WIN : OTHER;
+      ctx.globalAlpha = on ? 0.95 : 0.5;
+      roundRect(ctx, x, y, BARW, h, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      label(fixed(v, 2), slotZ(i), v >= 0 ? y - 10 : y + h + 19, on ? 1 : 0.65, 'center', 12, on ? WIN : undefined);
+    });
+  }
+
+  function bars(p: number[], top: number) {
+    label('the probabilities', P.x, 66, 0.55, 'left', 13);
+    label('always adding to exactly 1', P.x, 84, 0.32, 'left', 11);
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(P.x - 8, P.base);
+    ctx.lineTo(P.x + P.w + 8, P.base);
+    ctx.stroke();
+    // where a five-way shrug would sit
+    const even = P.base - (1 / K) * P.tall;
+    ctx.strokeStyle = ink(0.2);
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.moveTo(P.x - 8, even);
+    ctx.lineTo(P.x + P.w + 8, even);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('1/5', P.x + P.w + 12, even + 5, 0.35, 'left', 11);
+    p.forEach((v, i) => {
+      const on = i === top;
+      const h = Math.max(2, v * P.tall);
+      ctx.fillStyle = on ? WIN : OTHER;
+      ctx.globalAlpha = on ? 0.95 : 0.5;
+      roundRect(ctx, slotP(i) - BARW / 2, P.base - h, BARW, h, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      label(`${(v * 100).toFixed(0)}%`, slotP(i), P.base - h - 10, on ? 1 : 0.65, 'center', 12, on ? WIN : undefined);
+    });
+  }
+
+  function names(top: number) {
+    for (let i = 0; i < K; i++) {
+      const on = i === top;
+      label(NAMES[i], slotZ(i), 328, on ? 0.95 : 0.4, 'center', 12, on ? WIN : undefined);
+      label(NAMES[i], slotP(i), 328, on ? 0.95 : 0.4, 'center', 12, on ? WIN : undefined);
+    }
+  }
+
+  function betweenArrow() {
+    const x0 = Z.x + Z.w + 24, x1 = P.x - 24, y = Z.mid;
+    ctx.strokeStyle = ink(0.3);
+    ctx.fillStyle = ink(0.3);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1 - 11, y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1, y);
+    ctx.lineTo(x1 - 11, y - 6);
+    ctx.lineTo(x1 - 11, y + 6);
+    ctx.closePath();
+    ctx.fill();
+    label('softmax', (x0 + x1) / 2, y - 16, 0.6, 'center', 12);
+    label(`τ = ${state.temp.toFixed(2)}`, (x0 + x1) / 2, y + 26, 0.85, 'center', 13, WIN);
+  }
+
+  /** Every probability across the whole range of temperatures. */
+  function sweep(top: number) {
+    label('the same scores at every temperature', SW.x, SW.y - 26, 0.55, 'left', 13);
+    label('one curve per class, from a single answer on the left to a shrug on the right', SW.x, SW.y - 8, 0.32, 'left', 11);
+    const LO = 0.1, HI = 10;
+    const gx = (t: number) => SW.x + (Math.log(t / LO) / Math.log(HI / LO)) * SW.w;
+    const gy = (p: number) => SW.y + SW.h - p * SW.h;
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(SW.x, SW.y, SW.w, SW.h);
+    for (const v of [0, 0.5, 1]) {
+      ctx.strokeStyle = ink(v === 0 ? 0.16 : 0.07);
+      ctx.beginPath();
+      ctx.moveTo(SW.x, gy(v));
+      ctx.lineTo(SW.x + SW.w, gy(v));
+      ctx.stroke();
+      label(v === 1 ? '100%' : v === 0.5 ? '50%' : '0', SW.x - 10, gy(v) + 5, 0.32, 'right', 11);
+    }
+    ctx.strokeStyle = ink(0.18);
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.moveTo(SW.x, gy(1 / K));
+    ctx.lineTo(SW.x + SW.w, gy(1 / K));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const STEPS = 150;
+    for (let i = 0; i < K; i++) {
+      const on = i === top;
+      ctx.strokeStyle = on ? WIN : OTHER;
+      ctx.globalAlpha = on ? 0.95 : 0.45;
+      ctx.lineWidth = on ? 3 : 1.8;
+      ctx.beginPath();
+      for (let s = 0; s <= STEPS; s++) {
+        const t = LO * (HI / LO) ** (s / STEPS);
+        const x = gx(t), y = gy(probs(t)[i]);
+        s ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    const x = gx(state.temp);
+    ctx.strokeStyle = WIN;
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x, SW.y);
+    ctx.lineTo(x, SW.y + SW.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const p = probs();
+    for (let i = 0; i < K; i++) {
+      ctx.fillStyle = i === top ? WIN : OTHER;
+      ctx.globalAlpha = i === top ? 1 : 0.6;
+      ctx.beginPath();
+      ctx.arc(x, gy(p[i]), i === top ? 5.5 : 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    for (const t of [0.1, 0.3, 1, 3, 10]) label(`τ ${t}`, gx(t), SW.y + SW.h + 22, 0.35, 'center', 11);
+    label('one answer', SW.x + 4, SW.y + 20, 0.4, 'left', 11);
+    label('no opinion', SW.x + SW.w - 4, SW.y + 20, 0.4, 'right', 11);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const p = probs();
+    const top = argmax(p);
+    scores(top);
+    bars(p, top);
+    names(top);
+    betweenArrow();
+    sweep(top);
+
+    const eff = 1 / p.reduce((s, v) => s + v * v, 0);
+    const ent = -p.reduce((s, v) => s + (v > 1e-12 ? v * Math.log(v) : 0), 0);
+    setEq({
+      rule: [['p_i = \\dfrac{e^{z_i/\\tau}}{\\sum_j e^{z_j/\\tau}}', WIN]],
+      live: [
+        `\\tau = ${state.temp.toFixed(2)}`,
+        [`\\quad p_{\\max} = ${(p[top] * 100).toFixed(1)}\\%`, WIN],
+        [`\\quad 1/\\!\\sum_i p_i^2 = ${eff.toFixed(2)}\\text{ of }${K}`, OTHER],
+      ],
+    });
+    setRows({
+      'r-top': NAMES[top],
+      'r-p': `${(p[top] * 100).toFixed(1)}%`,
+      'r-eff': `${eff.toFixed(2)} of ${K}`,
+      'r-ent': ent.toFixed(3),
+    });
+    setResult({
+      value: `${(p[top] * 100).toFixed(1)}%`,
+      colour: WIN,
+      status: `${NAMES[top]} wins at τ = ${state.temp.toFixed(2)} · effectively ${eff.toFixed(2)} of the ${K} classes are in play`,
+      note:
+        state.temp < 0.35
+          ? 'Cold: the differences are divided by almost nothing, so they blow up and the largest score takes everything. This is what argmax looks like from the inside.'
+          : state.temp > 3
+            ? 'Hot: the differences are divided away and every class converges on 1/5. The scores still differ, but nothing downstream can tell.'
+            : eff < 1.5
+              ? 'One class holds nearly all of it, so the model has committed. Raise the temperature and watch the others come back into play.'
+              : 'Softmax only ever reads differences, and temperature is the number those differences are divided by before they are exponentiated.',
+    });
+  }
+
+  // --- interaction -----------------------------------------------------------
+  let dragging = -1;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const grab = (pt: { x: number; y: number }) => {
+    if (pt.y < Z.mid - Z.half - 28 || pt.y > Z.mid + Z.half + 28) return -1;
+    for (let i = 0; i < K; i++) if (Math.abs(pt.x - slotZ(i)) < Z.w / K / 2) return i;
+    return -1;
+  };
+  function setFrom(pt: { x: number; y: number }, i: number) {
+    state.base[i] = Math.max(-4, Math.min(4, ((Z.mid - pt.y) / Z.half) * 4 - state.shift));
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const pt = local(e);
+    const i = grab(pt);
+    if (i < 0) return;
+    dragging = i;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    setFrom(pt, i);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const pt = local(e);
+    if (dragging >= 0) { setFrom(pt, dragging); return; }
+    canvas.style.cursor = grab(pt) >= 0 ? 'ns-resize' : 'default';
+  });
+  const drop = () => (dragging = -1);
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  segmented('preset', (p) => { state.base = PRESETS[p].slice(); draw(); });
+  slider('temp', (v) => { state.temp = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  slider('shift', (v) => { state.shift = v / 100; draw(); }, (v) => fixed(v / 100, 2));
+
+  draw();
+</script>
+
+<style>
+  #sm {
+    touch-action: none;
+  }
+</style>

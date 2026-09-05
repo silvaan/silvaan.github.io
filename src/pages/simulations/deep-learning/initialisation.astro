@@ -1,0 +1,440 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Weight Initialisation"
+  description="Before a network learns anything it has to survive its own depth. Every layer multiplies the spread of the signal by a factor, and thirty layers multiply it thirty times, so the wrong starting scale makes the activations vanish or overflow before the first gradient ever arrives."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="init"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="The distribution of activations at each layer drawn as a stack of violins, beside a log plot of the activation and gradient scale against depth."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the signal going forward', color: '#5eead4' },
+          { label: 'gradients coming back', color: '#f59e0b' },
+          { label: 'the scale it started at', color: 'rgba(160,165,175,0.55)' },
+        ]}
+        hint="Every violin is one layer, drawn on the same fixed scale"
+      />
+      <Result label="Signal scale at the last layer" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="scheme"
+        label="Initialisation"
+        attr="s"
+        active="he"
+        options={[
+          { value: 'he', label: 'He' },
+          { value: 'xavier', label: 'Xavier' },
+          { value: 'small', label: '0.01' },
+          { value: 'unit', label: 'N(0, 1)' },
+        ]}
+      />
+      <Seg id="act" label="Activation" attr="a" options={[{ value: 'relu', label: 'ReLU' }, { value: 'tanh', label: 'tanh' }, { value: 'linear', label: 'linear' }]} />
+      <Slider id="scale" label="Break it on purpose" min={40} max={200} value={100} display="×1.00" hint={['smaller weights', 'bigger weights']} />
+      <Slider id="depth" label="Layers" min={4} max={40} value={24} />
+      <Slider id="width" label="Units per layer" min={16} max={96} step={8} value={64} />
+      <Actions>
+        <button type="button" class="btn ghost" id="reseed">New weights</button>
+      </Actions>
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-sigma', label: 'weight std σ' },
+          { id: 'r-ideal', label: 'σ that keeps the scale' },
+          { id: 'r-growth', label: 'growth per layer' },
+          { id: 'r-first', label: 'signal scale, layer 1' },
+          { id: 'r-last', label: 'signal scale, last layer' },
+          { id: 'r-grad', label: 'gradient scale, layer 1' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Start on <b>He</b> with <b>ReLU</b>. Every violin has roughly the same
+      width, the two curves on the right sit flat along 1, and the signal
+      reaches the last layer at the size it started. That is the entire job of
+      an initialisation.
+    </li>
+    <li>
+      Switch to <b>0.01</b>. Each layer multiplies the spread by a number well
+      under one, and multiplying twenty-four times collapses it: the violins
+      shrink to a spike and the last layer is numerically zero. Every input maps
+      to the same output, so there is nothing to learn from.
+    </li>
+    <li>
+      Switch to <b>N(0, 1)</b>. The same failure in the other direction. The
+      spread multiplies up until the numbers leave the plot, and in a real
+      network they leave the range of a float and become infinities.
+    </li>
+    <li>
+      Notice the amber curve is the mirror of the teal one. Whatever the forward
+      pass does to the activations, the backward pass does to the gradients,
+      because the same weights are used both ways. Vanishing activations and
+      vanishing gradients are one problem, not two.
+    </li>
+    <li>
+      Pick <b>tanh</b> and then <b>Xavier</b>. Xavier is the scale that keeps
+      variance fixed for an activation that behaves like the identity near zero.
+      Now put <b>ReLU</b> back with Xavier still selected: the curves droop,
+      because ReLU throws away half its inputs. He is exactly Xavier with that
+      factor of two put back, which is why the two differ by √2 and nothing else.
+    </li>
+    <li>
+      Drag <b>break it on purpose</b>. The growth per layer moves a little either
+      side of one, and the last layer moves by that number raised to the depth.
+      A five percent error per layer is nothing at four layers and a factor of
+      three at twenty-four. Depth is what turns a small mistake into a fatal one,
+      which is the problem
+      <a href="/simulations/deep-learning/normalisation">normalisation</a> and
+      <a href="/simulations/deep-learning/residual">residual connections</a>
+      were built to remove.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const FWD = '#5eead4', BWD = '#f59e0b', BAD = '#f87171';
+  const BATCH = 96;
+
+  const state = { scheme: 'he', act: 'relu', scale: 1, depth: 24, width: 64, seed: 7 };
+
+  const canvas = el('init') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => run());
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- a repeatable normal source -------------------------------------------
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  let rnd = mulberry32(state.seed);
+  const gauss = () => {
+    const u = Math.max(1e-9, rnd());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+  };
+
+  const ACT: Record<string, { f: (z: number) => number; d: (z: number) => number }> = {
+    relu: { f: (z) => (z > 0 ? z : 0), d: (z) => (z > 0 ? 1 : 0) },
+    tanh: { f: Math.tanh, d: (z) => 1 - Math.tanh(z) ** 2 },
+    linear: { f: (z) => z, d: () => 1 },
+  };
+
+  /** The weight standard deviation each scheme asks for, before the scale knob. */
+  function sigmaOf() {
+    const n = state.width;
+    const base =
+      state.scheme === 'he' ? Math.sqrt(2 / n)
+      : state.scheme === 'xavier' ? Math.sqrt(1 / n)
+      : state.scheme === 'small' ? 0.01
+      : 1;
+    return base * state.scale;
+  }
+  /** The σ that would hold the scale steady for the activation in use. */
+  const idealSigma = () => Math.sqrt((state.act === 'relu' ? 2 : 1) / state.width);
+
+  type Pass = { fwd: number[]; bwd: number[]; sample: Float64Array[] };
+  let pass: Pass = { fwd: [], bwd: [], sample: [] };
+
+  /** Push a batch through, then push a gradient back, recording the spread at each layer. */
+  function propagate(): Pass {
+    rnd = mulberry32(state.seed);
+    const n = state.width, L = state.depth, sigma = sigmaOf();
+    const A = ACT[state.act];
+
+    const Ws: Float64Array[] = [];
+    for (let l = 0; l < L; l++) {
+      const w = new Float64Array(n * n);
+      for (let i = 0; i < w.length; i++) w[i] = gauss() * sigma;
+      Ws.push(w);
+    }
+
+    // forward: unit-variance inputs, then layer after layer
+    let a = new Float64Array(BATCH * n);
+    for (let i = 0; i < a.length; i++) a[i] = gauss();
+    const zs: Float64Array[] = [];
+    const sample: Float64Array[] = [];
+    const fwd: number[] = [std(a)];
+    sample.push(a.slice(0, BATCH * Math.min(n, 24)));
+    for (let l = 0; l < L; l++) {
+      const z = new Float64Array(BATCH * n);
+      const w = Ws[l];
+      for (let b = 0; b < BATCH; b++)
+        for (let j = 0; j < n; j++) {
+          let s = 0;
+          const off = j * n, ab = b * n;
+          for (let i = 0; i < n; i++) s += w[off + i] * a[ab + i];
+          z[b * n + j] = s;
+        }
+      zs.push(z);
+      fwd.push(std(z));
+      const out = new Float64Array(BATCH * n);
+      for (let i = 0; i < z.length; i++) out[i] = A.f(z[i]);
+      a = out;
+      sample.push(a.slice(0, BATCH * Math.min(n, 24)));
+    }
+
+    // backward: a unit-variance gradient at the top, back down the same weights
+    let d = new Float64Array(BATCH * n);
+    for (let i = 0; i < d.length; i++) d[i] = gauss();
+    const bwd: number[] = new Array(L + 1).fill(0);
+    bwd[L] = std(d);
+    for (let l = L - 1; l >= 0; l--) {
+      const z = zs[l], w = Ws[l];
+      const g = new Float64Array(BATCH * n);
+      for (let i = 0; i < d.length; i++) g[i] = d[i] * A.d(z[i]);
+      const back = new Float64Array(BATCH * n);
+      for (let b = 0; b < BATCH; b++)
+        for (let i = 0; i < n; i++) {
+          let s = 0;
+          for (let j = 0; j < n; j++) s += w[j * n + i] * g[b * n + j];
+          back[b * n + i] = s;
+        }
+      d = back;
+      bwd[l] = std(d);
+    }
+    return { fwd, bwd, sample };
+  }
+
+  function std(v: Float64Array) {
+    let m = 0;
+    for (const x of v) m += x;
+    m /= v.length;
+    let s = 0;
+    for (const x of v) s += (x - m) ** 2;
+    const out = Math.sqrt(s / v.length);
+    return Number.isFinite(out) ? out : Infinity;
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const VI = { x: 66, y: 96, w: 400, h: 452 };
+  const PL = { x: 566, y: 96, w: 384, h: 300 };
+  const SUM = { x: 566, y: 456, w: 384 };
+
+  /** One layer's activations as a symmetric violin on a fixed scale. */
+  function violins() {
+    label('what one layer holds', VI.x, VI.y - 32, 0.5, 'left', 13);
+    label('every violin is drawn on the same scale, −3 to 3', VI.x, VI.y - 16, 0.3, 'left', 11);
+    const shown = Math.min(state.depth + 1, 15);
+    const pitch = VI.h / shown;
+    const mid = VI.x + VI.w / 2;
+    const half = VI.w / 2 - 30;
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(mid, VI.y);
+    ctx.lineTo(mid, VI.y + VI.h);
+    ctx.stroke();
+
+    for (let k = 0; k < shown; k++) {
+      const l = Math.round((k * state.depth) / (shown - 1));
+      const v = pass.sample[l];
+      const y = VI.y + (k + 0.5) * pitch;
+      const BINS = 41;
+      const hist = new Float64Array(BINS);
+      let over = 0;
+      for (const x of v) {
+        const t = (x + 3) / 6;
+        if (t < 0 || t > 1) { over++; continue; }
+        hist[Math.min(BINS - 1, Math.floor(t * BINS))]++;
+      }
+      let mx = 1;
+      for (const c of hist) mx = Math.max(mx, c);
+      const amp = Math.min(pitch * 0.42, 15);
+      ctx.beginPath();
+      for (let i = 0; i < BINS; i++) {
+        const x = mid - half + ((i + 0.5) / BINS) * half * 2;
+        ctx.lineTo(x, y - (hist[i] / mx) * amp);
+      }
+      for (let i = BINS - 1; i >= 0; i--) {
+        const x = mid - half + ((i + 0.5) / BINS) * half * 2;
+        ctx.lineTo(x, y + (hist[i] / mx) * amp);
+      }
+      ctx.closePath();
+      const dead = pass.fwd[l] < 1e-6;
+      ctx.fillStyle = dead ? 'rgba(248,113,113,0.5)' : `rgba(94,234,212,${0.2 + 0.3 * Math.min(1, pass.fwd[l])})`;
+      ctx.fill();
+      ctx.strokeStyle = dead ? BAD : FWD;
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      label(l === 0 ? 'input' : `layer ${l}`, VI.x - 8, y + 4, 0.35, 'right', 11);
+      if (over > v.length * 0.02)
+        label(`${((over / v.length) * 100).toFixed(0)}% off the scale`, VI.x + VI.w - 6, y + 4, 0.7, 'right', 11, BAD);
+      else if (dead) label('collapsed', VI.x + VI.w - 6, y + 4, 0.7, 'right', 11, BAD);
+    }
+    for (const t of [-3, 0, 3]) label(String(t), mid + (t / 3) * half, VI.y + VI.h + 18, 0.3, 'center', 11);
+  }
+
+  /** The scale of both passes against depth, on a log axis. */
+  function plot() {
+    label('how the scale survives the depth', PL.x, PL.y - 32, 0.5, 'left', 13);
+    label('one point per layer, log scale', PL.x, PL.y - 16, 0.3, 'left', 11);
+    const LO = -12, HI = 12;
+    const px = (l: number) => PL.x + (l / Math.max(1, state.depth)) * PL.w;
+    const py = (v: number) => {
+      const e = Math.max(LO, Math.min(HI, Math.log10(Math.max(1e-300, v))));
+      return PL.y + PL.h - ((e - LO) / (HI - LO)) * PL.h;
+    };
+    ctx.fillStyle = 'rgba(94,234,212,0.05)';
+    ctx.fillRect(PL.x, py(10), PL.w, py(0.1) - py(10));
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    for (const e of [-12, -8, -4, 0, 4, 8, 12]) {
+      const y = py(10 ** e);
+      ctx.strokeStyle = ink(e === 0 ? 0.28 : 0.07);
+      ctx.beginPath();
+      ctx.moveTo(PL.x, y);
+      ctx.lineTo(PL.x + PL.w, y);
+      ctx.stroke();
+      label(e === 0 ? '1' : `1e${e}`, PL.x - 8, y + 4, 0.3, 'right', 11);
+    }
+    const line = (vals: number[], colour: string, width: number) => {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      vals.forEach((v, l) => (l ? ctx.lineTo(px(l), py(v)) : ctx.moveTo(px(l), py(v))));
+      ctx.stroke();
+      const last = vals[vals.length - 1];
+      ctx.fillStyle = colour;
+      ctx.beginPath();
+      ctx.arc(px(vals.length - 1), py(last), 4, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    line(pass.bwd, BWD, 2);
+    line(pass.fwd, FWD, 2.6);
+    label('forward', PL.x + 8, py(pass.fwd[1] ?? 1) - 10, 0.9, 'left', 11.5, FWD);
+    label('backward', PL.x + 8, py(pass.bwd[1] ?? 1) + 18, 0.9, 'left', 11.5, BWD);
+    label('kept', PL.x + PL.w + 6, py(1) + 4, 0.35, 'left', 11);
+    label('layer', PL.x + PL.w, PL.y + PL.h + 18, 0.3, 'right', 11);
+  }
+
+  /** The one multiplication that decides everything. */
+  function arithmetic() {
+    const g = growth();
+    const last = pass.fwd[pass.fwd.length - 1];
+    label('one layer multiplies the spread by', SUM.x, SUM.y, 0.45, 'left', 12);
+    const ok = Math.abs(Math.log(g)) < 0.12;
+    label(g.toFixed(3), SUM.x, SUM.y + 40, 1, 'left', 30, ok ? FWD : BAD);
+    label(`so ${state.depth} layers multiply it by`, SUM.x + 130, SUM.y + 18, 0.4, 'left', 11.5);
+    label(fmt(g ** state.depth), SUM.x + 130, SUM.y + 40, 1, 'left', 17, ok ? FWD : BAD);
+    label(
+      ok ? 'the signal arrives the size it left' : g < 1 ? 'the signal is gone before the top' : 'the signal has run away',
+      SUM.x,
+      SUM.y + 68,
+      0.4,
+      'left',
+      11.5
+    );
+    label(`measured at the last layer: ${fmt(last)}`, SUM.x, SUM.y + 88, 0.3, 'left', 11);
+  }
+
+  /** The geometric mean of the per-layer ratio, which is what depth compounds. */
+  function growth() {
+    const f = pass.fwd;
+    let n = 0, s = 0;
+    for (let l = 1; l < f.length; l++) {
+      if (!(f[l] > 0) || !(f[l - 1] > 0) || !Number.isFinite(f[l])) continue;
+      s += Math.log(f[l] / f[l - 1]);
+      n++;
+    }
+    return n ? Math.exp(s / n) : 0;
+  }
+  const fmt = (v: number) =>
+    !Number.isFinite(v) ? 'overflow' : v === 0 ? '0' : v < 1e-4 || v >= 1e4 ? v.toExponential(1) : v.toFixed(3);
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    violins();
+    plot();
+    arithmetic();
+
+    const sigma = sigmaOf(), ideal = idealSigma(), g = growth();
+    const last = pass.fwd[pass.fwd.length - 1];
+    const gradFirst = pass.bwd[0];
+    setEq({
+      rule: [
+        ['\\operatorname{Var}[z^{(l)}] = \\tfrac{n}{2}\\,\\operatorname{Var}[W]\\,\\operatorname{Var}[z^{(l-1)}]', FWD],
+        '\\qquad',
+        ['\\sigma_{\\text{He}} = \\sqrt{2/n}', BWD],
+      ],
+      live: [
+        `\\sigma = ${sigma.toExponential(2)}`,
+        `\\quad \\sigma_{\\text{ideal}} = ${ideal.toExponential(2)}`,
+        [`\\quad \\text{growth} = ${g.toFixed(3)}`, FWD],
+        [`\\quad ${g.toFixed(3)}^{${state.depth}} = ${fmt(g ** state.depth)}`, Math.abs(Math.log(g || 1e-9)) < 0.12 ? FWD : BAD],
+      ],
+    });
+    setRows({
+      'r-sigma': sigma.toExponential(3),
+      'r-ideal': ideal.toExponential(3),
+      'r-growth': g.toFixed(4),
+      'r-first': fmt(pass.fwd[1] ?? 0),
+      'r-last': fmt(last),
+      'r-grad': fmt(gradFirst),
+    });
+    const dead = last < 1e-6, blown = !Number.isFinite(last) || last > 1e6;
+    setResult({
+      value: fmt(last),
+      colour: dead || blown ? BAD : FWD,
+      status: `${state.depth} layers of ${state.width} units, ${state.act} · each one multiplies the spread by ${g.toFixed(3)} · the gradient reaching layer 1 is ${fmt(gradFirst)}`,
+      note: blown
+        ? 'The weights are too big. Each layer amplifies, the amplification compounds, and in a real network these numbers become infinities within a few more layers.'
+        : dead
+          ? 'The weights are too small. Every layer shrinks the signal, and after this many layers there is nothing left to distinguish one input from another.'
+          : state.act === 'relu' && state.scheme === 'xavier'
+            ? 'Xavier assumes the activation passes the signal through. ReLU deletes half of it, so the scale droops, and He is exactly this scale with that factor of two put back.'
+            : 'The spread arrives at the top roughly as it left, so every layer is doing work and the gradient has something to come back through.',
+    });
+  }
+
+  function run() {
+    pass = propagate();
+    draw();
+  }
+
+  segmented('scheme', (s) => { state.scheme = s; run(); });
+  segmented('act', (a) => { state.act = a; run(); });
+  slider('scale', (v) => { state.scale = v / 100; run(); }, (v) => `×${(v / 100).toFixed(2)}`);
+  slider('depth', (v) => { state.depth = v; run(); });
+  slider('width', (v) => { state.width = v; run(); });
+  el('reseed').addEventListener('click', () => { state.seed = (Math.random() * 1e9) | 0; run(); });
+
+  run();
+</script>

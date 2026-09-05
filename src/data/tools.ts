@@ -417,6 +417,46 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'batch-noise',
+        title: 'Batch Size & Gradient Noise',
+        description:
+          'Nobody computes the real gradient. Watch a cloud of batch estimates fan out around it, shrink like one over the square root of the batch, and leave a run rattling in a ball instead of stopping at a point.',
+        href: '/simulations/deep-learning/batch-noise',
+        status: 'live',
+      },
+      {
+        slug: 'initialisation',
+        title: 'Weight Initialisation',
+        description:
+          'Every layer multiplies the spread of the signal, and depth multiplies that again. Watch the activations collapse to zero or run off to infinity, then see the one scale that keeps them steady.',
+        href: '/simulations/deep-learning/initialisation',
+        status: 'live',
+      },
+      {
+        slug: 'normalisation',
+        title: 'Batch & Layer Normalisation',
+        description:
+          'Subtract a mean, divide by a spread, and hand the scale back as two learned numbers. The only real choice is which way you slice the batch, and one of the two survives a batch of size one.',
+        href: '/simulations/deep-learning/normalisation',
+        status: 'live',
+      },
+      {
+        slug: 'residual',
+        title: 'Residual Connections',
+        description:
+          'A plain stack multiplies the gradient once per layer, so it is gone by layer twenty. Put an identity beside every block and the product starts at one, which is the whole of what a skip connection does.',
+        href: '/simulations/deep-learning/residual',
+        status: 'live',
+      },
+      {
+        slug: 'softmax',
+        title: 'Softmax & Temperature',
+        description:
+          'Raw scores become probabilities, and one number decides how strong an opinion that is. Drag the temperature from a single confident answer all the way to a five-way shrug.',
+        href: '/simulations/deep-learning/softmax',
+        status: 'live',
+      },
+      {
         slug: 'neural-net',
         title: 'Neuron Activations',
         description:
@@ -449,11 +489,43 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'positional-encoding',
+        title: 'Positional Encoding',
+        description:
+          'Attention reads a set, so order has to be added to the vectors themselves. Fast waves separate neighbours, slow ones keep distant tokens apart, and the similarity depends on distance alone.',
+        href: '/simulations/deep-learning/positional-encoding',
+        status: 'live',
+      },
+      {
         slug: 'image-convolution',
         title: 'Image Convolution',
         description:
           'Slide a kernel over an image to detect edges, blur or sharpen, and see how stride, padding and dilation reshape the output feature map.',
         href: '/simulations/deep-learning/image-convolution',
+        status: 'live',
+      },
+      {
+        slug: 'receptive-field',
+        title: 'Receptive Field',
+        description:
+          'Trace the cone of pixels one output cell can see. Depth adds to the window, stride multiplies it and costs resolution, and dilation doubles it for free while leaving holes behind.',
+        href: '/simulations/deep-learning/receptive-field',
+        status: 'live',
+      },
+      {
+        slug: 'recurrence',
+        title: 'Recurrence & Memory',
+        description:
+          'One hidden state carries everything, multiplied by the same weight at every step, so memory decays geometrically and the gradient decays with it. An additive gate is what buys the hundreds of steps back.',
+        href: '/simulations/deep-learning/recurrence',
+        status: 'live',
+      },
+      {
+        slug: 'autoencoder',
+        title: 'Autoencoder & Latent Space',
+        description:
+          'Squeeze a picture through a gap of two numbers and force the network to rebuild it. Nothing says what the numbers should mean, and they come out as a map you can drag around.',
+        href: '/simulations/deep-learning/autoencoder',
         status: 'live',
       },
     ],

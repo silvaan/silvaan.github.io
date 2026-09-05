@@ -1,0 +1,478 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Batch Size & Gradient Noise"
+  description="Nobody computes the real gradient. A batch of examples gives an estimate of it, and the estimate is wrong by an amount that shrinks like one over the square root of the batch. That error is not only a cost: it is what keeps the run from settling into the first narrow hole it finds."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="bn"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="A loss surface in two parameters with the true gradient, a cloud of gradients estimated from random batches, and the path a run takes, beside a plot of the noise against batch size."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the gradient over all the data', color: '#5eead4' },
+          { label: 'what one batch says instead', color: 'rgba(124,140,255,0.75)' },
+          { label: 'where the run has been', color: '#f59e0b' },
+        ]}
+        hint="Click anywhere on the surface to start a run from there"
+      />
+      <Result label="Gradient noise" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport step />
+      <Slider id="batch" label="Batch size" min={1} max={256} value={8} hint={['one example', 'the whole set']} />
+      <Slider id="lr" label="Learning rate" min={1} max={120} value={30} display="0.30" />
+      <Checks items={[{ id: 'cloud', label: 'Draw the batches this step could have drawn', checked: true }]} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-noise', label: 'noise in one batch gradient' },
+          { id: 'r-true', label: 'size of the true gradient' },
+          { id: 'r-ratio', label: 'noise ÷ signal' },
+          { id: 'r-ball', label: 'radius it settles into' },
+          { id: 'r-steps', label: 'steps taken' },
+          { id: 'r-loss', label: 'loss' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The teal arrow is the gradient of the loss over all 256 examples, and it
+      is the direction nobody can afford to compute every step. Each faint arrow
+      is what one random batch of the current size claims instead.
+    </li>
+    <li>
+      Slide <b>batch size</b> to 1. The cloud opens up into a fan and some
+      arrows point almost the wrong way, because a single example knows about a
+      single example. The run still gets there, taking a drunk path.
+    </li>
+    <li>
+      Slide it up and the fan closes. The panel says the noise falls like one
+      over the square root of the batch, so sixteen times the work buys four
+      times less noise. That poor exchange rate is the whole argument against
+      very large batches.
+    </li>
+    <li>
+      Let a run finish with a small batch. It does not stop at the minimum, it
+      arrives and then jitters around it forever, in a ball whose radius the
+      panel reports. Stochastic descent converges to a <b>region</b>, not a
+      point, and the region is set by the learning rate against the batch size.
+    </li>
+    <li>
+      That is why the two knobs are always adjusted together. Double the batch
+      and the noise falls by √2; double the learning rate as well and the ball
+      is back to the size it was, which is the rule of thumb behind scaling the
+      learning rate with the batch.
+    </li>
+    <li>
+      The ball is also the useful part. A run that jitters cannot stay in a hole
+      narrower than the jitter, so noise quietly selects the wide flat minima,
+      and turning the batch all the way up removes the one force pushing towards
+      solutions that generalise.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, arrow } from '../../../lib/draw';
+  import { el, slider, check, transport, result, readout } from '../../../lib/panel';
+
+  const TRUE = '#5eead4', BATCH = '#7c8cff', PATH = '#f59e0b';
+  const N = 256; // examples in the whole set
+
+  const state = { batch: 8, lr: 0.3, cloud: true, running: false, w: [1.7, -1.35], steps: 0 };
+  let path: number[][] = [[1.7, -1.35]];
+
+  const canvas = el('bn') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const rnd = mulberry32(20260906);
+  const gauss = () => {
+    const u = Math.max(1e-9, rnd());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+  };
+
+  // A plain least-squares fit, so a per-example gradient is exact and cheap.
+  // The two features have very different scales, which is what makes the bowl
+  // long and thin and the picture worth looking at.
+  const xs: number[][] = [], ys: number[] = [];
+  const TRUE_W = [0.8, -0.4];
+  for (let i = 0; i < N; i++) {
+    const a = gauss() * 1.4, b = gauss() * 0.45;
+    xs.push([a, b]);
+    ys.push(TRUE_W[0] * a + TRUE_W[1] * b + gauss() * 0.55);
+  }
+
+  const gradOne = (i: number, w: number[]) => {
+    const r = w[0] * xs[i][0] + w[1] * xs[i][1] - ys[i];
+    return [r * xs[i][0], r * xs[i][1]];
+  };
+  function gradFull(w: number[]) {
+    let g0 = 0, g1 = 0;
+    for (let i = 0; i < N; i++) {
+      const g = gradOne(i, w);
+      g0 += g[0];
+      g1 += g[1];
+    }
+    return [g0 / N, g1 / N];
+  }
+  function gradBatch(w: number[], B: number) {
+    let g0 = 0, g1 = 0;
+    for (let k = 0; k < B; k++) {
+      const i = Math.floor(rnd() * N);
+      const g = gradOne(i, w);
+      g0 += g[0];
+      g1 += g[1];
+    }
+    return [g0 / B, g1 / B];
+  }
+  function loss(w: number[]) {
+    let s = 0;
+    for (let i = 0; i < N; i++) s += (w[0] * xs[i][0] + w[1] * xs[i][1] - ys[i]) ** 2;
+    return s / (2 * N);
+  }
+
+  /** The spread of a one-batch gradient, straight from the per-example spread. */
+  function noiseAt(w: number[], B: number) {
+    const g = gradFull(w);
+    let v = 0;
+    for (let i = 0; i < N; i++) {
+      const gi = gradOne(i, w);
+      v += (gi[0] - g[0]) ** 2 + (gi[1] - g[1]) ** 2;
+    }
+    return Math.sqrt(v / N / B);
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const MAP = { x: 66, y: 96, w: 470, h: 470 };
+  const FIT = { x: 610, y: 96, w: 330, h: 190 };
+  const PL = { x: 610, y: 372, w: 330, h: 194 };
+  const RANGE = 2.4;
+  const px = (w0: number) => MAP.x + ((w0 + RANGE) / (2 * RANGE)) * MAP.w;
+  const py = (w1: number) => MAP.y + MAP.h - ((w1 + RANGE) / (2 * RANGE)) * MAP.h;
+  const toW = (x: number, y: number) => [
+    ((x - MAP.x) / MAP.w) * 2 * RANGE - RANGE,
+    ((MAP.y + MAP.h - y) / MAP.h) * 2 * RANGE - RANGE,
+  ];
+
+  function surface() {
+    label('the loss over the two parameters', MAP.x, MAP.y - 34, 0.5, 'left', 13);
+    label('contours of the whole set, which no single step ever sees', MAP.x, MAP.y - 18, 0.3, 'left', 11);
+    const STEP = 5;
+    let lo = Infinity, hi = -Infinity;
+    const grid: number[][] = [];
+    for (let yy = 0; yy <= MAP.h; yy += STEP) {
+      const row: number[] = [];
+      for (let xx = 0; xx <= MAP.w; xx += STEP) {
+        const w = toW(MAP.x + xx, MAP.y + yy);
+        const v = Math.log(1e-3 + loss(w));
+        row.push(v);
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+      grid.push(row);
+    }
+    for (let r = 0; r < grid.length; r++)
+      for (let c = 0; c < grid[r].length; c++) {
+        const t = (grid[r][c] - lo) / Math.max(1e-9, hi - lo);
+        ctx.fillStyle = `rgba(124,140,255,${0.03 + 0.3 * t})`;
+        ctx.fillRect(MAP.x + c * STEP, MAP.y + r * STEP, STEP, STEP);
+      }
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(MAP.x, MAP.y, MAP.w, MAP.h);
+    // where the whole set is happiest
+    ctx.strokeStyle = TRUE;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(px(TRUE_W[0]), py(TRUE_W[1]), 5, 0, Math.PI * 2);
+    ctx.stroke();
+    label('the best fit', px(TRUE_W[0]) + 10, py(TRUE_W[1]) + 4, 0.45, 'left', 11, TRUE);
+    label('w₁', MAP.x + MAP.w, MAP.y + MAP.h + 18, 0.3, 'right', 11);
+    label('w₂', MAP.x - 10, MAP.y + 10, 0.3, 'right', 11);
+  }
+
+  function arrows() {
+    const w = state.w;
+    const x = px(w[0]), y = py(w[1]);
+    // the true gradient is always drawn the same length, so the fan is about
+    // the spread and not about how far down the slope the run happens to be
+    const g0m = Math.hypot(...gradFull(w)) || 1e-9;
+    const K = 95 / g0m;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.clip();
+
+    if (state.cloud) {
+      const keep = mulberry32(991);
+      const g0 = gradFull(w);
+      let v = 0;
+      for (let i = 0; i < N; i++) {
+        const gi = gradOne(i, w);
+        v += (gi[0] - g0[0]) ** 2 + (gi[1] - g0[1]) ** 2;
+      }
+      const sd = Math.sqrt(v / N / state.batch) / Math.SQRT2;
+      ctx.strokeStyle = `${BATCH}55`;
+      ctx.fillStyle = `${BATCH}55`;
+      ctx.lineWidth = 1.2;
+      for (let k = 0; k < 40; k++) {
+        // the same spread the real sampling has, drawn from a fixed seed so the
+        // fan is stable while you move the sliders
+        const u = Math.max(1e-9, keep());
+        const r = Math.sqrt(-2 * Math.log(u));
+        const a = 2 * Math.PI * keep();
+        const gx = g0[0] + r * Math.cos(a) * sd;
+        const gy = g0[1] + r * Math.sin(a) * sd;
+        arrow(ctx, x, y, x - gx * K, y + gy * K, 5);
+      }
+    }
+
+    const g = gradFull(w);
+    ctx.strokeStyle = TRUE;
+    ctx.fillStyle = TRUE;
+    ctx.lineWidth = 2.6;
+    arrow(ctx, x, y, x - g[0] * K, y + g[1] * K, 9);
+    ctx.restore();
+
+    if (path.length > 1) {
+      ctx.strokeStyle = PATH;
+      ctx.lineWidth = 1.6;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      path.forEach((p, i) => (i ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1]))));
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = PATH;
+    ctx.strokeStyle = inv(0.75);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // the ball the run ends up rattling around in
+    const rad = ballRadius();
+    if (rad > 0.002) {
+      ctx.strokeStyle = `${PATH}66`;
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(px(TRUE_W[0]), py(TRUE_W[1]), (rad / (2 * RANGE)) * MAP.w, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label('it settles in here, not on the point', px(TRUE_W[0]), py(TRUE_W[1]) + (rad / (2 * RANGE)) * MAP.w + 18, 0.45, 'center', 11, PATH);
+    }
+  }
+
+  function fit() {
+    label('the data, and the line the parameters draw', FIT.x, FIT.y - 22, 0.5, 'left', 13);
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(FIT.x, FIT.y, FIT.w, FIT.h);
+    const sx = (a: number) => FIT.x + ((a + 4) / 8) * FIT.w;
+    const sy = (b: number) => FIT.y + FIT.h - ((b + 4) / 8) * FIT.h;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(FIT.x, FIT.y, FIT.w, FIT.h);
+    ctx.clip();
+    ctx.fillStyle = `${BATCH}55`;
+    for (let i = 0; i < N; i++) {
+      ctx.beginPath();
+      ctx.arc(sx(xs[i][0]), sy(ys[i]), 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(FIT.x, FIT.y, FIT.w, FIT.h);
+    ctx.clip();
+    ctx.strokeStyle = PATH;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx(-4), sy(state.w[0] * -4));
+    ctx.lineTo(sx(4), sy(state.w[0] * 4));
+    ctx.stroke();
+    ctx.restore();
+    label('one dot is one example', FIT.x + 8, FIT.y + FIT.h - 10, 0.3, 'left', 11);
+  }
+
+  function noisePlot() {
+    label('noise against batch size', PL.x, PL.y - 22, 0.5, 'left', 13);
+    const LO = 1, HI = 256;
+    const gx = (b: number) => PL.x + (Math.log(b / LO) / Math.log(HI / LO)) * PL.w;
+    const n1 = noiseAt(state.w, 1);
+    const gy = (v: number) => {
+      const t = Math.log(Math.max(1e-6, v) / (n1 || 1)) / Math.log(1 / 20);
+      return PL.y + Math.max(0, Math.min(1, t)) * PL.h;
+    };
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    ctx.strokeStyle = TRUE;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 80; i++) {
+      const b = LO * (HI / LO) ** (i / 80);
+      const x = gx(b), y = gy(n1 / Math.sqrt(b));
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    for (const b of [1, 4, 16, 64, 256]) label(String(b), gx(b), PL.y + PL.h + 18, 0.3, 'center', 11);
+    const x = gx(state.batch), y = gy(noiseAt(state.w, state.batch));
+    ctx.strokeStyle = BATCH;
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x, PL.y);
+    ctx.lineTo(x, PL.y + PL.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = BATCH;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    label('one over the square root', PL.x + PL.w - 8, PL.y + 18, 0.4, 'right', 11, TRUE);
+    label('batch size', PL.x + PL.w, PL.y + PL.h + 34, 0.3, 'right', 11);
+  }
+
+  /** Where stochastic descent stops improving: noise times step, against curvature. */
+  function ballRadius() {
+    const n = noiseAt(TRUE_W, state.batch);
+    return state.lr * n;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    surface();
+    arrows();
+    fit();
+    noisePlot();
+
+    const g = gradFull(state.w);
+    const gm = Math.hypot(g[0], g[1]);
+    const n = noiseAt(state.w, state.batch);
+    const rad = ballRadius();
+    setEq({
+      rule: [
+        ['g_B = \\dfrac{1}{B}\\sum_{i \\in B} \\nabla L_i', BATCH],
+        '\\qquad',
+        ['\\mathbb{E}[g_B] = \\nabla L', TRUE],
+        '\\qquad',
+        ['\\operatorname{sd}[g_B] = \\dfrac{\\sigma}{\\sqrt{B}}', PATH],
+      ],
+      live: [
+        [`B = ${state.batch}`, BATCH],
+        [`\\quad \\operatorname{sd} = ${n.toFixed(4)}`, PATH],
+        [`\\quad |\\nabla L| = ${gm.toFixed(4)}`, TRUE],
+        `\\quad \\text{noise}/\\text{signal} = ${(n / Math.max(1e-9, gm)).toFixed(2)}`,
+      ],
+    });
+    setRows({
+      'r-noise': n.toFixed(4),
+      'r-true': gm.toFixed(4),
+      'r-ratio': `${(n / Math.max(1e-9, gm)).toFixed(2)}×`,
+      'r-ball': rad.toFixed(4),
+      'r-steps': String(state.steps),
+      'r-loss': loss(state.w).toFixed(4),
+    });
+    const ratio = n / Math.max(1e-9, gm);
+    setResult({
+      value: n.toFixed(4),
+      colour: ratio > 1 ? PATH : TRUE,
+      status: `batch of ${state.batch} · the true gradient is ${gm.toFixed(4)} long, so the noise is ${ratio.toFixed(2)} times the signal · it settles into a ball of radius ${rad.toFixed(3)}`,
+      note:
+        ratio > 2
+          ? 'The noise is larger than the gradient itself, so any single step points almost anywhere. The run still arrives, because the errors average out over many steps rather than within one.'
+          : state.batch > 128
+            ? 'A large batch buys a clean gradient at a poor exchange rate, and it removes the jitter that keeps a run out of narrow holes.'
+            : 'Four times the batch halves the noise, never more, because the estimate improves with the square root of the count and not with the count.',
+    });
+  }
+
+  // --- the run ---------------------------------------------------------------
+  function step() {
+    const g = gradBatch(state.w, state.batch);
+    state.w = [state.w[0] - state.lr * g[0], state.w[1] - state.lr * g[1]];
+    path.push(state.w.slice());
+    if (path.length > 600) path.shift();
+    state.steps++;
+  }
+  function reset(at?: number[]) {
+    state.w = at ?? [1.7, -1.35];
+    path = [state.w.slice()];
+    state.steps = 0;
+  }
+  let last = 0;
+  function frame(t: number) {
+    if (!last) last = t;
+    if (state.running && t - last > 28) {
+      last = t;
+      step();
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    if (x < MAP.x || x > MAP.x + MAP.w || y < MAP.y || y > MAP.y + MAP.h) return;
+    const w = toW(x, y);
+    reset([Math.max(-RANGE, Math.min(RANGE, w[0])), Math.max(-RANGE, Math.min(RANGE, w[1]))]);
+  });
+
+  slider('batch', (v) => (state.batch = v));
+  slider('lr', (v) => (state.lr = v / 100), (v) => (v / 100).toFixed(2));
+  check('cloud', (on) => (state.cloud = on));
+  transport({
+    onRun: (running) => (state.running = running),
+    onStep: () => step(),
+    onReset: () => reset(),
+  });
+
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  #bn {
+    cursor: crosshair;
+  }
+</style>

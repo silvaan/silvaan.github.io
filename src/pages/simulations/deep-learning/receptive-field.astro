@@ -1,0 +1,315 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Receptive Field"
+  description="One convolution sees three pixels. Stack them and each layer sees three of the layer below, which saw three each of their own, so the window on the original image grows with depth. How fast it grows is decided by three numbers, and they do not all behave the same way."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="rf"
+          width="1000"
+          height="640"
+          role="img"
+          aria-label="A stack of one-dimensional convolution layers with the cone of input pixels feeding one chosen output cell highlighted, and the receptive field size printed for each layer."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the output cell you picked', color: '#7c8cff' },
+          { label: 'everything it can see', color: '#5eead4' },
+          { label: 'pixels it will never see', color: 'rgba(160,165,175,0.35)' },
+        ]}
+        hint="Click any cell in the top row to trace a different output"
+      />
+      <Result label="Receptive field" />
+    </div>
+
+    <div class="sim-panel">
+      <Slider id="layers" label="Layers" min={1} max={7} value={4} />
+      <Slider id="k" label="Kernel size" min={2} max={7} value={3} />
+      <Slider id="s" label="Stride" min={1} max={3} value={1} />
+      <Seg
+        id="dil"
+        label="Dilation"
+        attr="d"
+        options={[
+          { value: 'none', label: 'None' },
+          { value: 'exp', label: 'Doubling' },
+        ]}
+      />
+      <Checks items={[{ id: 'pool', label: 'Halve the width after every layer' }]} />
+      <Readout
+        rows={[
+          { id: 'r-rf', label: 'receptive field' },
+          { id: 'r-jump', label: 'distance between neighbours' },
+          { id: 'r-width', label: 'width of the top layer' },
+          { id: 'r-cost', label: 'weights per layer' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The cone is everything one output cell can possibly depend on. Every pixel
+      outside it could be anything at all and that cell would not change, which
+      is the honest limit on what a convolutional network can notice.
+    </li>
+    <li>
+      Add <b>layers</b> and the field grows by the same amount each time, so
+      depth alone buys you a field that grows only <b>linearly</b>. Reaching
+      across a large image this way needs an absurd number of layers.
+    </li>
+    <li>
+      Now raise the <b>stride</b>. The field grows much faster, because a stride
+      spreads the cells of the next layer further apart and every later layer
+      inherits that spacing. Stride multiplies where depth only adds.
+    </li>
+    <li>
+      That speed is not free. Watch the width of the top row collapse as the
+      stride goes up: you buy reach by throwing away resolution, which is why
+      stride and pooling appear in classifiers and are avoided in anything that
+      has to output a full-size image.
+    </li>
+    <li>
+      Switch <b>dilation</b> to doubling. The field now grows exponentially with
+      depth, the weight count per layer does not move at all, and the width of
+      the top row is untouched. That combination is why dilated convolutions
+      took over audio and segmentation.
+    </li>
+    <li>
+      Look at the holes the dilated cone leaves behind. Some pixels inside the
+      outer bounds are still never read, so the field is wide but not solid, and
+      stacking dilations that share a common factor makes those gaps line up
+      into a genuine blind spot.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+
+  const PICK = '#7c8cff', SEEN = '#5eead4';
+  const IN_W = 96; // pixels in the original image
+
+  const state = { layers: 4, k: 3, s: 1, dil: 'none', pool: false, cell: -1 };
+
+  const canvas = el('rf') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => build());
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  type Layer = { width: number; k: number; s: number; d: number; jump: number; rf: number };
+  let layers: Layer[] = [];
+  /** For each layer, which of its cells the chosen output depends on. */
+  let lit: Set<number>[] = [];
+
+  function build() {
+    layers = [];
+    let width = IN_W, jump = 1, rf = 1;
+    for (let l = 0; l < state.layers; l++) {
+      const d = state.dil === 'exp' ? 2 ** l : 1;
+      const s = state.pool ? 2 : state.s;
+      const eff = d * (state.k - 1) + 1; // the span the kernel actually covers
+      const out = Math.floor((width - eff) / s) + 1;
+      if (out < 1) break;
+      rf += (eff - 1) * jump;
+      jump *= s;
+      width = out;
+      layers.push({ width, k: state.k, s, d, jump, rf });
+    }
+    if (!layers.length) layers.push({ width: IN_W, k: state.k, s: 1, d: 1, jump: 1, rf: 1 });
+    const top = layers[layers.length - 1];
+    if (state.cell < 0 || state.cell >= top.width) state.cell = Math.floor(top.width / 2);
+    trace();
+    draw();
+  }
+
+  /** Walk the chosen output cell back down, layer by layer, collecting inputs. */
+  function trace() {
+    lit = new Array(layers.length + 1).fill(null).map(() => new Set<number>());
+    lit[layers.length].add(state.cell);
+    for (let l = layers.length - 1; l >= 0; l--) {
+      const L = layers[l];
+      const below = lit[l];
+      for (const o of lit[l + 1])
+        for (let t = 0; t < L.k; t++) below.add(o * L.s + t * L.d);
+    }
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const GRID = { x: 106, y: 88, w: 748, bottom: 482 };
+
+  function rowY(l: number) {
+    const rows = layers.length + 1;
+    const pitch = (GRID.bottom - GRID.y) / Math.max(1, rows - 1);
+    return GRID.bottom - l * pitch; // layer 0 (the image) at the bottom
+  }
+  const cellW = (width: number) => GRID.w / IN_W;
+  function cellX(l: number, i: number) {
+    // every layer is drawn in the coordinates of the original image, so a cone
+    // is a cone and a stride visibly spreads its outputs apart
+    const L = l === 0 ? null : layers[l - 1];
+    const jump = L ? L.jump : 1;
+    const start = L ? (L.rf - 1) / 2 : 0;
+    return GRID.x + ((start + i * jump) / IN_W) * GRID.w;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const cw = cellW(IN_W);
+
+    label('every layer drawn over the pixels it reads', GRID.x, GRID.y - 40, 0.5, 'left', 13);
+    label('the top row is the output, the bottom row is the image itself', GRID.x, GRID.y - 24, 0.3, 'left', 11);
+
+    // the cone, drawn behind the cells as soft connections
+    for (let l = 0; l < layers.length; l++) {
+      const L = layers[l];
+      const y0 = rowY(l), y1 = rowY(l + 1);
+      ctx.strokeStyle = `${SEEN}33`;
+      ctx.lineWidth = 1;
+      for (const o of lit[l + 1])
+        for (let t = 0; t < L.k; t++) {
+          const i = o * L.s + t * L.d;
+          ctx.beginPath();
+          ctx.moveTo(cellX(l + 1, o) + cw / 2, y1 + 7);
+          ctx.lineTo(cellX(l, i) + cw / 2, y0 - 7);
+          ctx.stroke();
+        }
+    }
+
+    for (let l = 0; l <= layers.length; l++) {
+      const width = l === 0 ? IN_W : layers[l - 1].width;
+      const y = rowY(l);
+      const top = l === layers.length;
+      for (let i = 0; i < width; i++) {
+        const x = cellX(l, i);
+        const on = lit[l].has(i);
+        const chosen = top && i === state.cell;
+        ctx.fillStyle = chosen ? PICK : on ? SEEN : ink(0.1);
+        ctx.globalAlpha = chosen ? 1 : on ? 0.55 : 1;
+        roundRect(ctx, x + 0.6, y - 7, Math.max(1.4, cw - 1.4), 14, 2.5);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      const name = l === 0 ? 'the image' : `layer ${l}`;
+      label(name, GRID.x - 12, y + 4, l === layers.length ? 0.85 : 0.4, 'right', 11.5, top ? PICK : undefined);
+      label(l === 0 ? `${IN_W} pixels` : `${width} cells`, GRID.x + GRID.w + 12, y + 4, 0.35, 'left', 11);
+      if (top) label(`sees ${layers[l - 1].rf}px`, GRID.x - 12, y + 17, 0.55, 'right', 11, SEEN);
+    }
+
+    // the span of the field, marked on the image row itself
+    const seen = [...lit[0]].sort((a, b) => a - b);
+    if (seen.length) {
+      const y = rowY(0) + 26;
+      const x0 = cellX(0, seen[0]), x1 = cellX(0, seen[seen.length - 1]) + cw;
+      ctx.strokeStyle = SEEN;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x1, y);
+      ctx.moveTo(x0, y - 5);
+      ctx.lineTo(x0, y + 5);
+      ctx.moveTo(x1, y - 5);
+      ctx.lineTo(x1, y + 5);
+      ctx.stroke();
+      const rf = seen[seen.length - 1] - seen[0] + 1;
+      const holes = rf - seen.length;
+      label(
+        `${rf} pixels wide${holes ? `, but ${holes} of them are never read` : ''}`,
+        (x0 + x1) / 2,
+        y + 22,
+        0.75,
+        'center',
+        12,
+        SEEN
+      );
+    }
+
+    // the arithmetic, in the space under the stack
+    const top = layers[layers.length - 1];
+    const y = 596;
+    label('one layer adds (k − 1) × jump, and multiplies the jump by the stride', GRID.x, y - 22, 0.4, 'left', 11.5);
+    label(`${state.layers} layers reach ${top.rf} pixels with a jump of ${top.jump}`, GRID.x, y, 0.9, 'left', 14, SEEN);
+
+    const params = state.k;
+    setEq({
+      rule: [
+        ['r_l = r_{l-1} + (k-1)\\,d_l\\,j_{l-1}', SEEN],
+        '\\qquad',
+        ['j_l = j_{l-1}\\,s_l', PICK],
+      ],
+      live: [
+        [`r = ${top.rf}\\text{ pixels}`, SEEN],
+        [`\\quad j = ${top.jump}`, PICK],
+        `\\quad k = ${state.k},\\; s = ${top.s},\\; d = ${state.dil === 'exp' ? `2^{l}` : '1'}`,
+        `\\quad ${top.width}\\text{ cells left}`,
+      ],
+    });
+    setRows({
+      'r-rf': `${top.rf} pixels`,
+      'r-jump': `${top.jump} pixel${top.jump === 1 ? '' : 's'}`,
+      'r-width': `${top.width} of ${IN_W}`,
+      'r-cost': `${params} per channel pair`,
+    });
+    const frac = top.rf / IN_W;
+    setResult({
+      value: `${top.rf} pixels`,
+      colour: SEEN,
+      status: `${(frac * 100).toFixed(0)}% of a ${IN_W} pixel image · ${top.width} cells left in the top layer · each layer still holds only ${params} weights per channel pair`,
+      note:
+        state.dil === 'exp'
+          ? 'Dilation doubles the reach at every layer without adding a single weight or losing a single cell, but it reads the image with gaps rather than solidly.'
+          : top.s > 1
+            ? 'Stride multiplies the reach and divides the resolution. Every layer after it inherits the wider spacing, which is why one early stride changes everything above it.'
+            : 'With stride one the field grows by the same amount per layer, so reaching across an image this way costs depth in direct proportion to the distance.',
+    });
+  }
+
+  // --- interaction -----------------------------------------------------------
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    const top = layers.length;
+    if (Math.abs(y - rowY(top)) > 16) return;
+    const L = layers[top - 1];
+    const px = ((x - GRID.x) / GRID.w) * IN_W;
+    const i = Math.round((px - (L.rf - 1) / 2) / L.jump);
+    if (i < 0 || i >= L.width) return;
+    state.cell = i;
+    trace();
+    draw();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const y = ((e.clientY - r.top) / r.height) * H;
+    canvas.style.cursor = Math.abs(y - rowY(layers.length)) < 16 ? 'pointer' : 'default';
+  });
+
+  slider('layers', (v) => { state.layers = v; state.cell = -1; build(); });
+  slider('k', (v) => { state.k = v; state.cell = -1; build(); });
+  slider('s', (v) => { state.s = v; state.cell = -1; build(); });
+  segmented('dil', (d) => { state.dil = d; state.cell = -1; build(); });
+  check('pool', (on) => { state.pool = on; state.cell = -1; build(); });
+
+  build();
+</script>

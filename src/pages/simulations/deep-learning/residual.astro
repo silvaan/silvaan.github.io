@@ -1,0 +1,348 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Residual Connections"
+  description="A gradient reaching the first layer of a deep network has been multiplied once per layer on the way down, and a product of many numbers is almost never near one. A skip connection adds an identity beside every block, so the product starts at one and each layer only nudges it."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="res"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="A chain of blocks with or without skip connections, each tinted by the size of the gradient reaching it, above a log plot of that gradient against depth for both architectures."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'with skip connections', color: '#5eead4' },
+          { label: 'plain stack', color: '#f87171' },
+          { label: 'the identity path', color: 'rgba(124,140,255,0.8)' },
+        ]}
+        hint="Each block is drawn dimmer as less gradient reaches it"
+      />
+      <Result label="Gradient reaching the first layer" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg id="arch" label="The chain shown above" attr="a" active="res" options={[{ value: 'res', label: 'With skips' }, { value: 'plain', label: 'Plain' }]} />
+      <Slider id="depth" label="Blocks" min={4} max={64} value={32} />
+      <Slider id="gain" label="Strength of each block" min={5} max={140} value={28} display="0.28" hint={['barely does anything', 'rewrites its input']} />
+      <Actions>
+        <button type="button" class="btn ghost" id="reseed">New blocks</button>
+      </Actions>
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-res', label: 'reaches layer 1, with skips' },
+          { id: 'r-plain', label: 'reaches layer 1, plain' },
+          { id: 'r-ratio', label: 'how many times more' },
+          { id: 'r-per-res', label: 'per block, with skips' },
+          { id: 'r-per-plain', label: 'per block, plain' },
+          { id: 'r-half', label: 'plain: usable depth' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The two curves are the same blocks wired two ways. In the plain stack the
+      gradient at layer 1 is the product of every block's factor, and each factor
+      is well under one, so the product falls off a cliff. With skips the factor
+      is <b>one plus</b> that same small number, so the product stays near one.
+    </li>
+    <li>
+      Slide <b>blocks</b> up and watch the two curves separate. The plain net
+      does not degrade gracefully, it degrades geometrically: each extra layer
+      multiplies what is left by the same fraction again. The red line hits the
+      floor of the plot and the teal one barely moves.
+    </li>
+    <li>
+      Turn <b>strength of each block</b> right down. Now the plain stack is even
+      worse, because a block that does very little multiplies by very little,
+      while the residual net is at its best: it becomes a chain of identities
+      with small corrections, and a gradient passes through untouched.
+    </li>
+    <li>
+      That is the trick stated plainly. A plain block has to <b>learn to pass
+      its input along</b>, which for a random initialisation it does not, and
+      the identity is a hard function for a stack of matrices to represent. A
+      residual block gets the identity for free and only has to learn the
+      difference.
+    </li>
+    <li>
+      Turn the strength up past about 1. Now the residual product grows instead
+      of shrinking, because one plus a large number is a large number. Skips do
+      not make depth free, they only make the neutral behaviour the default, and
+      keeping each block small is what
+      <a href="/simulations/deep-learning/initialisation">initialisation</a> and
+      <a href="/simulations/deep-learning/normalisation">normalisation</a> are for.
+    </li>
+    <li>
+      Read the last row of the panel. It is the depth at which the plain stack
+      has lost the gradient to the limits of a 32-bit float, and it is usually
+      somewhere around twenty layers. Networks were stuck at roughly that depth
+      until this one line of wiring arrived.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const RES = '#5eead4', PLAIN = '#f87171', SKIP = '#7c8cff';
+
+  const state = { arch: 'res', depth: 32, gain: 0.28, seed: 11 };
+
+  const canvas = el('res') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => build());
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /**
+   * One number per block: how much that block's own function stretches what
+   * passes through it, projected onto the direction the gradient happens to
+   * take. Drawn once and shared by both wirings, so the only difference on
+   * screen is the wiring itself.
+   */
+  let j: number[] = [];
+  /** The gradient that survives from the top down to each layer, both ways. */
+  let gRes: number[] = [], gPlain: number[] = [];
+
+  function build() {
+    const rnd = mulberry32(state.seed);
+    const gauss = () => {
+      const u = Math.max(1e-9, rnd());
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+    };
+    j = Array.from({ length: state.depth }, () => gauss() * state.gain);
+    gRes = new Array(state.depth + 1).fill(1);
+    gPlain = new Array(state.depth + 1).fill(1);
+    // walk down from the top: the plain block multiplies by its own factor, the
+    // residual block by one plus it, because the identity is still there
+    for (let l = state.depth - 1; l >= 0; l--) {
+      gRes[l] = gRes[l + 1] * Math.abs(1 + j[l]);
+      gPlain[l] = gPlain[l + 1] * Math.abs(j[l]);
+    }
+    draw();
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const CH = { x: 70, y: 108, w: 880, h: 128 };
+  const PL = { x: 70, y: 330, w: 880, h: 218 };
+  const FLOOR = 1e-38; // where a 32-bit float gives up
+
+  const shade = (v: number) => {
+    // log position between the float floor and 1, so a dying chain fades out
+    const t = Math.max(0, Math.min(1, (Math.log10(Math.max(1e-40, v)) + 20) / 20));
+    return t;
+  };
+
+  function chain() {
+    const g = state.arch === 'res' ? gRes : gPlain;
+    const colour = state.arch === 'res' ? RES : PLAIN;
+    label(
+      state.arch === 'res' ? 'the chain, with a skip beside every block' : 'the chain, one block after another',
+      CH.x,
+      CH.y - 40,
+      0.5,
+      'left',
+      13
+    );
+    label('input on the left, loss on the right, gradient flowing back the other way', CH.x, CH.y - 24, 0.3, 'left', 11);
+
+    const n = state.depth;
+    const pitch = CH.w / n;
+    const bw = Math.max(3, Math.min(26, pitch - 6));
+    const midY = CH.y + CH.h / 2;
+
+    // the identity path, drawn behind everything as one unbroken line
+    if (state.arch === 'res') {
+      ctx.strokeStyle = `${SKIP}66`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(CH.x, midY + 34);
+      ctx.lineTo(CH.x + CH.w, midY + 34);
+      ctx.stroke();
+      label('the identity: multiplied by exactly 1 at every step', CH.x + 4, midY + 52, 0.45, 'left', 11, SKIP);
+    }
+
+    for (let l = 0; l < n; l++) {
+      const x = CH.x + l * pitch + (pitch - bw) / 2;
+      const t = shade(g[l]);
+      ctx.fillStyle = colour;
+      ctx.globalAlpha = 0.12 + 0.85 * t;
+      roundRect(ctx, x, midY - 26, bw, 44, Math.min(5, bw / 2));
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // the skip arc over this block
+      if (state.arch === 'res' && pitch > 9) {
+        ctx.strokeStyle = `${SKIP}55`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(x - 2, midY + 34);
+        ctx.quadraticCurveTo(x + bw / 2, midY - 44, x + bw + 2, midY + 34);
+        ctx.stroke();
+      }
+    }
+    label('layer 1', CH.x, midY + 76, 0.35, 'left', 11);
+    label(`layer ${n}`, CH.x + CH.w, midY + 76, 0.35, 'right', 11);
+    label('gradient arrives here', CH.x + CH.w, CH.y - 8, 0.3, 'right', 11);
+    ctx.strokeStyle = ink(0.3);
+    ctx.fillStyle = ink(0.3);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(CH.x + CH.w - 10, midY - 46);
+    ctx.lineTo(CH.x + 10, midY - 46);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(CH.x, midY - 46);
+    ctx.lineTo(CH.x + 10, midY - 51);
+    ctx.lineTo(CH.x + 10, midY - 41);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function plot() {
+    label('how much of the gradient is left at each depth', PL.x, PL.y - 38, 0.5, 'left', 13);
+    label('both wirings, the same blocks, log scale', PL.x, PL.y - 22, 0.3, 'left', 11);
+    const LO = -40, HI = 4;
+    const px = (l: number) => PL.x + (l / Math.max(1, state.depth)) * PL.w;
+    const py = (v: number) => {
+      const e = Math.max(LO, Math.min(HI, Math.log10(Math.max(1e-300, v))));
+      return PL.y + PL.h - ((e - LO) / (HI - LO)) * PL.h;
+    };
+    // below this line a 32-bit gradient is simply zero
+    ctx.fillStyle = 'rgba(248,113,113,0.06)';
+    ctx.fillRect(PL.x, py(FLOOR), PL.w, PL.y + PL.h - py(FLOOR));
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    for (const e of [0, -10, -20, -30, -38]) {
+      const y = py(10 ** e);
+      ctx.strokeStyle = ink(e === 0 ? 0.28 : 0.07);
+      ctx.beginPath();
+      ctx.moveTo(PL.x, y);
+      ctx.lineTo(PL.x + PL.w, y);
+      ctx.stroke();
+      label(e === 0 ? '1' : `1e${e}`, PL.x - 8, y + 4, 0.3, 'right', 11);
+    }
+    label('a float32 gradient is zero below here', PL.x + PL.w - 6, py(FLOOR) + 16, 0.35, 'right', 11, PLAIN);
+
+    const line = (vals: number[], colour: string, width: number, dash: number[] = []) => {
+      ctx.setLineDash(dash);
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let l = state.depth; l >= 0; l--) {
+        const x = px(l), y = py(vals[l]);
+        l === state.depth ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = colour;
+      ctx.beginPath();
+      ctx.arc(px(0), py(vals[0]), 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    line(gPlain, PLAIN, 2.2, [6, 4]);
+    line(gRes, RES, 2.8);
+    label('with skips', px(state.depth * 0.5), py(gRes[Math.round(state.depth * 0.5)]) - 12, 0.9, 'center', 11.5, RES);
+    label('plain', px(state.depth * 0.5), py(gPlain[Math.round(state.depth * 0.5)]) + 20, 0.9, 'center', 11.5, PLAIN);
+    label('layer 1', PL.x, PL.y + PL.h + 18, 0.3, 'left', 11);
+    label(`layer ${state.depth}`, PL.x + PL.w, PL.y + PL.h + 18, 0.3, 'right', 11);
+  }
+
+  const fmt = (v: number) =>
+    !Number.isFinite(v) ? 'overflow' : v === 0 ? '0' : v < 1e-4 || v >= 1e4 ? v.toExponential(1) : v.toFixed(4);
+
+  /** How deep a plain stack can go before the gradient underflows. */
+  function usableDepth() {
+    const per = Math.exp(j.reduce((s, v) => s + Math.log(Math.max(1e-12, Math.abs(v))), 0) / Math.max(1, j.length));
+    if (per >= 1) return '∞, it grows';
+    return `${Math.max(1, Math.floor(Math.log(FLOOR) / Math.log(per)))} blocks`;
+  }
+  const perBlock = (vals: number[]) =>
+    Math.exp(Math.log(Math.max(1e-300, vals[0])) / Math.max(1, state.depth));
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    chain();
+    plot();
+
+    const r = gRes[0], p = gPlain[0];
+    const ratio = p > 0 ? r / p : Infinity;
+    setEq({
+      rule: [
+        ['h_{l+1} = h_l + F(h_l)', SKIP],
+        '\\;\\Rightarrow\\;',
+        ['I + J_l', RES],
+        '\\quad\\text{against}\\quad',
+        ['J_l', PLAIN],
+        '\\quad\\text{alone}',
+      ],
+      live: [
+        [`\\textstyle\\prod_l |1 + J_l| = ${fmt(r)}`, RES],
+        [`\\quad \\textstyle\\prod_l |J_l| = ${fmt(p)}`, PLAIN],
+        `\\quad ${state.depth}\\text{ blocks of strength }${state.gain.toFixed(2)}`,
+      ],
+    });
+    setRows({
+      'r-res': fmt(r),
+      'r-plain': fmt(p),
+      'r-ratio': Number.isFinite(ratio) ? (ratio > 1e4 ? ratio.toExponential(1) : ratio.toFixed(1)) : '∞',
+      'r-per-res': perBlock(gRes).toFixed(4),
+      'r-per-plain': perBlock(gPlain).toFixed(4),
+      'r-half': usableDepth(),
+    });
+    const shown = state.arch === 'res' ? r : p;
+    setResult({
+      value: fmt(shown),
+      colour: shown < FLOOR ? PLAIN : state.arch === 'res' ? RES : PLAIN,
+      status: `${state.depth} blocks · with skips ${fmt(r)}, plain ${fmt(p)} · per block that is ${perBlock(gRes).toFixed(3)} against ${perBlock(gPlain).toFixed(3)}`,
+      note:
+        p < FLOOR && r > 1e-3
+          ? 'The plain stack has already underflowed: at this depth its first layer receives a gradient a float cannot represent, so it never trains at all.'
+          : state.gain > 1
+            ? 'The blocks are strong enough that one plus them is far from one, so even the residual product runs away. Skips make the neutral behaviour free, not guaranteed.'
+            : state.gain < 0.2
+              ? 'Weak blocks are the worst case for a plain stack and the best case for a residual one: multiplying by nearly zero destroys the gradient, adding nearly zero leaves it alone.'
+              : 'Every plain layer multiplies the gradient by its own factor. Every residual layer multiplies by one plus that factor, and a product of numbers near one stays near one.',
+    });
+  }
+
+  segmented('arch', (a) => { state.arch = a; draw(); });
+  slider('depth', (v) => { state.depth = v; build(); });
+  slider('gain', (v) => { state.gain = v / 100; build(); }, (v) => (v / 100).toFixed(2));
+  el('reseed').addEventListener('click', () => { state.seed = (Math.random() * 1e9) | 0; build(); });
+
+  build();
+</script>

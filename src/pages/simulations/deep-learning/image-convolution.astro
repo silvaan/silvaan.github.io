@@ -21,7 +21,7 @@ import Readout from '../../../components/sim/Readout.astro';
           width="1000"
           height="600"
           role="img"
-          aria-label="A grayscale input image with the kernel's receptive field outlined, and the feature map being filled in cell by cell beside it."
+          aria-label="A handwritten digit with the kernel's receptive field outlined, and the feature map being filled in cell by cell beside it."
         ></canvas>
       </div>
       <Caption legend={[{ label: 'the patch under the kernel', color: '#f59e0b' }, { label: 'the output cell being computed', color: '#f59e0b' }]} hint="Step or run to watch the window slide" />
@@ -29,7 +29,9 @@ import Readout from '../../../components/sim/Readout.astro';
     </div>
 
     <div class="sim-panel">
-      <Transport step />
+      <Transport step>
+        <button type="button" class="btn ghost" id="newimg">Another digit</button>
+      </Transport>
       <Seg
         id="kernel"
         label="Kernel"
@@ -76,7 +78,8 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { oneDigit } from '../../../lib/digits';
   import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
 
   const KERNELS: Record<string, { k: number[][]; name: string; note: string }> = {
@@ -87,29 +90,25 @@ import Readout from '../../../components/sim/Readout.astro';
     emboss: { k: [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]], name: 'emboss', note: 'Asymmetric weights compare one diagonal with the other, which reads like light from one side.' },
     identity: { k: [[0, 0, 0], [0, 1, 0], [0, 0, 0]], name: 'identity', note: 'Only the centre weight is nonzero, so the output copies the input, cropped where the window cannot fit.' },
   };
-  const K = 3, GI = 20;
+  const K = 3, GI = 28;
   const state = { kernel: 'edge', stride: 1, pad: 0, dil: 1, running: false };
   const FIELD = '#f59e0b';
 
   const canvas = el('conv') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink } = stageInk(canvas);
+  const { ink, inv } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  // procedural grayscale input with clear edges
-  const input: number[][] = [];
-  for (let y = 0; y < GI; y++) {
-    input[y] = [];
-    for (let x = 0; x < GI; x++) {
-      let v = 0.32 + 0.22 * (x / GI);
-      if ((x - 6) ** 2 + (y - 8) ** 2 < 20) v = 0.9;
-      if (x >= 12 && x <= 17 && y >= 4 && y <= 10) v = 0.1;
-      if (Math.abs(x - y) < 1.1 && x > 3) v = 0.98;
-      input[y][x] = Math.max(0, Math.min(1, v));
-    }
+  // a handwritten digit, the size and shape MNIST uses
+  let input: number[][] = [];
+  let digit = 3;
+  function loadImage() {
+    const flat = oneDigit(digit, GI, 3 + digit * 7 + ((Math.random() * 1000) | 0));
+    input = [];
+    for (let y = 0; y < GI; y++) input.push(Array.from(flat.slice(y * GI, y * GI + GI)));
   }
   let out: number[][] = [];
   let outN = 0, outMin = 0, outMax = 1, reveal = 0;
@@ -142,56 +141,214 @@ import Readout from '../../../components/sim/Readout.astro';
   }
   const gray = (v: number) => { const g = Math.round(v * 255); return `rgb(${g},${g},${g})`; };
 
+  // --- the picture -----------------------------------------------------------
+  const IN = { x: 40, y: 104, s: 356 };
+  const OUT = { x: 618, y: 104, s: 342 };
+  const MID = 508;
+
+  /** A map is drawn as one rounded panel, so the two read as objects, not grids. */
+  function panel(x: number, y: number, s: number) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = inv(0.5);
+    roundRect(ctx, x, y, s, s, 10);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    roundRect(ctx, x, y, s, s, 10);
+    ctx.clip();
+  }
+  function frame(x: number, y: number, s: number) {
+    ctx.restore();
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, 10);
+    ctx.stroke();
+  }
+
+  /** Positive one way, negative the other, so a signed feature map reads as one. */
+  const diverge = (v: number, mx: number) => {
+    const t = Math.max(-1, Math.min(1, v / (mx || 1)));
+    return t >= 0
+      ? `rgba(248,113,113,${0.06 + 0.9 * t})`
+      : `rgba(96,165,250,${0.06 + 0.9 * -t})`;
+  };
+
+  /** Numbers small enough to sit inside a cell: no leading zero, no trailing zeros. */
+  function short(v: number, digits: number) {
+    if (Math.abs(v) < 1e-9) return '0';
+    if (Number.isInteger(v)) return String(v);
+    const t = v.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+    return t.replace('0.', '.').replace('-0.', '−.').replace('-', '−');
+  }
+
+  /** A k by k board of numbers, used for both the patch and the kernel. */
+  function board(cx: number, y: number, cell: number, vals: number[][], colour: (v: number) => string, digits: number, darkText?: (v: number) => boolean) {
+    const s = cell * K;
+    const x = cx - s / 2;
+    for (let r = 0; r < K; r++)
+      for (let c = 0; c < K; c++) {
+        ctx.fillStyle = colour(vals[r][c]);
+        roundRect(ctx, x + c * cell + 1, y + r * cell + 1, cell - 2, cell - 2, 3);
+        ctx.fill();
+        const v = vals[r][c];
+        label(short(v, digits), x + c * cell + cell / 2, y + r * cell + cell / 2 + 4, 0.9, 'center', 11, darkText?.(v) ? 'rgba(12,14,18,0.85)' : undefined);
+      }
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, 4);
+    ctx.stroke();
+    return { x, y, s };
+  }
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    const box = 400;
-    const cellIn = box / GI, cellOut = box / outN;
-    const ix0 = 40, iy0 = 110, ox0 = W - box - 40, oy0 = 110;
-    const cur = Math.min(reveal, outN * outN - 1);
+    const kd = KERNELS[state.kernel];
+    const ker = kd.k;
+    const signed = ker.flat().some((v) => v < 0);
+    const cellIn = IN.s / GI, cellOut = OUT.s / outN;
+    const done = reveal >= outN * outN;
+    const cur = done ? Math.floor(outN / 2) * outN + Math.floor(outN / 2) : Math.min(reveal, outN * outN - 1);
     const ccy = Math.floor(cur / outN), ccx = cur % outN;
+    const riy0 = ccy * state.stride - state.pad, rix0 = ccx * state.stride - state.pad;
 
-    label('input', ix0, iy0 - 14, 0.5, 'left', 11);
-    label('feature map', ox0, oy0 - 14, 0.5, 'left', 11);
-    label('⊛', W / 2, iy0 + box / 2 - 6, 0.6, 'center', 22);
-    label(`${KERNELS[state.kernel].name}`, W / 2, iy0 + box / 2 + 18, 0.45, 'center', 11);
-    label(`s ${state.stride} · p ${state.pad} · d ${state.dil}`, W / 2, iy0 + box / 2 + 34, 0.3, 'center', 10);
+    label('the image', IN.x, IN.y - 30, 0.55, 'left', 13);
+    label(`${GI} × ${GI} pixels`, IN.x, IN.y - 14, 0.3, 'left', 11);
+    label('the feature map', OUT.x, OUT.y - 30, 0.55, 'left', 13);
+    label(`${outN} × ${outN}, one number per window`, OUT.x, OUT.y - 14, 0.3, 'left', 11);
+
+    // --- the image, with everything outside the window pushed back -----------
+    panel(IN.x, IN.y, IN.s);
     for (let y = 0; y < GI; y++)
       for (let x = 0; x < GI; x++) {
         ctx.fillStyle = gray(input[y][x]);
-        ctx.fillRect(ix0 + x * cellIn, iy0 + y * cellIn, cellIn + 0.5, cellIn + 0.5);
+        ctx.fillRect(IN.x + x * cellIn, IN.y + y * cellIn, cellIn + 0.5, cellIn + 0.5);
       }
-    const riy0 = ccy * state.stride - state.pad, rix0 = ccx * state.stride - state.pad;
+    ctx.fillStyle = inv(0.28);
+    ctx.fillRect(IN.x, IN.y, IN.s, IN.s);
+    // the window itself, at full strength
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(IN.x + rix0 * cellIn, IN.y + riy0 * cellIn, span() * cellIn, span() * cellIn);
+    ctx.clip();
+    for (let y = 0; y < GI; y++)
+      for (let x = 0; x < GI; x++) {
+        ctx.fillStyle = gray(input[y][x]);
+        ctx.fillRect(IN.x + x * cellIn, IN.y + y * cellIn, cellIn + 0.5, cellIn + 0.5);
+      }
+    ctx.restore();
+    if (cellIn > 9) {
+      ctx.strokeStyle = ink(0.05);
+      ctx.lineWidth = 1;
+      for (let i = 1; i < GI; i++) {
+        ctx.beginPath();
+        ctx.moveTo(IN.x + i * cellIn, IN.y);
+        ctx.lineTo(IN.x + i * cellIn, IN.y + IN.s);
+        ctx.moveTo(IN.x, IN.y + i * cellIn);
+        ctx.lineTo(IN.x + IN.s, IN.y + i * cellIn);
+        ctx.stroke();
+      }
+    }
+    frame(IN.x, IN.y, IN.s);
+
+    // the k by k cells the kernel actually multiplies, and the span they sit in
+    ctx.save();
+    ctx.shadowColor = FIELD;
+    ctx.shadowBlur = 10;
     ctx.strokeStyle = FIELD;
     ctx.lineWidth = 2;
     for (let dy = 0; dy < K; dy++)
       for (let dx = 0; dx < K; dx++) {
         const iy = riy0 + dy * state.dil, ix = rix0 + dx * state.dil;
-        ctx.strokeRect(ix0 + ix * cellIn + 1, iy0 + iy * cellIn + 1, cellIn - 2, cellIn - 2);
+        ctx.strokeRect(IN.x + ix * cellIn + 1, IN.y + iy * cellIn + 1, cellIn - 2, cellIn - 2);
       }
-    ctx.strokeStyle = 'rgba(245,158,11,0.5)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(ix0 + rix0 * cellIn, iy0 + riy0 * cellIn, span() * cellIn, span() * cellIn);
+    ctx.restore();
+    if (state.dil > 1) {
+      ctx.strokeStyle = 'rgba(245,158,11,0.4)';
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(IN.x + rix0 * cellIn, IN.y + riy0 * cellIn, span() * cellIn, span() * cellIn);
+      ctx.setLineDash([]);
+    }
 
+    // --- the feature map ------------------------------------------------------
+    panel(OUT.x, OUT.y, OUT.s);
+    const amp = Math.max(Math.abs(outMin), Math.abs(outMax), 1e-6);
     for (let i = 0; i < reveal; i++) {
       const y = Math.floor(i / outN), x = i % outN;
-      ctx.fillStyle = gray((out[y][x] - outMin) / (outMax - outMin));
-      ctx.fillRect(ox0 + x * cellOut, oy0 + y * cellOut, cellOut + 0.5, cellOut + 0.5);
+      ctx.fillStyle = signed ? diverge(out[y][x], amp) : gray((out[y][x] - outMin) / (outMax - outMin));
+      ctx.fillRect(OUT.x + x * cellOut, OUT.y + y * cellOut, cellOut + 0.5, cellOut + 0.5);
     }
-    ctx.strokeStyle = ink(0.3);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(ox0, oy0, box, box);
-    if (reveal < outN * outN) {
-      ctx.strokeStyle = FIELD;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(ox0 + ccx * cellOut, oy0 + ccy * cellOut, cellOut, cellOut);
+    // what has not been computed yet, so the sweep is visible
+    if (!done) {
+      ctx.fillStyle = ink(0.04);
+      for (let i = reveal; i < outN * outN; i++) {
+        const y = Math.floor(i / outN), x = i % outN;
+        ctx.fillRect(OUT.x + x * cellOut + cellOut / 2 - 1, OUT.y + y * cellOut + cellOut / 2 - 1, 2, 2);
+      }
     }
+    if (cellOut > 9) {
+      ctx.strokeStyle = ink(0.05);
+      ctx.lineWidth = 1;
+      for (let i = 1; i < outN; i++) {
+        ctx.beginPath();
+        ctx.moveTo(OUT.x + i * cellOut, OUT.y);
+        ctx.lineTo(OUT.x + i * cellOut, OUT.y + OUT.s);
+        ctx.moveTo(OUT.x, OUT.y + i * cellOut);
+        ctx.lineTo(OUT.x + OUT.s, OUT.y + i * cellOut);
+        ctx.stroke();
+      }
+    }
+    frame(OUT.x, OUT.y, OUT.s);
+    ctx.save();
+    ctx.shadowColor = FIELD;
+    ctx.shadowBlur = 10;
+    ctx.strokeStyle = FIELD;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(OUT.x + ccx * cellOut, OUT.y + ccy * cellOut, Math.max(3, cellOut), Math.max(3, cellOut));
+    ctx.restore();
+
+    // --- the middle: the patch, the kernel, and the one number they make -----
+    const patch: number[][] = [];
+    for (let dy = 0; dy < K; dy++) {
+      const row: number[] = [];
+      for (let dx = 0; dx < K; dx++) row.push(sampleIn(riy0 + dy * state.dil, rix0 + dx * state.dil));
+      patch.push(row);
+    }
+    const cell = 44;
+    label('what is under it', MID, IN.y + 4, 0.45, 'center', 11.5);
+    const pb = board(MID, IN.y + 14, cell, patch, (v) => gray(v), 2, (v) => v > 0.55);
+    label('×', MID, pb.y + pb.s + 22, 0.5, 'center', 16);
+    label('the kernel', MID, pb.y + pb.s + 46, 0.45, 'center', 11.5);
+    const kb = board(MID, pb.y + pb.s + 56, cell, ker, (v) => diverge(v, Math.max(...ker.flat().map(Math.abs))), 2);
+    label('=', MID, kb.y + kb.s + 24, 0.5, 'center', 16);
+    let sum = 0;
+    for (let dy = 0; dy < K; dy++) for (let dx = 0; dx < K; dx++) sum += patch[dy][dx] * ker[dy][dx];
+    label(sum.toFixed(3), MID, kb.y + kb.s + 56, 1, 'center', 20, FIELD);
+    label('one cell of the map', MID, kb.y + kb.s + 74, 0.3, 'center', 11);
+    label(`${kd.name} kernel · stride ${state.stride} · padding ${state.pad} · dilation ${state.dil}`, IN.x, IN.y + IN.s + 22, 0.35, 'left', 11);
+
+    // the two threads tying the window to the number and the number to the cell
+    ctx.strokeStyle = 'rgba(245,158,11,0.35)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(IN.x + (rix0 + span() / 2) * cellIn, IN.y + (riy0 + span() / 2) * cellIn);
+    ctx.lineTo(pb.x + pb.s / 2, pb.y + pb.s / 2);
+    ctx.moveTo(MID, kb.y + kb.s + 48);
+    ctx.lineTo(OUT.x + (ccx + 0.5) * cellOut, OUT.y + (ccy + 0.5) * cellOut);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
     words();
   }
 
   function words() {
     const kd = KERNELS[state.kernel];
     setEq({
-      rule: [['Y[i,j] = \\sum_{u,v} K[u,v]\\, X[si + du,\\ sj + dv]', FIELD], '\\qquad', 'W_{\\text{out}} = \\lfloor (W + 2p - d(k-1) - 1)/s \\rfloor + 1'],
+      rule: [['Y[i,j] = \\sum_{u,v} K[u,v]\\, X[si + du,\\ sj + dv]', FIELD]],
       live: [`W_{\\text{out}} = \\lfloor (${GI} + ${2 * state.pad} - ${state.dil * (K - 1)} - 1)/${state.stride} \\rfloor + 1 = ${outN}`, [`\\quad ${Math.min(reveal, outN * outN)}\\text{ of }${outN * outN}\\text{ cells}`, FIELD]],
     });
     setResult({
@@ -229,6 +386,14 @@ import Readout from '../../../components/sim/Readout.astro';
     onReset: () => { reveal = 0; state.running = false; controls.setRunning(false); },
   });
 
+  el('newimg').addEventListener('click', () => {
+    digit = (digit + 1 + Math.floor(Math.random() * 3)) % 10;
+    loadImage();
+    compute();
+    reveal = outN * outN;
+  });
+
+  loadImage();
   renderKernelGrid();
   compute();
   reveal = outN * outN; // start fully computed

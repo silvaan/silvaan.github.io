@@ -17,6 +17,7 @@ export default defineConfig({
     '/simulations/calculus/sum-rule': '/simulations/calculus/derivative-rules',
     '/simulations/calculus/product-rule': '/simulations/calculus/derivative-rules',
     '/simulations/calculus/chain-rule': '/simulations/calculus/derivative-rules',
+    '/simulations/deep-learning/softmax-cross-entropy': '/simulations/deep-learning/softmax',
   },
   markdown: {
     // Keep authored punctuation literal so `--`/`---` never become en/em dashes.

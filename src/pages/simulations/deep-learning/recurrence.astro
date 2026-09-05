@@ -1,0 +1,375 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Recurrence & Memory"
+  description="A recurrent network reads a sequence one step at a time and carries everything it knows in a single hidden state. That state is multiplied by the same weight at every step, so what it remembers decays geometrically, and the gradient that has to travel back to the start decays with it."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="rnn"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="A recurrent network unrolled over time with its hidden state at each step, above a plot of how much of the first input survives and how much gradient reaches back to it."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the hidden state', color: '#7c8cff' },
+          { label: 'what is left of the first input', color: '#5eead4' },
+          { label: 'gradient reaching back that far', color: '#f59e0b' },
+        ]}
+        hint="One circle per time step, tinted by what the state is holding"
+      />
+      <Result label="Memory half-life" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="cell"
+        label="The cell"
+        attr="c"
+        options={[
+          { value: 'rnn', label: 'Plain RNN' },
+          { value: 'gate', label: 'Additive gate' },
+        ]}
+      />
+      <Slider id="steps" label="Steps in the sequence" min={8} max={60} value={32} />
+      <Slider id="w" label="Recurrent weight w" min={20} max={180} value={90} display="0.90" hint={['forgets at once', 'blows up']} />
+      <Slider id="forget" label="How much the gate keeps" min={80} max={100} value={99} display="0.99" hint={['leaky', 'perfect']} />
+      <Seg id="act" label="Activation" attr="a" options={[{ value: 'tanh', label: 'tanh' }, { value: 'linear', label: 'linear' }]} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-half', label: 'memory half-life' },
+          { id: 'r-per', label: 'kept per step' },
+          { id: 'r-first', label: 'gradient reaching step 1' },
+          { id: 'r-mem', label: 'first input still visible' },
+          { id: 'r-reach', label: 'steps before it is lost' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      A single pulse arrives at step 1 and nothing else ever comes in. Watch the
+      teal curve: that is how much of the pulse is still in the state. With
+      <b>w</b> below one it decays by the same fraction every step, so it is gone
+      long before the sequence ends.
+    </li>
+    <li>
+      The amber curve is the gradient making the same trip in the opposite
+      direction, and it is the same shape for the same reason. Both are products
+      of the same per-step factor, so <b>a network forgets exactly as fast as it
+      fails to learn</b>. There is no setting where it remembers but cannot be
+      trained, or the other way round.
+    </li>
+    <li>
+      Push <b>w</b> above one. The state stops decaying and starts exploding,
+      and the gradient explodes with it. That is the narrow window recurrence
+      lives in: below one it forgets, above one it diverges, and only exactly one
+      is stable, which no trained weight ever is.
+    </li>
+    <li>
+      Pick <b>tanh</b> and set w above one. The state saturates instead of
+      running away, because tanh flattens, and its slope then collapses toward
+      zero. The squashing that stops the explosion forwards is what kills the
+      gradient backwards.
+    </li>
+    <li>
+      Switch to the <b>additive gate</b>. Now the state is carried forward by
+      adding rather than multiplying, so the per-step factor is the forget gate,
+      which sits just under one on purpose. The half-life jumps from a handful of
+      steps to hundreds, and that single change is what an LSTM is.
+    </li>
+    <li>
+      Even the gate is a product, only a slower one. Drop <b>how much the gate
+      keeps</b> to 0.9 and the memory collapses again. Attention avoids the whole
+      problem by not carrying anything forward at all: it reaches any earlier
+      step in
+      <a href="/simulations/deep-learning/attention">one hop</a>, so nothing has
+      to survive a chain of multiplications.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const STATE = '#7c8cff', MEM = '#5eead4', GRAD = '#f59e0b', BAD = '#f87171';
+
+  const state = { cell: 'rnn', steps: 32, w: 0.9, forget: 0.99, act: 'tanh' };
+
+  const canvas = el('rnn') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  /** One pulse at step 1, then silence, so everything after is memory. */
+  type Run = { h: number[]; mem: number[]; grad: number[]; factor: number[] };
+
+  function simulate(): Run {
+    const T = state.steps;
+    const act = state.act === 'tanh' ? Math.tanh : (z: number) => z;
+    const dact = state.act === 'tanh' ? (z: number) => 1 - Math.tanh(z) ** 2 : () => 1;
+
+    const h: number[] = [0];
+    const factor: number[] = [1]; // d h_t / d h_{t-1}
+    for (let t = 1; t <= T; t++) {
+      const x = t === 1 ? 1 : 0;
+      if (state.cell === 'gate') {
+        // the cell state is carried by addition, the way an LSTM carries it
+        const z = state.w * h[t - 1] + x;
+        h.push(state.forget * h[t - 1] + (1 - state.forget) * act(z));
+        factor.push(state.forget + (1 - state.forget) * state.w * dact(z));
+      } else {
+        const z = state.w * h[t - 1] + x;
+        h.push(act(z));
+        factor.push(state.w * dact(z));
+      }
+    }
+
+    // how much of h_1 is still in h_t, and how much gradient gets back to step t
+    const mem: number[] = new Array(T + 1).fill(0);
+    mem[1] = 1;
+    for (let t = 2; t <= T; t++) mem[t] = mem[t - 1] * Math.abs(factor[t]);
+    const grad: number[] = new Array(T + 1).fill(0);
+    grad[T] = 1;
+    for (let t = T - 1; t >= 1; t--) grad[t] = grad[t + 1] * Math.abs(factor[t + 1]);
+    return { h, mem, grad, factor };
+  }
+
+  let run: Run = simulate();
+
+  // --- layout ----------------------------------------------------------------
+  const CH = { x: 70, y: 104, w: 880, h: 96 };
+  const PL = { x: 70, y: 296, w: 880, h: 250 };
+
+  function chain() {
+    label('the same cell, unrolled over time', CH.x, CH.y - 40, 0.5, 'left', 13);
+    label('one hidden state carried all the way along, multiplied by w at every step', CH.x, CH.y - 24, 0.3, 'left', 11);
+    const T = state.steps;
+    const pitch = CH.w / T;
+    const y = CH.y + CH.h / 2;
+    const r = Math.max(3, Math.min(13, pitch / 2 - 3));
+
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(CH.x, y);
+    ctx.lineTo(CH.x + CH.w, y);
+    ctx.stroke();
+
+    const mx = Math.max(1e-9, ...run.h.map(Math.abs));
+    for (let t = 1; t <= T; t++) {
+      const x = CH.x + (t - 0.5) * pitch;
+      const v = Math.abs(run.h[t]) / mx;
+      ctx.fillStyle = STATE;
+      ctx.globalAlpha = 0.12 + 0.85 * v;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (t === 1) {
+        // the one input the sequence ever gets
+        ctx.strokeStyle = MEM;
+        ctx.fillStyle = MEM;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y + 38);
+        ctx.lineTo(x, y + r + 8);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, y + r + 2);
+        ctx.lineTo(x - 4, y + r + 10);
+        ctx.lineTo(x + 4, y + r + 10);
+        ctx.closePath();
+        ctx.fill();
+        label('one pulse in', x, y + 54, 0.7, 'center', 11, MEM);
+      }
+    }
+    label('step 1', CH.x, y - r - 16, 0.35, 'left', 11);
+    label(`step ${T}`, CH.x + CH.w, y - r - 16, 0.35, 'right', 11);
+    // the gradient's journey, drawn the way it actually travels
+    ctx.strokeStyle = `${GRAD}88`;
+    ctx.fillStyle = `${GRAD}88`;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(CH.x + CH.w - 6, y - r - 30);
+    ctx.lineTo(CH.x + 12, y - r - 30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(CH.x + 2, y - r - 30);
+    ctx.lineTo(CH.x + 12, y - r - 35);
+    ctx.lineTo(CH.x + 12, y - r - 25);
+    ctx.closePath();
+    ctx.fill();
+    label('the gradient has to travel all of this', CH.x + CH.w - 20, y - r - 38, 0.4, 'right', 11, GRAD);
+  }
+
+  function plot() {
+    label('what survives the trip', PL.x, PL.y - 38, 0.5, 'left', 13);
+    label('both curves are products of the same per-step factor, log scale', PL.x, PL.y - 22, 0.3, 'left', 11);
+    const T = state.steps;
+    const LO = -12, HI = 4;
+    const px = (t: number) => PL.x + ((t - 1) / Math.max(1, T - 1)) * PL.w;
+    const py = (v: number) => {
+      const e = Math.max(LO, Math.min(HI, Math.log10(Math.max(1e-300, v))));
+      return PL.y + PL.h - ((e - LO) / (HI - LO)) * PL.h;
+    };
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    for (const e of [4, 0, -4, -8, -12]) {
+      const y = py(10 ** e);
+      ctx.strokeStyle = ink(e === 0 ? 0.28 : 0.07);
+      ctx.beginPath();
+      ctx.moveTo(PL.x, y);
+      ctx.lineTo(PL.x + PL.w, y);
+      ctx.stroke();
+      label(e === 0 ? '1' : `1e${e}`, PL.x - 8, y + 4, 0.3, 'right', 11);
+    }
+    // half of the pulse, the line the half-life is read off
+    const yHalf = py(0.5);
+    ctx.strokeStyle = ink(0.2);
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(PL.x, yHalf);
+    ctx.lineTo(PL.x + PL.w, yHalf);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('half gone', PL.x + PL.w + 6, yHalf + 4, 0.3, 'left', 11);
+
+    const line = (vals: number[], colour: string, width: number) => {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let t = 1; t <= T; t++) {
+        const x = px(t), y = py(vals[t]);
+        t === 1 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    line(run.grad, GRAD, 2.2);
+    line(run.mem, MEM, 2.8);
+    label('memory of step 1', px(1) + 8, py(run.mem[1]) + 18, 0.9, 'left', 11.5, MEM);
+    label('gradient back to here', px(T) - 8, py(run.grad[Math.max(1, T - 1)]) - 10, 0.9, 'right', 11.5, GRAD);
+    label('step 1', PL.x, PL.y + PL.h + 18, 0.3, 'left', 11);
+    label(`step ${T}`, PL.x + PL.w, PL.y + PL.h + 18, 0.3, 'right', 11);
+
+    // where the memory has halved, marked on the curve itself
+    const hl = halfLife();
+    if (hl > 0 && hl <= T) {
+      const x = px(hl);
+      ctx.strokeStyle = MEM;
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x, PL.y);
+      ctx.lineTo(x, PL.y + PL.h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = MEM;
+      ctx.beginPath();
+      ctx.arc(x, yHalf, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = inv(0.7);
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      label(`${hl.toFixed(1)} steps`, x + 8, yHalf - 10, 0.85, 'left', 11.5, MEM);
+    }
+  }
+
+  /** The geometric mean of the per-step factor, which is what compounds. */
+  function perStep() {
+    const f = run.factor.slice(2);
+    if (!f.length) return Math.abs(run.factor[1] ?? 1);
+    let s = 0;
+    for (const v of f) s += Math.log(Math.max(1e-12, Math.abs(v)));
+    return Math.exp(s / f.length);
+  }
+  function halfLife() {
+    const p = perStep();
+    if (p >= 1) return Infinity;
+    return Math.log(0.5) / Math.log(p);
+  }
+  /** How many steps before the pulse is below a part in a thousand. */
+  function reach() {
+    const p = perStep();
+    if (p >= 1) return Infinity;
+    return Math.log(1e-3) / Math.log(p);
+  }
+  const fmt = (v: number) =>
+    !Number.isFinite(v) ? '∞' : v === 0 ? '0' : v < 1e-4 || v >= 1e4 ? v.toExponential(1) : v.toFixed(4);
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    chain();
+    plot();
+
+    const p = perStep(), hl = halfLife(), T = state.steps;
+    const gradFirst = run.grad[1], memLast = run.mem[T];
+    const growing = p >= 1;
+    setEq({
+      rule:
+        state.cell === 'gate'
+          ? [['c_t = f\\,c_{t-1} + (1-f)\\,\\tilde c_t', STATE], '\\qquad', ['\\dfrac{\\partial c_T}{\\partial c_1} = \\prod_t f + (1-f)\\,w\\,\\phi\'', GRAD]]
+          : [['h_t = \\phi(w\\,h_{t-1} + u\\,x_t)', STATE], '\\qquad', ['\\dfrac{\\partial h_T}{\\partial h_1} = \\prod_t w\\,\\phi\'(z_t)', GRAD]],
+      live: [
+        [`\\text{kept per step} = ${p.toFixed(4)}`, MEM],
+        [`\\quad \\text{after } ${T} \\text{ steps} = ${fmt(memLast)}`, growing ? BAD : MEM],
+        [`\\quad \\text{half-life} = ${Number.isFinite(hl) ? hl.toFixed(1) : '\\infty'}\\text{ steps}`, GRAD],
+      ],
+    });
+    setRows({
+      'r-half': Number.isFinite(hl) ? `${hl.toFixed(1)} steps` : 'it grows instead',
+      'r-per': p.toFixed(4),
+      'r-first': fmt(gradFirst),
+      'r-mem': fmt(memLast),
+      'r-reach': Number.isFinite(reach()) ? `${reach().toFixed(0)} steps` : 'it never is',
+    });
+    setResult({
+      value: Number.isFinite(hl) ? `${hl.toFixed(1)} steps` : 'it grows',
+      colour: growing ? BAD : hl > 40 ? MEM : hl < 4 ? BAD : STATE,
+      status: `keeps ${p.toFixed(3)} of the state per step · after ${T} steps the first input is down to ${fmt(memLast)} · the gradient reaching step 1 is ${fmt(gradFirst)}`,
+      note: growing
+        ? 'Above one the state and the gradient both run away. Recurrence is stable only in a window so narrow that exploding gradients have to be clipped by hand.'
+        : state.cell === 'gate'
+          ? 'The gate carries the state forward by adding, so the per-step factor is the forget gate itself. Set it near one and the memory lasts hundreds of steps, which is the whole of an LSTM.'
+          : hl < 6
+            ? 'A handful of steps is all this cell remembers. Anything the sequence needed from the beginning is gone by the middle, and no gradient can tell it so.'
+            : 'Memory and gradient are the same product read in two directions, so a recurrent network forgets at exactly the rate it fails to learn.',
+    });
+  }
+
+  function rebuild() {
+    run = simulate();
+    draw();
+  }
+
+  segmented('cell', (c) => { state.cell = c; rebuild(); });
+  segmented('act', (a) => { state.act = a; rebuild(); });
+  slider('steps', (v) => { state.steps = v; rebuild(); });
+  slider('w', (v) => { state.w = v / 100; rebuild(); }, (v) => (v / 100).toFixed(2));
+  slider('forget', (v) => { state.forget = v / 100; rebuild(); }, (v) => (v / 100).toFixed(2));
+
+  rebuild();
+</script>

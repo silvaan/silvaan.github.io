@@ -1,0 +1,412 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Batch & Layer Normalisation"
+  description="A layer hands the next one whatever scale it happens to have, and that scale drifts while the weights move underneath it. Normalisation just subtracts a mean and divides by a spread, and the only real question is which direction of the batch you take them along."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="norm"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="A batch of activations as a grid of examples against features, before and after normalisation, with the slice each method averages over outlined and the two distributions drawn underneath."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'above the mean', color: '#5eead4' },
+          { label: 'below it', color: '#f59e0b' },
+          { label: 'the slice being averaged', color: '#7c8cff' },
+        ]}
+        hint="One row is one example in the batch, one column is one feature"
+      />
+      <Result label="Widest feature ÷ narrowest" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="kind"
+        label="Normalise"
+        attr="k"
+        active="batch"
+        options={[
+          { value: 'none', label: 'Not at all' },
+          { value: 'batch', label: 'Batch norm' },
+          { value: 'layer', label: 'Layer norm' },
+        ]}
+      />
+      <Slider id="batch" label="Examples in the batch" min={1} max={16} value={12} hint={['a single example', 'a full batch']} />
+      <Slider id="gamma" label="Learned scale γ" min={0} max={300} value={100} display="1.00" />
+      <Slider id="beta" label="Learned shift β" min={-200} max={200} value={0} display="0.00" />
+      <Slider id="drift" label="Drift of the incoming layer" min={0} max={300} value={80} display="0.80" hint={['every feature alike', 'wildly different']} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-feat', label: 'feature spreads, widest ÷ narrowest' },
+          { id: 'r-ex', label: 'example spreads, widest ÷ narrowest' },
+          { id: 'r-mean', label: 'mean of everything' },
+          { id: 'r-std', label: 'spread of everything' },
+          { id: 'r-slice', label: 'numbers averaged per slice' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The grid is one batch of activations: a row is an example, a column is a
+      feature. With <b>drift</b> turned up the columns have wildly different
+      offsets and widths, which is what a layer actually receives when the
+      weights below it have been moving.
+    </li>
+    <li>
+      <b>Batch norm</b> takes its mean and spread down a column, so it fixes
+      every feature to the same footing and the widest-over-narrowest ratio
+      snaps to exactly 1. That is the number a following layer cares about, and
+      it is why one learning rate can suit every feature at once.
+    </li>
+    <li>
+      <b>Layer norm</b> takes them across a row instead. Each example is put on
+      the same footing as itself, the features are left free to differ, and the
+      ratio in the panel stays above one. It normalises a different thing and it
+      is not a drop-in improvement.
+    </li>
+    <li>
+      Now drag <b>examples in the batch</b> down to 1. Batch norm collapses: a
+      column of one number has zero spread, so every output becomes exactly β
+      and the whole batch carries no information at all. Layer norm does not
+      notice, because it never looked across examples.
+    </li>
+    <li>
+      That single failure is the whole reason transformers use layer norm. A
+      language model runs one sequence at a time at inference, batches vary, and
+      a method that depends on its neighbours in the batch cannot be trusted to
+      behave the same way twice.
+    </li>
+    <li>
+      Move <b>γ</b> and <b>β</b>. Normalisation throws away the scale and the
+      offset, and these two learned numbers hand them back, so the network can
+      undo the normalisation if it turns out to want to. Set γ to zero and the
+      layer outputs a constant, which is exactly how a residual block is
+      initialised to do nothing at all.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const HI = '#5eead4', LO = '#f59e0b', SLICE = '#7c8cff', BAD = '#f87171';
+  const FEAT = 14, MAXB = 16, EPS = 1e-5;
+
+  const state = { kind: 'batch', batch: 12, gamma: 1, beta: 0, drift: 0.8 };
+
+  const canvas = el('norm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => build());
+  const { ink } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  let X: number[][] = [], Y: number[][] = [];
+  /** Which slice each cell was normalised with, for the outline. */
+  let pick = { row: 0, col: 0 };
+
+  function build() {
+    const rnd = mulberry32(4242);
+    const gauss = () => {
+      const u = Math.max(1e-9, rnd());
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+    };
+    // every feature gets its own offset and width, which is what drift means
+    const off: number[] = [], wid: number[] = [];
+    for (let f = 0; f < FEAT; f++) {
+      off.push(gauss() * 1.6 * state.drift);
+      wid.push(Math.exp(gauss() * 0.9 * state.drift));
+    }
+    X = [];
+    for (let b = 0; b < MAXB; b++) {
+      const row: number[] = [];
+      for (let f = 0; f < FEAT; f++) row.push(off[f] + wid[f] * gauss());
+      X.push(row);
+    }
+    Y = normalise();
+    draw();
+  }
+
+  const rows = () => X.slice(0, state.batch);
+
+  function normalise() {
+    const R = rows();
+    const out = R.map((r) => r.slice());
+    if (state.kind === 'none') return out;
+    if (state.kind === 'batch') {
+      for (let f = 0; f < FEAT; f++) {
+        let m = 0;
+        for (const r of R) m += r[f];
+        m /= R.length;
+        let v = 0;
+        for (const r of R) v += (r[f] - m) ** 2;
+        v /= R.length;
+        const s = Math.sqrt(v + EPS);
+        for (let b = 0; b < R.length; b++) out[b][f] = state.gamma * ((R[b][f] - m) / s) + state.beta;
+      }
+    } else {
+      for (let b = 0; b < R.length; b++) {
+        const r = R[b];
+        const m = r.reduce((a, x) => a + x, 0) / FEAT;
+        const v = r.reduce((a, x) => a + (x - m) ** 2, 0) / FEAT;
+        const s = Math.sqrt(v + EPS);
+        for (let f = 0; f < FEAT; f++) out[b][f] = state.gamma * ((r[f] - m) / s) + state.beta;
+      }
+    }
+    return out;
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const A = { x: 78, y: 116, w: 356, h: 250 };
+  const B = { x: 566, y: 116, w: 356, h: 250 };
+  const PL = { x: 78, y: 470, w: 844, h: 100 };
+
+  const cellW = (g: typeof A) => g.w / FEAT;
+  const cellH = (g: typeof A) => g.h / Math.max(1, state.batch);
+
+  const heat = (v: number, scale: number) => {
+    const t = Math.max(-1, Math.min(1, v / Math.max(0.2, scale)));
+    return t >= 0 ? `rgba(94,234,212,${0.06 + 0.8 * t})` : `rgba(245,158,11,${0.06 + 0.8 * -t})`;
+  };
+
+  function grid(g: typeof A, data: number[][], title: string, sub: string, outline: boolean) {
+    label(title, g.x, g.y - 34, 0.5, 'left', 13);
+    label(sub, g.x, g.y - 18, 0.3, 'left', 11);
+    let scale = 0.2;
+    for (const r of data) for (const v of r) scale = Math.max(scale, Math.abs(v));
+    const cw = cellW(g), ch = cellH(g);
+    for (let b = 0; b < data.length; b++)
+      for (let f = 0; f < FEAT; f++) {
+        ctx.fillStyle = heat(data[b][f], scale);
+        ctx.fillRect(g.x + f * cw, g.y + b * ch, cw - 1, ch - 1);
+      }
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(g.x, g.y, g.w, g.h);
+    if (outline && state.kind !== 'none') {
+      ctx.strokeStyle = SLICE;
+      ctx.lineWidth = 2;
+      if (state.kind === 'batch') ctx.strokeRect(g.x + pick.col * cw - 1, g.y - 2, cw + 1, g.h + 4);
+      else ctx.strokeRect(g.x - 2, g.y + pick.row * ch - 1, g.w + 4, ch + 1);
+    }
+    // one bar per feature, so "every column now has the same width" is visible
+    const stds: number[] = [];
+    for (let f = 0; f < FEAT; f++) stds.push(stdOf(data.map((r) => r[f])));
+    const smax = Math.max(...stds, 1e-6);
+    for (let f = 0; f < FEAT; f++) {
+      const bh = (stds[f] / smax) * 26;
+      ctx.fillStyle = HI;
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(g.x + f * cw + 1, g.y + g.h + 32 - bh, cw - 2, bh);
+      ctx.globalAlpha = 1;
+    }
+    label('how wide each feature is', g.x, g.y + g.h + 48, 0.3, 'left', 11);
+    label(`${FEAT}`, g.x + g.w, g.y + g.h + 48, 0.3, 'right', 11);
+    label('example 1', g.x - 10, g.y + 10, 0.3, 'right', 11);
+    label(`${state.batch}`, g.x - 10, g.y + g.h - 2, 0.3, 'right', 11);
+  }
+
+  function middle() {
+    const cx = (A.x + A.w + B.x) / 2;
+    const cy = A.y + A.h / 2;
+    ctx.strokeStyle = ink(0.28);
+    ctx.fillStyle = ink(0.28);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(A.x + A.w + 16, cy);
+    ctx.lineTo(B.x - 25, cy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(B.x - 16, cy);
+    ctx.lineTo(B.x - 25, cy - 5);
+    ctx.lineTo(B.x - 25, cy + 5);
+    ctx.closePath();
+    ctx.fill();
+    const name = state.kind === 'none' ? 'nothing happens' : state.kind === 'batch' ? 'down each column' : 'across each row';
+    label(name, cx, cy - 16, 0.55, 'center', 11.5, state.kind === 'none' ? undefined : SLICE);
+    if (state.kind !== 'none') {
+      label(`γ ${state.gamma.toFixed(2)}`, cx, cy + 22, 0.45, 'center', 11.5);
+      label(`β ${state.beta.toFixed(2)}`, cx, cy + 38, 0.45, 'center', 11.5);
+    }
+  }
+
+  /** The two distributions, drawn on one axis so the change is the whole point. */
+  function dists() {
+    label('everything in the batch, before and after', PL.x, PL.y - 22, 0.5, 'left', 13);
+    const all = (d: number[][]) => d.flat();
+    const before = all(rows()), after = all(Y);
+    let lim = 0.5;
+    for (const v of before.concat(after)) lim = Math.max(lim, Math.abs(v));
+    lim = Math.min(lim, 12);
+    const px = (v: number) => PL.x + ((Math.max(-lim, Math.min(lim, v)) + lim) / (2 * lim)) * PL.w;
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    ctx.strokeStyle = ink(0.22);
+    ctx.beginPath();
+    ctx.moveTo(px(0), PL.y);
+    ctx.lineTo(px(0), PL.y + PL.h);
+    ctx.stroke();
+    label('0', px(0), PL.y + PL.h + 18, 0.3, 'center', 11);
+    label(`−${lim.toFixed(0)}`, PL.x + 4, PL.y + PL.h + 18, 0.3, 'left', 11);
+    label(`${lim.toFixed(0)}`, PL.x + PL.w - 4, PL.y + PL.h + 18, 0.3, 'right', 11);
+
+    const hist = (vals: number[], colour: string, alpha: number, fill: boolean) => {
+      const BINS = 72;
+      const h = new Float64Array(BINS);
+      for (const v of vals) {
+        const t = (Math.max(-lim, Math.min(lim, v)) + lim) / (2 * lim);
+        h[Math.min(BINS - 1, Math.floor(t * BINS))]++;
+      }
+      let mx = 1;
+      for (const c of h) mx = Math.max(mx, c);
+      ctx.beginPath();
+      ctx.moveTo(PL.x, PL.y + PL.h);
+      for (let i = 0; i < BINS; i++) {
+        const x = PL.x + ((i + 0.5) / BINS) * PL.w;
+        ctx.lineTo(x, PL.y + PL.h - (h[i] / mx) * (PL.h - 10));
+      }
+      ctx.lineTo(PL.x + PL.w, PL.y + PL.h);
+      if (fill) {
+        ctx.fillStyle = colour;
+        ctx.globalAlpha = alpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = fill ? 0.9 : alpha;
+      ctx.lineWidth = fill ? 2 : 1.6;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+    hist(before, ink(0.5), 0.55, false);
+    hist(after, HI, 0.16, true);
+    label('before', PL.x + 10, PL.y + 18, 0.45, 'left', 11.5);
+    label('after', PL.x + 10, PL.y + 36, 0.9, 'left', 11.5, HI);
+  }
+
+  /** Widest divided by narrowest, along whichever axis is asked for. */
+  function spreadRatio(d: number[][], axis: 'feature' | 'example') {
+    const stds: number[] = [];
+    if (axis === 'feature') {
+      for (let f = 0; f < FEAT; f++) {
+        const col = d.map((r) => r[f]);
+        stds.push(stdOf(col));
+      }
+    } else for (const r of d) stds.push(stdOf(r));
+    const mx = Math.max(...stds), mn = Math.min(...stds);
+    return mn < 1e-9 ? Infinity : mx / mn;
+  }
+  function stdOf(v: number[]) {
+    if (v.length < 2) return 0;
+    const m = v.reduce((a, x) => a + x, 0) / v.length;
+    return Math.sqrt(v.reduce((a, x) => a + (x - m) ** 2, 0) / v.length);
+  }
+  const fmt = (v: number) => (!Number.isFinite(v) ? '∞' : v > 1e4 ? v.toExponential(1) : v.toFixed(2));
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    Y = normalise();
+    pick = { row: Math.min(pick.row, state.batch - 1), col: pick.col };
+    grid(A, rows(), 'what the layer receives', 'a row is one example, a column is one feature', true);
+    grid(B, Y, 'what it passes on', state.kind === 'none' ? 'unchanged' : 'each slice set to mean 0 and spread 1, then scaled by γ and shifted by β', false);
+    middle();
+    dists();
+
+    const rf = spreadRatio(Y, 'feature'), re = spreadRatio(Y, 'example');
+    const flat = state.kind === 'batch' && state.batch === 1;
+    const all = Y.flat();
+    setEq({
+      rule: [
+        ['\\hat x = \\dfrac{x - \\mu}{\\sqrt{\\sigma^2 + \\epsilon}}', SLICE],
+        '\\qquad',
+        ['y = \\gamma\\,\\hat x + \\beta', HI],
+      ],
+      live: [
+        state.kind === 'none' ? '\\text{no slice taken}' : `\\mu, \\sigma \\text{ ${state.kind === 'batch' ? 'down each column' : 'across each row'}}`,
+        `\\quad \\gamma = ${state.gamma.toFixed(2)},\\; \\beta = ${state.beta.toFixed(2)}`,
+        [`\\quad \\text{features } ${fmt(rf)}\\times`, HI],
+      ],
+    });
+    setRows({
+      'r-feat': `${fmt(rf)}×`,
+      'r-ex': `${fmt(re)}×`,
+      'r-mean': (all.reduce((a, x) => a + x, 0) / all.length).toFixed(3),
+      'r-std': stdOf(all).toFixed(3),
+      'r-slice': state.kind === 'none' ? 'none' : state.kind === 'batch' ? `${state.batch} per feature` : `${FEAT} per example`,
+    });
+    setResult({
+      value: flat ? 'everything is β' : `${fmt(rf)}×`,
+      colour: flat ? BAD : rf < 1.05 ? HI : LO,
+      status: flat
+        ? 'a column of one number has no spread, so the division is by zero and every output collapses'
+        : `across examples the ratio is ${fmt(re)}× · everything now has mean ${(all.reduce((a, x) => a + x, 0) / all.length).toFixed(2)} and spread ${stdOf(all).toFixed(2)}`,
+      note: flat
+        ? 'Batch norm needs its neighbours in the batch. With a single example there is nothing to take a spread over, which is exactly the situation a model is in at inference.'
+        : state.kind === 'none'
+          ? 'Some features are twenty times wider than others, so a single learning rate is far too large for one and far too small for the next.'
+          : state.kind === 'batch'
+            ? 'Every feature now has the same spread, whatever the layer below did to it, so the next layer sees a fixed scale and one learning rate fits all of them.'
+            : 'Every example is put on the same footing as itself, and no example depends on the others, which is what makes this the one that survives a batch of size one.',
+    });
+  }
+
+  // --- interaction -----------------------------------------------------------
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    if (x < A.x || x > A.x + A.w || y < A.y || y > A.y + A.h) return;
+    pick = {
+      col: Math.max(0, Math.min(FEAT - 1, Math.floor(((x - A.x) / A.w) * FEAT))),
+      row: Math.max(0, Math.min(state.batch - 1, Math.floor(((y - A.y) / A.h) * state.batch))),
+    };
+    draw();
+  });
+
+  segmented('kind', (k) => { state.kind = k; draw(); });
+  slider('batch', (v) => { state.batch = v; draw(); });
+  slider('gamma', (v) => { state.gamma = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  slider('beta', (v) => { state.beta = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  slider('drift', (v) => { state.drift = v / 100; build(); }, (v) => (v / 100).toFixed(2));
+
+  build();
+</script>
+
+<style>
+  #norm {
+    cursor: crosshair;
+  }
+</style>

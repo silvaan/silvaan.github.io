@@ -1,0 +1,408 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Positional Encoding"
+  description="Attention looks at a set, not a sequence: shuffle the words and every score comes out the same. Position has to be added to the vectors themselves, and the trick is to add something whose dot product depends on how far apart two tokens are rather than on where they sit."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="pe"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="The positional encoding matrix as a heatmap of positions against dimensions, the vector for the chosen position, and a plot of its similarity with every other position."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the position you picked', color: '#7c8cff' },
+          { label: 'similarity with it', color: '#5eead4' },
+          { label: 'a fast dimension', color: '#f59e0b' },
+        ]}
+        hint="Click a row of the heatmap to move the position"
+      />
+      <Result label="Similarity has halved after" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="kind"
+        label="Encoding"
+        attr="k"
+        options={[
+          { value: 'sin', label: 'Sinusoidal' },
+          { value: 'rope', label: 'Rotary' },
+          { value: 'learned', label: 'Learned' },
+          { value: 'none', label: 'None' },
+        ]}
+      />
+      <Slider id="pos" label="Position" min={0} max={63} value={24} />
+      <Slider id="len" label="Sequence length" min={16} max={96} step={8} value={64} />
+      <Slider id="dim" label="Dimensions d" min={8} max={64} step={4} value={32} />
+      <Slider id="base" label="Base B" min={10} max={50} value={40} display="10000" hint={['every dimension fast', 'the last ones very slow']} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-self', label: 'similarity with itself' },
+          { id: 'r-next', label: 'similarity with the next one' },
+          { id: 'r-far', label: 'similarity ten away' },
+          { id: 'r-half', label: 'similarity halves after' },
+          { id: 'r-slow', label: 'slowest wavelength' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Pick <b>None</b> first. Every row of the heatmap is identical and the
+      similarity curve is flat, so attention has no way at all to tell the first
+      token from the last. Word order simply does not exist for the mechanism
+      until something is added.
+    </li>
+    <li>
+      Now <b>Sinusoidal</b>. Each column is a wave, and the columns on the left
+      turn quickly while the ones on the right turn slowly, so a position is
+      written the way a number is written in binary: fast digits for the fine
+      detail, slow digits for the coarse.
+    </li>
+    <li>
+      The curve below is the dot product of your position with every other one.
+      It peaks where you are and falls away with distance, and it falls away
+      <b>the same way wherever you put the peak</b>. That is the property worth
+      having: attention gets told how far apart two tokens are, not where they
+      happen to sit in the batch.
+    </li>
+    <li>
+      Drag the <b>base</b> down. Every dimension now turns quickly, the curve
+      becomes a narrow spike, and positions more than a few apart look equally
+      unrelated. Drag it up and the slow dimensions take over, so the curve
+      widens and distant positions stay distinguishable. That one number sets
+      how far the model can see.
+    </li>
+    <li>
+      Choose <b>Learned</b>. Every position gets its own random vector, so
+      similarity is a spike at zero and noise everywhere else. It works, and it
+      is what the earlier models used, but nothing about it generalises to a
+      sequence longer than the ones it was trained on, because position 200 was
+      never given a vector.
+    </li>
+    <li>
+      Choose <b>Rotary</b>. Instead of adding, it rotates each pair of
+      dimensions by an angle set by the position, so the dot product between two
+      tokens depends on their difference exactly rather than approximately. It
+      is the same idea as the head called <b>one before</b> in
+      <a href="/simulations/deep-learning/self-attention">Self-Attention</a>,
+      which reads position and nothing else.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const PICK = '#7c8cff', SIM = '#5eead4', FAST = '#f59e0b';
+
+  const state = { kind: 'sin', pos: 24, len: 64, dim: 32, base: 10000 };
+
+  const canvas = el('pe') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => build());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** One row per position, one column per dimension. */
+  let PE: Float64Array[] = [];
+  /** Normalised dot product of the chosen position with every other one. */
+  let sim: number[] = [];
+
+  const omega = (i: number) => 1 / Math.pow(state.base, (2 * Math.floor(i / 2)) / state.dim);
+
+  function build() {
+    const { len, dim } = state;
+    PE = [];
+    const rnd = mulberry32(1234);
+    const learned: Float64Array[] = [];
+    if (state.kind === 'learned')
+      for (let p = 0; p < len; p++) {
+        const v = new Float64Array(dim);
+        for (let i = 0; i < dim; i++) v[i] = rnd() * 2 - 1;
+        learned.push(v);
+      }
+    for (let p = 0; p < len; p++) {
+      const v = new Float64Array(dim);
+      for (let i = 0; i < dim; i++) {
+        if (state.kind === 'none') v[i] = 0;
+        else if (state.kind === 'learned') v[i] = learned[p][i];
+        else {
+          // sinusoidal and rotary share the same angles; rotary applies them as
+          // a rotation of a token's own vector, which is why its similarity is
+          // exactly a function of the difference of two positions
+          const a = p * omega(i);
+          v[i] = i % 2 === 0 ? Math.sin(a) : Math.cos(a);
+        }
+      }
+      PE.push(v);
+    }
+
+    sim = [];
+    const p0 = Math.min(state.pos, len - 1);
+    for (let q = 0; q < len; q++) {
+      if (state.kind === 'none') { sim.push(1); continue; }
+      if (state.kind === 'rope') {
+        // rotating a fixed vector by each position: the dot product collapses to
+        // a sum of cosines of the difference alone
+        let s = 0;
+        for (let i = 0; i < state.dim; i += 2) s += Math.cos((q - p0) * omega(i));
+        sim.push(s / (state.dim / 2));
+        continue;
+      }
+      let dot = 0, na = 0, nb = 0;
+      for (let i = 0; i < state.dim; i++) {
+        dot += PE[p0][i] * PE[q][i];
+        na += PE[p0][i] ** 2;
+        nb += PE[q][i] ** 2;
+      }
+      sim.push(dot / Math.max(1e-9, Math.sqrt(na * nb)));
+    }
+    draw();
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const HM = { x: 122, y: 96, w: 412, h: 330 };
+  const VEC = { x: 122, y: 470, w: 412, h: 46 };
+  const PL = { x: 600, y: 96, w: 350, h: 330 };
+
+  const heat = (v: number) => {
+    // −1 amber, 0 background, +1 teal
+    const t = Math.max(-1, Math.min(1, v));
+    return t >= 0
+      ? `rgba(94,234,212,${0.08 + 0.72 * t})`
+      : `rgba(245,158,11,${0.08 + 0.72 * -t})`;
+  };
+
+  function heatmap() {
+    label('the encoding, one row per position', HM.x, HM.y - 32, 0.5, 'left', 13);
+    label('columns on the left turn fast, columns on the right turn slowly', HM.x, HM.y - 16, 0.3, 'left', 11);
+    const cw = HM.w / state.dim, rh = HM.h / state.len;
+    for (let p = 0; p < state.len; p++)
+      for (let i = 0; i < state.dim; i++) {
+        ctx.fillStyle = heat(PE[p][i]);
+        ctx.fillRect(HM.x + i * cw, HM.y + p * rh, cw + 0.5, rh + 0.5);
+      }
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(HM.x, HM.y, HM.w, HM.h);
+
+    const p0 = Math.min(state.pos, state.len - 1);
+    ctx.strokeStyle = PICK;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(HM.x - 2, HM.y + p0 * rh - 1, HM.w + 4, Math.max(3, rh) + 2);
+    label(`position ${p0}`, HM.x - 10, HM.y + p0 * rh + Math.max(3, rh) / 2 + 4, 1, 'right', 11.5, PICK);
+    label('0', HM.x - 10, HM.y + 10, 0.3, 'right', 11);
+    label(String(state.len - 1), HM.x - 10, HM.y + HM.h - 2, 0.3, 'right', 11);
+    label('dimension 0', HM.x, HM.y + HM.h + 18, 0.3, 'left', 11);
+    label(`${state.dim - 1}`, HM.x + HM.w, HM.y + HM.h + 18, 0.3, 'right', 11);
+  }
+
+  function vector() {
+    const p0 = Math.min(state.pos, state.len - 1);
+    label(`what position ${p0} actually adds to its token`, VEC.x, VEC.y - 14, 0.45, 'left', 12);
+    const cw = VEC.w / state.dim;
+    for (let i = 0; i < state.dim; i++) {
+      const v = PE[p0][i];
+      const h = (Math.abs(v) / 1) * (VEC.h / 2);
+      ctx.fillStyle = v >= 0 ? SIM : FAST;
+      ctx.globalAlpha = 0.85;
+      const mid = VEC.y + VEC.h / 2;
+      ctx.fillRect(VEC.x + i * cw + 0.5, v >= 0 ? mid - h : mid, Math.max(1, cw - 1), Math.max(1, h));
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(VEC.x, VEC.y + VEC.h / 2);
+    ctx.lineTo(VEC.x + VEC.w, VEC.y + VEC.h / 2);
+    ctx.stroke();
+    label('one bar per dimension', VEC.x, VEC.y + VEC.h + 18, 0.3, 'left', 11);
+  }
+
+  function plot() {
+    const p0 = Math.min(state.pos, state.len - 1);
+    label('how similar every other position looks', PL.x, PL.y - 32, 0.5, 'left', 13);
+    label('the dot product with the row you picked', PL.x, PL.y - 16, 0.3, 'left', 11);
+    const px = (q: number) => PL.x + (q / Math.max(1, state.len - 1)) * PL.w;
+    const py = (v: number) => PL.y + PL.h / 2 - (Math.max(-1, Math.min(1, v)) * PL.h) / 2;
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    for (const v of [1, 0.5, 0, -0.5, -1]) {
+      ctx.strokeStyle = ink(v === 0 ? 0.24 : 0.07);
+      ctx.beginPath();
+      ctx.moveTo(PL.x, py(v));
+      ctx.lineTo(PL.x + PL.w, py(v));
+      ctx.stroke();
+      label(v.toFixed(1), PL.x - 8, py(v) + 4, 0.3, 'right', 11);
+    }
+    ctx.strokeStyle = SIM;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    sim.forEach((v, q) => (q ? ctx.lineTo(px(q), py(v)) : ctx.moveTo(px(q), py(v))));
+    ctx.stroke();
+
+    ctx.strokeStyle = PICK;
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(px(p0), PL.y);
+    ctx.lineTo(px(p0), PL.y + PL.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = PICK;
+    ctx.beginPath();
+    ctx.arc(px(p0), py(sim[p0]), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = inv(0.7);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const hl = halfAt();
+    if (Number.isFinite(hl)) {
+      const q = Math.min(state.len - 1, p0 + hl);
+      ctx.strokeStyle = `${SIM}88`;
+      ctx.setLineDash([2, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(px(q), PL.y);
+      ctx.lineTo(px(q), PL.y + PL.h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(`${hl} away`, px(q) + 6, PL.y + 18, 0.75, 'left', 11, SIM);
+    }
+    label('position 0', PL.x, PL.y + PL.h + 18, 0.3, 'left', 11);
+    label(`${state.len - 1}`, PL.x + PL.w, PL.y + PL.h + 18, 0.3, 'right', 11);
+
+    // the same fact stated as words, under the plot
+    const wl = 2 * Math.PI * Math.pow(state.base, (state.dim - 2) / state.dim);
+    label('the slowest column repeats every', PL.x, PL.y + PL.h + 54, 0.45, 'left', 12);
+    label(`${wl > 1e5 ? wl.toExponential(1) : wl.toFixed(0)} positions`, PL.x, PL.y + PL.h + 84, 1, 'left', 22, FAST);
+    label('which is how far apart two tokens', PL.x, PL.y + PL.h + 104, 0.35, 'left', 11);
+    label('can still be told apart', PL.x, PL.y + PL.h + 118, 0.35, 'left', 11);
+  }
+
+  /** How many positions away the similarity first drops to half. */
+  function halfAt() {
+    const p0 = Math.min(state.pos, state.len - 1);
+    for (let d = 1; d < state.len; d++) {
+      const a = p0 + d < state.len ? sim[p0 + d] : null;
+      const b = p0 - d >= 0 ? sim[p0 - d] : null;
+      const v = a ?? b;
+      if (v === null) break;
+      if (v < 0.5) return d;
+    }
+    return Infinity;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    heatmap();
+    vector();
+    plot();
+
+    const p0 = Math.min(state.pos, state.len - 1);
+    const next = p0 + 1 < state.len ? sim[p0 + 1] : sim[Math.max(0, p0 - 1)];
+    const far = p0 + 10 < state.len ? sim[p0 + 10] : sim[Math.max(0, p0 - 10)];
+    const hl = halfAt();
+    const wl = 2 * Math.PI * Math.pow(state.base, (state.dim - 2) / state.dim);
+    setEq({
+      rule:
+        state.kind === 'rope'
+          ? [['q_p \\cdot k_q = \\sum_i \\cos\\big((p-q)\\,\\omega_i\\big)', SIM]]
+          : [['PE_{p,2i} = \\sin(p\\,\\omega_i)', SIM], ',\\;', ['PE_{p,2i+1} = \\cos(p\\,\\omega_i)', FAST]],
+      live: [
+        [`p = ${p0}`, PICK],
+        `\\quad \\omega_i = B^{-2i/d},\\; d = ${state.dim},\\; B = ${state.base}`,
+        [`\\quad \\text{next position} = ${next.toFixed(3)}`, SIM],
+      ],
+    });
+    setRows({
+      'r-self': sim[p0].toFixed(4),
+      'r-next': next.toFixed(4),
+      'r-far': far.toFixed(4),
+      'r-half': Number.isFinite(hl) ? `${hl} positions` : 'it never does',
+      'r-slow': state.kind === 'none' || state.kind === 'learned' ? 'no waves here' : `${wl > 1e5 ? wl.toExponential(1) : wl.toFixed(0)} positions`,
+    });
+    setResult({
+      value: Number.isFinite(hl) ? `${hl} positions` : 'never',
+      colour: state.kind === 'none' ? '#f87171' : SIM,
+      status:
+        state.kind === 'none'
+          ? 'every position is identical, so attention cannot tell the first token from the last'
+          : `the next position scores ${next.toFixed(3)} and one ten away scores ${far.toFixed(3)} · ${state.dim} dimensions, base ${state.base}`,
+      note:
+        state.kind === 'none'
+          ? 'Attention reads a set. Without something added to the vectors, the same words in any order give exactly the same scores.'
+          : state.kind === 'learned'
+            ? 'A separate vector per position works, but the similarity is noise past the peak, and a position the model never trained on has no vector at all.'
+            : state.kind === 'rope'
+              ? 'Rotating each pair of dimensions makes the dot product a function of the difference of two positions exactly, with no dependence on where the pair sits.'
+              : 'Fast columns separate neighbours, slow columns keep distant positions apart, and the sum falls off with distance in the same way wherever you put the peak.',
+    });
+  }
+
+  // --- interaction -----------------------------------------------------------
+  const setPos = slider('pos', (v) => { state.pos = v; build(); });
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    if (x < HM.x - 20 || x > HM.x + HM.w + 20 || y < HM.y || y > HM.y + HM.h) return;
+    const p = Math.max(0, Math.min(state.len - 1, Math.floor(((y - HM.y) / HM.h) * state.len)));
+    state.pos = p;
+    setPos(p);
+    build();
+  });
+
+  segmented('kind', (k) => { state.kind = k; build(); });
+  slider('len', (v) => {
+    state.len = v;
+    if (state.pos > v - 1) { state.pos = v - 1; setPos(state.pos); }
+    (el('pos') as HTMLInputElement).max = String(v - 1);
+    build();
+  });
+  slider('dim', (v) => { state.dim = v; build(); });
+  slider('base', (v) => { state.base = Math.round(10 ** (v / 10)); build(); }, (v) => String(Math.round(10 ** (v / 10))));
+
+  build();
+</script>
+
+<style>
+  #pe {
+    cursor: crosshair;
+  }
+</style>
