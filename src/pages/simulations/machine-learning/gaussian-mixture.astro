@@ -1,0 +1,533 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Gaussian Mixtures"
+  description="k-means hands every point to one cluster and draws only circles. A mixture of Gaussians gives every point a share of each cluster instead, and lets a cluster be stretched and tilted, so a point sitting between two of them is finally allowed to say so."
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="gm"
+          width="1000"
+          height="580"
+          role="img"
+          aria-label="Points coloured by how much each cluster claims them, with one ellipse per component, the responsibilities of one point as bars, and the log-likelihood over the iterations."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'each ellipse is one component', color: '#e5e7eb' },
+          { label: 'a point shared between clusters', color: '#f59e0b' },
+          { label: 'the likelihood, which only ever rises', color: '#5eead4' },
+        ]}
+        hint="Hover a point to see how the clusters divide it · run to fit, step for one round of EM"
+      />
+      <Result label="Log-likelihood a point" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="data"
+        label="Data"
+        attr="d"
+        options={[
+          { value: 'blobs', label: 'Blobs' },
+          { value: 'long', label: 'Stretched' },
+          { value: 'overlap', label: 'Overlapping' },
+          { value: 'sizes', label: 'Uneven' },
+        ]}
+      />
+      <Slider id="k" label="Components" min={1} max={6} value={3} />
+      <Seg id="cov" label="Shape allowed" attr="c" options={[{ value: 'full', label: 'Any' }, { value: 'diag', label: 'Axis-aligned' }, { value: 'round', label: 'Round' }]} />
+      <Checks items={[{ id: 'hard', label: 'Hand each point to one cluster, as k-means does' }]} />
+      <Transport step running />
+      <Readout
+        rows={[
+          { id: 'r-ll', label: 'log-likelihood a point' },
+          { id: 'r-it', label: 'rounds of EM' },
+          { id: 'r-mix', label: 'mixing weights' },
+          { id: 'r-split', label: 'points genuinely shared' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Every point is painted with the colours of the clusters that claim it, in
+      the proportions they claim it. Deep in a cluster a point takes one colour
+      outright. Between two of them it comes out mixed, and that mixture is the
+      whole difference from
+      <a href="/simulations/machine-learning/kmeans">k-means</a>, which has to
+      pick one and lose the doubt.
+    </li>
+    <li>
+      One round of EM is two things. The <b>E step</b> asks, given where the
+      ellipses are, how much of each point belongs to each of them. The
+      <b>M step</b> asks, given those shares, where the ellipses should now sit
+      and what shape they should be. Press <b>step</b> and watch them alternate.
+    </li>
+    <li>
+      Choose <b>Stretched</b> and leave the shape on <b>Any</b>. Both components
+      lie straight down along their stripe, because a full covariance is allowed
+      to be stretched and tilted. Now set the shape to <b>Round</b>. Neither
+      circle can follow a stripe, so each has to swell until it covers a great
+      deal of empty space, and the likelihood falls by more than a whole point
+      for the same two clusters. That restriction is exactly the one k-means
+      lives under.
+    </li>
+    <li>
+      Tick <b>hand each point to one cluster</b>. The colours go flat, every
+      point commits, and the likelihood settles lower than it did before. Round
+      shapes plus hard assignment plus equal weights <em>is</em> k-means, so the
+      two are the same algorithm with three restrictions removed.
+    </li>
+    <li>
+      Watch the likelihood curve. It never falls, which is the one guarantee EM
+      offers, and it says nothing at all about whether the answer is right.
+      Press <b>reset</b> a few times on <b>Uneven</b> and you will find fits that
+      climbed happily into an obviously wrong arrangement.
+    </li>
+    <li>
+      Ask for more components than the data has. A spare component will wander
+      off and wrap itself tightly around a handful of points, because a narrow
+      ellipse over a few points scores enormously well. Nothing in the
+      likelihood objects, which is why the number of components is a decision
+      and not something the fit can tell you.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+
+  const HUES = ['#5eead4', '#f59e0b', '#a78bfa', '#f87171', '#60a5fa', '#a3e635'];
+  const RGB = HUES.map((h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
+  const LIKE = '#5eead4';
+  const SPLIT = '#f59e0b';
+  const N = 260;
+  const FLOOR = 4e-3; // keeps a component from shrinking onto a single point
+
+  const state = { data: 'blobs', k: 3, cov: 'full', hard: false, running: true, hover: -1, it: 0 };
+  const NATURAL: Record<string, number> = { blobs: 3, long: 2, overlap: 2, sizes: 2 };
+
+  const canvas = el('gm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  let seed = 12345;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const gauss = () => {
+    const u = Math.max(1e-9, rnd());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+  };
+
+  // --- the data --------------------------------------------------------------
+  let P: number[][] = [];
+
+  function build(name: string) {
+    seed = 987654321;
+    P = [];
+    const blob = (cx: number, cy: number, sx: number, sy: number, ang: number, n: number) => {
+      const c = Math.cos(ang), s = Math.sin(ang);
+      for (let i = 0; i < n; i++) {
+        const a = gauss() * sx, b = gauss() * sy;
+        P.push([cx + a * c - b * s, cy + a * s + b * c]);
+      }
+    };
+    if (name === 'blobs') {
+      blob(-1.3, -0.7, 0.5, 0.5, 0, N / 3);
+      blob(1.2, -0.5, 0.45, 0.45, 0, N / 3);
+      blob(-0.1, 1.3, 0.55, 0.5, 0, N / 3);
+    } else if (name === 'long') {
+      blob(-0.95, 0.95, 0.85, 0.13, Math.PI / 4, N / 2);
+      blob(0.95, -0.95, 0.85, 0.13, Math.PI / 4, N / 2);
+    } else if (name === 'overlap') {
+      blob(-0.55, 0, 0.8, 0.8, 0, N / 2);
+      blob(0.55, 0.2, 0.8, 0.8, 0, N / 2);
+    } else {
+      blob(-1.4, -0.9, 0.75, 0.75, 0, (N * 3) / 4);
+      blob(1.3, 0.9, 0.22, 0.22, 0, N / 4);
+    }
+  }
+
+  // --- the mixture -----------------------------------------------------------
+  type Comp = { pi: number; mu: number[]; S: number[] }; // S = [a, b, d] of [[a,b],[b,d]]
+  let C: Comp[] = [];
+  let R: number[][] = [];      // responsibilities, one row per point
+  let trace: number[] = [];
+
+  /** One k-means++ seeding: the first centre at random, the rest far from it. */
+  function seedOnce(): Comp[] {
+    // Seeds are spread out rather than picked blind: dropping two components on
+    // the same blob is a local optimum EM cannot climb out of, and it is the
+    // fit's fault rather than the method's.
+    const centres: number[][] = [P[Math.floor(rnd() * P.length)].slice()];
+    while (centres.length < state.k) {
+      const d2 = P.map((p) => {
+        let best = Infinity;
+        for (const c of centres) best = Math.min(best, (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2);
+        return best;
+      });
+      const total = d2.reduce((a, v) => a + v, 0) || 1;
+      let t = rnd() * total, i = 0;
+      while (i < P.length - 1 && (t -= d2[i]) > 0) i++;
+      centres.push(P[i].slice());
+    }
+    // and each one starts about as wide as the data divided between them
+    let mx = 0, my = 0;
+    for (const p of P) { mx += p[0]; my += p[1]; }
+    mx /= P.length;
+    my /= P.length;
+    let v = 0;
+    for (const p of P) v += ((p[0] - mx) ** 2 + (p[1] - my) ** 2) / 2;
+    v = Math.max(0.05, v / P.length / (state.k + 1));
+    return centres.map((mu) => ({ pi: 1 / state.k, mu, S: [v, 0, v] }));
+  }
+
+  function init() {
+    seed = (Math.random() * 1e9) | 0;
+    // A few candidate seedings, keeping whichever already explains the data
+    // best. No EM has run yet, so a bad local optimum is still reachable; this
+    // only rules out the seedings that were doomed before they started.
+    let best: Comp[] | null = null, bestLL = -Infinity;
+    for (let t = 0; t < 8; t++) {
+      C = seedOnce();
+      const ll = estep();
+      if (ll > bestLL) { bestLL = ll; best = C.map((c) => ({ pi: c.pi, mu: c.mu.slice(), S: c.S.slice() })); }
+    }
+    C = best!;
+    trace = [];
+    state.it = 0;
+    estep();
+  }
+
+  const density = (p: number[], c: Comp) => {
+    const [a, b, d] = c.S;
+    const det = Math.max(1e-12, a * d - b * b);
+    const q0 = p[0] - c.mu[0], q1 = p[1] - c.mu[1];
+    const m = (d * q0 * q0 - 2 * b * q0 * q1 + a * q1 * q1) / det;
+    return Math.exp(-0.5 * m) / (2 * Math.PI * Math.sqrt(det));
+  };
+
+  /** The E step: given the ellipses, how much of each point belongs to each. */
+  function estep() {
+    R = [];
+    let ll = 0;
+    for (const p of P) {
+      const w = C.map((c) => Math.max(1e-300, c.pi * density(p, c)));
+      const sum = w.reduce((a, v) => a + v, 0);
+      ll += Math.log(sum);
+      let r = w.map((v) => v / sum);
+      if (state.hard) {
+        let best = 0;
+        for (let k = 1; k < r.length; k++) if (r[k] > r[best]) best = k;
+        r = r.map((_, k) => (k === best ? 1 : 0));
+      }
+      R.push(r);
+    }
+    return ll / P.length;
+  }
+
+  /** The M step: given those shares, where the ellipses go and what shape they take. */
+  function mstep() {
+    for (let k = 0; k < C.length; k++) {
+      let nk = 0, mx = 0, my = 0;
+      for (let i = 0; i < P.length; i++) {
+        nk += R[i][k];
+        mx += R[i][k] * P[i][0];
+        my += R[i][k] * P[i][1];
+      }
+      if (nk < 1e-6) continue;
+      const mu = [mx / nk, my / nk];
+      let a = 0, b = 0, d = 0;
+      for (let i = 0; i < P.length; i++) {
+        const q0 = P[i][0] - mu[0], q1 = P[i][1] - mu[1];
+        a += R[i][k] * q0 * q0;
+        b += R[i][k] * q0 * q1;
+        d += R[i][k] * q1 * q1;
+      }
+      a /= nk;
+      b /= nk;
+      d /= nk;
+      if (state.cov === 'round') {
+        const v = (a + d) / 2;
+        a = v;
+        d = v;
+        b = 0;
+      } else if (state.cov === 'diag') b = 0;
+      C[k] = { pi: nk / P.length, mu, S: [a + FLOOR, b, d + FLOOR] };
+    }
+  }
+
+  function step() {
+    mstep();
+    const ll = estep();
+    trace.push(ll);
+    if (trace.length > 200) trace.shift();
+    state.it++;
+    return ll;
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const SC = { x: 40, y: 104, w: 566, h: 436 };
+  const RS = { x: 662, y: 148, w: 294, h: 146 };
+  const LL = { x: 662, y: 384, w: 294, h: 140 };
+  const RANGE = 3.1;
+  const sx = (x: number) => SC.x + ((x + RANGE) / (2 * RANGE)) * SC.w;
+  const sy = (y: number) => SC.y + SC.h - ((y + RANGE) / (2 * RANGE)) * SC.h;
+  const scale = SC.w / (2 * RANGE);
+
+  /** The point the clusters disagree about most, so the idea is on screen unasked. */
+  function mostSplit() {
+    let best = -1, hi = -1;
+    for (let i = 0; i < R.length; i++) {
+      let e = 0;
+      for (const r of R[i]) if (r > 1e-9) e -= r * Math.log(r);
+      if (e > hi) { hi = e; best = i; }
+    }
+    return best;
+  }
+
+  const colourOf = (r: number[]) => {
+    let cr = 0, cg = 0, cb = 0;
+    for (let k = 0; k < r.length; k++) {
+      cr += r[k] * RGB[k % RGB.length][0];
+      cg += r[k] * RGB[k % RGB.length][1];
+      cb += r[k] * RGB[k % RGB.length][2];
+    }
+    return `rgb(${cr | 0},${cg | 0},${cb | 0})`;
+  };
+
+  function ellipse(c: Comp, colour: string) {
+    const [a, b, d] = c.S;
+    const tr = a + d, det = a * d - b * b;
+    const disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - det));
+    const l1 = tr / 2 + disc, l2 = Math.max(1e-9, tr / 2 - disc);
+    const ang = Math.abs(b) > 1e-9 ? Math.atan2(l1 - a, b) : 0;
+    for (const s of [2, 1]) {
+      ctx.save();
+      ctx.translate(sx(c.mu[0]), sy(c.mu[1]));
+      ctx.rotate(-ang);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, Math.sqrt(l1) * s * scale, Math.sqrt(l2) * s * scale, 0, 0, Math.PI * 2);
+      ctx.restore();
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = s === 1 ? 0.9 : 0.4;
+      ctx.lineWidth = s === 1 ? 2 : 1.4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = colour;
+    ctx.beginPath();
+    ctx.arc(sx(c.mu[0]), sy(c.mu[1]), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function scatter(pick: number) {
+    label('every point, painted by who claims it', SC.x, SC.y - 34, 0.55, 'left', 13);
+    label('a mixed colour is a point two clusters share', SC.x, SC.y - 16, 0.32, 'left', 11);
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, SC.x, SC.y, SC.w, SC.h, 10);
+    ctx.fill();
+    ctx.save();
+    roundRect(ctx, SC.x, SC.y, SC.w, SC.h, 10);
+    ctx.clip();
+    for (let i = 0; i < P.length; i++) {
+      ctx.fillStyle = colourOf(R[i]);
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.arc(sx(P[i][0]), sy(P[i][1]), 3.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    for (let k = 0; k < C.length; k++) ellipse(C[k], HUES[k % HUES.length]);
+    if (pick >= 0) {
+      ctx.strokeStyle = ink(0.95);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(P[pick][0]), sy(P[pick][1]), 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    roundRect(ctx, SC.x + 0.5, SC.y + 0.5, SC.w - 1, SC.h - 1, 10);
+    ctx.stroke();
+  }
+
+  function bars(pick: number) {
+    label('how that one point is divided', RS.x, RS.y - 34, 0.55, 'left', 13);
+    label(state.hover >= 0 ? 'the point under the pointer' : 'the most undecided point on the board', RS.x, RS.y - 16, 0.32, 'left', 11);
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, RS.x, RS.y, RS.w, RS.h, 10);
+    ctx.fill();
+    if (pick < 0) return;
+    const r = R[pick];
+    const pitch = Math.min(28, (RS.h - 16) / r.length);
+    for (let k = 0; k < r.length; k++) {
+      const y = RS.y + 12 + k * pitch;
+      ctx.fillStyle = HUES[k % HUES.length];
+      ctx.globalAlpha = 0.28;
+      roundRect(ctx, RS.x + 42, y, RS.w - 96, pitch - 6, 3);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      roundRect(ctx, RS.x + 42, y, Math.max(1, (RS.w - 96) * r[k]), pitch - 6, 3);
+      ctx.fill();
+      label(`${k + 1}`, RS.x + 30, y + pitch / 2, 0.5, 'right', 11, HUES[k % HUES.length]);
+      label(`${(r[k] * 100).toFixed(0)}%`, RS.x + RS.w - 10, y + pitch / 2, 0.75, 'right', 11);
+    }
+  }
+
+  function likelihood() {
+    label('the likelihood, round by round', LL.x, LL.y - 34, 0.55, 'left', 13);
+    label('EM can never make it worse', LL.x, LL.y - 16, 0.32, 'left', 11);
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, LL.x, LL.y, LL.w, LL.h, 10);
+    ctx.fill();
+    if (trace.length < 2) return;
+    let lo = Infinity, hi = -Infinity;
+    for (const v of trace) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const pad = Math.max(1e-3, (hi - lo) * 0.12);
+    const py = (v: number) => LL.y + LL.h - 8 - ((v - lo + pad) / (hi - lo + 2 * pad)) * (LL.h - 16);
+    ctx.strokeStyle = LIKE;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    trace.forEach((v, i) => {
+      const x = LL.x + 6 + (i / Math.max(1, trace.length - 1)) * (LL.w - 12);
+      i ? ctx.lineTo(x, py(v)) : ctx.moveTo(x, py(v));
+    });
+    ctx.stroke();
+    label(trace[trace.length - 1].toFixed(3), LL.x + LL.w - 10, LL.y + 18, 0.75, 'right', 12, LIKE);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const pick = state.hover >= 0 ? state.hover : mostSplit();
+    scatter(pick);
+    bars(pick);
+    likelihood();
+
+    const ll = trace.length ? trace[trace.length - 1] : 0;
+    let shared = 0;
+    for (const r of R) {
+      let mx = 0;
+      for (const v of r) mx = Math.max(mx, v);
+      if (mx < 0.9) shared++;
+    }
+    setEq({
+      rule: [
+        ['p(x) = \\sum_k \\pi_k\\, \\mathcal{N}(x \\mid \\mu_k, \\Sigma_k)', LIKE],
+        '\\qquad',
+        ['r_{nk} = \\dfrac{\\pi_k \\mathcal{N}_k}{\\sum_j \\pi_j \\mathcal{N}_j}', SPLIT],
+      ],
+      live: [
+        `K = ${state.k}`,
+        [`\\quad \\log L = ${ll.toFixed(3)}`, LIKE],
+        `\\quad \\text{round } ${state.it}`,
+        [`\\quad ${shared}\\text{ points shared}`, SPLIT],
+      ],
+    });
+    setRows({
+      'r-ll': ll.toFixed(4),
+      'r-it': String(state.it),
+      'r-mix': C.map((c) => c.pi.toFixed(2)).join(' '),
+      'r-split': `${shared} of ${P.length}`,
+    });
+    setResult({
+      value: ll.toFixed(3),
+      colour: LIKE,
+      status: `${state.k} components · ${state.cov === 'full' ? 'any shape' : state.cov === 'diag' ? 'axis-aligned' : 'round only'} · ${state.hard ? 'one cluster each' : 'shared between clusters'} · ${state.it} rounds`,
+      note: state.hard
+        ? 'Every point has been handed to a single cluster, so the shares are all one or nothing. Round shapes and equal weights on top of this is k-means exactly, and the likelihood it reaches is the worse for each restriction.'
+        : state.cov === 'round'
+          ? 'Every component is forced to be a circle, so a stretched cluster cannot be followed and has to be cut into pieces instead. This is the restriction that makes k-means fail on elongated data.'
+          : 'Each component is free to stretch and tilt, and each point is divided between them in proportion to how well each explains it. The likelihood rises every round and never says whether the answer is the right one.',
+    });
+  }
+
+  // --- interaction -----------------------------------------------------------
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    let best = -1, bd = 13;
+    for (let i = 0; i < P.length; i++) {
+      const d = Math.hypot(x - sx(P[i][0]), y - sy(P[i][1]));
+      if (d < bd) { bd = d; best = i; }
+    }
+    canvas.style.cursor = best >= 0 ? 'pointer' : 'default';
+    if (best === state.hover) return;
+    state.hover = best;
+    draw();
+  });
+  canvas.addEventListener('pointerleave', () => { state.hover = -1; draw(); });
+
+  let last = 0, acc = 0;
+  const controls = transport({
+    onRun: (running) => (state.running = running),
+    onStep: () => { step(); draw(); },
+    onReset: () => restart(),
+  });
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      while (acc >= 0.28) {
+        acc -= 0.28;
+        const before = trace.length ? trace[trace.length - 1] : -Infinity;
+        const now = step();
+        if (state.it > 3 && now - before < 1e-5) {
+          state.running = false;
+          controls.setRunning(false);
+        }
+        draw();
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  /** A new fit always runs itself, so changing anything shows the answer. */
+  const restart = () => {
+    init();
+    state.running = true;
+    controls.setRunning(true);
+    draw();
+  };
+  const setK = slider('k', (v) => { state.k = v; restart(); });
+  segmented('data', (d) => {
+    state.data = d;
+    state.k = NATURAL[d] ?? state.k;
+    setK(state.k);
+    build(d);
+    restart();
+  });
+  segmented('cov', (c) => { state.cov = c; restart(); });
+  check('hard', (on) => { state.hard = on; restart(); });
+
+  build(state.data);
+  restart();
+  requestAnimationFrame(loop);
+</script>

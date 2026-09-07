@@ -329,6 +329,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'gaussian-mixture',
+        title: 'Gaussian Mixtures',
+        description:
+          'k-means hands every point to one cluster and draws only circles. A mixture gives every point a share of each cluster instead, and lets a cluster stretch and tilt, so a point between two of them can finally say so.',
+        href: '/simulations/machine-learning/gaussian-mixture',
+        status: 'live',
+      },
+      {
         slug: 'dbscan',
         title: 'DBSCAN',
         description:
