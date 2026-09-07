@@ -465,6 +465,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'contrastive-learning',
+        title: 'Contrastive Learning',
+        description:
+          'Nobody labelled anything. Two views of the same thing are pulled together and everything else is pushed apart, and that alone arranges a representation. Drop the pushing and it all collapses to a point.',
+        href: '/simulations/deep-learning/contrastive-learning',
+        status: 'live',
+      },
+      {
         slug: 'cosine-similarity',
         title: 'Embeddings & Cosine Similarity',
         description:

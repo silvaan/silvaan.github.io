@@ -31,7 +31,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { label: 'gradients coming back', color: '#f59e0b' },
           { label: 'the scale it started at', color: 'rgba(160,165,175,0.55)' },
         ]}
-        hint="Every violin is one layer, drawn on the same fixed scale"
+        hint="Every violin is one layer, drawn on the same fixed scale · the faint curves are the schemes you did not pick"
       />
       <Result label="Signal scale at the last layer" />
     </div>
@@ -54,6 +54,7 @@ import Readout from '../../../components/sim/Readout.astro';
       <Slider id="depth" label="Layers" min={4} max={40} value={24} />
       <Slider id="width" label="Units per layer" min={16} max={96} step={8} value={64} />
       <Actions>
+        <button type="button" class="btn" id="sweep">Send a batch through</button>
         <button type="button" class="btn ghost" id="reseed">New weights</button>
       </Actions>
       <Readout
@@ -65,6 +66,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { id: 'r-first', label: 'signal scale, layer 1' },
           { id: 'r-last', label: 'signal scale, last layer' },
           { id: 'r-grad', label: 'gradient scale, layer 1' },
+          { id: 'r-survive', label: 'layers before it breaks' },
         ]}
       />
     </div>
@@ -124,6 +126,10 @@ import Readout from '../../../components/sim/Readout.astro';
   const BATCH = 96;
 
   const state = { scheme: 'he', act: 'relu', scale: 1, depth: 24, width: 64, seed: 7 };
+  // a one-shot sweep: the batch goes up, then the gradient comes back down
+  const anim = { on: false, t: 0 };
+  const frontOf = () => (anim.on ? Math.min(1, anim.t) * state.depth : state.depth);
+  const backOf = () => (anim.on ? (anim.t <= 1 ? state.depth : state.depth * (2 - anim.t)) : 0);
 
   const canvas = el('init') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => run());
@@ -230,6 +236,49 @@ import Readout from '../../../components/sim/Readout.astro';
     return { fwd, bwd, sample };
   }
 
+  /**
+   * The scale of the pre-activations, layer by layer, without touching a matrix.
+   * A pre-activation is a sum of n independent terms, so Var[z] = n σ² E[a²],
+   * and each activation has its own second moment: ReLU keeps half of what came
+   * in, the identity keeps all of it, tanh has to be measured.
+   */
+  const NORMS = Array.from({ length: 256 }, (_, i) => {
+    // a fixed low-discrepancy normal sample, so the curve never flickers
+    const u = (i + 0.5) / 256;
+    return Math.sqrt(2) * inverseErf(2 * u - 1);
+  });
+  function inverseErf(x: number) {
+    const a = 0.147;
+    const ln = Math.log(1 - x * x);
+    const t = 2 / (Math.PI * a) + ln / 2;
+    return Math.sign(x) * Math.sqrt(Math.sqrt(t * t - ln / a) - t);
+  }
+  function secondMoment(p: number, act: string) {
+    if (act === 'linear') return p * p;
+    if (act === 'relu') return (p * p) / 2;
+    let s = 0;
+    for (const z of NORMS) s += Math.tanh(p * z) ** 2;
+    return s / NORMS.length;
+  }
+  function scaleCurve(scheme: string, useKnob: boolean) {
+    const n = state.width;
+    const base =
+      scheme === 'he' ? Math.sqrt(2 / n)
+      : scheme === 'xavier' ? Math.sqrt(1 / n)
+      : scheme === 'small' ? 0.01
+      : 1;
+    const sigma = base * (useKnob ? state.scale : 1);
+    const out = [1];
+    let m = 1;
+    for (let l = 0; l < state.depth; l++) {
+      const p = Math.sqrt(n * sigma * sigma * m);
+      out.push(p);
+      if (!Number.isFinite(p) || p > 1e150) { for (let k = l + 1; k < state.depth; k++) out.push(Infinity); break; }
+      m = secondMoment(p, state.act);
+    }
+    return out;
+  }
+
   function std(v: Float64Array) {
     let m = 0;
     for (const x of v) m += x;
@@ -241,7 +290,7 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   // --- layout ----------------------------------------------------------------
-  const VI = { x: 66, y: 96, w: 400, h: 452 };
+  const VI = { x: 86, y: 96, w: 390, h: 452 };
   const PL = { x: 566, y: 96, w: 384, h: 300 };
   const SUM = { x: 566, y: 456, w: 384 };
 
@@ -252,7 +301,7 @@ import Readout from '../../../components/sim/Readout.astro';
     const shown = Math.min(state.depth + 1, 15);
     const pitch = VI.h / shown;
     const mid = VI.x + VI.w / 2;
-    const half = VI.w / 2 - 30;
+    const half = VI.w / 2 - 75;
     ctx.strokeStyle = ink(0.1);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -260,8 +309,10 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.lineTo(mid, VI.y + VI.h);
     ctx.stroke();
 
+    const front = frontOf();
     for (let k = 0; k < shown; k++) {
       const l = Math.round((k * state.depth) / (shown - 1));
+      if (l > front + 1e-9) continue;
       const v = pass.sample[l];
       const y = VI.y + (k + 0.5) * pitch;
       const BINS = 41;
@@ -272,17 +323,19 @@ import Readout from '../../../components/sim/Readout.astro';
         if (t < 0 || t > 1) { over++; continue; }
         hist[Math.min(BINS - 1, Math.floor(t * BINS))]++;
       }
-      let mx = 1;
-      for (const c of hist) mx = Math.max(mx, c);
+      // ReLU parks half of everything on exactly zero, and that one spike would
+      // flatten the rest of the shape, so the scale comes from a high quantile
+      const sorted = Array.from(hist).sort((p, q) => p - q);
+      const mx = Math.max(1, sorted[Math.floor(BINS * 0.88)]);
       const amp = Math.min(pitch * 0.42, 15);
       ctx.beginPath();
       for (let i = 0; i < BINS; i++) {
         const x = mid - half + ((i + 0.5) / BINS) * half * 2;
-        ctx.lineTo(x, y - (hist[i] / mx) * amp);
+        ctx.lineTo(x, y - Math.min(1, hist[i] / mx) * amp);
       }
       for (let i = BINS - 1; i >= 0; i--) {
         const x = mid - half + ((i + 0.5) / BINS) * half * 2;
-        ctx.lineTo(x, y + (hist[i] / mx) * amp);
+        ctx.lineTo(x, y + Math.min(1, hist[i] / mx) * amp);
       }
       ctx.closePath();
       const dead = pass.fwd[l] < 1e-6;
@@ -294,8 +347,8 @@ import Readout from '../../../components/sim/Readout.astro';
       ctx.stroke();
       ctx.globalAlpha = 1;
       label(l === 0 ? 'input' : `layer ${l}`, VI.x - 8, y + 4, 0.35, 'right', 11);
-      if (over > v.length * 0.02)
-        label(`${((over / v.length) * 100).toFixed(0)}% off the scale`, VI.x + VI.w - 6, y + 4, 0.7, 'right', 11, BAD);
+      if (over > v.length * 0.04)
+        label(`${((over / v.length) * 100).toFixed(0)}% out`, VI.x + VI.w - 6, y + 4, 0.7, 'right', 11, BAD);
       else if (dead) label('collapsed', VI.x + VI.w - 6, y + 4, 0.7, 'right', 11, BAD);
     }
     for (const t of [-3, 0, 3]) label(String(t), mid + (t / 3) * half, VI.y + VI.h + 18, 0.3, 'center', 11);
@@ -325,22 +378,35 @@ import Readout from '../../../components/sim/Readout.astro';
       ctx.stroke();
       label(e === 0 ? '1' : `1e${e}`, PL.x - 8, y + 4, 0.3, 'right', 11);
     }
-    const line = (vals: number[], colour: string, width: number) => {
+    const line = (vals: number[], colour: string, width: number, from = 0, to = vals.length - 1, dot = true) => {
+      const a = Math.max(0, Math.ceil(from)), b = Math.min(vals.length - 1, Math.floor(to));
+      if (b <= a) return;
       ctx.strokeStyle = colour;
       ctx.lineWidth = width;
       ctx.beginPath();
-      vals.forEach((v, l) => (l ? ctx.lineTo(px(l), py(v)) : ctx.moveTo(px(l), py(v))));
+      for (let l = a; l <= b; l++) (l > a ? ctx.lineTo : ctx.moveTo).call(ctx, px(l), py(vals[l]));
       ctx.stroke();
-      const last = vals[vals.length - 1];
+      if (!dot) return;
       ctx.fillStyle = colour;
       ctx.beginPath();
-      ctx.arc(px(vals.length - 1), py(last), 4, 0, Math.PI * 2);
+      ctx.arc(px(b), py(vals[b]), 4, 0, Math.PI * 2);
       ctx.fill();
     };
-    line(pass.bwd, BWD, 2);
-    line(pass.fwd, FWD, 2.6);
+
+    // the three schemes you did not pick, drawn from the variance recursion
+    const GHOST: Record<string, string> = { he: 'He', xavier: 'Xavier', small: '0.01', unit: 'N(0,1)' };
+    for (const k of Object.keys(GHOST)) {
+      if (k === state.scheme) continue;
+      const c = scaleCurve(k, false);
+      line(c, ink(0.16), 1.4, 0, c.length - 1, false);
+      const end = c[c.length - 1];
+      label(GHOST[k], px(state.depth) - 6, py(end) + (end > 1 ? 14 : -6), 0.28, 'right', 10.5);
+    }
+
+    line(pass.bwd, BWD, 2, backOf(), state.depth);
+    line(pass.fwd, FWD, 2.6, 0, frontOf());
     label('forward', PL.x + 8, py(pass.fwd[1] ?? 1) - 10, 0.9, 'left', 11.5, FWD);
-    label('backward', PL.x + 8, py(pass.bwd[1] ?? 1) + 18, 0.9, 'left', 11.5, BWD);
+    if (backOf() < state.depth) label('backward', PL.x + 8, py(pass.bwd[1] ?? 1) + 18, 0.9, 'left', 11.5, BWD);
     label('kept', PL.x + PL.w + 6, py(1) + 4, 0.35, 'left', 11);
     label('layer', PL.x + PL.w, PL.y + PL.h + 18, 0.3, 'right', 11);
   }
@@ -363,6 +429,19 @@ import Readout from '../../../components/sim/Readout.astro';
       11.5
     );
     label(`measured at the last layer: ${fmt(last)}`, SUM.x, SUM.y + 88, 0.3, 'left', 11);
+    const n = survives();
+    label(
+      n === Infinity ? 'it would survive any depth' : `it breaks down after about ${n} layers`,
+      SUM.x, SUM.y + 108, 0.4, 'left', 11.5, n !== Infinity && n <= state.depth ? BAD : undefined
+    );
+  }
+
+  /** How many layers this growth can take before the scale leaves a million either way. */
+  function survives() {
+    const g = growth();
+    if (!(g > 0) || !Number.isFinite(g)) return 0;
+    const r = Math.abs(Math.log(g));
+    return r < 1e-4 ? Infinity : Math.max(1, Math.round(Math.log(1e6) / r));
   }
 
   /** The geometric mean of the per-layer ratio, which is what depth compounds. */
@@ -408,6 +487,7 @@ import Readout from '../../../components/sim/Readout.astro';
       'r-first': fmt(pass.fwd[1] ?? 0),
       'r-last': fmt(last),
       'r-grad': fmt(gradFirst),
+      'r-survive': survives() === Infinity ? 'any' : String(survives()),
     });
     const dead = last < 1e-6, blown = !Number.isFinite(last) || last > 1e6;
     setResult({
@@ -429,6 +509,20 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   }
 
+  let lastTs = 0;
+  function tick(ts: number) {
+    if (anim.on) {
+      const dt = lastTs ? (ts - lastTs) / 1000 : 0;
+      anim.t += dt / (anim.t <= 1 ? 1.1 : 0.9);
+      if (anim.t >= 2) { anim.t = 0; anim.on = false; }
+      draw();
+    }
+    lastTs = ts;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  el('sweep').addEventListener('click', () => { anim.on = true; anim.t = 0; draw(); });
   segmented('scheme', (s) => { state.scheme = s; run(); });
   segmented('act', (a) => { state.act = a; run(); });
   slider('scale', (v) => { state.scale = v / 100; run(); }, (v) => `×${(v / 100).toFixed(2)}`);
