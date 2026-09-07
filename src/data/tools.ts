@@ -57,6 +57,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'curvature',
+        title: 'Second Derivatives & Curvature',
+        description:
+          'Join the two points either side of you with a straight line. The curve misses the middle of it, and that gap is the second derivative. Halve the spacing and the gap falls to a quarter.',
+        href: '/simulations/calculus/curvature',
+        status: 'live',
+      },
+      {
         slug: 'integration-by-parts',
         title: 'Integration by Parts',
         description:
@@ -102,6 +110,14 @@ export const AREAS: Area[] = [
         description:
           'Drag a tiny probe through a 3D density cloud. An arrow shows the direction of steepest increase, with the gradient magnitude alongside.',
         href: '/simulations/calculus/scalar-fields',
+        status: 'live',
+      },
+      {
+        slug: 'hessian',
+        title: 'The Hessian',
+        description:
+          'A surface bends by a different amount in every direction, and four numbers hold all of them. Its eigenvectors are the sharpest and gentlest directions, and their signs decide bowl, dome or saddle.',
+        href: '/simulations/calculus/hessian',
         status: 'live',
       },
       {

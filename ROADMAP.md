@@ -56,6 +56,34 @@ naive two-pass version needs the union-find at all.
 
 ---
 
+## Finite Differences
+
+**Area:** calculus · slug `finite-differences` · follows
+[Second Derivatives & Curvature](src/pages/simulations/calculus/curvature.astro)
+
+The derivative you can actually compute, and the two ways it goes wrong.
+
+**Canvas.** A curve with the point of interest and its neighbours at distance h,
+showing the forward, backward and central slopes as three lines through the
+point against the true tangent. Beside it, the error of each against h on a
+log-log plot, where the slope of the line *is* the order of the method.
+
+**Controls.** The curve, h on a log slider spanning ten decades, which
+differences to draw, and a switch between single and double precision.
+
+**The moment.** The U. Shrink h and the error falls along a straight line, one
+for one on the forward difference and two for one on the central one, and then
+at some point it stops falling and climbs again. Truncation error is going down
+while rounding error is coming up, and the best h is where they cross, nowhere
+near zero. Every naive numerical derivative sits somewhere on that U, and the
+page should let you find its bottom by hand.
+
+**Notes.** The second-derivative stencil belongs here too, since it divides by h
+squared and therefore hits its floor much sooner, which is worth seeing next to
+the first.
+
+---
+
 ## Variational Autoencoder
 
 **Area:** deep learning · slug `vae` · sits beside

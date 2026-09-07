@@ -1,0 +1,474 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Second Derivatives & Curvature"
+  description="Take two points either side of where you are and join them with a straight line. The curve does not pass through the middle of that line: it sags below it, or bulges above it, and that gap is the second derivative. Shrink the gap between the two points and the gap to the line falls four times as fast."
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="cv"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A curve with a point on it, its two neighbours joined by a chord, the gap between the chord's middle and the curve, and the circle that fits the curve there."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the chord, and how far the curve misses its middle', color: '#f59e0b' },
+          { label: 'the circle that fits here', color: '#a78bfa' },
+          { label: 'the tangent', color: '#5eead4' },
+        ]}
+        hint="Drag along the curve to move the point · run to walk it across"
+      />
+      <Result label="Second derivative" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="fn"
+        label="Curve"
+        attr="f"
+        options={[
+          { value: 'parabola', label: 'Parabola' },
+          { value: 'cubic', label: 'Cubic' },
+          { value: 'wave', label: 'Wave' },
+          { value: 'bump', label: 'Bump' },
+        ]}
+      />
+      <Slider id="x" label="Where you are" min={-230} max={230} value={-90} display="−0.90" />
+      <Slider id="h" label="How far the neighbours sit" min={4} max={110} value={70} display="0.70" hint={['almost touching', 'far apart']} />
+      <Checks
+        items={[
+          { id: 'circ', label: 'The circle that fits the curve here', checked: true },
+          { id: 'tay', label: 'The parabola that matches to second order' },
+        ]}
+      />
+      <Transport step />
+      <Readout
+        rows={[
+          { id: 'r-d2', label: "f′′ from the formula" },
+          { id: 'r-fd', label: "f′′ from the three heights" },
+          { id: 'r-sag', label: 'the chord clears it by' },
+          { id: 'r-k', label: 'curvature κ' },
+          { id: 'r-r', label: 'radius of the fitting circle' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The three dots on the right are the curve's height here and at its two
+      neighbours. Join the outer two and the middle one does not sit on that
+      line. The gap is the whole of the second derivative: divide it by half of
+      h squared and you have f′′ itself. The two numbers in the panel are that
+      estimate and the exact value, and they close on each other as h shrinks.
+    </li>
+    <li>
+      Halve <b>how far the neighbours sit</b> and watch the gap fall to a
+      quarter, not a half. That is why the formula divides by h squared. A first
+      derivative is a difference over h; a second derivative is a difference of
+      differences, and it needs h twice.
+    </li>
+    <li>
+      Move to a place where the curve bends the other way. The gap changes side,
+      the number changes sign, and the fitting circle jumps from one side of the
+      curve to the other. On the <b>cubic</b>, go to the middle: the bending
+      stops, f'' passes through zero, and the circle grows without bound. A
+      straight line is a circle of infinite radius.
+    </li>
+    <li>
+      Now watch the two curves in the bottom right. Where the curve is level
+      they agree exactly. Where it is steep the curvature κ falls well below
+      f'', because f'' measures sag against a horizontal ruler while κ measures
+      the actual turning of the curve, and a steep piece of curve covers more
+      length for the same run of x.
+    </li>
+    <li>
+      Tick <b>the parabola that matches to second order</b>. It is the same
+      arithmetic seen forwards: the curve's height, its slope, and its bending
+      are the only three things that parabola is told, and near the point it is
+      indistinguishable from the curve. That is the second-order
+      <a href="/simulations/calculus/taylor-series">Taylor series</a>, and the
+      circle is the same statement in geometry.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+
+  const SAG = '#f59e0b';
+  const CIRC = '#a78bfa';
+  const TAN = '#5eead4';
+  const KAP = '#60a5fa';
+
+  type Fn = { f: (x: number) => number; d1: (x: number) => number; d2: (x: number) => number; tex: string };
+  const FNS: Record<string, Fn> = {
+    parabola: { f: (x) => 0.45 * x * x - 1, d1: (x) => 0.9 * x, d2: () => 0.9, tex: '0.45x^2 - 1' },
+    cubic: { f: (x) => 0.25 * x ** 3 - 0.9 * x, d1: (x) => 0.75 * x * x - 0.9, d2: (x) => 1.5 * x, tex: '0.25x^3 - 0.9x' },
+    wave: { f: (x) => 1.2 * Math.sin(1.3 * x), d1: (x) => 1.56 * Math.cos(1.3 * x), d2: (x) => -2.028 * Math.sin(1.3 * x), tex: '1.2\\sin 1.3x' },
+    bump: {
+      f: (x) => 1.8 * Math.exp(-1.2 * x * x) - 0.6,
+      d1: (x) => -4.32 * x * Math.exp(-1.2 * x * x),
+      d2: (x) => (10.368 * x * x - 4.32) * Math.exp(-1.2 * x * x),
+      tex: '1.8e^{-1.2x^2} - 0.6',
+    },
+  };
+
+  const state = { fn: 'parabola', x: -0.9, h: 0.7, circ: true, tay: false, running: false, dir: 1 };
+
+  const canvas = el('cv') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- layout ----------------------------------------------------------------
+  // The main panel is drawn at equal scale in x and y, so the fitting circle is
+  // a circle and not an ellipse.
+  const CUR = { x: 44, y: 104, w: 596, h: 384 };
+  const TRI = { x: 696, y: 148, w: 260, h: 172 };
+  const STR = { x: 696, y: 404, w: 260, h: 122 };
+  const XR = 2.5;                       // x runs from -XR to XR
+  const PPU = CUR.w / (2 * XR);         // pixels per unit, both axes
+  const px = (x: number) => CUR.x + CUR.w / 2 + x * PPU;
+  const py = (y: number) => CUR.y + CUR.h / 2 - y * PPU;
+  const toX = (sx: number) => (sx - CUR.x - CUR.w / 2) / PPU;
+
+  const F = () => FNS[state.fn];
+  const kappa = (x: number) => F().d2(x) / Math.pow(1 + F().d1(x) ** 2, 1.5);
+
+  function panel(b: { x: number; y: number; w: number; h: number }) {
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, b.x, b.y, b.w, b.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    roundRect(ctx, b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, 10);
+    ctx.stroke();
+  }
+
+  function curvePanel() {
+    const f = F();
+    const x0 = state.x, h = state.h;
+    label('the curve, and where you are standing on it', CUR.x, CUR.y - 34, 0.55, 'left', 13);
+    label('everything here is drawn at the same scale both ways', CUR.x, CUR.y - 16, 0.32, 'left', 11);
+    panel(CUR);
+    ctx.save();
+    roundRect(ctx, CUR.x, CUR.y, CUR.w, CUR.h, 10);
+    ctx.clip();
+
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(CUR.x, py(0));
+    ctx.lineTo(CUR.x + CUR.w, py(0));
+    ctx.moveTo(px(0), CUR.y);
+    ctx.lineTo(px(0), CUR.y + CUR.h);
+    ctx.stroke();
+
+    // the circle that fits, drawn before the curve so the curve sits on top
+    const k = kappa(x0);
+    if (state.circ && Math.abs(k) > 1e-4) {
+      const r = 1 / Math.abs(k);
+      const n = 1 / Math.sqrt(1 + f.d1(x0) ** 2);
+      const cx = x0 + (-f.d1(x0) * n) / k;
+      const cy = f.f(x0) + n / k;
+      ctx.strokeStyle = CIRC;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(px(cx), py(cy), r * PPU, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = `${CIRC}66`;
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(px(cx), py(cy));
+      ctx.lineTo(px(x0), py(f.f(x0)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = CIRC;
+      ctx.beginPath();
+      ctx.arc(px(cx), py(cy), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // the parabola that knows the height, the slope and the bending
+    if (state.tay) {
+      ctx.strokeStyle = `${TAN}88`;
+      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= 200; i++) {
+        const x = -XR + (i / 200) * 2 * XR;
+        const d = x - x0;
+        const y = f.f(x0) + f.d1(x0) * d + 0.5 * f.d2(x0) * d * d;
+        i ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y));
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // the tangent
+    ctx.strokeStyle = TAN;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(px(x0 - 1.4), py(f.f(x0) - 1.4 * f.d1(x0)));
+    ctx.lineTo(px(x0 + 1.4), py(f.f(x0) + 1.4 * f.d1(x0)));
+    ctx.stroke();
+
+    // the curve
+    ctx.strokeStyle = ink(0.92);
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let i = 0; i <= 400; i++) {
+      const x = -XR + (i / 400) * 2 * XR;
+      i ? ctx.lineTo(px(x), py(f.f(x))) : ctx.moveTo(px(x), py(f.f(x)));
+    }
+    ctx.stroke();
+
+    // the chord, and the gap between its middle and the curve
+    const yl = f.f(x0 - h), yr = f.f(x0 + h), mid = (yl + yr) / 2;
+    ctx.strokeStyle = SAG;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(px(x0 - h), py(yl));
+    ctx.lineTo(px(x0 + h), py(yr));
+    ctx.stroke();
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(px(x0), py(mid));
+    ctx.lineTo(px(x0), py(f.f(x0)));
+    ctx.stroke();
+    for (const [x, y, r] of [[x0 - h, yl, 4], [x0 + h, yr, 4], [x0, mid, 3.5]] as [number, number, number][]) {
+      ctx.fillStyle = SAG;
+      ctx.beginPath();
+      ctx.arc(px(x), py(y), r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = ink(0.95);
+    ctx.strokeStyle = inv(0.8);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px(x0), py(f.f(x0)), 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** The formula itself: three heights, and the middle one missing the line. */
+  function three() {
+    const f = F(), x0 = state.x, h = state.h;
+    const yl = f.f(x0 - h), y0 = f.f(x0), yr = f.f(x0 + h);
+    const mid = (yl + yr) / 2;
+    label('the three heights', TRI.x, TRI.y - 34, 0.55, 'left', 13);
+    label('the middle one misses the line', TRI.x, TRI.y - 16, 0.32, 'left', 11);
+    panel(TRI);
+    const lo = Math.min(yl, y0, yr), hi = Math.max(yl, y0, yr);
+    const pad = Math.max(1e-6, (hi - lo) * 0.35);
+    const gy = (v: number) => TRI.y + TRI.h - 22 - ((v - lo + pad) / (hi - lo + 2 * pad)) * (TRI.h - 44);
+    const gx = [TRI.x + 40, TRI.x + TRI.w / 2, TRI.x + TRI.w - 40];
+    ctx.strokeStyle = SAG;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(gx[0], gy(yl));
+    ctx.lineTo(gx[2], gy(yr));
+    ctx.stroke();
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(gx[1], gy(mid));
+    ctx.lineTo(gx[1], gy(y0));
+    ctx.stroke();
+    const pts: [number, number, string][] = [
+      [gx[0], gy(yl), SAG], [gx[2], gy(yr), SAG], [gx[1], gy(mid), SAG],
+    ];
+    for (const [x, y, c] of pts) {
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = ink(0.95);
+    ctx.beginPath();
+    ctx.arc(gx[1], gy(y0), 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    label('x − h', gx[0], TRI.y + TRI.h - 8, 0.32, 'center', 11);
+    label('x', gx[1], TRI.y + TRI.h - 8, 0.32, 'center', 11);
+    label('x + h', gx[2], TRI.y + TRI.h - 8, 0.32, 'center', 11);
+    const gap = mid - y0;
+    label(
+      `the curve is ${gap >= 0 ? 'below' : 'above'} the line by ${Math.abs(gap).toFixed(4)}`,
+      TRI.x + TRI.w / 2, TRI.y + TRI.h + 22, 0.7, 'center', 12, SAG
+    );
+  }
+
+  /** Where the two quantities agree, and where they part company. */
+  function strip() {
+    const f = F();
+    label("f′′ and κ along the curve", STR.x, STR.y - 34, 0.55, 'left', 13);
+    label('the same where it is level, not where it is steep', STR.x, STR.y - 16, 0.32, 'left', 11);
+    panel(STR);
+    let mx = 1e-6;
+    for (let i = 0; i <= 200; i++) {
+      const x = -XR + (i / 200) * 2 * XR;
+      mx = Math.max(mx, Math.abs(f.d2(x)), Math.abs(kappa(x)));
+    }
+    const sx2 = (x: number) => STR.x + ((x + XR) / (2 * XR)) * STR.w;
+    const sy2 = (v: number) => STR.y + STR.h / 2 - (v / (mx * 1.15)) * (STR.h / 2 - 6);
+    ctx.strokeStyle = ink(0.16);
+    ctx.beginPath();
+    ctx.moveTo(STR.x + 4, sy2(0));
+    ctx.lineTo(STR.x + STR.w - 4, sy2(0));
+    ctx.stroke();
+    const line = (g: (x: number) => number, colour: string, width: number) => {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let i = 0; i <= 200; i++) {
+        const x = -XR + (i / 200) * 2 * XR;
+        i ? ctx.lineTo(sx2(x), sy2(g(x))) : ctx.moveTo(sx2(x), sy2(g(x)));
+      }
+      ctx.stroke();
+    };
+    line((x) => f.d2(x), SAG, 2.2);
+    line((x) => kappa(x), KAP, 2);
+    ctx.strokeStyle = ink(0.5);
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx2(state.x), STR.y + 4);
+    ctx.lineTo(sx2(state.x), STR.y + STR.h - 4);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label("f′′", STR.x + 8, STR.y + 18, 0.85, 'left', 11.5, SAG);
+    label('κ', STR.x + 52, STR.y + 18, 0.85, 'left', 11.5, KAP);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    curvePanel();
+    three();
+    strip();
+
+    const f = F(), x0 = state.x, h = state.h;
+    const exact = f.d2(x0);
+    const fd = (f.f(x0 - h) - 2 * f.f(x0) + f.f(x0 + h)) / (h * h);
+    // the chord's middle minus the curve, which is exactly f''h²/2 in the limit
+    const gap = (f.f(x0 - h) + f.f(x0 + h)) / 2 - f.f(x0);
+    const k = kappa(x0);
+    const r = Math.abs(k) > 1e-4 ? 1 / Math.abs(k) : Infinity;
+    const n2 = (v: number) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4);
+    setEq({
+      rule: [
+        ["f'' \\approx \\dfrac{f(x-h) - 2f(x) + f(x+h)}{h^2}", SAG],
+        '\\qquad',
+        ["\\kappa = f''/(1+f'^2)^{3/2}", KAP],
+      ],
+      live: [
+        [`f'' = ${n2(exact)}`, SAG],
+        `\\quad h = ${h.toFixed(2)}`,
+        [`\\quad \\kappa = ${n2(k)}`, KAP],
+        [`\\quad R = ${Number.isFinite(r) ? r.toFixed(2) : '\\infty'}`, CIRC],
+      ],
+    });
+    setRows({
+      'r-d2': n2(exact),
+      'r-fd': n2(fd),
+      'r-sag': n2(gap),
+      'r-k': n2(k),
+      'r-r': Number.isFinite(r) ? r.toFixed(3) : '∞',
+    });
+    setResult({
+      value: n2(exact),
+      colour: Math.abs(exact) < 1e-3 ? undefined : exact > 0 ? SAG : KAP,
+      status: `the chord's middle clears the curve by ${n2(gap)}, which is f''h²/2 = ${n2((exact * h * h) / 2)} · the circle that fits has radius ${Number.isFinite(r) ? r.toFixed(2) : 'infinity'}`,
+      note:
+        Math.abs(exact) < 1e-3
+          ? 'The bending has stopped. The chord passes straight through the curve, the three heights lie on one line, and the circle that fits has become a straight line of infinite radius.'
+          : Math.abs(f.d1(x0)) > 1.2
+            ? "The curve is steep here, so κ sits well below f′′. The second derivative measures sag against a horizontal ruler, while curvature measures how sharply the curve actually turns, and a steep piece covers more length for the same run of x."
+            : exact > 0
+              ? 'The curve holds water here. It sits below the chord, the middle height is under the average of its neighbours, and the fitting circle is above the curve.'
+              : 'The curve sheds water here. It bulges above the chord, the middle height is over the average of its neighbours, and the fitting circle is below the curve.',
+    });
+  }
+
+  // --- interaction -----------------------------------------------------------
+  let drag = false;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const setX = (v: number) => {
+    state.x = Math.max(-2.3, Math.min(2.3, v));
+    setXSlider(Math.round(state.x * 100));
+    draw();
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = local(e);
+    if (p.x < CUR.x || p.x > CUR.x + CUR.w || p.y < CUR.y || p.y > CUR.y + CUR.h) return;
+    drag = true;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    setX(toX(p.x));
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = local(e);
+    const over = p.x >= CUR.x && p.x <= CUR.x + CUR.w && p.y >= CUR.y && p.y <= CUR.y + CUR.h;
+    canvas.style.cursor = drag || over ? 'ew-resize' : 'default';
+    if (drag) setX(toX(p.x));
+  });
+  const drop = () => { drag = false; };
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  let last = 0, acc = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      while (acc >= 0.016) {
+        acc -= 0.016;
+        let v = state.x + state.dir * 0.016 * 1.1;
+        if (v > 2.3) { v = 2.3; state.dir = -1; }
+        if (v < -2.3) { v = -2.3; state.dir = 1; }
+        setX(v);
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  const setXSlider = slider('x', (v) => { state.x = v / 100; draw(); }, (v) => (v / 100).toFixed(2).replace('-', '−'));
+  slider('h', (v) => { state.h = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  segmented('fn', (f) => { state.fn = f; draw(); });
+  check('circ', (on) => { state.circ = on; draw(); });
+  check('tay', (on) => { state.tay = on; draw(); });
+  transport({
+    onRun: (running) => (state.running = running),
+    onStep: () => setX(state.x + 0.1),
+    onReset: () => { state.dir = 1; setX(-0.9); },
+  });
+
+  draw();
+  requestAnimationFrame(loop);
+</script>
