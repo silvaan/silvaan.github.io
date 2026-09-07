@@ -1,0 +1,432 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="computer-vision"
+  title="Shape from Shading"
+  description="A photograph is flat, yet you see a surface in it. All the eye has is brightness, and brightness is decided by how each patch leans towards the light. Turn that around and the shape can be read back out, provided you guess the light right."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="sfs"
+          width="1000"
+          height="560"
+          role="img"
+          aria-label="A shaded surface, the direction of the light, the true height along one line and the height recovered from the brightness alone."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the line you are reading', color: '#f59e0b' },
+          { label: 'the true surface', color: '#5eead4' },
+          { label: 'what the shading implies', color: '#a78bfa' },
+        ]}
+        hint="Move the mouse over the picture to read a different line · the line always follows the light"
+      />
+      <Result label="Agreement" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="shape"
+        label="Surface"
+        attr="s"
+        options={[
+          { value: 'bumps', label: 'Bumps' },
+          { value: 'craters', label: 'Craters' },
+          { value: 'dome', label: 'Dome' },
+          { value: 'ripples', label: 'Ripples' },
+        ]}
+      />
+      <Slider id="az" label="Light direction" min={0} max={355} step={5} value={135} display="135°" />
+      <Slider id="ev" label="Light height" min={5} max={85} step={5} value={35} display="35°" hint={['grazing', 'overhead']} />
+      <Slider id="rel" label="Relief" min={20} max={200} step={5} value={100} display="1.00×" />
+      <Checks items={[{ id: 'flip', label: 'Assume the light is on the other side' }]} />
+      <Readout
+        rows={[
+          { id: 'r-light', label: 'light vector' },
+          { id: 'r-flat', label: 'its sideways part' },
+          { id: 'r-range', label: 'brightness on this line' },
+          { id: 'r-corr', label: 'agreement with the truth' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Nothing in the picture is a shape. Every pixel is one number, the cosine of
+      the angle between the light and the little patch of surface under it, and
+      the shape you see is something you are supplying.
+    </li>
+    <li>
+      Tick <b>assume the light is on the other side</b>. The picture does not
+      change at all, and the surface read out of it turns inside out: every bump
+      becomes a dent, and the agreement flips from near <b>+1</b> to near
+      <b>−1</b>. One image, two surfaces, and the brightness cannot tell them
+      apart.
+    </li>
+    <li>
+      This is why we assume light comes from above. Switch between <b>Bumps</b>
+      and <b>Craters</b> and turn the light right around: at some directions your
+      eye quietly refuses the true answer and shows you the other one.
+    </li>
+    <li>
+      The reading line always points along the light, because that is the only
+      direction the brightness says anything about. Across the light the surface
+      can rise and fall as it likes without changing a single pixel.
+    </li>
+    <li>
+      Push the <b>light height</b> towards overhead. The sideways part of the
+      light shrinks, the picture flattens towards one even grey, and past a point
+      there is nothing left in it to invert. All the shape information lives in
+      grazing light.
+    </li>
+    <li>
+      Change the <b>relief</b>. The recovered profile keeps its shape but not its
+      size, because a shallow surface under a low light and a steep one under a
+      high light make the very same picture. Height is never recoverable from one
+      photograph.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect, arrow } from '../../../lib/draw';
+  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+
+  const NOW = '#f59e0b';
+  const TRUE = '#5eead4';
+  const GUESS = '#a78bfa';
+  const G = 128;   // the surface, in samples
+  const S = 160;   // samples taken along the reading line
+
+  const state = { shape: 'bumps', az: 135, ev: 35, relief: 1, flip: false, cx: G / 2, cy: G / 2 };
+
+  const canvas = el('sfs') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- the surface -----------------------------------------------------------
+  let Z = new Float32Array(G * G);
+
+  function build(name: string) {
+    const z = new Float32Array(G * G);
+    const blob = (cx: number, cy: number, r: number, a: number) => {
+      for (let y = 0; y < G; y++)
+        for (let x = 0; x < G; x++) z[y * G + x] += a * Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (r * r));
+    };
+    if (name === 'dome') blob(G / 2, G / 2, G * 0.34, 1);
+    else if (name === 'ripples') {
+      for (let y = 0; y < G; y++)
+        for (let x = 0; x < G; x++) {
+          const r = Math.hypot(x - G / 2, y - G / 2) / G;
+          z[y * G + x] = Math.cos(r * 24) * Math.exp(-r * r * 6);
+        }
+    } else {
+      const s = name === 'craters' ? -1 : 1;
+      blob(G * 0.32, G * 0.34, G * 0.16, s);
+      blob(G * 0.7, G * 0.28, G * 0.12, s * 0.8);
+      blob(G * 0.5, G * 0.63, G * 0.2, s * 0.95);
+      blob(G * 0.22, G * 0.74, G * 0.11, s * 0.6);
+      blob(G * 0.79, G * 0.7, G * 0.14, s * 0.75);
+    }
+    let mx = 1e-6;
+    for (const v of z) mx = Math.max(mx, Math.abs(v));
+    for (let i = 0; i < z.length; i++) z[i] /= mx;
+    Z = z;
+  }
+
+  /** The light, in the picture's own axes: x to the right, y downwards. */
+  const lightFrom = (deg: number) => {
+    const a = (deg * Math.PI) / 180, e = (state.ev * Math.PI) / 180;
+    return [Math.cos(e) * Math.cos(a), -Math.cos(e) * Math.sin(a), Math.sin(e)];
+  };
+
+  // --- what a camera would see ----------------------------------------------
+  let shade = new Float32Array(G * G);
+  const cv = document.createElement('canvas');
+  cv.width = G;
+  cv.height = G;
+  const cvx = cv.getContext('2d')!;
+
+  const clamp = (v: number, n: number) => Math.max(0, Math.min(n - 1, v));
+  const zAt = (x: number, y: number) => Z[clamp(Math.round(y), G) * G + clamp(Math.round(x), G)];
+  const slope = () => state.relief * 10;
+  const zx = (x: number, y: number) => ((zAt(x + 1, y) - zAt(x - 1, y)) / 2) * slope();
+  const zy = (x: number, y: number) => ((zAt(x, y + 1) - zAt(x, y - 1)) / 2) * slope();
+
+  function render() {
+    const L = lightFrom(state.az);
+    const px = cvx.createImageData(G, G);
+    for (let y = 0; y < G; y++)
+      for (let x = 0; x < G; x++) {
+        const a = zx(x, y), b = zy(x, y);
+        const v = Math.max(0, (-a * L[0] - b * L[1] + L[2]) / Math.hypot(a, b, 1));
+        shade[y * G + x] = v;
+        const g = Math.round(255 * (0.02 + 0.98 * v));
+        const o = (y * G + x) * 4;
+        px.data[o] = px.data[o + 1] = px.data[o + 2] = g;
+        px.data[o + 3] = 255;
+      }
+    cvx.putImageData(px, 0, 0);
+  }
+
+  const bilinear = (f: Float32Array, x: number, y: number) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y), tx = x - x0, ty = y - y0;
+    const g = (xx: number, yy: number) => f[clamp(yy, G) * G + clamp(xx, G)];
+    return (
+      g(x0, y0) * (1 - tx) * (1 - ty) + g(x0 + 1, y0) * tx * (1 - ty) +
+      g(x0, y0 + 1) * (1 - tx) * ty + g(x0 + 1, y0 + 1) * tx * ty
+    );
+  };
+
+  /**
+   * Brightness only reports how the surface leans towards the light, so the one
+   * direction it says anything about is the light's own. Walking that way, the
+   * linearised shading I ≈ l_z − (l · ∇z) turns into a slope at every step, and
+   * the height is the running total of those slopes. Nothing else is needed but
+   * the direction of the light, which is exactly what cannot be checked.
+   */
+  function readLine(A: number[]) {
+    const h = Math.hypot(A[0], A[1]);
+    if (h < 0.12) return null;
+    const ux = A[0] / h, uy = A[1] / h;
+    // how far the line can run inside the picture before it leaves
+    let t0 = -1e9, t1 = 1e9;
+    for (const [p, d] of [[state.cx, ux], [state.cy, uy]] as [number, number][]) {
+      if (Math.abs(d) < 1e-9) continue;
+      const a = (0 - p) / d, b = (G - 1 - p) / d;
+      t0 = Math.max(t0, Math.min(a, b));
+      t1 = Math.min(t1, Math.max(a, b));
+    }
+    if (!(t1 > t0)) return null;
+    const step = (t1 - t0) / (S - 1);
+    const truth = new Float32Array(S), guess = new Float32Array(S), lit = new Float32Array(S);
+    let acc = 0;
+    for (let i = 0; i < S; i++) {
+      const t = t0 + i * step;
+      const x = state.cx + ux * t, y = state.cy + uy * t;
+      truth[i] = bilinear(Z, x, y) * slope();
+      lit[i] = bilinear(shade, x, y);
+      acc += (step * (A[2] - lit[i])) / h;
+      guess[i] = acc;
+    }
+    const centre = (f: Float32Array) => {
+      let m = 0;
+      for (const v of f) m += v;
+      m /= f.length;
+      for (let i = 0; i < f.length; i++) f[i] -= m;
+    };
+    centre(truth);
+    centre(guess);
+    return { truth, guess, lit, from: { x: state.cx + ux * t0, y: state.cy + uy * t0 }, to: { x: state.cx + ux * t1, y: state.cy + uy * t1 } };
+  }
+
+  const corr = (a: Float32Array, b: Float32Array) => {
+    let ab = 0, aa = 0, bb = 0;
+    for (let i = 0; i < a.length; i++) { ab += a[i] * b[i]; aa += a[i] * a[i]; bb += b[i] * b[i]; }
+    return aa && bb ? ab / Math.sqrt(aa * bb) : 0;
+  };
+
+  // --- layout ----------------------------------------------------------------
+  const IMG = { x: 40, y: 96, s: 300 };
+  const SUN = { x: 190, y: 456, r: 52 };
+  const PT = { x: 400, y: 116, w: 540, h: 134 };
+  const PR = { x: 400, y: 330, w: 540, h: 134 };
+  const sgn = (v: number) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+
+  function panel(x: number, y: number, w: number, h: number, r = 10) {
+    ctx.fillStyle = inv(0.55);
+    roundRect(ctx, x, y, w, h, r);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, r);
+    ctx.stroke();
+  }
+
+  function plot(box: { x: number; y: number; w: number; h: number }, data: Float32Array | null, colour: string, empty: string) {
+    panel(box.x, box.y, box.w, box.h);
+    const mid = box.y + box.h / 2;
+    ctx.strokeStyle = ink(0.12);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(box.x + 10, mid);
+    ctx.lineTo(box.x + box.w - 10, mid);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (!data) {
+      label(empty, box.x + box.w / 2, mid + 4, 0.35, 'center', 12);
+      return;
+    }
+    let mx = 1e-6;
+    for (const v of data) mx = Math.max(mx, Math.abs(v));
+    const px = (i: number) => box.x + 14 + (i / (data.length - 1)) * (box.w - 28);
+    const py = (v: number) => mid - (v / mx) * (box.h / 2 - 18);
+    ctx.beginPath();
+    ctx.moveTo(px(0), mid);
+    for (let i = 0; i < data.length; i++) ctx.lineTo(px(i), py(data[i]));
+    ctx.lineTo(px(data.length - 1), mid);
+    ctx.closePath();
+    ctx.fillStyle = colour + '22';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(data[0]));
+    for (let i = 1; i < data.length; i++) ctx.lineTo(px(i), py(data[i]));
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  /** Where the light is, and where you are choosing to believe it is. */
+  function sun(L: number[], A: number[]) {
+    const { x, y, r } = SUN;
+    ctx.fillStyle = inv(0.55);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const ray = (v: number[], colour: string, len: number, dot: number) => {
+      const h = Math.hypot(v[0], v[1]) || 1e-9;
+      const ex = x + (v[0] / h) * len, ey = y + (v[1] / h) * len;
+      ctx.strokeStyle = colour;
+      ctx.fillStyle = colour;
+      ctx.lineWidth = 2;
+      arrow(ctx, x, y, ex, ey, 7);
+      ctx.beginPath();
+      ctx.arc(ex, ey, dot, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    if (state.flip) ray(A, GUESS, r - 24, 3);
+    ray(L, NOW, r - 12, 4);
+    ctx.fillStyle = ink(0.45);
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    label(state.flip ? 'the light, and your guess' : 'where the light is', x, y + r + 22, 0.45, 'center', 12);
+    label(`${state.az}° round, ${state.ev}° up`, x, y + r + 38, 0.3, 'center', 11);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const L = lightFrom(state.az);
+    const A = lightFrom(state.flip ? (state.az + 180) % 360 : state.az);
+    const line = readLine(A);
+
+    label('what you see', IMG.x, IMG.y - 30, 0.55, 'left', 13);
+    label('brightness, and nothing else', IMG.x, IMG.y - 12, 0.32, 'left', 11);
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = inv(0.55);
+    roundRect(ctx, IMG.x, IMG.y, IMG.s, IMG.s, 12);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    roundRect(ctx, IMG.x, IMG.y, IMG.s, IMG.s, 12);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(cv, IMG.x, IMG.y, IMG.s, IMG.s);
+    if (line) {
+      const sx = (p: { x: number; y: number }) => IMG.x + ((p.x + 0.5) / G) * IMG.s;
+      const sy = (p: { x: number; y: number }) => IMG.y + ((p.y + 0.5) / G) * IMG.s;
+      ctx.strokeStyle = NOW;
+      ctx.fillStyle = NOW;
+      ctx.lineWidth = 2;
+      arrow(ctx, sx(line.from), sy(line.from), sx(line.to), sy(line.to), 8);
+      ctx.beginPath();
+      ctx.arc(IMG.x + ((state.cx + 0.5) / G) * IMG.s, IMG.y + ((state.cy + 0.5) / G) * IMG.s, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    roundRect(ctx, IMG.x + 0.5, IMG.y + 0.5, IMG.s - 1, IMG.s - 1, 12);
+    ctx.stroke();
+
+    sun(L, A);
+
+    label('the true surface along that line', PT.x, PT.y - 30, 0.55, 'left', 13);
+    label('what is really there', PT.x, PT.y - 12, 0.32, 'left', 11);
+    plot(PT, line?.truth ?? null, TRUE, 'nothing to read');
+
+    label('the surface the shading implies', PR.x, PR.y - 30, 0.55, 'left', 13);
+    label('read out of the brightness alone', PR.x, PR.y - 12, 0.32, 'left', 11);
+    plot(PR, line?.guess ?? null, GUESS, 'the light is overhead: the picture says nothing');
+
+    const c = line ? corr(line.truth, line.guess) : 0;
+    let lo = 1, hi = 0;
+    if (line) for (const v of line.lit) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const flat = Math.hypot(A[0], A[1]);
+
+    setEq({
+      rule: [['I = \\max(0,\\; \\hat n \\cdot \\ell)', NOW], '\\qquad', ['\\ell \\cdot \\nabla z \\approx \\ell_z - I', GUESS]],
+      live: [
+        [`\\ell = (${sgn(A[0])},\\, ${sgn(A[1])},\\, ${sgn(A[2])})`, GUESS],
+        line ? [`\\quad r = ${sgn(c)}`, c < 0 ? GUESS : TRUE] : '\\quad \\text{nothing to invert}',
+      ],
+    });
+    setRows({
+      'r-light': `${sgn(L[0])}, ${sgn(L[1])}, ${sgn(L[2])}`,
+      'r-flat': sgn(flat),
+      'r-range': line ? `${sgn(lo)} … ${sgn(hi)}` : '—',
+      'r-corr': line ? sgn(c) : '—',
+    });
+    setResult({
+      value: line ? sgn(c) : '—',
+      colour: !line ? undefined : c > 0.5 ? TRUE : c < -0.5 ? GUESS : NOW,
+      status: line
+        ? `light at ${state.az}°, ${state.ev}° up · assumed at ${state.flip ? (state.az + 180) % 360 : state.az}° · relief ${state.relief.toFixed(2)}×`
+        : `the light is ${state.ev}° up, so its sideways part is only ${sgn(flat)}`,
+      note: !line
+        ? 'Lit from almost straight above, every patch returns nearly the same brightness whichever way it leans. The picture is one flat grey and there is nothing in it to invert.'
+        : c < -0.5
+          ? 'The recovered surface is the true one turned inside out. Believe the light is on the wrong side and every bump reads as a dent, from a picture that never changed.'
+          : c > 0.5
+            ? 'Believe the light correctly and the shape comes back out of the brightness, though only its form and never its height.'
+            : 'Neither reading fits. The slopes here are steep enough that brightness is no longer close to linear in them, and the running total drifts away from the truth.',
+    });
+  }
+
+  const recompute = () => { build(state.shape); render(); draw(); };
+  const relight = () => { render(); draw(); };
+
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    const on = x >= IMG.x && x <= IMG.x + IMG.s && y >= IMG.y && y <= IMG.y + IMG.s;
+    canvas.style.cursor = on ? 'crosshair' : 'default';
+    if (!on) return;
+    state.cx = clamp(((x - IMG.x) / IMG.s) * G, G);
+    state.cy = clamp(((y - IMG.y) / IMG.s) * G, G);
+    draw();
+  });
+
+  segmented('shape', (s) => { state.shape = s; recompute(); });
+  slider('az', (v) => { state.az = v; relight(); }, (v) => `${v}°`);
+  slider('ev', (v) => { state.ev = v; relight(); }, (v) => `${v}°`);
+  slider('rel', (v) => { state.relief = v / 100; relight(); }, (v) => `${(v / 100).toFixed(2)}×`);
+  check('flip', (on) => { state.flip = on; draw(); });
+
+  recompute();
+</script>

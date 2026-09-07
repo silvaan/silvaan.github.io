@@ -1,0 +1,458 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="computer-vision"
+  title="Image Filters"
+  description="A filter is a small square of numbers. Slide it over a photograph, multiply and add, and the same handful of weights will blur it, sharpen it or leave nothing but its edges. Pick one, resize it, or drag the weights until it is yours."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="filt"
+          width="1000"
+          height="500"
+          role="img"
+          aria-label="A photograph, the kernel's weights in the middle, and the filtered photograph beside them."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'a positive weight', color: '#f87171' },
+          { label: 'a negative weight', color: '#60a5fa' },
+        ]}
+        hint="Drag a weight up or down to change it · the picture follows immediately"
+      />
+      <Result label="Filter" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg id="pic" label="Photo" attr="p" options={[{ value: 'astronaut', label: 'Astronaut' }, { value: 'cat', label: 'Cat' }, { value: 'coffee', label: 'Coffee' }]} />
+      <Seg id="mode" label="Channels" attr="c" options={[{ value: 'grey', label: 'Grayscale' }, { value: 'rgb', label: 'Colour' }]} />
+      <Seg id="size" label="Size" attr="n" options={[{ value: '3', label: '3 × 3' }, { value: '5', label: '5 × 5' }]} />
+      <Seg
+        id="kernel"
+        label="Filter"
+        attr="k"
+        active="gaussian"
+        options={[
+          { value: 'identity', label: 'Identity' },
+          { value: 'blur', label: 'Box blur' },
+          { value: 'gaussian', label: 'Gaussian' },
+          { value: 'sharpen', label: 'Sharpen' },
+          { value: 'outline', label: 'Outline' },
+          { value: 'sobelx', label: 'Sobel X' },
+          { value: 'sobely', label: 'Sobel Y' },
+          { value: 'emboss', label: 'Emboss' },
+        ]}
+      />
+      <Actions>
+        <button type="button" class="btn ghost" id="norm">Normalise</button>
+        <button type="button" class="btn ghost" id="zero">Zero</button>
+        <button type="button" class="btn ghost" id="rand">Random</button>
+      </Actions>
+      <Readout
+        rows={[
+          { id: 'r-sum', label: 'the weights add to' },
+          { id: 'r-size', label: 'multiplications a pixel' },
+          { id: 'r-range', label: 'output before clipping' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Every filter here is the same operation. Nine or twenty-five numbers sit on
+      top of a pixel and its neighbours, each pixel is multiplied by the number
+      above it, and the total becomes one pixel of the new picture. Only the
+      numbers change.
+    </li>
+    <li>
+      Weights that <b>add to one</b> leave the average brightness alone, which is
+      why the blurs look like the photograph and the sharpen still looks like a
+      face. Press <b>normalise</b> after dragging and the picture stops drifting
+      light or dark.
+    </li>
+    <li>
+      Weights that <b>add to zero</b> throw the picture away and keep only what
+      changes. Flat sky returns nothing, so <b>outline</b> and the two
+      <b>Sobels</b> leave a black field with the edges drawn on it.
+    </li>
+    <li>
+      <b>Sobel X</b> is left minus right and answers to vertical edges;
+      <b>Sobel Y</b> is the same numbers turned on their side. Neither knows what
+      an edge is. Subtracting one side from the other is the whole idea.
+    </li>
+    <li>
+      Go to <b>5 × 5</b>. A wider window reaches further, so the blurs are
+      smoother and the edges thicker, and every output pixel now costs
+      twenty-five multiplications instead of nine.
+    </li>
+    <li>
+      Press <b>random</b> a few times. Almost every random filter is noise, and
+      the useful ones are a vanishingly small corner of the space. A
+      convolutional network searches that corner by
+      <a href="/simulations/deep-learning/gradient-descent">gradient descent</a>
+      rather than by hand.
+    </li>
+    <li>
+      This page never asks where the window is allowed to sit. That question,
+      and the size of what comes out, is
+      <a href="/simulations/deep-learning/convolution-arithmetic">Convolution Arithmetic</a>.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, result, readout } from '../../../lib/panel';
+
+  const POS = '#f87171';
+  const NEG = '#60a5fa';
+  const FIELD = '#f59e0b';
+  const IMG = 160;
+
+  // --- the filters -----------------------------------------------------------
+  /** Pascal's triangle row of length n, the discrete Gaussian. */
+  function binom(n: number) {
+    const r = [1];
+    for (let i = 1; i < n; i++) r.push((r[i - 1] * (n - i)) / i);
+    return r;
+  }
+  const outer = (a: number[], b: number[]) => a.map((u) => b.map((v) => u * v));
+  const scale = (K: number[][], f: number) => K.map((r) => r.map((v) => v * f));
+
+  const NAMES: Record<string, string> = {
+    identity: 'identity', blur: 'box blur', gaussian: 'Gaussian', sharpen: 'sharpen',
+    outline: 'outline', sobelx: 'Sobel X', sobely: 'Sobel Y', emboss: 'emboss', custom: 'your own',
+  };
+  const NOTES: Record<string, string> = {
+    identity: 'Only the centre weight is anything but zero, so every pixel is copied straight through.',
+    blur: 'Every weight is the same, so each pixel becomes the plain average of its neighbourhood and fine detail is averaged away.',
+    gaussian: 'The weights fall off from the centre, so nearby pixels count for more than distant ones and the blur keeps its shape instead of smearing into a square.',
+    sharpen: 'Twice the pixel minus a blurred copy of it, which is the same as adding back whatever the blur destroyed.',
+    outline: 'The weights add to zero, so flat areas return nothing at all and only the places where brightness changes survive.',
+    sobelx: 'Left minus right, smoothed along the other direction. It answers to vertical edges and stays silent on horizontal ones.',
+    sobely: 'The same weights turned on their side, so now it is the horizontal edges that light up.',
+    emboss: 'One diagonal set against the other, which the eye reads as a surface lit from a single corner.',
+    custom: 'Your own weights. What they add to decides the brightness, and how they are arranged decides what survives.',
+  };
+
+  function preset(name: string, n: number): number[][] {
+    const c = (n - 1) / 2;
+    const Z = () => Array.from({ length: n }, () => new Array(n).fill(0));
+    if (name === 'identity') { const K = Z(); K[c][c] = 1; return K; }
+    if (name === 'blur') return Z().map((r) => r.map(() => 1 / (n * n)));
+    if (name === 'gaussian') {
+      const b = binom(n), s = b.reduce((a, v) => a + v, 0) ** 2;
+      return scale(outer(b, b), 1 / s);
+    }
+    if (name === 'sharpen') {
+      if (n === 3) return [[0, -1, 0], [-1, 5, -1], [0, -1, 0]];
+      const K = scale(preset('gaussian', n), -1);
+      K[c][c] += 2;
+      return K;
+    }
+    if (name === 'outline') {
+      if (n === 3) return [[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]];
+      return [
+        [0, 0, -1, 0, 0],
+        [0, -1, -2, -1, 0],
+        [-1, -2, 16, -2, -1],
+        [0, -1, -2, -1, 0],
+        [0, 0, -1, 0, 0],
+      ];
+    }
+    if (name === 'sobelx' || name === 'sobely') {
+      // the derivative row is the binomial of length n-1 convolved with [1, -1]
+      const b = binom(n - 1);
+      const d = Array.from({ length: n }, (_, i) => (b[i] ?? 0) - (b[i - 1] ?? 0));
+      const K = scale(outer(binom(n), d), n === 3 ? 1 : 1 / 4);
+      return name === 'sobelx' ? K : K[0].map((_, x) => K.map((r) => r[x]));
+    }
+    // emboss: a ramp across the diagonal, lifted so the weights add to one
+    const K = Z();
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) K[y][x] = (x - c + (y - c)) / c;
+    K[c][c] += 1;
+    return K;
+  }
+
+  const state = { pic: 'astronaut', mode: 'grey', size: 3, kernel: 'identity' };
+  let K = preset('gaussian', 3);
+
+  const canvas = el('filt') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- the photograph --------------------------------------------------------
+  let src: Float32Array[] = [];
+  let grey = new Float32Array(IMG * IMG);
+  let ready = false;
+
+  const buf = (): [HTMLCanvasElement, CanvasRenderingContext2D] => {
+    const c = document.createElement('canvas');
+    c.width = IMG;
+    c.height = IMG;
+    return [c, c.getContext('2d', { willReadFrequently: true })!];
+  };
+  const [srcCv, srcCx] = buf();
+  const [outCv, outCx] = buf();
+
+  /** The photograph as the filter sees it: colour, or the grey plane it reads. */
+  function paintSource() {
+    if (!ready) return;
+    const px = srcCx.createImageData(IMG, IMG);
+    for (let i = 0; i < IMG * IMG; i++) {
+      const o = i * 4;
+      for (let c = 0; c < 3; c++)
+        px.data[o + c] = Math.round(255 * (state.mode === 'grey' ? grey[i] : src[c][i]));
+      px.data[o + 3] = 255;
+    }
+    srcCx.putImageData(px, 0, 0);
+  }
+
+  function loadPhoto(name: string) {
+    ready = false;
+    draw();
+    const img = new Image();
+    img.onload = () => {
+      srcCx.drawImage(img, 0, 0, IMG, IMG);
+      const d = srcCx.getImageData(0, 0, IMG, IMG).data;
+      src = [new Float32Array(IMG * IMG), new Float32Array(IMG * IMG), new Float32Array(IMG * IMG)];
+      for (let i = 0; i < IMG * IMG; i++) {
+        src[0][i] = d[i * 4] / 255;
+        src[1][i] = d[i * 4 + 1] / 255;
+        src[2][i] = d[i * 4 + 2] / 255;
+        grey[i] = 0.299 * src[0][i] + 0.587 * src[1][i] + 0.114 * src[2][i];
+      }
+      ready = true;
+      paintSource();
+      apply();
+    };
+    img.src = `/img/${name}-160.png`;
+  }
+
+  // --- the filter ------------------------------------------------------------
+  let lo = 0, hi = 1;
+
+  /** The whole picture, filtered. Edges repeat the border pixel so nothing goes dark. */
+  function apply() {
+    if (!ready) return;
+    const n = state.size, r = (n - 1) / 2;
+    const px = outCx.createImageData(IMG, IMG);
+    const planes = state.mode === 'grey' ? [grey] : src;
+    lo = Infinity;
+    hi = -Infinity;
+    const acc = [0, 0, 0];
+    for (let y = 0; y < IMG; y++)
+      for (let x = 0; x < IMG; x++) {
+        acc[0] = acc[1] = acc[2] = 0;
+        for (let dy = 0; dy < n; dy++) {
+          const yy = Math.max(0, Math.min(IMG - 1, y + dy - r));
+          for (let dx = 0; dx < n; dx++) {
+            const w = K[dy][dx];
+            if (!w) continue;
+            const i = yy * IMG + Math.max(0, Math.min(IMG - 1, x + dx - r));
+            for (let c = 0; c < planes.length; c++) acc[c] += w * planes[c][i];
+          }
+        }
+        const o = (y * IMG + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const v = planes.length === 1 ? acc[0] : acc[c];
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+          px.data[o + c] = Math.round(255 * Math.max(0, Math.min(1, v)));
+        }
+        px.data[o + 3] = 255;
+      }
+    outCx.putImageData(px, 0, 0);
+    draw();
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const IN = { x: 40, y: 96, s: 340 };
+  const OUT = { x: 620, y: 96, s: 340 };
+  const MID = 500, MIDY = 262;
+
+  const cellSize = () => (state.size === 3 ? 52 : 36);
+  const gridTop = () => MIDY - (state.size * cellSize()) / 2;
+  const gridLeft = () => MID - (state.size * cellSize()) / 2;
+
+  /** Short enough to sit inside a cell: ".25", "1.5", "−3". */
+  const short = (v: number) => {
+    if (Math.abs(v) < 5e-3) return '0';
+    const a = Math.abs(v);
+    let s = a < 1 ? a.toFixed(2).replace(/0?$/, '') : a.toFixed(1).replace(/\.0$/, '');
+    if (a < 1) s = s.replace(/^0/, '');
+    return (v < 0 ? '−' : '') + s;
+  };
+  const sum = () => K.flat().reduce((a, v) => a + v, 0);
+
+  function board(x: number, y: number, s: number, cv: HTMLCanvasElement, on: boolean) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = inv(0.55);
+    roundRect(ctx, x, y, s, s, 12);
+    ctx.fill();
+    ctx.restore();
+    if (on) {
+      ctx.save();
+      roundRect(ctx, x, y, s, s, 12);
+      ctx.clip();
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(cv, x, y, s, s);
+      ctx.restore();
+    }
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, 12);
+    ctx.stroke();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    label('the photograph', IN.x, IN.y - 30, 0.55, 'left', 13);
+    label(ready ? `${IMG} × ${IMG}, ${state.mode === 'rgb' ? 'three channels' : 'one grey channel'}` : 'loading', IN.x, IN.y - 12, 0.32, 'left', 11);
+    board(IN.x, IN.y, IN.s, srcCv, ready);
+
+    label('filtered', OUT.x, OUT.y - 30, 0.55, 'left', 13);
+    label(`every pixel, ${NAMES[state.kernel]}`, OUT.x, OUT.y - 12, 0.32, 'left', 11);
+    board(OUT.x, OUT.y, OUT.s, outCv, ready);
+
+    // the weights, big enough to read and to drag
+    const n = state.size, cs = cellSize(), gx = gridLeft(), gy = gridTop();
+    label('the weights', MID, gy - 34, 0.55, 'center', 13);
+    label('drag one up or down', MID, gy - 16, 0.32, 'center', 11);
+    let mx = 1e-6;
+    for (const v of K.flat()) mx = Math.max(mx, Math.abs(v));
+    for (let y = 0; y < n; y++)
+      for (let x = 0; x < n; x++) {
+        const v = K[y][x], t = Math.abs(v) / mx;
+        const bx = gx + x * cs, by = gy + y * cs;
+        ctx.fillStyle = v === 0 ? ink(0.05) : v > 0 ? `rgba(248,113,113,${0.1 + 0.75 * t})` : `rgba(96,165,250,${0.1 + 0.75 * t})`;
+        roundRect(ctx, bx + 1.5, by + 1.5, cs - 3, cs - 3, 5);
+        ctx.fill();
+        const hot = t > 0.55;
+        label(short(v), bx + cs / 2, by + cs / 2 + (n === 3 ? 5 : 4), 1, 'center', n === 3 ? 15 : 11, hot ? '#0d0e12' : ink(0.8));
+      }
+    if (drag) {
+      ctx.strokeStyle = FIELD;
+      ctx.lineWidth = 2;
+      roundRect(ctx, gx + drag.x * cs + 0.5, gy + drag.y * cs + 0.5, cs - 1, cs - 1, 6);
+      ctx.stroke();
+    }
+    const s = sum();
+    label(`they add to ${short(s)}`, MID, gy + n * cs + 26, 0.45, 'center', 12, Math.abs(s - 1) < 1e-6 || Math.abs(s) < 1e-6 ? FIELD : undefined);
+    label(
+      Math.abs(s) < 1e-6 ? 'zero: only changes survive' : Math.abs(s - 1) < 1e-6 ? 'one: brightness is kept' : 'the picture will drift',
+      MID, gy + n * cs + 46, 0.3, 'center', 11
+    );
+
+    setEq({
+      rule: [['g[i,j] = \\sum_{u,v} k[u,v]\\; f[i+u,\\, j+v]', POS]],
+      live: [`${n} \\times ${n}`, [`\\quad \\textstyle\\sum k = ${short(s)}`, FIELD]],
+    });
+    setRows({
+      'r-sum': short(s),
+      'r-size': `${n * n}${state.mode === 'rgb' ? ' × 3' : ''}`,
+      'r-range': ready ? `${short(lo)} … ${short(hi)}` : '—',
+    });
+    setResult({
+      value: NAMES[state.kernel],
+      colour: POS,
+      status: `${n} × ${n} · weights add to ${short(s)} · ${state.mode === 'rgb' ? 'run down each colour channel' : 'one grey channel'}`,
+      note: NOTES[state.kernel],
+    });
+  }
+
+  // --- dragging a weight -----------------------------------------------------
+  let drag: { x: number; y: number; from: number; at: number } | null = null;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  function cellAt(p: { x: number; y: number }) {
+    const n = state.size, cs = cellSize(), gx = gridLeft(), gy = gridTop();
+    const x = Math.floor((p.x - gx) / cs), y = Math.floor((p.y - gy) / cs);
+    return x >= 0 && y >= 0 && x < n && y < n ? { x, y } : null;
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const c = cellAt(local(e));
+    if (!c) return;
+    drag = { ...c, from: K[c.y][c.x], at: e.clientY };
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    draw();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) {
+      canvas.style.cursor = cellAt(local(e)) ? 'ns-resize' : 'default';
+      return;
+    }
+    const v = drag.from + (drag.at - e.clientY) * 0.04;
+    K[drag.y][drag.x] = Math.max(-9, Math.min(9, Math.round(v * 20) / 20));
+    state.kernel = 'custom';
+    presets.clear();
+    apply();
+  });
+  const drop = () => { drag = null; draw(); };
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  // --- panel -----------------------------------------------------------------
+  function setKernel(name: string) {
+    state.kernel = name;
+    K = preset(name, state.size);
+    apply();
+  }
+  segmented('pic', (p) => { state.pic = p; loadPhoto(p); });
+  segmented('mode', (m) => { state.mode = m; paintSource(); apply(); });
+  segmented('size', (n) => {
+    state.size = Number(n);
+    setKernel(state.kernel === 'custom' ? 'gaussian' : state.kernel);
+    if (state.kernel !== 'custom') presets.select(state.kernel);
+  });
+  const presets = segmented('kernel', setKernel);
+
+  el('norm').addEventListener('click', () => {
+    const s = sum();
+    if (Math.abs(s) < 1e-6) return;
+    K = K.map((r) => r.map((v) => Math.round((v / s) * 1000) / 1000));
+    state.kernel = 'custom';
+    presets.clear();
+    apply();
+  });
+  el('zero').addEventListener('click', () => {
+    K = K.map((r) => r.map(() => 0));
+    state.kernel = 'custom';
+    presets.clear();
+    apply();
+  });
+  el('rand').addEventListener('click', () => {
+    K = K.map((r) => r.map(() => Math.round((Math.random() * 2 - 1) * 20) / 20));
+    state.kernel = 'custom';
+    presets.clear();
+    apply();
+  });
+
+  setKernel('gaussian');
+  presets.select('gaussian');
+  loadPhoto(state.pic);
+</script>

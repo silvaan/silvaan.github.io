@@ -497,11 +497,11 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'image-convolution',
-        title: 'Image Convolution',
+        slug: 'convolution-arithmetic',
+        title: 'Convolution Arithmetic',
         description:
-          'Slide a kernel over a photograph with the mouse. Filter one grey channel or all three colour ones, give each channel a kernel of its own, and watch stride, padding and dilation reshape the output.',
-        href: '/simulations/deep-learning/image-convolution',
+          'Where the window is allowed to sit decides how big the answer is. Padding lets it hang over the edge, stride decides how far it hops, dilation spreads it out, and one formula ties all three together.',
+        href: '/simulations/deep-learning/convolution-arithmetic',
         status: 'live',
       },
       {
@@ -526,6 +526,30 @@ export const AREAS: Area[] = [
         description:
           'Squeeze a picture through a gap of two numbers and force the network to rebuild it. Nothing says what the numbers should mean, and they come out as a map you can drag around.',
         href: '/simulations/deep-learning/autoencoder',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'computer-vision',
+    title: 'Computer Vision',
+    description: 'What can be measured in a picture, and what has to be guessed.',
+    icon: 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2',
+    simulators: [
+      {
+        slug: 'image-filters',
+        title: 'Image Filters',
+        description:
+          'A filter is a small square of numbers. Slide it over a photograph and the same handful of weights will blur it, sharpen it or leave nothing but its edges. Pick one, resize it, or drag the weights until it is yours.',
+        href: '/simulations/computer-vision/image-filters',
+        status: 'live',
+      },
+      {
+        slug: 'shape-from-shading',
+        title: 'Shape from Shading',
+        description:
+          'A photograph is flat, yet you see a surface in it. Brightness is decided by how each patch leans towards the light, and turning that around recovers the shape, provided you guess the light right.',
+        href: '/simulations/computer-vision/shape-from-shading',
         status: 'live',
       },
     ],
