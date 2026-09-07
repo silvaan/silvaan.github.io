@@ -1,7 +1,7 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Checks from '../../../components/sim/Checks.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
@@ -11,8 +11,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Contrastive Learning"
-  description="Nobody labelled anything. Two views of the same thing should end up in the same place, two views of different things should not, and that alone is enough to arrange a representation. The pulling is easy; it is the pushing that stops everything collapsing to a point."
-  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+  description="Nobody says where anything goes. The only instruction is that things of a kind belong together and everything else belongs apart, and the embedding arranges itself from that. Four different losses say it in four different ways, and you can watch each one push."
 >
   <div class="sim">
     <div class="sim-view">
@@ -22,33 +21,44 @@ import Readout from '../../../components/sim/Readout.astro';
           width="1000"
           height="560"
           role="img"
-          aria-label="Embeddings on a circle with a line joining each pair, the similarity matrix beside them, and the loss against the chance level."
+          aria-label="Points of several classes arranging themselves in a bounded space, with every other point laid out on a distance ruler beside them showing which way the loss is pushing it."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'the first view of an item', color: '#5eead4' },
-          { label: 'the second view', color: '#a78bfa' },
-          { label: 'the gap the loss is closing', color: '#f59e0b' },
+          { label: 'pull it closer', color: '#5eead4' },
+          { label: 'push it away', color: '#f87171' },
+          { label: 'the margin', color: '#f59e0b' },
         ]}
-        hint="Run to learn · hover a point to follow one item through the matrix"
+        hint="Run to learn · hover any point to look at the loss from there"
       />
-      <Result label="Picks the right pair" />
+      <Result label="Nearest neighbour agrees" />
     </div>
 
     <div class="sim-panel">
-      <Slider id="n" label="Items in the batch" min={3} max={10} value={6} />
-      <Slider id="tau" label="Temperature τ" min={3} max={100} value={10} display="0.10" hint={['sharp', 'soft']} />
-      <Slider id="aug" label="How different the views are" min={0} max={90} value={35} display="0.35" />
-      <Checks items={[{ id: 'nopush', label: 'Drop the negatives, only pull' }]} />
+      <Seg
+        id="loss"
+        label="Loss"
+        attr="l"
+        options={[
+          { value: 'pairs', label: 'Pairs' },
+          { value: 'triplet', label: 'Triplet' },
+          { value: 'hard', label: 'Hardest triplet' },
+          { value: 'nce', label: 'InfoNCE' },
+        ]}
+      />
+      <Slider id="k" label="Classes" min={2} max={6} value={4} />
+      <Slider id="m" label="Points in each" min={2} max={8} value={6} />
+      <Slider id="mar" label="Margin" min={20} max={150} value={80} display="0.80" />
+      <Slider id="tau" label="Temperature τ" min={3} max={60} value={15} display="0.15" hint={['sharp', 'soft']} />
       <Transport step running />
       <Readout
         rows={[
           { id: 'r-loss', label: 'loss' },
-          { id: 'r-chance', label: 'loss at chance, log N' },
-          { id: 'r-align', label: 'alignment, the pair gap' },
-          { id: 'r-unif', label: 'uniformity, how spread out' },
-          { id: 'r-pick', label: 'belief on the right pair' },
+          { id: 'r-in', label: 'distance within a class' },
+          { id: 'r-out', label: 'distance between classes' },
+          { id: 'r-viol', label: 'constraints still broken' },
+          { id: 'r-nn', label: 'nearest neighbour agrees' },
         ]}
       />
     </div>
@@ -56,51 +66,55 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Each item appears twice, as two views that some augmentation produced. One
-      shared encoder maps every view onto the circle, and the only thing the
-      objective is told is which two views belong together. It is never told what
-      any of them are.
+      Every point starts in a heap in the middle and no point is told where to
+      go. The only thing any of these losses knows is which points share a class,
+      and the arrangement is entirely a consequence of that.
     </li>
     <li>
-      Watch the amber lines shorten and the points spread out at the same time.
-      Those are the two halves of the objective: <b>alignment</b> pulls the two
-      views of one item together, <b>uniformity</b> pushes everything else apart,
-      and the arrangement it settles into is the batch spaced evenly round the
-      circle.
+      Two items are never allowed to occupy the same place, which is why a class
+      settles into a small packed cluster instead of a single dot. Take that rule
+      away and every loss on this page would crush each class to nothing, and
+      crushing a class to nothing is exactly what collapse means.
     </li>
     <li>
-      Tick <b>drop the negatives</b>. The loss falls straight to zero and the
-      matrix goes uniformly bright, because the encoder has discovered the
-      easiest function it is allowed to be: a constant. Every view lands on one
-      point, so every pair is perfectly aligned and no two items can be told
-      apart. The number being minimised is perfect and the representation is
-      worthless.
+      Hover a point. The ruler on the right lays every other point out by its
+      distance from that one, same class above the line and everything else
+      below, and the arrow under each one is the direction that loss is pushing
+      it. That arrow is the loss; the picture on the left is only its
+      consequence.
     </li>
     <li>
-      Push <b>how different the views are</b> up. The augmentation is what the
-      encoder has to learn to ignore, so a harder augmentation is a stronger
-      signal and also a harder problem. Take it to zero and the two views are
-      identical, which makes the task trivial and teaches nothing.
+      <b>Pairs</b> is the blunt version: pull every pair of the same class to
+      zero, push every other pair past the margin, and stop caring once it is
+      past. Watch the red arrows vanish one at a time as points cross the margin
+      line. The teal ones never vanish, because a positive pair is given no
+      threshold to reach and is pulled for as long as any distance remains.
     </li>
     <li>
-      Lower the <b>temperature</b>. The softmax sharpens, so almost all of the
-      push comes from the single nearest negative, and the points end up more
-      evenly spread but the run gets twitchier. Raise it and every negative
-      contributes about equally, which is gentler and blurrier.
+      <b>Triplet</b> never asks for an absolute distance. It asks only that the
+      same class be <em>nearer than</em> the other one by the margin, so the
+      clusters are free to sit wherever they like as long as the ordering holds.
+      That is why it survives classes of wildly different spread, where pairs
+      does not.
     </li>
     <li>
-      Compare the loss with <b>log N</b>, the value you get by guessing, and the
-      headline figure with one in N. Those are the only honest baselines: a loss
-      of one means nothing until you know whether chance was two. Under collapse
-      the loss is zero and the figure sits exactly at chance, which is the whole
-      warning.
+      <b>Hardest triplet</b> keeps only the worst positive and the nearest
+      negative for each point, which is most of the signal in a tiny fraction of
+      the terms. It converges faster and it is far more likely to fold two
+      classes together and never recover, because one bad pair now speaks for
+      everything.
     </li>
     <li>
-      Add more items. The task gets harder because every extra item is another
-      negative to be pushed away from, which is why these methods want enormous
-      batches, and why the same similarity matrix trains
-      <a href="/simulations/deep-learning/cosine-similarity">cosine similarity</a>
-      into text and image models alike.
+      <b>InfoNCE</b> replaces the margin with a softmax, so nothing is ever fully
+      satisfied and every negative keeps contributing something. Lower the
+      <b>temperature</b> and almost all the push comes from the single nearest
+      wrong point, which is hard negative mining arriving for free out of the
+      arithmetic. Raise it and every negative pushes about equally.
+    </li>
+    <li>
+      The space is bounded, so pushing one thing away always costs room
+      somewhere. That competition is the whole reason the classes end up spread
+      round the edge rather than piled anywhere convenient.
     </li>
   </Fragment>
 </SimLayout>
@@ -108,377 +122,462 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { stageInk, roundRect, arrow } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
 
-  const A_COL = '#5eead4';
-  const B_COL = '#a78bfa';
-  const GAP = '#f59e0b';
-  const BAD = '#f87171';
+  const PULL = '#5eead4';
+  const PUSH = '#f87171';
+  const MARK = '#f59e0b';
+  const HUES = ['#5eead4', '#f59e0b', '#a78bfa', '#f87171', '#60a5fa', '#a3e635'];
+  // Two different items never land on exactly the same point. Without that rule
+  // every loss here would happily crush a class to nothing, which is what
+  // collapse means; with it, a class settles into a small packed cluster.
+  const SEP = 0.09;
 
-  const D = 12;    // what an item looks like, before anything is learned
-  const NMAX = 10;
-
-  const state = { n: 6, tau: 0.1, aug: 0.35, nopush: false, running: true, hover: -1, steps: 0 };
+  const state = { loss: 'pairs', k: 4, m: 6, margin: 0.8, tau: 0.15, running: true, anchor: 0 };
 
   const canvas = el('con') as HTMLCanvasElement;
-  const { ctx, W: CW, H: CH } = setupCanvas(canvas, () => draw());
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  const gauss = () => {
-    const u = Math.max(1e-9, Math.random());
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
-  };
-  const unit = (v: number[]) => {
-    const n = Math.hypot(...v) || 1;
-    return v.map((x) => x / n);
-  };
+  // --- the points ------------------------------------------------------------
+  // Every embedding is a free pair of numbers. Nothing produces them, so what is
+  // on screen is the loss and nothing else.
+  let P: number[][] = [];
+  let cls: number[] = [];
+  let trace: number[] = [];
+  let mAdam: number[][] = [], vAdam: number[][] = [], tAdam = 0;
 
-  // --- the batch -------------------------------------------------------------
-  // Every item is a direction in a space of twelve numbers, and its two views
-  // are that direction knocked about by a fixed piece of noise. The augmentation
-  // is what the encoder has to learn to ignore.
-  let content: number[][] = [];
-  let noiseA: number[][] = [];
-  let noiseB: number[][] = [];
+  const N = () => state.k * state.m;
 
-  function newBatch() {
-    content = Array.from({ length: NMAX }, () => unit(Array.from({ length: D }, gauss)));
-    resample();
-  }
-  /** A fresh augmentation every step, so the encoder has to be invariant and not merely lucky. */
-  function resample() {
-    // unit noise, so the slider reads as a fraction of the item itself
-    noiseA = Array.from({ length: NMAX }, () => unit(Array.from({ length: D }, gauss)));
-    noiseB = Array.from({ length: NMAX }, () => unit(Array.from({ length: D }, gauss)));
-  }
-  const view = (i: number, second: boolean) =>
-    unit(content[i].map((c, k) => c + state.aug * (second ? noiseB : noiseA)[i][k]));
-
-  // --- the encoder -----------------------------------------------------------
-  // One shared map from an item to a direction, which is the whole point: the
-  // same function has to serve every input, so a constant function is always
-  // available to it.
-  let Wm: number[] = [];   // 2 × D
-  let bm: number[] = [];   // 2
-  let mW: number[] = [], vW: number[] = [], mB = [0, 0], vB = [0, 0], tAdam = 0;
-
-  function newEncoder() {
-    Wm = Array.from({ length: 2 * D }, () => gauss() * 0.5);
-    bm = [0, 0];
-    mW = new Array(2 * D).fill(0);
-    vW = new Array(2 * D).fill(0);
-    mB = [0, 0];
-    vB = [0, 0];
+  function scatter() {
+    P = [];
+    cls = [];
+    for (let c = 0; c < state.k; c++)
+      for (let i = 0; i < state.m; i++) {
+        const r = 0.12 * Math.sqrt(Math.random()), a = Math.random() * Math.PI * 2;
+        P.push([r * Math.cos(a), r * Math.sin(a)]);
+        cls.push(c);
+      }
+    mAdam = P.map(() => [0, 0]);
+    vAdam = P.map(() => [0, 0]);
     tAdam = 0;
     trace = [];
-    state.steps = 0;
+    if (state.anchor >= P.length) state.anchor = 0;
   }
 
-  /** Encode one view: a linear map into the plane, then normalised onto the circle. */
-  function encode(x: number[]) {
-    let e0 = bm[0], e1 = bm[1];
-    for (let k = 0; k < D; k++) {
-      e0 += Wm[k] * x[k];
-      e1 += Wm[D + k] * x[k];
-    }
-    const n = Math.hypot(e0, e1) || 1e-9;
-    return { u: [e0 / n, e1 / n], norm: n, x };
-  }
-
-  type Emb = { u: number[]; norm: number; x: number[] };
-  let A: Emb[] = [], B: Emb[] = [];
-  let trace: number[] = [];
-
-  function forward() {
-    A = [];
-    B = [];
-    for (let i = 0; i < state.n; i++) {
-      A.push(encode(view(i, false)));
-      B.push(encode(view(i, true)));
-    }
-  }
-
-  const simOf = () => A.map((p) => B.map((q) => p.u[0] * q.u[0] + p.u[1] * q.u[1]));
-
-  function soft(v: number[]) {
-    const t = state.tau;
-    let mx = -Infinity;
-    for (const x of v) mx = Math.max(mx, x / t);
-    let s = 0;
-    const p = v.map((x) => {
-      const e = Math.exp(x / t - mx);
-      s += e;
-      return e;
-    });
-    return { p: p.map((e) => e / s), lse: Math.log(s) + mx };
-  }
+  const dist = (i: number, j: number) => Math.hypot(P[i][0] - P[j][0], P[i][1] - P[j][1]);
 
   /**
-   * InfoNCE, read both ways: every first view has to pick its own second view
-   * out of the batch, and every second view has to pick its own first. Dropping
-   * the negatives leaves only the pulling, and the encoder is then free to send
-   * everything to the same place.
+   * Every loss here is a rule about distances, so each one is written as the
+   * derivative it wants with respect to one distance. Turning that into a
+   * gradient on the points is the same three lines for all of them.
    */
   function lossAndGrad() {
-    const N = state.n, t = state.tau;
-    const S = simOf();
-    const g: number[][] = Array.from({ length: N }, () => new Array(N).fill(0));
-    let loss = 0;
-    if (state.nopush) {
-      for (let i = 0; i < N; i++) {
-        loss += (1 - S[i][i]) / N;
-        g[i][i] += -1 / N;
-      }
-    } else {
-      for (let i = 0; i < N; i++) {
-        const r = soft(S[i]);
-        loss += (r.lse - S[i][i] / t) / (2 * N);
-        for (let j = 0; j < N; j++) g[i][j] += (r.p[j] - (i === j ? 1 : 0)) / (2 * t * N);
-      }
-      for (let j = 0; j < N; j++) {
-        const col = A.map((_, i) => S[i][j]);
-        const r = soft(col);
-        loss += (r.lse - S[j][j] / t) / (2 * N);
-        for (let i = 0; i < N; i++) g[i][j] += (r.p[i] - (i === j ? 1 : 0)) / (2 * t * N);
-      }
-    }
-
-    // through the similarity into each unit vector, then back off the circle
-    const gW = new Array(2 * D).fill(0);
-    const gB = [0, 0];
-    const push = (emb: Emb, du: number[]) => {
-      const dot = du[0] * emb.u[0] + du[1] * emb.u[1];
-      const de = [(du[0] - dot * emb.u[0]) / emb.norm, (du[1] - dot * emb.u[1]) / emb.norm];
-      gB[0] += de[0];
-      gB[1] += de[1];
-      for (let k = 0; k < D; k++) {
-        gW[k] += de[0] * emb.x[k];
-        gW[D + k] += de[1] * emb.x[k];
-      }
+    const n = N(), m = state.margin, t = state.tau;
+    const g: number[][] = P.map(() => [0, 0]);
+    let loss = 0, broken = 0;
+    // dL/dd for the pair (i, j), applied to both ends
+    const apply = (i: number, j: number, dd: number, d: number) => {
+      if (!dd || d < 1e-9) return;
+      const ux = (P[i][0] - P[j][0]) / d, uy = (P[i][1] - P[j][1]) / d;
+      g[i][0] += dd * ux;
+      g[i][1] += dd * uy;
+      g[j][0] -= dd * ux;
+      g[j][1] -= dd * uy;
     };
-    for (let i = 0; i < N; i++) {
-      const du = [0, 0], dv = [0, 0];
-      for (let j = 0; j < N; j++) {
-        du[0] += g[i][j] * B[j].u[0];
-        du[1] += g[i][j] * B[j].u[1];
-        dv[0] += g[j][i] * A[j].u[0];
-        dv[1] += g[j][i] * A[j].u[1];
+
+    if (state.loss === 'pairs') {
+      let pairs = 0;
+      for (let i = 0; i < n; i++)
+        for (let j = i + 1; j < n; j++) {
+          const d = dist(i, j);
+          pairs++;
+          if (cls[i] === cls[j]) {
+            loss += d * d;
+            apply(i, j, 2 * d, d);
+          } else if (d < m) {
+            loss += (m - d) ** 2;
+            apply(i, j, -2 * (m - d), d);
+            broken++;
+          }
+        }
+      loss /= Math.max(1, pairs);
+      for (const q of g) { q[0] /= pairs; q[1] /= pairs; }
+    } else if (state.loss === 'triplet' || state.loss === 'hard') {
+      const hard = state.loss === 'hard';
+      let terms = 0;
+      for (let i = 0; i < n; i++) {
+        const pos: number[] = [], neg: number[] = [];
+        for (let j = 0; j < n; j++) {
+          if (j === i) continue;
+          (cls[j] === cls[i] ? pos : neg).push(j);
+        }
+        if (!pos.length || !neg.length) continue;
+        // batch hard keeps the positive that is furthest and the negative that is nearest
+        const ps = hard ? [pos.reduce((a, b) => (dist(i, b) > dist(i, a) ? b : a))] : pos;
+        const ns = hard ? [neg.reduce((a, b) => (dist(i, b) < dist(i, a) ? b : a))] : neg;
+        for (const p of ps)
+          for (const q of ns) {
+            terms++;
+            const dp = dist(i, p), dn = dist(i, q);
+            const v = dp - dn + m;
+            if (v <= 0) continue;
+            broken++;
+            loss += v;
+            apply(i, p, 1, dp);
+            apply(i, q, -1, dn);
+          }
       }
-      push(A[i], du);
-      push(B[i], dv);
+      loss /= Math.max(1, terms);
+      for (const q of g) { q[0] /= Math.max(1, terms); q[1] /= Math.max(1, terms); }
+    } else {
+      for (let i = 0; i < n; i++) {
+        const others: number[] = [];
+        for (let j = 0; j < n; j++) if (j !== i) others.push(j);
+        const pos = others.filter((j) => cls[j] === cls[i]);
+        if (!pos.length) continue;
+        const s = others.map((j) => -(dist(i, j) ** 2) / t);
+        let mx = -Infinity;
+        for (const v of s) mx = Math.max(mx, v);
+        let sum = 0;
+        const ex = s.map((v) => {
+          const e = Math.exp(v - mx);
+          sum += e;
+          return e;
+        });
+        const lse = Math.log(sum) + mx;
+        for (const p of pos) loss += (lse - s[others.indexOf(p)]) / (pos.length * n);
+        others.forEach((j, idx) => {
+          const q = ex[idx] / sum;
+          const dLds = (q - (cls[j] === cls[i] ? 1 / pos.length : 0)) / n;
+          const d = dist(i, j);
+          // s = -d²/τ, so dL/dd = dL/ds · (-2d/τ)
+          apply(i, j, dLds * (-2 * d) / t, d);
+        });
+      }
+      broken = -1;
     }
-    return { loss, gW, gB };
+    return { loss, g, broken };
   }
 
-  /** Adam, so the run behaves the same at every temperature. */
+  /** Adam, so every loss moves at a comparable speed however it is scaled. */
   function stepOnce() {
-    resample();
-    forward();
-    const { loss, gW, gB } = lossAndGrad();
+    const { loss, g } = lossAndGrad();
     tAdam++;
-    const lr = 0.1, b1 = 0.9, b2 = 0.999, eps = 1e-8;
+    const lr = 0.02, b1 = 0.9, b2 = 0.999, eps = 1e-8;
     const c1 = 1 - Math.pow(b1, tAdam), c2 = 1 - Math.pow(b2, tAdam);
-    for (let k = 0; k < Wm.length; k++) {
-      mW[k] = b1 * mW[k] + (1 - b1) * gW[k];
-      vW[k] = b2 * vW[k] + (1 - b2) * gW[k] * gW[k];
-      Wm[k] -= (lr * (mW[k] / c1)) / (Math.sqrt(vW[k] / c2) + eps);
+    for (let i = 0; i < P.length; i++)
+      for (let k = 0; k < 2; k++) {
+        mAdam[i][k] = b1 * mAdam[i][k] + (1 - b1) * g[i][k];
+        vAdam[i][k] = b2 * vAdam[i][k] + (1 - b2) * g[i][k] * g[i][k];
+        P[i][k] -= (lr * (mAdam[i][k] / c1)) / (Math.sqrt(vAdam[i][k] / c2) + eps);
+      }
+    // the space is bounded, so room is finite and pushing costs something
+    for (const p of P) {
+      const r = Math.hypot(p[0], p[1]);
+      if (r > 1) { p[0] /= r; p[1] /= r; }
     }
-    for (let k = 0; k < 2; k++) {
-      mB[k] = b1 * mB[k] + (1 - b1) * gB[k];
-      vB[k] = b2 * vB[k] + (1 - b2) * gB[k] * gB[k];
-      bm[k] -= (lr * (mB[k] / c1)) / (Math.sqrt(vB[k] / c2) + eps);
+    // and no two items share a point, so a class packs rather than vanishes
+    for (let pass = 0; pass < 3; pass++) {
+      for (let i = 0; i < P.length; i++)
+        for (let j = i + 1; j < P.length; j++) {
+          let dx = P[i][0] - P[j][0], dy = P[i][1] - P[j][1];
+          let d = Math.hypot(dx, dy);
+          if (d >= SEP) continue;
+          if (d < 1e-6) { dx = Math.cos(i * 2.4) * 1e-3; dy = Math.sin(i * 2.4) * 1e-3; d = 1e-3; }
+          const push = (SEP - d) / 2 / d;
+          P[i][0] += dx * push;
+          P[i][1] += dy * push;
+          P[j][0] -= dx * push;
+          P[j][1] -= dy * push;
+        }
+      for (const p of P) {
+        const r = Math.hypot(p[0], p[1]);
+        if (r > 1) { p[0] /= r; p[1] /= r; }
+      }
     }
-    state.steps++;
     trace.push(loss);
     if (trace.length > 260) trace.shift();
-    forward();
   }
 
-  // --- what the arrangement is worth ----------------------------------------
-  const near0 = (v: number, n: number) => (Math.abs(v) < 0.5 * 10 ** -n ? 0 : v).toFixed(n);
-  const chord = (p: Emb, q: Emb) => Math.hypot(p.u[0] - q.u[0], p.u[1] - q.u[1]);
+  /** What the loss asks of every other point, seen from one of them. */
+  function fromAnchor(i: number) {
+    const n = N(), m = state.margin, t = state.tau;
+    const out: { j: number; d: number; dd: number; same: boolean }[] = [];
+    const others: number[] = [];
+    for (let j = 0; j < n; j++) if (j !== i) others.push(j);
 
-  function stats(S: number[][]) {
-    const N = state.n;
-    let align = 0, pick = 0;
-    for (let i = 0; i < N; i++) {
-      align += chord(A[i], B[i]) ** 2;
-      // asked to name the matching view, how much of its belief lands on the right one
-      pick += soft(S[i]).p[i] / N;
+    if (state.loss === 'nce') {
+      const s = others.map((j) => -(dist(i, j) ** 2) / t);
+      let mx = -Infinity;
+      for (const v of s) mx = Math.max(mx, v);
+      let sum = 0;
+      const ex = s.map((v) => {
+        const e = Math.exp(v - mx);
+        sum += e;
+        return e;
+      });
+      const np = others.filter((j) => cls[j] === cls[i]).length || 1;
+      others.forEach((j, idx) => {
+        const q = ex[idx] / sum;
+        const d = dist(i, j);
+        out.push({ j, d, dd: (q - (cls[j] === cls[i] ? 1 / np : 0)) * (-2 * d) / t, same: cls[j] === cls[i] });
+      });
+      return out;
     }
-    const all = [...A, ...B];
-    let u = 0, pairs = 0;
-    for (let i = 0; i < all.length; i++)
-      for (let j = i + 1; j < all.length; j++) {
-        u += Math.exp(-2 * chord(all[i], all[j]) ** 2);
-        pairs++;
+    if (state.loss === 'pairs') {
+      for (const j of others) {
+        const d = dist(i, j), same = cls[j] === cls[i];
+        out.push({ j, d, dd: same ? 2 * d : d < m ? -2 * (m - d) : 0, same });
       }
-    return { align: align / N, unif: Math.log(u / Math.max(1, pairs)), pick };
+      return out;
+    }
+    const hard = state.loss === 'hard';
+    const pos = others.filter((j) => cls[j] === cls[i]);
+    const neg = others.filter((j) => cls[j] !== cls[i]);
+    const ps = hard && pos.length ? [pos.reduce((a, b) => (dist(i, b) > dist(i, a) ? b : a))] : pos;
+    const ns = hard && neg.length ? [neg.reduce((a, b) => (dist(i, b) < dist(i, a) ? b : a))] : neg;
+    const w = new Map<number, number>();
+    for (const p of ps)
+      for (const q of ns) {
+        if (dist(i, p) - dist(i, q) + m <= 0) continue;
+        w.set(p, (w.get(p) ?? 0) + 1);
+        w.set(q, (w.get(q) ?? 0) - 1);
+      }
+    for (const j of others) out.push({ j, d: dist(i, j), dd: w.get(j) ?? 0, same: cls[j] === cls[i] });
+    return out;
   }
 
   // --- layout ----------------------------------------------------------------
-  const CIR = { x: 250, y: 300, r: 145 };
-  const MAT = { x: 570, y: 120, s: 290 };
-  const TR = { x: 570, y: 474, w: 290, h: 62 };
-  const pt = (e: Emb) => ({ x: CIR.x + e.u[0] * CIR.r, y: CIR.y - e.u[1] * CIR.r });
+  const DISC = { x: 282, y: 306, r: 190 };
+  const RUL = { x: 578, y: 274, w: 366 };
+  const TR = { x: 578, y: 428, w: 366, h: 92 };
+  const sx = (p: number[]) => DISC.x + p[0] * DISC.r;
+  const sy = (p: number[]) => DISC.y - p[1] * DISC.r;
+  const near0 = (v: number, n: number) => (Math.abs(v) < 0.5 * 10 ** -n ? 0 : v).toFixed(n);
 
-  function circle() {
-    label('the embedding space', CIR.x - CIR.r, 92, 0.55, 'left', 13);
-    label('every view is a point on it', CIR.x - CIR.r, 110, 0.32, 'left', 11);
-    ctx.strokeStyle = ink(0.14);
+  function disc() {
+    label('the embedding space', DISC.x - DISC.r, 92, 0.55, 'left', 13);
+    label('colour is the class, and nothing else is given', DISC.x - DISC.r, 110, 0.32, 'left', 11);
+    ctx.strokeStyle = ink(0.12);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(CIR.x, CIR.y, CIR.r, 0, Math.PI * 2);
+    ctx.arc(DISC.x, DISC.y, DISC.r, 0, Math.PI * 2);
     ctx.stroke();
 
-    for (let i = 0; i < state.n; i++) {
-      const p = pt(A[i]), q = pt(B[i]), on = state.hover === i;
-      ctx.strokeStyle = on ? GAP : 'rgba(245,158,11,0.42)';
-      ctx.lineWidth = on ? 2.6 : 1.5;
+    const a = state.anchor;
+    const rows = fromAnchor(a);
+    // what the anchor is bound to, drawn where it happens
+    for (const r of rows) {
+      if (!r.dd) continue;
+      ctx.strokeStyle = r.dd > 0 ? 'rgba(94,234,212,0.4)' : 'rgba(248,113,113,0.32)';
+      ctx.lineWidth = Math.min(3, 0.6 + Math.abs(r.dd) * 1.6);
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(q.x, q.y);
+      ctx.moveTo(sx(P[a]), sy(P[a]));
+      ctx.lineTo(sx(P[r.j]), sy(P[r.j]));
       ctx.stroke();
     }
-    for (let i = 0; i < state.n; i++) {
-      const p = pt(A[i]), q = pt(B[i]), on = state.hover === i;
-      ctx.globalAlpha = on || state.hover < 0 ? 1 : 0.32;
-      ctx.fillStyle = A_COL;
+    if (state.loss !== 'nce') {
+      ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, on ? 8 : 6, 0, Math.PI * 2);
+      ctx.arc(sx(P[a]), sy(P[a]), state.margin * DISC.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    for (let i = 0; i < P.length; i++) {
+      ctx.fillStyle = HUES[cls[i] % HUES.length];
+      ctx.beginPath();
+      ctx.arc(sx(P[i]), sy(P[i]), i === a ? 7.5 : 5.5, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = B_COL;
-      ctx.lineWidth = on ? 3 : 2.2;
-      ctx.beginPath();
-      ctx.arc(q.x, q.y, on ? 8 : 6, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      if (on) label(`item ${i + 1}`, p.x + 12, p.y - 8, 0.9, 'left', 12, GAP);
-    }
-    // how far apart the whole batch has managed to stay
-    let spread = 0;
-    for (let i = 0; i < state.n; i++)
-      for (let j = i + 1; j < state.n; j++) spread = Math.max(spread, chord(A[i], A[j]));
-    if (spread < 0.25)
-      label('every item has landed on the same point', CIR.x, CIR.y + CIR.r + 36, 0.75, 'center', 12.5, BAD);
-  }
-
-  function matrix(S: number[][]) {
-    const N = state.n, c = MAT.s / N;
-    label('how alike every pairing looks', MAT.x, 92, 0.55, 'left', 13);
-    label('rows are first views, columns are second ones', MAT.x, 110, 0.32, 'left', 11);
-    for (let i = 0; i < N; i++)
-      for (let j = 0; j < N; j++) {
-        const t = Math.max(-1, Math.min(1, S[i][j]));
-        ctx.fillStyle = t >= 0 ? `rgba(94,234,212,${0.04 + 0.8 * t})` : `rgba(96,165,250,${0.04 + 0.8 * -t})`;
-        roundRect(ctx, MAT.x + j * c + 1, MAT.y + i * c + 1, c - 2, c - 2, 4);
-        ctx.fill();
-        if (i === j) {
-          ctx.strokeStyle = GAP;
-          ctx.lineWidth = 1.6;
-          roundRect(ctx, MAT.x + j * c + 1, MAT.y + i * c + 1, c - 2, c - 2, 4);
-          ctx.stroke();
-        }
-        if (c > 30)
-          label(S[i][j].toFixed(2).replace('0.', '.').replace('-', '−'), MAT.x + (j + 0.5) * c, MAT.y + (i + 0.5) * c + 4, 0.55, 'center', 10);
+      if (i === a) {
+        ctx.strokeStyle = ink(0.95);
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(sx(P[i]), sy(P[i]), 11, 0, Math.PI * 2);
+        ctx.stroke();
       }
-    if (state.hover >= 0) {
-      ctx.strokeStyle = GAP;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(MAT.x, MAT.y + state.hover * c, MAT.s, c);
-      ctx.strokeRect(MAT.x + state.hover * c, MAT.y, c, MAT.s);
     }
-    label('the boxed diagonal is the true pairing', MAT.x, MAT.y + MAT.s + 24, 0.32, 'left', 11);
   }
 
-  function tracePlot(chance: number) {
-    label('the loss, against guessing', TR.x, TR.y - 14, 0.45, 'left', 12);
+  const RULE: Record<string, string> = {
+    pairs: 'to zero, or past the margin',
+    triplet: 'nearer than the other class by the margin',
+    hard: 'only the worst pair of each kind counts',
+    nce: 'a softmax, so nothing is ever finished',
+  };
+
+  /** Every other point laid out by its distance, with the push it is under. */
+  function ruler() {
+    const a = state.anchor;
+    label('what the loss asks, seen from that point', RUL.x, 92, 0.55, 'left', 13);
+    label(RULE[state.loss], RUL.x, 110, 0.32, 'left', 11);
+
+    const px = (d: number) => RUL.x + (Math.min(2, d) / 2) * RUL.w;
+    ctx.strokeStyle = ink(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(RUL.x, RUL.y);
+    ctx.lineTo(RUL.x + RUL.w, RUL.y);
+    ctx.stroke();
+    for (const d of [0, 0.5, 1, 1.5, 2]) {
+      ctx.strokeStyle = ink(0.12);
+      ctx.beginPath();
+      ctx.moveTo(px(d), RUL.y - 4);
+      ctx.lineTo(px(d), RUL.y + 4);
+      ctx.stroke();
+      label(d.toFixed(1), px(d), RUL.y + 18, 0.3, 'center', 10.5);
+    }
+    label('distance from it', RUL.x + RUL.w, RUL.y + 84, 0.32, 'right', 11);
+    label('same class', RUL.x - 10, RUL.y - 22, 0.55, 'right', 11, PULL);
+    label('other classes', RUL.x - 10, RUL.y + 44, 0.55, 'right', 11, PUSH);
+
+    if (state.loss !== 'nce') {
+      ctx.strokeStyle = MARK;
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(px(state.margin), RUL.y - 54);
+      ctx.lineTo(px(state.margin), RUL.y + 64);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label('margin', px(state.margin), RUL.y - 62, 0.7, 'center', 11, MARK);
+    }
+
+    const rows = fromAnchor(a);
+    let mx = 1e-9;
+    for (const r of rows) mx = Math.max(mx, Math.abs(r.dd));
+    for (const r of rows) {
+      const x = px(r.d), y = RUL.y + (r.same ? -26 : 40);
+      ctx.fillStyle = HUES[cls[r.j] % HUES.length];
+      ctx.beginPath();
+      ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      if (!r.dd) continue;
+      // the arrow is the loss: which way it wants this point to move
+      const len = 8 + 26 * Math.min(1, Math.abs(r.dd) / mx);
+      const dir = r.dd > 0 ? -1 : 1;
+      const ay = y + (r.same ? -16 : 16);
+      ctx.strokeStyle = r.dd > 0 ? PULL : PUSH;
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.lineWidth = 1.8;
+      arrow(ctx, x, ay, x + dir * len, ay, 5);
+    }
+    const still = rows.filter((r) => r.dd).length;
+    label(
+      still ? `${still} of these ${rows.length} are still being pushed` : 'nothing here is being pushed any more',
+      RUL.x,
+      RUL.y + 108,
+      0.35,
+      'left',
+      11.5,
+      still ? undefined : PULL
+    );
+  }
+
+  function tracePlot() {
+    label('the loss', TR.x, TR.y - 12, 0.45, 'left', 12);
     ctx.fillStyle = inv(0.45);
     roundRect(ctx, TR.x, TR.y, TR.w, TR.h, 8);
     ctx.fill();
-    const top = Math.max(chance * 1.25, 0.2);
-    const py = (v: number) => TR.y + TR.h - (Math.max(0, Math.min(top, v)) / top) * (TR.h - 8) - 4;
-    ctx.strokeStyle = ink(0.28);
-    ctx.setLineDash([4, 4]);
+    if (trace.length < 2) return;
+    let top = 1e-9;
+    for (const v of trace) top = Math.max(top, v);
+    const py = (v: number) => TR.y + TR.h - 5 - (Math.max(0, v) / top) * (TR.h - 12);
+    ctx.strokeStyle = PULL;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(TR.x, py(chance));
-    ctx.lineTo(TR.x + TR.w, py(chance));
+    trace.forEach((v, i) => {
+      const x = TR.x + 3 + (i / (trace.length - 1)) * (TR.w - 6);
+      i ? ctx.lineTo(x, py(v)) : ctx.moveTo(x, py(v));
+    });
     ctx.stroke();
-    ctx.setLineDash([]);
-    label('chance', TR.x + TR.w - 6, py(chance) - 5, 0.35, 'right', 10);
-    if (trace.length > 1) {
-      ctx.strokeStyle = state.nopush ? BAD : A_COL;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      trace.forEach((v, i) => {
-        const x = TR.x + 2 + (i / (trace.length - 1)) * (TR.w - 4);
-        i ? ctx.lineTo(x, py(v)) : ctx.moveTo(x, py(v));
-      });
-      ctx.stroke();
-    }
+    label(near0(trace[trace.length - 1], 3), TR.x + TR.w - 6, TR.y + 16, 0.7, 'right', 12, PULL);
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, CW, CH);
-    const S = simOf();
-    circle();
-    matrix(S);
-    const chance = Math.log(state.n);
-    tracePlot(chance);
+  function quality() {
+    const n = N();
+    let within = 0, wc = 0, between = 0, bc = 0, agree = 0;
+    for (let i = 0; i < n; i++) {
+      let best = -1;
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue;
+        const d = dist(i, j);
+        if (cls[i] === cls[j]) { within += d; wc++; } else { between += d; bc++; }
+        if (best < 0 || d < dist(i, best)) best = j;
+      }
+      if (best >= 0 && cls[best] === cls[i]) agree++;
+    }
+    return { within: within / Math.max(1, wc), between: between / Math.max(1, bc), agree };
+  }
 
-    const { align, unif, pick } = stats(S);
-    const loss = trace.length ? trace[trace.length - 1] : lossAndGrad().loss;
+  const EQ: Record<string, string> = {
+    pairs: '\\mathcal{L} = d_+^2 + \\max(0,\\, m - d_-)^2',
+    triplet: '\\mathcal{L} = \\max(0,\\, d_+ - d_- + m)',
+    hard: '\\mathcal{L} = \\max(0,\\, \\max d_+ - \\min d_- + m)',
+    nce: '\\mathcal{L} = -\\log \\frac{e^{-d_+^2/\\tau}}{\\sum_j e^{-d_j^2/\\tau}}',
+  };
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    disc();
+    ruler();
+    tracePlot();
+
+    const { within, between, agree } = quality();
+    const { loss, broken } = lossAndGrad();
+    const n = N();
     setEq({
-      rule: [['\\mathcal{L}_i = -\\log \\frac{e^{s_{ii}/\\tau}}{\\sum_j e^{s_{ij}/\\tau}}', A_COL]],
+      rule: [[EQ[state.loss], PULL]],
       live: [
-        `\\tau = ${state.tau.toFixed(2)}`,
-        [`\\quad \\mathcal{L} = ${near0(loss, 3)}`, state.nopush ? BAD : A_COL],
-        `\\quad \\log N = ${chance.toFixed(3)}`,
+        [`d_+ = ${within.toFixed(2)}`, PULL],
+        [`\\quad d_- = ${between.toFixed(2)}`, PUSH],
+        state.loss === 'nce' ? `\\quad \\tau = ${state.tau.toFixed(2)}` : [`\\quad m = ${state.margin.toFixed(2)}`, MARK],
+        `\\quad \\mathcal{L} = ${near0(loss, 3)}`,
       ],
     });
     setRows({
       'r-loss': near0(loss, 4),
-      'r-chance': chance.toFixed(4),
-      'r-align': near0(align, 4),
-      'r-unif': unif.toFixed(3),
-      'r-pick': `${(pick * 100).toFixed(1)}%`,
+      'r-in': within.toFixed(3),
+      'r-out': between.toFixed(3),
+      'r-viol': broken < 0 ? '—' : String(broken),
+      'r-nn': `${agree} of ${n}`,
     });
-    const guess = 1 / state.n;
     setResult({
-      value: `${(pick * 100).toFixed(0)}%`,
-      colour: pick > 0.9 ? A_COL : pick < guess * 1.6 ? BAD : GAP,
-      status: `${state.n} items · τ = ${state.tau.toFixed(2)} · guessing would give ${(guess * 100).toFixed(0)}% · loss ${near0(loss, 3)} against ${chance.toFixed(3)} at chance`,
-      note: state.nopush
-        ? 'With nothing to push against, the encoder has found the easiest function it can be: a constant. Every view lands on the same point, every pair is perfectly aligned, the loss is zero, and no two items can be told apart. This is the collapse the negatives exist to prevent.'
-        : pick > 0.9
-          ? 'Asked to name the matching view, the representation almost always names the right one, and the items have spread themselves round the circle. Nothing here was labelled; the only signal was which two views came from the same thing.'
-          : 'Still sorting itself out. The pairs are being pulled together while everything else is pushed apart, and the loss drops below chance once the diagonal starts winning its row.',
+      value: `${agree} of ${n}`,
+      colour: agree === n ? PULL : agree < n * 0.6 ? PUSH : MARK,
+      status: `${state.k} classes of ${state.m} · within ${within.toFixed(2)}, between ${between.toFixed(2)} · loss ${near0(loss, 3)}${broken < 0 ? '' : ` · ${broken} broken`}`,
+      note:
+        state.loss === 'nce'
+          ? 'A softmax never reaches zero, so every negative goes on pushing however far away it already is. The temperature decides whether that push is shared out or spent almost entirely on the nearest wrong point.'
+          : state.loss === 'hard'
+            ? 'Only the furthest matching point and the nearest wrong one are used, which is where nearly all the signal lives. It learns faster and it can also drag two classes together and never let go.'
+            : state.loss === 'triplet'
+              ? 'Only the ordering is asked for, never a distance, so each class can sit at whatever spread suits it as long as it stays nearer to itself than to anything else.'
+              : 'Every pair is given an absolute target: zero for a match, at least the margin for anything else. Once a pair is past the margin it stops contributing entirely.',
     });
   }
 
   // --- interaction -----------------------------------------------------------
   canvas.addEventListener('pointermove', (e) => {
     const r = canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * CW, y = ((e.clientY - r.top) / r.height) * CH;
-    let found = -1;
-    for (let i = 0; i < state.n; i++) {
-      const p = pt(A[i]), q = pt(B[i]);
-      if (Math.hypot(x - p.x, y - p.y) < 13 || Math.hypot(x - q.x, y - q.y) < 13) { found = i; break; }
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    let best = -1, bd = 16;
+    for (let i = 0; i < P.length; i++) {
+      const d = Math.hypot(x - sx(P[i]), y - sy(P[i]));
+      if (d < bd) { bd = d; best = i; }
     }
-    const c = MAT.s / state.n;
-    if (found < 0 && x >= MAT.x && x <= MAT.x + MAT.s && y >= MAT.y && y <= MAT.y + MAT.s)
-      found = Math.floor((y - MAT.y) / c);
-    canvas.style.cursor = found >= 0 ? 'pointer' : 'default';
-    if (found === state.hover) return;
-    state.hover = found;
+    canvas.style.cursor = best >= 0 ? 'pointer' : 'default';
+    if (best < 0 || best === state.anchor) return;
+    state.anchor = best;
     draw();
   });
-  canvas.addEventListener('pointerleave', () => { state.hover = -1; draw(); });
 
   let last = 0, acc = 0;
   function loop(ts: number) {
@@ -488,8 +587,8 @@ import Readout from '../../../components/sim/Readout.astro';
     if (state.running) {
       acc += dt;
       let moved = false;
-      while (acc >= 0.012) {
-        acc -= 0.012;
+      while (acc >= 0.014) {
+        acc -= 0.014;
         stepOnce();
         moved = true;
       }
@@ -498,18 +597,18 @@ import Readout from '../../../components/sim/Readout.astro';
     requestAnimationFrame(loop);
   }
 
-  const restart = () => { newEncoder(); forward(); draw(); };
-  slider('n', (v) => { state.n = v; restart(); });
+  const restart = () => { scatter(); draw(); };
+  segmented('loss', (l) => { state.loss = l; trace = []; draw(); });
+  slider('k', (v) => { state.k = v; restart(); });
+  slider('m', (v) => { state.m = v; restart(); });
+  slider('mar', (v) => { state.margin = v / 100; trace = []; draw(); }, (v) => (v / 100).toFixed(2));
   slider('tau', (v) => { state.tau = v / 100; trace = []; draw(); }, (v) => (v / 100).toFixed(2));
-  slider('aug', (v) => { state.aug = v / 100; forward(); draw(); }, (v) => (v / 100).toFixed(2));
-  check('nopush', (on) => { state.nopush = on; restart(); });
   transport({
     onRun: (running) => (state.running = running),
     onStep: () => { stepOnce(); draw(); },
-    onReset: () => { newBatch(); restart(); },
+    onReset: () => restart(),
   });
 
-  newBatch();
   restart();
   requestAnimationFrame(loop);
 </script>
