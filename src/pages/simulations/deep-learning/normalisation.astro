@@ -108,7 +108,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, roundRect } from '../../../lib/draw';
   import { el, segmented, slider, result, readout } from '../../../lib/panel';
 
   const HI = '#5eead4', LO = '#f59e0b', SLICE = '#7c8cff', BAD = '#f87171';
@@ -118,7 +118,7 @@ import Readout from '../../../components/sim/Readout.astro';
 
   const canvas = el('norm') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => build());
-  const { ink } = stageInk(canvas);
+  const { ink, inv } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
@@ -189,53 +189,94 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   // --- layout ----------------------------------------------------------------
-  const A = { x: 78, y: 116, w: 356, h: 250 };
-  const B = { x: 566, y: 116, w: 356, h: 250 };
-  const PL = { x: 78, y: 470, w: 844, h: 100 };
+  const A = { x: 68, y: 120, w: 360, h: 248 };
+  const B = { x: 572, y: 120, w: 360, h: 248 };
+  const PL = { x: 68, y: 476, w: 864, h: 96 };
 
-  const cellW = (g: typeof A) => g.w / FEAT;
-  const cellH = (g: typeof A) => g.h / Math.max(1, state.batch);
 
   const heat = (v: number, scale: number) => {
     const t = Math.max(-1, Math.min(1, v / Math.max(0.2, scale)));
     return t >= 0 ? `rgba(94,234,212,${0.06 + 0.8 * t})` : `rgba(245,158,11,${0.06 + 0.8 * -t})`;
   };
 
+  /**
+   * One column per feature, one dot per example. A heat grid hides the very
+   * thing this page is about; a strip shows where each feature sits and how
+   * wide it is, so "they all line up now" is something you see rather than
+   * something you are told.
+   */
   function grid(g: typeof A, data: number[][], title: string, sub: string, outline: boolean) {
     label(title, g.x, g.y - 34, 0.5, 'left', 13);
-    label(sub, g.x, g.y - 18, 0.3, 'left', 11);
-    let scale = 0.2;
+    label(sub, g.x, g.y - 16, 0.3, 'left', 11);
+
+    let scale = 0.3;
     for (const r of data) for (const v of r) scale = Math.max(scale, Math.abs(v));
-    const cw = cellW(g), ch = cellH(g);
-    for (let b = 0; b < data.length; b++)
-      for (let f = 0; f < FEAT; f++) {
-        ctx.fillStyle = heat(data[b][f], scale);
-        ctx.fillRect(g.x + f * cw, g.y + b * ch, cw - 1, ch - 1);
-      }
+    scale *= 1.12;
+    const cw = g.w / FEAT;
+    const yv = (v: number) => g.y + g.h / 2 - (v / scale) * (g.h / 2 - 8);
+
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, g.x, g.y, g.w, g.h, 10);
+    ctx.fill();
     ctx.strokeStyle = ink(0.12);
     ctx.lineWidth = 1;
-    ctx.strokeRect(g.x, g.y, g.w, g.h);
-    if (outline && state.kind !== 'none') {
-      ctx.strokeStyle = SLICE;
-      ctx.lineWidth = 2;
-      if (state.kind === 'batch') ctx.strokeRect(g.x + pick.col * cw - 1, g.y - 2, cw + 1, g.h + 4);
-      else ctx.strokeRect(g.x - 2, g.y + pick.row * ch - 1, g.w + 4, ch + 1);
+    roundRect(ctx, g.x + 0.5, g.y + 0.5, g.w - 1, g.h - 1, 10);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.2);
+    ctx.beginPath();
+    ctx.moveTo(g.x + 6, yv(0));
+    ctx.lineTo(g.x + g.w - 6, yv(0));
+    ctx.stroke();
+
+    // the slice each method averages over
+    if (outline && state.kind === 'batch') {
+      ctx.fillStyle = 'rgba(124,140,255,0.16)';
+      ctx.fillRect(g.x + pick.col * cw, g.y + 2, cw, g.h - 4);
     }
-    // one bar per feature, so "every column now has the same width" is visible
-    const stds: number[] = [];
-    for (let f = 0; f < FEAT; f++) stds.push(stdOf(data.map((r) => r[f])));
-    const smax = Math.max(...stds, 1e-6);
+
+    ctx.save();
+    roundRect(ctx, g.x, g.y, g.w, g.h, 10);
+    ctx.clip();
     for (let f = 0; f < FEAT; f++) {
-      const bh = (stds[f] / smax) * 26;
-      ctx.fillStyle = HI;
-      ctx.globalAlpha = 0.55;
-      ctx.fillRect(g.x + f * cw + 1, g.y + g.h + 32 - bh, cw - 2, bh);
+      const xc = g.x + (f + 0.5) * cw;
+      const col = data.map((r) => r[f]);
+      const m = col.reduce((a, v) => a + v, 0) / col.length;
+      const sd = stdOf(col);
+      // where this feature sits, and how wide it is
+      ctx.fillStyle = 'rgba(160,170,190,0.12)';
+      ctx.fillRect(xc - cw * 0.32, yv(m + sd), cw * 0.64, Math.max(1, yv(m - sd) - yv(m + sd)));
+      ctx.strokeStyle = ink(0.4);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(xc - cw * 0.36, yv(m));
+      ctx.lineTo(xc + cw * 0.36, yv(m));
+      ctx.stroke();
+      for (let b = 0; b < col.length; b++) {
+        const on = state.kind === 'layer' && outline && b === pick.row;
+        ctx.fillStyle = on ? SLICE : col[b] >= m ? HI : LO;
+        ctx.beginPath();
+        ctx.arc(xc + ((b % 3) - 1) * cw * 0.16, yv(col[b]), on ? 4 : 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // layer norm works along one example, so that example is a line across
+    if (outline && state.kind === 'layer' && data[pick.row]) {
+      ctx.strokeStyle = SLICE;
+      ctx.lineWidth = 1.6;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      for (let f = 0; f < FEAT; f++) {
+        const xc = g.x + (f + 0.5) * cw + ((pick.row % 3) - 1) * cw * 0.16;
+        f ? ctx.lineTo(xc, yv(data[pick.row][f])) : ctx.moveTo(xc, yv(data[pick.row][f]));
+      }
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    label('how wide each feature is', g.x, g.y + g.h + 48, 0.3, 'left', 11);
-    label(`${FEAT}`, g.x + g.w, g.y + g.h + 48, 0.3, 'right', 11);
-    label('example 1', g.x - 10, g.y + 10, 0.3, 'right', 11);
-    label(`${state.batch}`, g.x - 10, g.y + g.h - 2, 0.3, 'right', 11);
+    ctx.restore();
+
+    label(`± ${scale.toFixed(1)}`, g.x - 8, g.y + 12, 0.3, 'right', 11);
+    label('0', g.x - 8, yv(0) + 4, 0.3, 'right', 11);
+    label('one column per feature, one dot per example', g.x, g.y + g.h + 20, 0.3, 'left', 11);
   }
 
   function middle() {
@@ -254,7 +295,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.lineTo(B.x - 25, cy + 5);
     ctx.closePath();
     ctx.fill();
-    const name = state.kind === 'none' ? 'nothing happens' : state.kind === 'batch' ? 'down each column' : 'across each row';
+    const name = state.kind === 'none' ? 'nothing' : state.kind === 'batch' ? 'down a column' : 'across a row';
     label(name, cx, cy - 16, 0.55, 'center', 11.5, state.kind === 'none' ? undefined : SLICE);
     if (state.kind !== 'none') {
       label(`γ ${state.gamma.toFixed(2)}`, cx, cy + 22, 0.45, 'center', 11.5);

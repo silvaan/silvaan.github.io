@@ -1,36 +1,48 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { AREAS } from '../../data/tools';
+
+const live = (a: (typeof AREAS)[number]) => a.simulators.filter((s) => s.status !== 'soon').length;
+const total = AREAS.reduce((n, a) => n + live(a), 0);
 ---
 
 <BaseLayout
   title="Simulations"
-  description="Interactive math simulations grouped by area: calculus, linear algebra, deep learning, statistics and physics."
+  description="Interactive math simulations grouped by area: calculus, linear algebra, deep learning, computer vision, statistics and physics."
   wide
 >
   <div class="page-head">
     <span class="eyebrow">Playground</span>
     <h1>Simulations</h1>
     <p class="lead">
-      Interactive simulations, grouped by area. Everything runs live in the
-      browser, drag, tune and watch the maths move.
+      {total} interactive simulations, grouped by area. Everything runs live in
+      the browser, drag, tune and watch the maths move. Open an area to see what
+      is in it.
     </p>
   </div>
 
   {
     AREAS.map((area) => (
-      <section class="area-block">
-        <div class="area-head">
+      <details class="area-block" data-area={area.slug}>
+        <summary class="area-head">
           <span class="area-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d={area.icon} />
             </svg>
           </span>
-          <div>
-            <h2><a href={`/simulations/${area.slug}`}>{area.title}</a></h2>
+          <div class="area-text">
+            <h2>
+              <a href={`/simulations/${area.slug}`}>{area.title}</a>
+              <span class="area-count">{live(area)}</span>
+            </h2>
             <p>{area.description}</p>
           </div>
-        </div>
+          <span class="area-chev" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </span>
+        </summary>
 
         <div class="card-grid">
           {area.simulators.map((sim) =>
@@ -54,20 +66,51 @@ import { AREAS } from '../../data/tools';
             )
           )}
         </div>
-      </section>
+      </details>
     ))
   }
 </BaseLayout>
 
+<script>
+  // The area link inside the summary should navigate, not toggle the panel.
+  document.querySelectorAll('.area-head a').forEach((a) =>
+    a.addEventListener('click', (e) => e.stopPropagation())
+  );
+  // Whichever areas you opened stay open next time.
+  const KEY = 'sim-areas-open';
+  const open = new Set<string>(JSON.parse(localStorage.getItem(KEY) ?? '[]'));
+  const blocks = Array.from(document.querySelectorAll<HTMLDetailsElement>('.area-block'));
+  for (const d of blocks) if (open.has(d.dataset.area ?? '')) d.open = true;
+  for (const d of blocks)
+    d.addEventListener('toggle', () => {
+      const slug = d.dataset.area ?? '';
+      d.open ? open.add(slug) : open.delete(slug);
+      try { localStorage.setItem(KEY, JSON.stringify([...open])); } catch { /* private mode */ }
+    });
+</script>
+
 <style>
   .area-block {
-    margin-top: 44px;
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
   }
   .area-head {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 14px;
-    margin-bottom: 18px;
+    padding: 18px 20px;
+    cursor: pointer;
+    list-style: none;
+    transition: background 0.16s ease;
+  }
+  .area-head::-webkit-details-marker {
+    display: none;
+  }
+  .area-head:hover {
+    background: var(--surface-2);
   }
   .area-icon {
     display: grid;
@@ -83,9 +126,16 @@ import { AREAS } from '../../data/tools';
     width: 22px;
     height: 22px;
   }
+  .area-text {
+    flex: 1;
+    min-width: 0;
+  }
   .area-head h2 {
     margin: 0;
-    font-size: 1.25rem;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
   .area-head h2 a {
     color: var(--text);
@@ -93,9 +143,42 @@ import { AREAS } from '../../data/tools';
   .area-head h2 a:hover {
     color: var(--accent);
   }
+  .area-count {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-faint);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
   .area-head p {
     margin: 3px 0 0;
     font-size: 0.92rem;
     color: var(--text-muted);
+  }
+  .area-chev {
+    flex: none;
+    color: var(--text-faint);
+    display: grid;
+    place-items: center;
+    transition: transform 0.18s ease;
+  }
+  .area-chev svg {
+    width: 20px;
+    height: 20px;
+  }
+  .area-block[open] .area-chev {
+    transform: rotate(180deg);
+  }
+  .area-block[open] .area-head {
+    border-bottom: 1px solid var(--border);
+  }
+  .area-block .card-grid {
+    padding: 20px;
+  }
+  @media (max-width: 640px) {
+    .area-head p {
+      display: none;
+    }
   }
 </style>

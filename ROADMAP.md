@@ -6,6 +6,56 @@ next.
 
 ---
 
+## Image Representation
+
+**Area:** computer vision · slug `image-representation`
+
+Before any filter, before any network: what a picture actually is once it is in
+memory.
+
+**Canvas.** One photograph on the left. On the right the same photograph as the
+thing it really is: a grid of numbers, with the zoom deep enough that individual
+values are readable. Between them a magnifier that follows the pointer, so the
+patch under it appears as numbers at the same moment it is a picture.
+
+**Controls.** Zoom, the channel shown (all, red, green, blue, or a single grey),
+bit depth from eight bits down to one, and a switch between viewing the values
+as brightness and as bare numbers.
+
+**The moment.** Drop the bit depth. At eight bits nothing changes, at four the
+sky bands, at one the photograph becomes a stencil, and the point that a picture
+is only ever a quantised measurement lands without being argued. The second
+moment is the channel split: three grey pictures that mean nothing separately
+and a colour photograph together.
+
+**Notes.** This is the page every other vision page should be able to point at,
+so it should stay small and never mention convolution.
+
+---
+
+## Connected Components
+
+**Area:** computer vision · slug `connected-components`
+
+Thresholding gives you white and black. Deciding which whites are the *same
+object* is a separate question, and the answer is one pass of a union-find.
+
+**Canvas.** A binary picture on the left, made by thresholding a photograph or
+by drawing straight onto it. On the right the same picture with every component
+in its own colour, labelled and counted. Underneath, the union-find forest as
+it is built, so a merge is visible as two trees joining.
+
+**Controls.** The threshold, four-connectivity against eight-connectivity, a
+minimum component size, and a transport that runs the scan pixel by pixel.
+
+**The moment.** Switch between four and eight neighbours on a picture with a
+diagonal touch. The count changes, sometimes dramatically, because "connected"
+was never a property of the picture but a definition you chose. The second
+moment is watching two labels merge halfway down the scan, which is why the
+naive two-pass version needs the union-find at all.
+
+---
+
 ## Variational Autoencoder
 
 **Area:** deep learning · slug `vae` · sits beside
@@ -70,14 +120,11 @@ scatter.
 
 ## Vanishing and Exploding Gradients
 
-**Area:** deep learning · slug `vanishing-gradients` · ties together
-[Initialisation](src/pages/simulations/deep-learning/initialisation.astro),
-[Normalisation](src/pages/simulations/deep-learning/normalisation.astro) and
-[Residual](src/pages/simulations/deep-learning/residual.astro)
+**Area:** deep learning · slug `vanishing-gradients`
 
-Weight Initialisation shows the scale at the start of training. This one shows
-what happens to the gradient during it, and what the three standard fixes
-actually fix.
+What happens to the gradient during training, and what the standard fixes
+actually fix. This is where residual connections earn their place, so it
+absorbs the old Residual Connections page rather than sitting beside it.
 
 **Canvas.** A deep stack drawn as a column of layers. The gradient arriving at
 each layer drawn as a bar, on a log axis, so a hundred layers of decay is
@@ -96,7 +143,52 @@ Switch on residual connections and the bar chart goes flat immediately, because
 the identity path carries the gradient through untouched. That is the whole
 argument for residual networks in one toggle.
 
-**Notes.** Recurrent depth is the same phenomenon in time rather than in space,
-so it should link to
-[Recurrence](src/pages/simulations/deep-learning/recurrence.astro), and the
-exploding half is where clipping earns its place.
+---
+
+## Attention
+
+**Area:** deep learning · slug `attention`
+
+Taken down for a rebuild. The old page split the mechanism across two
+simulations, one for the soft lookup and one for self-attention, and neither
+was worth the length on its own.
+
+**Canvas.** One sentence. A query token, every other token as a key, the score
+for each, the softmax that turns scores into weights, and the blend that comes
+out. All four on the same row so the pipeline reads left to right, with the
+attention matrix underneath as the same thing done for every token at once.
+
+**Controls.** Which token is asking, the temperature, causal masking on or off,
+and a switch between the mechanism on abstract keys and the same mechanism on a
+real sentence.
+
+**The moment.** Move the query and watch one row of the matrix light up. The
+matrix is not a new idea; it is the row you were just looking at, repeated for
+every token. The second moment is masking: half the matrix goes dark and the
+sentence can only look backwards.
+
+**Notes.** One page, not two. Queries, keys and values as projections of the
+same X belong here as a toggle, not as a separate simulation.
+
+---
+
+## Recurrence and Memory
+
+**Area:** deep learning · slug `recurrence`
+
+Also taken down for a rebuild. The idea is right and the page never made the
+decay visible enough to feel.
+
+**Canvas.** A sequence running left to right, one hidden state carried along it,
+and the influence of the first input on every later step drawn as a fading
+trail. Beneath it the same quantity as a number on a log axis, which is a
+straight line whose slope is the recurrent weight.
+
+**Controls.** The recurrent weight, the sequence length, and a switch between a
+plain multiplicative state and an additive gate.
+
+**The moment.** Set the weight below one and watch the trail vanish within a
+dozen steps; set it above one and watch it swamp everything. Then switch on the
+gate: the trail stays flat for hundreds of steps, because an addition does not
+compound the way a multiplication does. It is the same argument as the residual
+connection, in time rather than in depth, and the two pages should say so.

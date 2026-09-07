@@ -2,9 +2,7 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Checks from '../../../components/sim/Checks.astro';
 import Transport from '../../../components/sim/Transport.astro';
-import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
@@ -13,197 +11,416 @@ import Readout from '../../../components/sim/Readout.astro';
 <SimLayout
   areaSlug="calculus"
   title="Fourier Series"
-  description="Any periodic wave is a sum of pure sines. Stack them as turning wheels and the tip traces a square, sawtooth or triangle wave as you add harmonics."
+  description="How much of a given frequency is inside a signal? Multiply the two together and add up the area. If the wave fits, the product sits mostly above the axis and the area is large; if it does not, the positives and negatives cancel and the answer is exactly zero. Every coefficient of a Fourier series is that one measurement."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="fourier" width="900" height="460" role="img" aria-label="A chain of turning circles, one per harmonic, whose final tip draws the target wave on the right."></canvas>
+        <canvas
+          id="ft"
+          width="1000"
+          height="642"
+          role="img"
+          aria-label="A signal with its partial sum, the harmonic being tested, the product of the two shaded by sign, and the spectrum of coefficients."
+        ></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the wheels, one per harmonic', color: '#7c8cff' }, { label: 'the wave their tip draws', color: '#5eead4' }]}
-        hint="Each wheel's radius is that sine's amplitude, and it spins k times as fast as the first"
+        legend={[
+          { label: 'the signal', color: '#e5e7eb' },
+          { label: 'the sum of what has been measured', color: '#5eead4' },
+          { label: 'area above the axis', color: '#5eead4' },
+          { label: 'area below it', color: '#f87171' },
+        ]}
+        hint="Drag on the top panel to draw your own signal · click a bar to test that frequency"
       />
-      <Result label="Harmonics" />
+      <Result label="How much fits" />
     </div>
+
     <div class="sim-panel">
-      <Seg id="wave" label="Target wave" attr="w" options={[{ value: 'square', label: 'Square' }, { value: 'saw', label: 'Sawtooth' }, { value: 'triangle', label: 'Triangle' }]} />
-      <Transport running />
-      <Slider id="n" label="Harmonics" min={1} max={40} value={4} />
-      <Slider id="sp" label="Speed" min={0} max={30} value={10} display="1.0" />
+      <Seg
+        id="sig"
+        label="Signal"
+        attr="s"
+        options={[
+          { value: 'square', label: 'Square' },
+          { value: 'saw', label: 'Sawtooth' },
+          { value: 'triangle', label: 'Triangle' },
+          { value: 'pulse', label: 'Pulse' },
+          { value: 'two', label: 'Two tones' },
+        ]}
+      />
+      <Seg id="basis" label="Testing with" attr="b" options={[{ value: 'sin', label: 'sin kx' }, { value: 'cos', label: 'cos kx' }]} />
+      <Slider id="k" label="Frequencies tested" min={1} max={24} value={1} />
+      <Transport step running />
+      <Readout
+        rows={[
+          { id: 'r-k', label: 'frequency being tested' },
+          { id: 'r-b', label: 'b_k, how much sin kx fits' },
+          { id: 'r-a', label: 'a_k, how much cos kx fits' },
+          { id: 'r-e', label: 'of the signal accounted for' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      A single circle traces a <b>pure sine</b>. Each harmonic you add sharpens
-      the corners, and the flat parts flatten, closing in on the target wave.
+      One frequency at a time. The middle-left panel is the wave being tested,
+      the middle-right panel is that wave multiplied by the signal, and the
+      shaded area is the whole answer. Teal counts positive, red counts
+      negative, and what survives is how much of that frequency the signal
+      contains.
     </li>
     <li>
-      Near every jump a small <b>overshoot</b> refuses to disappear however many
-      harmonics you add: that is the <b>Gibbs phenomenon</b>.
+      Take the <b>square</b> wave and test frequency 2. The product has exactly
+      as much area above the axis as below, the two cancel, and the coefficient
+      is zero. Not small: zero. A square wave contains no even harmonics at all,
+      and you can see the cancellation happen rather than take it on faith.
     </li>
     <li>
-      The <b>triangle</b> wave's amplitudes fall off like 1/k², far faster than
-      the square's 1/k, so it converges to a clean shape with only a handful of
-      circles.
+      Now test 1, 3, 5. Every one of them lands almost entirely above the axis,
+      because the wave rises exactly where the signal is positive. Fitting and
+      not fitting look completely different, and nothing in between is required.
+    </li>
+    <li>
+      Switch to <b>cos kx</b> on the same square wave. Everything collapses to
+      zero. The signal is odd, cosines are even, and an odd function multiplied
+      by an even one always has cancelling halves. Symmetry alone decides half
+      the coefficients before any arithmetic.
+    </li>
+    <li>
+      Press <b>run</b>. Each frequency is tested in turn, its bar appears in the
+      spectrum, and the teal curve on top gains that term. The reconstruction is
+      not a separate idea: it is the running total of everything measured so far.
+    </li>
+    <li>
+      Pick <b>two tones</b>. Two bars appear and every other one is zero, so the
+      spectrum is a far shorter description of the signal than the signal is.
+      That is the entire reason for doing this to sound, to images, and to
+      anything else that repeats.
+    </li>
+    <li>
+      Draw your own signal by dragging on the top panel. Something smooth needs
+      only a few low bars; a sharp corner needs a long tail of high ones, which
+      is why compression throws away the tail and why a corner is where a
+      compressed picture goes wrong.
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
 
-  type Harm = { k: number; amp: number };
-  function harmonics(wave: string, N: number): Harm[] {
-    const out: Harm[] = [];
-    if (wave === 'square') {
-      for (let i = 0; i < N; i++) {
-        const k = 2 * i + 1;
-        out.push({ k, amp: (4 / Math.PI) / k });
-      }
-    } else if (wave === 'saw') {
-      for (let k = 1; k <= N; k++) {
-        out.push({ k, amp: ((2 / Math.PI) * (-1) ** (k + 1)) / k });
-      }
-    } else {
-      for (let i = 0; i < N; i++) {
-        const k = 2 * i + 1;
-        out.push({ k, amp: ((8 / Math.PI ** 2) * (-1) ** i) / (k * k) });
-      }
-    }
-    return out;
-  }
+  const SIG = '#e5e7eb';
+  const POS = '#5eead4';
+  const NEG = '#f87171';
+  const MARK = '#f59e0b';
+  const M = 720;   // samples over one period
+  const KMAX = 24;
 
-  const state = { wave: 'square', n: 4, speed: 1, running: true };
-  let t = 0;
-  let history: number[] = [];
+  const state = { sig: 'square', basis: 'sin', k: 1, running: true, drawing: false };
 
+  const canvas = el('ft') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
-  const canvas = el('fourier') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas);
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const setRows = readout();
 
-  const CX = 210;
-  const CY = H / 2;
-  const TRACE_X = 360;
-  const DX = 2;
-  const MAXH = Math.floor((W - TRACE_X - 16) / DX);
+  // --- the signal ------------------------------------------------------------
+  let f = new Float64Array(M);
+  const xs = (i: number) => (i * 2 * Math.PI) / M;
 
-  function firstAmp() {
-    return Math.abs(harmonics(state.wave, 1)[0].amp);
+  function build(name: string) {
+    for (let i = 0; i < M; i++) {
+      const x = xs(i);
+      f[i] =
+        name === 'square' ? (Math.sin(x) >= 0 ? 1 : -1)
+        : name === 'saw' ? 1 - x / Math.PI
+        : name === 'triangle' ? (x < Math.PI ? -1 + (2 * x) / Math.PI : 3 - (2 * x) / Math.PI)
+        : name === 'pulse' ? (x < Math.PI / 3 ? 1 : -0.2)
+        : 0.8 * Math.sin(2 * x) + 0.5 * Math.sin(5 * x + 0.6);
+    }
+  }
+
+  // --- the measurement -------------------------------------------------------
+  // A coefficient is one inner product: multiply the signal by the wave and add
+  // up the area. Everything on this page is that number, drawn.
+  const A: number[] = [], B: number[] = [];
+  let mean = 0, energy = 1;
+
+  function analyse() {
+    mean = 0;
+    for (let i = 0; i < M; i++) mean += f[i];
+    mean /= M;
+    A.length = 0;
+    B.length = 0;
+    A.push(0);
+    B.push(0);
+    for (let k = 1; k <= KMAX; k++) {
+      let a = 0, b = 0;
+      for (let i = 0; i < M; i++) {
+        const x = xs(i);
+        a += f[i] * Math.cos(k * x);
+        b += f[i] * Math.sin(k * x);
+      }
+      A.push((2 * a) / M);
+      B.push((2 * b) / M);
+    }
+    energy = 1e-12;
+    for (let i = 0; i < M; i++) energy += (f[i] - mean) ** 2 / M;
+  }
+
+  const wave = (k: number, x: number) => (state.basis === 'sin' ? Math.sin(k * x) : Math.cos(k * x));
+  const coeff = (k: number) => (state.basis === 'sin' ? B[k] : A[k]);
+
+  /** The signal rebuilt from everything measured so far. */
+  function partial(x: number, upto: number) {
+    let s = mean;
+    for (let k = 1; k <= upto; k++) s += A[k] * Math.cos(k * x) + B[k] * Math.sin(k * x);
+    return s;
+  }
+
+  /** How much of the signal the terms kept so far account for, by Parseval. */
+  function captured(upto: number) {
+    let e = 0;
+    for (let k = 1; k <= upto; k++) e += (A[k] ** 2 + B[k] ** 2) / 2;
+    return Math.min(1, e / energy);
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const TOP = { x: 44, y: 104, w: 912, h: 148 };
+  const TEST = { x: 44, y: 320, w: 434, h: 116 };
+  const PROD = { x: 522, y: 320, w: 434, h: 116 };
+  const SPEC = { x: 44, y: 512, w: 912, h: 96 };
+
+  const px = (box: { x: number; w: number }, i: number) => box.x + (i / M) * box.w;
+  const py = (box: { y: number; h: number }, v: number, span: number) =>
+    box.y + box.h / 2 - (v / span) * (box.h / 2 - 8);
+
+  function frame(box: { x: number; y: number; w: number; h: number }) {
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, box.x, box.y, box.w, box.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    roundRect(ctx, box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1, 10);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.18);
+    ctx.beginPath();
+    ctx.moveTo(box.x + 6, box.y + box.h / 2);
+    ctx.lineTo(box.x + box.w - 6, box.y + box.h / 2);
+    ctx.stroke();
+  }
+
+  function curve(box: { x: number; y: number; w: number; h: number }, g: (i: number) => number, span: number, colour: string, width = 2) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    for (let i = 0; i <= M; i++) {
+      const v = py(box, g(i % M), span);
+      i ? ctx.lineTo(px(box, i), v) : ctx.moveTo(px(box, i), v);
+    }
+    ctx.stroke();
   }
 
   function draw() {
-    const accent = css('--accent') || '#7c8cff';
-    const teal = css('--accent-2') || '#5eead4';
-    const grid = css('--border') || '#262a32';
-    const ink = css('--stage-ink') || '232,233,236';
     ctx.clearRect(0, 0, W, H);
+    const k = state.k;
+    let span = 1e-6;
+    for (const v of f) span = Math.max(span, Math.abs(v));
+    span *= 1.15;
 
-    const SCALE = 108 / firstAmp();
-    const hs = harmonics(state.wave, state.n);
+    // --- the signal, and the running total
+    label('the signal', TOP.x, TOP.y - 32, 0.55, 'left', 13);
+    label('drag here to draw your own', TOP.x, TOP.y - 14, 0.32, 'left', 11);
+    label(`the first ${k} frequencies, added up`, TOP.x + TOP.w, TOP.y - 14, 0.55, 'right', 12, POS);
+    frame(TOP);
+    curve(TOP, (i) => f[i], span, ink(0.92), 2.2);
+    curve(TOP, (i) => partial(xs(i), k), span, POS, 2.4);
+
+    // --- the wave being tested
+    const name = state.basis === 'sin' ? `sin ${k}x` : `cos ${k}x`;
+    label('the wave being tested', TEST.x, TEST.y - 32, 0.55, 'left', 13);
+    label(`one full turn ${k} times over`, TEST.x, TEST.y - 14, 0.32, 'left', 11);
+    label(name, TEST.x + TEST.w, TEST.y - 14, 0.75, 'right', 12, MARK);
+    frame(TEST);
+    curve(TEST, (i) => wave(k, xs(i)), 1.15, MARK, 2);
+
+    // --- the product, which is the whole answer
+    label('the signal times that wave', PROD.x, PROD.y - 32, 0.55, 'left', 13);
+    label('shaded above and below the axis', PROD.x, PROD.y - 14, 0.32, 'left', 11);
+    frame(PROD);
+    let pspan = 1e-6;
+    for (let i = 0; i < M; i++) pspan = Math.max(pspan, Math.abs(f[i] * wave(k, xs(i))));
+    pspan *= 1.15;
+    ctx.save();
+    roundRect(ctx, PROD.x, PROD.y, PROD.w, PROD.h, 10);
+    ctx.clip();
+    const mid = PROD.y + PROD.h / 2;
+    for (let i = 0; i < M; i++) {
+      const v = f[i] * wave(k, xs(i));
+      const y = py(PROD, v, pspan);
+      ctx.fillStyle = v >= 0 ? 'rgba(94,234,212,0.4)' : 'rgba(248,113,113,0.4)';
+      ctx.fillRect(px(PROD, i), Math.min(mid, y), PROD.w / M + 0.7, Math.abs(mid - y));
+    }
+    ctx.restore();
+    curve(PROD, (i) => f[i] * wave(k, xs(i)), pspan, ink(0.5), 1.4);
+    const c = coeff(k);
+    const fits = Math.abs(c) > 0.02;
+    label(
+      fits ? 'the two sides do not cancel' : 'the two sides cancel exactly',
+      PROD.x + PROD.w / 2,
+      PROD.y + PROD.h + 22,
+      0.7,
+      'center',
+      12,
+      fits ? POS : NEG
+    );
+
+    // --- the spectrum
+    label('how much of each frequency is in there', SPEC.x, SPEC.y - 32, 0.55, 'left', 13);
+    label('one bar per frequency, click to test it', SPEC.x, SPEC.y - 14, 0.32, 'left', 11);
+    let bmax = 1e-6;
+    for (let j = 1; j <= KMAX; j++) bmax = Math.max(bmax, Math.abs(A[j]), Math.abs(B[j]));
+    const bw = SPEC.w / KMAX, base = SPEC.y + SPEC.h - 18;
+    ctx.strokeStyle = ink(0.18);
+    ctx.beginPath();
+    ctx.moveTo(SPEC.x, base);
+    ctx.lineTo(SPEC.x + SPEC.w, base);
+    ctx.stroke();
+    for (let j = 1; j <= KMAX; j++) {
+      const x = SPEC.x + (j - 1) * bw;
+      const v = state.basis === 'sin' ? B[j] : A[j];
+      const hgt = (Math.abs(v) / bmax) * (SPEC.h - 30);
+      const on = j === k, done = j <= k;
+      ctx.fillStyle = on ? MARK : done ? (v >= 0 ? 'rgba(94,234,212,0.75)' : 'rgba(248,113,113,0.75)') : ink(0.1);
+      roundRect(ctx, x + 3, base - Math.max(1.5, hgt), bw - 6, Math.max(1.5, hgt), 3);
+      ctx.fill();
+      label(String(j), x + bw / 2, base + 16, on ? 0.9 : 0.3, 'center', 11, on ? MARK : undefined);
+    }
+
+    // --- the words
+    const cap = captured(k);
+    const short = (v: number) => (Math.abs(v) < 5e-4 ? '0.000' : v.toFixed(3));
     setEq({
-      rule: [['f(t)', teal], '=', ['\\sum_k a_k\\sin(k\\,t)', accent], '\\quad\\text{one turning wheel per }k'],
-      live: [[`k = ${hs.slice(0, 8).map((h) => h.k).join(',\\,')}${hs.length > 8 ? ',\\,\\dots' : ''}`, accent], `\\quad a_k \\propto ${state.wave === 'triangle' ? '1/k^2' : '1/k'}`],
+      rule: [
+        [state.basis === 'sin' ? 'b_k' : 'a_k', MARK],
+        '= \\frac{1}{\\pi}\\int_0^{2\\pi} f(x)\\,',
+        [state.basis === 'sin' ? '\\sin kx' : '\\cos kx', MARK],
+        '\\,dx',
+      ],
+      live: [
+        `k = ${k}`,
+        [`\\quad ${state.basis === 'sin' ? 'b' : 'a'}_{${k}} = ${short(c)}`, fits ? POS : NEG],
+        `\\quad ${(cap * 100).toFixed(1)}\\%\\text{ of the signal}`,
+      ],
+    });
+    setRows({
+      'r-k': String(k),
+      'r-b': short(B[k]),
+      'r-a': short(A[k]),
+      'r-e': `${(cap * 100).toFixed(1)}%`,
     });
     setResult({
-      value: String(state.n),
-      colour: accent,
-      status: `${state.wave} wave · ${state.n} wheel${state.n > 1 ? 's' : ''}, the largest turning once per cycle and the smallest ${hs[hs.length - 1].k} times`,
-      note: state.n < 4
-        ? 'With only a few sines the corners are soft and the flat parts wobble. Add harmonics and watch the wave sharpen.'
-        : 'Every wheel is one pure sine. The overshoot next to a jump never fully goes away however many you add: that is the Gibbs phenomenon.',
+      value: short(c),
+      colour: fits ? POS : NEG,
+      status: `${state.basis === 'sin' ? 'sin' : 'cos'} ${k}x against the signal · ${(cap * 100).toFixed(1)}% of it is accounted for by the first ${k}`,
+      note: fits
+        ? 'The wave rises where the signal rises, so the product spends more time above the axis than below and the areas do not cancel. What is left over is the size of this frequency inside the signal.'
+        : 'Every piece of area above the axis is matched by one below, so the total is exactly nothing. This frequency is not in the signal at all, and multiplying is what proves it.',
     });
-
-    // baseline
-    ctx.strokeStyle = grid;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(TRACE_X, CY);
-    ctx.lineTo(W - 12, CY);
-    ctx.stroke();
-
-    // epicycles
-    let x = CX;
-    let y = CY;
-    for (const h of hs) {
-      const r = Math.abs(h.amp) * SCALE;
-      const phi = h.k * t + (h.amp < 0 ? Math.PI : 0);
-      ctx.strokeStyle = `rgba(${ink},0.22)`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.stroke();
-      const nx = x + r * Math.cos(phi);
-      const ny = y + r * Math.sin(phi);
-      ctx.strokeStyle = `rgba(${ink},0.8)`;
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(nx, ny);
-      ctx.stroke();
-      x = nx;
-      y = ny;
-    }
-
-    // connector from tip to the trace
-    ctx.strokeStyle = 'rgba(124,140,255,0.5)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(TRACE_X, y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // tip dot
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // traced wave (newest at the left, scrolling right)
-    ctx.strokeStyle = teal;
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    for (let i = 0; i < history.length; i++) {
-      const px = TRACE_X + i * DX;
-      const py = history[i];
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-
-    return y;
   }
 
-  function frame() {
-    const tipY = draw();
-    if (state.running) {
-      history.unshift(tipY);
-      if (history.length > MAXH) history.pop();
-      t += 0.012 * state.speed;
-    }
-    requestAnimationFrame(frame);
+  // --- drawing your own ------------------------------------------------------
+  let lastI = -1;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  function paint(pt: { x: number; y: number }) {
+    let span = 1e-6;
+    for (const v of f) span = Math.max(span, Math.abs(v));
+    span *= 1.15;
+    const i = Math.max(0, Math.min(M - 1, Math.round(((pt.x - TOP.x) / TOP.w) * M)));
+    const v = ((TOP.y + TOP.h / 2 - pt.y) / (TOP.h / 2 - 8)) * span;
+    const set = Math.max(-1.6, Math.min(1.6, v));
+    if (lastI >= 0 && Math.abs(i - lastI) > 1) {
+      const a = Math.min(i, lastI), b = Math.max(i, lastI);
+      const va = lastI < i ? f[lastI] : set, vb = lastI < i ? set : f[lastI];
+      for (let j = a; j <= b; j++) f[j] = va + ((vb - va) * (j - a)) / (b - a);
+    } else f[i] = set;
+    lastI = i;
+    analyse();
+    draw();
   }
-
-  segmented('wave', (w) => {
-    state.wave = w;
-    history = [];
-    t = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    const pt = local(e);
+    if (pt.y >= SPEC.y - 20 && pt.y <= SPEC.y + SPEC.h && pt.x >= SPEC.x && pt.x <= SPEC.x + SPEC.w) {
+      const j = Math.floor(((pt.x - SPEC.x) / SPEC.w) * KMAX) + 1;
+      setK(Math.max(1, Math.min(KMAX, j)));
+      return;
+    }
+    if (pt.x < TOP.x || pt.x > TOP.x + TOP.w || pt.y < TOP.y || pt.y > TOP.y + TOP.h) return;
+    state.drawing = true;
+    lastI = -1;
+    sigSeg.clear();
+    state.sig = 'drawn';
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    paint(pt);
   });
-  slider('n', (v) => (state.n = v));
-  slider('sp', (v) => (state.speed = v / 10), (v) => (v / 10).toFixed(1));
-  transport({
+  canvas.addEventListener('pointermove', (e) => {
+    const pt = local(e);
+    const overTop = pt.x >= TOP.x && pt.x <= TOP.x + TOP.w && pt.y >= TOP.y && pt.y <= TOP.y + TOP.h;
+    const overSpec = pt.y >= SPEC.y - 20 && pt.y <= SPEC.y + SPEC.h && pt.x >= SPEC.x && pt.x <= SPEC.x + SPEC.w;
+    canvas.style.cursor = state.drawing || overTop ? 'crosshair' : overSpec ? 'pointer' : 'default';
+    if (state.drawing) paint(pt);
+  });
+  const drop = () => { state.drawing = false; lastI = -1; };
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  // --- panel -----------------------------------------------------------------
+  const setKSlider = slider('k', (v) => { state.k = v; draw(); });
+  function setK(v: number) {
+    state.k = Math.max(1, Math.min(KMAX, v));
+    setKSlider(state.k);
+    draw();
+  }
+  const sigSeg = segmented('sig', (s) => { state.sig = s; build(s); analyse(); setK(1); });
+  segmented('basis', (b) => { state.basis = b; draw(); });
+  const controls = transport({
     onRun: (running) => (state.running = running),
-    onReset: () => {
-      history = [];
-      t = 0;
-    },
+    onStep: () => setK(state.k >= KMAX ? 1 : state.k + 1),
+    onReset: () => setK(1),
   });
 
-  requestAnimationFrame(frame);
+  let last = 0, acc = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      while (acc >= 0.55) {
+        acc -= 0.55;
+        if (state.k >= KMAX) {
+          state.running = false;
+          controls.setRunning(false);
+          break;
+        }
+        setK(state.k + 1);
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  build(state.sig);
+  analyse();
+  draw();
+  requestAnimationFrame(loop);
 </script>

@@ -20,6 +20,10 @@ export default defineConfig({
     '/simulations/deep-learning/softmax-cross-entropy': '/simulations/deep-learning/softmax',
     '/simulations/deep-learning/mnist-classifier': '/simulations/deep-learning/neural-net',
     '/simulations/deep-learning/image-convolution': '/simulations/computer-vision/image-filters',
+    '/simulations/deep-learning/residual': '/simulations/deep-learning',
+    '/simulations/deep-learning/attention': '/simulations/deep-learning',
+    '/simulations/deep-learning/self-attention': '/simulations/deep-learning',
+    '/simulations/deep-learning/recurrence': '/simulations/deep-learning',
   },
   markdown: {
     // Keep authored punctuation literal so `--`/`---` never become en/em dashes.

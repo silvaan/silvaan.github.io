@@ -20,7 +20,7 @@ import Readout from '../../../components/sim/Readout.astro';
         <canvas
           id="bn"
           width="1000"
-          height="620"
+          height="548"
           role="img"
           aria-label="A loss surface in two parameters with the true gradient, a cloud of gradients estimated from random batches, and the path a run takes, beside a plot of the noise against batch size."
         ></canvas>
@@ -179,9 +179,8 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   // --- layout ----------------------------------------------------------------
-  const MAP = { x: 66, y: 96, w: 470, h: 470 };
-  const FIT = { x: 610, y: 96, w: 330, h: 190 };
-  const PL = { x: 610, y: 372, w: 330, h: 194 };
+  const MAP = { x: 64, y: 100, w: 420, h: 420 };
+  const PL = { x: 580, y: 168, w: 360, h: 280 };
   const RANGE = 2.4;
   const px = (w0: number) => MAP.x + ((w0 + RANGE) / (2 * RANGE)) * MAP.w;
   const py = (w1: number) => MAP.y + MAP.h - ((w1 + RANGE) / (2 * RANGE)) * MAP.h;
@@ -190,9 +189,31 @@ import Readout from '../../../components/sim/Readout.astro';
     ((MAP.y + MAP.h - y) / MAP.h) * 2 * RANGE - RANGE,
   ];
 
+  // The loss is exactly quadratic, so a level set is an ellipse and can be
+  // drawn as one rather than hunted for on a grid.
+  const HESS = (() => {
+    let a = 0, b = 0, c = 0;
+    for (let i = 0; i < N; i++) {
+      a += xs[i][0] * xs[i][0];
+      b += xs[i][0] * xs[i][1];
+      c += xs[i][1] * xs[i][1];
+    }
+    return [a / N, b / N, c / N];
+  })();
+  /** The two principal directions of the bowl, and how steep each one is. */
+  const EIG = (() => {
+    const [a, b, c] = HESS;
+    const tr = a + c, det = a * c - b * b;
+    const disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - det));
+    const l1 = tr / 2 + disc, l2 = tr / 2 - disc;
+    const v1 = Math.abs(b) > 1e-12 ? [l1 - c, b] : [1, 0];
+    const n1 = Math.hypot(v1[0], v1[1]) || 1;
+    return { l1, l2, ang: Math.atan2(v1[1] / n1, v1[0] / n1) };
+  })();
+
   function surface() {
     label('the loss over the two parameters', MAP.x, MAP.y - 34, 0.5, 'left', 13);
-    label('contours of the whole set, which no single step ever sees', MAP.x, MAP.y - 18, 0.3, 'left', 11);
+    label('what no single step ever sees', MAP.x, MAP.y - 16, 0.3, 'left', 11);
     const STEP = 5;
     let lo = Infinity, hi = -Infinity;
     const grid: number[][] = [];
@@ -213,7 +234,28 @@ import Readout from '../../../components/sim/Readout.astro';
         ctx.fillStyle = `rgba(124,140,255,${0.03 + 0.3 * t})`;
         ctx.fillRect(MAP.x + c * STEP, MAP.y + r * STEP, STEP, STEP);
       }
-    ctx.strokeStyle = ink(0.12);
+    // the level sets themselves, drawn as the ellipses they are
+    const best = loss(TRUE_W);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.clip();
+    const sc = MAP.w / (2 * RANGE);
+    for (let j = 1; j <= 9; j++) {
+      const lv = best + 0.02 * Math.pow(2.05, j);
+      const d = 2 * (lv - best);
+      ctx.save();
+      ctx.translate(px(TRUE_W[0]), py(TRUE_W[1]));
+      ctx.rotate(-EIG.ang);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, Math.sqrt(d / EIG.l1) * sc, Math.sqrt(d / EIG.l2) * sc, 0, 0, Math.PI * 2);
+      ctx.restore();
+      ctx.strokeStyle = ink(0.1 + 0.06 * (9 - j) / 9);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     ctx.strokeRect(MAP.x, MAP.y, MAP.w, MAP.h);
     // where the whole set is happiest
@@ -223,7 +265,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.arc(px(TRUE_W[0]), py(TRUE_W[1]), 5, 0, Math.PI * 2);
     ctx.stroke();
     label('the best fit', px(TRUE_W[0]) + 10, py(TRUE_W[1]) + 4, 0.45, 'left', 11, TRUE);
-    label('w₁', MAP.x + MAP.w, MAP.y + MAP.h + 18, 0.3, 'right', 11);
+    label('w₁', MAP.x + MAP.w, MAP.y + MAP.h + 20, 0.3, 'right', 11);
     label('w₂', MAP.x - 10, MAP.y + 10, 0.3, 'right', 11);
   }
 
@@ -297,44 +339,18 @@ import Readout from '../../../components/sim/Readout.astro';
       ctx.arc(px(TRUE_W[0]), py(TRUE_W[1]), (rad / (2 * RANGE)) * MAP.w, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      label('it settles in here, not on the point', px(TRUE_W[0]), py(TRUE_W[1]) + (rad / (2 * RANGE)) * MAP.w + 18, 0.45, 'center', 11, PATH);
+      label(
+        'the dashed ring is where it settles, not the point',
+        MAP.x + MAP.w / 2,
+        MAP.y + MAP.h + 40,
+        0.45, 'center', 11.5, PATH
+      );
     }
-  }
-
-  function fit() {
-    label('the data, and the line the parameters draw', FIT.x, FIT.y - 22, 0.5, 'left', 13);
-    ctx.strokeStyle = ink(0.12);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(FIT.x, FIT.y, FIT.w, FIT.h);
-    const sx = (a: number) => FIT.x + ((a + 4) / 8) * FIT.w;
-    const sy = (b: number) => FIT.y + FIT.h - ((b + 4) / 8) * FIT.h;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(FIT.x, FIT.y, FIT.w, FIT.h);
-    ctx.clip();
-    ctx.fillStyle = `${BATCH}55`;
-    for (let i = 0; i < N; i++) {
-      ctx.beginPath();
-      ctx.arc(sx(xs[i][0]), sy(ys[i]), 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(FIT.x, FIT.y, FIT.w, FIT.h);
-    ctx.clip();
-    ctx.strokeStyle = PATH;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(sx(-4), sy(state.w[0] * -4));
-    ctx.lineTo(sx(4), sy(state.w[0] * 4));
-    ctx.stroke();
-    ctx.restore();
-    label('one dot is one example', FIT.x + 8, FIT.y + FIT.h - 10, 0.3, 'left', 11);
   }
 
   function noisePlot() {
-    label('noise against batch size', PL.x, PL.y - 22, 0.5, 'left', 13);
+    label('how the noise falls with the batch', PL.x, PL.y - 34, 0.5, 'left', 13);
+    label('four times the batch, half the noise', PL.x, PL.y - 16, 0.3, 'left', 11);
     const LO = 1, HI = 256;
     const gx = (b: number) => PL.x + (Math.log(b / LO) / Math.log(HI / LO)) * PL.w;
     const n1 = noiseAt(state.w, 1);
@@ -382,7 +398,6 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.clearRect(0, 0, W, H);
     surface();
     arrows();
-    fit();
     noisePlot();
 
     const g = gradFull(state.w);

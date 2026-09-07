@@ -84,7 +84,7 @@ export const AREAS: Area[] = [
         slug: 'fourier-series',
         title: 'Fourier Series',
         description:
-          'Stack rotating circles (epicycles) to build a square, sawtooth or triangle wave from pure sine harmonics.',
+          'Multiply the signal by one frequency and add up the area. If the wave fits, the product sits above the axis; if it does not, the halves cancel to exactly zero. Every coefficient is that one measurement.',
         href: '/simulations/calculus/fourier-series',
         status: 'live',
       },
@@ -441,14 +441,6 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'residual',
-        title: 'Residual Connections',
-        description:
-          'A plain stack multiplies the gradient once per layer, so it is gone by layer twenty. Put an identity beside every block and the product starts at one, which is the whole of what a skip connection does.',
-        href: '/simulations/deep-learning/residual',
-        status: 'live',
-      },
-      {
         slug: 'softmax',
         title: 'Softmax & Temperature',
         description:
@@ -481,22 +473,6 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'attention',
-        title: 'Attention as a Soft Lookup',
-        description:
-          'The mechanism on its own: a dictionary returns one value, attention returns a blend of all of them, weighted by how well each key matches the query. Sharpen it, flatten it, mask a key out.',
-        href: '/simulations/deep-learning/attention',
-        status: 'live',
-      },
-      {
-        slug: 'self-attention',
-        title: 'Self-Attention',
-        description:
-          'Where the queries and the keys come from: three projections of one X, so the sentence looks itself up. The full matrix, one head at a time, down to every multiplication.',
-        href: '/simulations/deep-learning/self-attention',
-        status: 'live',
-      },
-      {
         slug: 'positional-encoding',
         title: 'Positional Encoding',
         description:
@@ -518,14 +494,6 @@ export const AREAS: Area[] = [
         description:
           'Trace the cone of pixels one output cell can see. Depth adds to the window, stride multiplies it and costs resolution, and dilation doubles it for free while leaving holes behind.',
         href: '/simulations/deep-learning/receptive-field',
-        status: 'live',
-      },
-      {
-        slug: 'recurrence',
-        title: 'Recurrence & Memory',
-        description:
-          'One hidden state carries everything, multiplied by the same weight at every step, so memory decays geometrically and the gradient decays with it. An additive gate is what buys the hundreds of steps back.',
-        href: '/simulations/deep-learning/recurrence',
         status: 'live',
       },
       {
