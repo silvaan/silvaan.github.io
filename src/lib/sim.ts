@@ -58,46 +58,92 @@ export function palette(el: Element) {
 }
 
 /**
- * Canvas text with real subscripts: `"V_CE 2.5 V"` draws V, a small lowered
- * CE, then the rest. Everything after an underscore up to the next
- * non-alphanumeric goes down and small, so sims can write `I_C` in a string
- * and never show a stray underscore.
+ * Canvas text with real subscripts and superscripts: `"V_CE 2.5 V"` draws V, a
+ * small lowered CE, then the rest, and `"a^[1]_1"` draws a with a raised [1]
+ * and a lowered 1. After `_` or `^` the script is either a braced group, a
+ * bracketed layer index, or a run of letters and digits, so a sim can write
+ * `z^[2]` in a plain string and never show a stray caret.
  *
  * `ink(alpha)` supplies the default fill, normally the theme-aware stage ink.
  */
 export function makeText(
   ctx: CanvasRenderingContext2D,
   ink: (alpha: number) => string,
-  scale = 1.22,
+  scale = 1.42,
   font = 'ui-monospace, SFMono-Regular, Menlo, monospace'
 ) {
-  type Part = { t: string; sub: boolean };
+  /** lift: 0 on the line, -1 lowered, +1 raised. */
+  type Part = { t: string; lift: -1 | 0 | 1 };
 
   function parts(text: string): Part[] {
     const out: Part[] = [];
     let i = 0,
       plain = '';
+    const flush = () => {
+      if (plain) out.push({ t: plain, lift: 0 });
+      plain = '';
+    };
     while (i < text.length) {
-      if (text[i] === '_' && i + 1 < text.length && /[A-Za-z0-9]/.test(text[i + 1])) {
-        if (plain) out.push({ t: plain, sub: false });
-        plain = '';
-        let j = i + 1;
-        while (j < text.length && /[A-Za-z0-9]/.test(text[j])) j++;
-        out.push({ t: text.slice(i + 1, j), sub: true });
-        i = j;
-      } else plain += text[i++];
+      const c = text[i];
+      if ((c === '_' || c === '^') && i + 1 < text.length) {
+        const lift = c === '_' ? -1 : 1;
+        const next = text[i + 1];
+        if (next === '{' || next === '[') {
+          const close = next === '{' ? '}' : ']';
+          const end = text.indexOf(close, i + 2);
+          if (end > 0) {
+            flush();
+            out.push({ t: next === '[' ? text.slice(i + 1, end + 1) : text.slice(i + 2, end), lift });
+            i = end + 1;
+            continue;
+          }
+        } else if (/[A-Za-z0-9]/.test(next)) {
+          flush();
+          let j = i + 1;
+          while (j < text.length && /[A-Za-z0-9]/.test(text[j])) j++;
+          out.push({ t: text.slice(i + 1, j), lift });
+          i = j;
+          continue;
+        }
+      }
+      plain += text[i++];
     }
-    if (plain) out.push({ t: plain, sub: false });
+    flush();
     return out;
+  }
+
+  // The logical width of the canvas, refreshed only when the backing store is
+  // resized, so a label can be kept inside it without measuring the transform
+  // on every call.
+  let bitmap = 0, dpr = 1;
+  function logicalWidth() {
+    if (ctx.canvas.width !== bitmap) {
+      bitmap = ctx.canvas.width;
+      dpr = ctx.getTransform().a || 1;
+    }
+    return bitmap / dpr;
+  }
+  /**
+   * Keep a run of text inside the canvas rather than letting it be cut off.
+   * Only the canvas's own frame is nudged: a sim that has rotated or moved the
+   * context is placing text in its own coordinates and is left alone.
+   */
+  function fit(x: number, width: number) {
+    const W = logicalWidth();
+    if (!W || width >= W - 4) return x;
+    const want = Math.max(2, Math.min(x, W - width - 2));
+    if (want === x) return x;
+    const t = ctx.getTransform();
+    return t.b || t.c || t.e || t.f ? x : want;
   }
 
   /** Width the same text would occupy, for laying out legends by hand. */
   function textWidth(text: string, size: number) {
     const px = Math.round(size * scale);
-    const sp = Math.round(px * 0.74);
+    const sp = Math.round(px * 0.72);
     let w = 0;
     for (const p of parts(text)) {
-      ctx.font = `${p.sub ? sp : px}px ${font}`;
+      ctx.font = `${p.lift ? sp : px}px ${font}`;
       w += ctx.measureText(p.t).width;
     }
     return w;
@@ -113,25 +159,26 @@ export function makeText(
     colour?: string
   ) {
     const px = Math.round(size * scale);
-    const sp = Math.round(px * 0.74);
+    const sp = Math.round(px * 0.72);
     const ps = parts(text);
     ctx.fillStyle = colour ?? ink(alpha);
     ctx.textAlign = 'left';
-    if (ps.length === 1 && !ps[0].sub) {
+    if (ps.length === 1 && !ps[0].lift) {
       ctx.font = `${px}px ${font}`;
-      const w = align === 'left' ? 0 : ctx.measureText(text).width;
-      ctx.fillText(text, align === 'right' ? x - w : align === 'center' ? x - w / 2 : x, y);
+      const w = ctx.measureText(text).width;
+      const left = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+      ctx.fillText(text, fit(left, w), y);
       return;
     }
     let total = 0;
     for (const p of ps) {
-      ctx.font = `${p.sub ? sp : px}px ${font}`;
+      ctx.font = `${p.lift ? sp : px}px ${font}`;
       total += ctx.measureText(p.t).width;
     }
-    let cx = align === 'right' ? x - total : align === 'center' ? x - total / 2 : x;
+    let cx = fit(align === 'right' ? x - total : align === 'center' ? x - total / 2 : x, total);
     for (const p of ps) {
-      ctx.font = `${p.sub ? sp : px}px ${font}`;
-      ctx.fillText(p.t, cx, p.sub ? y + Math.round(px * 0.2) : y);
+      ctx.font = `${p.lift ? sp : px}px ${font}`;
+      ctx.fillText(p.t, cx, y + (p.lift === -1 ? Math.round(px * 0.2) : p.lift === 1 ? -Math.round(px * 0.36) : 0));
       cx += ctx.measureText(p.t).width;
     }
   }
@@ -139,9 +186,11 @@ export function makeText(
   return { label, textWidth };
 }
 
-/** Same subscript convention as `makeText`, for HTML panel labels. */
+/** Same script convention as `makeText`, for HTML panel labels. */
 export function subHtml(text: string) {
-  return text.replace(/([A-Za-zΩβμ])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>');
+  return text
+    .replace(/\^\[([A-Za-z0-9]+)\]/g, '<sup>[$1]</sup>')
+    .replace(/([A-Za-zΩβμ])_([A-Za-z0-9]+)/g, '$1<sub>$2</sub>');
 }
 
 // ---------------------------------------------------------------------------
