@@ -436,7 +436,7 @@ export const AREAS: Area[] = [
         slug: 'optimizers',
         title: 'Optimizers',
         description:
-          'Race SGD, Momentum, NAG, RMSProp and Adam down the same loss, drawn either as a surface you can click on or as a volumetric cloud in three parameters.',
+          'Race SGD, Momentum, NAG, AdaGrad, RMSProp and Adam down the same loss, drawn either as a surface you can click on or as a volumetric cloud in three parameters.',
         href: '/simulations/deep-learning/optimizers',
         status: 'live',
       },
