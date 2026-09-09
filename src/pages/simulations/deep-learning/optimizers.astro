@@ -86,10 +86,11 @@ import Caption from '../../../components/sim/Caption.astro';
       <b>Himmelblau</b> has four minima and all four are equally deep, so no ball
       ends up anywhere worse than any other: the four basins simply carve the
       square up between them. Hit <b>random start</b> a few times and watch which
-      corner the pack falls into. The boundaries are thin, and landing on one is
-      the interesting case: there the adaptive three, which rescale every
-      coordinate by its own gradient history, peel off toward a different minimum
-      from the three that just follow the raw gradient.
+      corner the pack falls into: from most starts all six agree, and roughly one
+      start in eight splits them. When it does, about half the time the split falls
+      exactly along one line, the three that rescale every coordinate by its own
+      gradient history going one way and the three that follow the raw gradient
+      going the other.
     </li>
     <li>
       Watch <b>AdaGrad</b> against <b>RMSProp</b> on <b>Ripples</b>. They take the
@@ -142,42 +143,66 @@ import Caption from '../../../components/sim/Caption.astro';
   const EPS = 1e-7;
 
   /** How far the parameters may wander, per landscape. */
-  const D = 2; // surface: the square the mesh is drawn over
   const LIM = 1.3; // cloud: the box the points are sampled in
+  // the surface half-width lives on each entry of SURFACES, read through ext()
 
   // ---------------------------------------------------------------------------
   // The two landscapes. Both boil down to one thing the optimizers care about:
   // a gradient at a point. Everything else is how it gets drawn.
   // ---------------------------------------------------------------------------
+  /**
+   * `d` is the half-width of the square of parameters the surface is drawn over,
+   * and so also how far the optimizers may wander before they are clamped. It is
+   * per surface because widening it is not free: a surface whose walls climb
+   * steeply spends the whole height budget on those walls, and the structure in
+   * the middle flattens into the floor. Where the formula tolerates a wider box,
+   * it gets one; where the shape is what matters, it keeps a tight one.
+   *
+   * The amplitudes below are set against that. Height is normalised by the range
+   * anyway, so scaling a surface changes no picture, only how hard it pushes: the
+   * steeper polynomials are damped so that a wider box does not silently turn
+   * every step into a leap.
+   */
   type Surf = {
+    d: number;
     f: (x: number, y: number) => number;
     g: (x: number, y: number) => { x: number; y: number };
   };
-  const HA = 2; // parameter scale: the [-2,2] square covers Himmelblau's [-4,4]
-  const HC = 0.006; // amplitude, chosen to match the other surfaces' gradients
   const SURFACES: Record<string, Surf> = {
-    saddle: { f: (x, y) => 0.5 * (x * x - y * y), g: (x, y) => ({ x, y: -y }) },
+    // a quadratic is self-similar: a wider box is the same picture with more room
+    saddle: { d: 3, f: (x, y) => 0.5 * (x * x - y * y), g: (x, y) => ({ x, y: -y }) },
+    // the only tight one. Its walls are quartic and the two wells are at ±1, so
+    // any wider and the wells shrink to dimples at the foot of the walls.
     wells: {
+      d: 2,
       f: (x, y) => 0.6 * (x * x - 1) ** 2 + 0.5 * y * y,
       g: (x, y) => ({ x: 2.4 * x * (x * x - 1), y }),
     },
+    // periodic: a wider box is more ripples, which is the point of it
     ripples: {
+      d: 3,
       f: (x, y) => 0.18 * (x * x + y * y) - 0.5 * Math.cos(2.2 * x) - 0.5 * Math.cos(2.2 * y),
       g: (x, y) => ({ x: 0.36 * x + 1.1 * Math.sin(2.2 * x), y: 0.36 * y + 1.1 * Math.sin(2.2 * y) }),
     },
     ravine: {
+      d: 3,
       f: (x, y) => 0.035 * x * x + 1.4 * y * y,
       g: (x, y) => ({ x: 0.07 * x, y: 2.8 * y }),
     },
+    // cubic: damped by two thirds, so the wider box does not step three times as far
     monkey: {
-      f: (x, y) => 0.4 * (x * x * x - 3 * x * y * y),
-      g: (x, y) => ({ x: 1.2 * (x * x - y * y), y: -2.4 * x * y }),
+      d: 3,
+      f: (x, y) => 0.268 * (x * x * x - 3 * x * y * y),
+      g: (x, y) => ({ x: 0.804 * (x * x - y * y), y: -1.608 * x * y }),
     },
+    // bounded above, so the extra width is all flat: the gradient really does vanish
     basin: {
+      d: 3,
       f: (x, y) => 1 - Math.exp(-(x * x + y * y)),
       g: (x, y) => { const e = Math.exp(-(x * x + y * y)); return { x: 2 * x * e, y: 2 * y * e }; },
     },
     eggcarton: {
+      d: 3,
       f: (x, y) => 0.2 * (x * x + y * y) + 0.5 * Math.sin(2.5 * x) * Math.sin(2.5 * y),
       g: (x, y) => ({
         x: 0.4 * x + 1.25 * Math.cos(2.5 * x) * Math.sin(2.5 * y),
@@ -185,24 +210,22 @@ import Caption from '../../../components/sim/Caption.astro';
       }),
     },
     banana: {
-      f: (x, y) => 0.02 * (1 - x) ** 2 + 0.2 * (y - x * x) ** 2,
+      d: 3,
+      f: (x, y) => 0.011 * (1 - x) ** 2 + 0.11 * (y - x * x) ** 2,
       g: (x, y) => ({
-        x: -0.04 * (1 - x) - 0.8 * x * (y - x * x),
-        y: 0.4 * (y - x * x),
+        x: -0.022 * (1 - x) - 0.44 * x * (y - x * x),
+        y: 0.22 * (y - x * x),
       }),
     },
-    // Himmelblau, squeezed by HA so that all four of its minima land inside the
-    // drawn square and flattened by HC so its quartic walls push no harder than
-    // the other surfaces do.
+    // Himmelblau as it is actually written. Its four minima sit out at a radius of
+    // about four, so rather than squeeze the function into everyone else's box,
+    // this one gets a box wide enough to hold them.
     himmelblau: {
-      f: (x, y) => {
-        const u = HA * x, v = HA * y;
-        return HC * ((u * u + v - 11) ** 2 + (u + v * v - 7) ** 2);
-      },
+      d: 4.5,
+      f: (x, y) => 0.015 * ((x * x + y - 11) ** 2 + (x + y * y - 7) ** 2),
       g: (x, y) => {
-        const u = HA * x, v = HA * y;
-        const a = u * u + v - 11, b = u + v * v - 7;
-        return { x: HC * HA * (4 * u * a + 2 * b), y: HC * HA * (2 * a + 4 * v * b) };
+        const a = x * x + y - 11, b = x + y * y - 7;
+        return { x: 0.015 * (4 * x * a + 2 * b), y: 0.015 * (2 * a + 4 * y * b) };
       },
     },
   };
@@ -237,13 +260,16 @@ import Caption from '../../../components/sim/Caption.astro';
   };
   const surfaceMode = () => state.mode === 'surface';
   const start = () => (surfaceMode() ? state.start2 : state.start3);
-  const limit = () => (surfaceMode() ? D : LIM);
+  /** Half-width of the current surface's square of parameters. */
+  const ext = () => SURFACES[state.surf].d;
+  const limit = () => (surfaceMode() ? ext() : LIM);
 
   let fmin = 0, fspan = 1;
   const curF = (x: number, y: number) => SURFACES[state.surf].f(x, y);
 
   function computeRange() {
     fmin = Infinity; let fmax = -Infinity;
+    const D = ext();
     for (let i = 0; i <= 40; i++)
       for (let j = 0; j <= 40; j++) {
         const f = curF(-D + (2 * D * i) / 40, -D + (2 * D * j) / 40);
@@ -275,8 +301,10 @@ import Caption from '../../../components/sim/Caption.astro';
    * parameters are already spatial and nothing is added.
    */
   function toWorld(p: number[]): [number, number, number] {
-    if (surfaceMode())
+    if (surfaceMode()) {
+      const D = ext();
       return [p[0] / D, ((curF(p[0], p[1]) - fmin) / fspan) * 1.3 - 0.65, p[1] / D];
+    }
     return [p[0], p[1], p[2]];
   }
 
@@ -474,6 +502,7 @@ import Caption from '../../../components/sim/Caption.astro';
   // --- the two backdrops -----------------------------------------------------
   function drawSurface() {
     const M = 30;
+    const D = ext();
     for (let i = 0; i <= M; i++) {
       for (const axis of [0, 1]) {
         ctx.beginPath();
@@ -679,6 +708,7 @@ import Caption from '../../../components/sim/Caption.astro';
     const my = ((clientY - rect.top) / rect.height) * H;
     let bestD = Infinity, bx = 0, by = 0, found = false;
     const G = 80;
+    const D = ext();
     for (let i = 0; i <= G; i++)
       for (let j = 0; j <= G; j++) {
         const x = -D + (2 * D * i) / G;
@@ -751,7 +781,15 @@ import Caption from '../../../components/sim/Caption.astro';
     resetOpts();
     draw();
   });
-  segmented('surf', (sname) => { state.surf = sname; computeRange(); resetOpts(); });
+  segmented('surf', (sname) => {
+    state.surf = sname;
+    // surfaces do not share one box any more, so a start picked on a wide one has
+    // to be pulled back inside a narrower one
+    const D = ext();
+    state.start2 = state.start2.map((v) => Math.max(-D, Math.min(D, v)));
+    computeRange();
+    resetOpts();
+  });
 
   // both arrows can be on at once, so this group is a pair of toggles, not a choice
   el('arrows').addEventListener('click', (e) => {
@@ -772,8 +810,10 @@ import Caption from '../../../components/sim/Caption.astro';
   });
   el('newfield').addEventListener('click', () => { newField(); resetOpts(); draw(); });
   el('newstart').addEventListener('click', () => {
-    if (surfaceMode())
-      state.start2 = [+(Math.random() * 3 - 1.5).toFixed(2), +(Math.random() * 3 - 1.5).toFixed(2)];
+    if (surfaceMode()) {
+      const r = 0.75 * ext();
+      state.start2 = [+(Math.random() * 2 * r - r).toFixed(2), +(Math.random() * 2 * r - r).toFixed(2)];
+    }
     else
       state.start3 = [
         +(Math.random() * 2 - 1).toFixed(2),
