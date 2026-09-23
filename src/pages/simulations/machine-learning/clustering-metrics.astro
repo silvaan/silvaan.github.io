@@ -1,0 +1,1385 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Clustering Metrics"
+  description="A clustering has no answer key to be marked against, so every score has to decide what it is comparing with. Silhouette, Davies–Bouldin and DBCV look only at the geometry. Purity, the Rand index and its adjusted form compare with the true classes, and they disagree with each other in instructive ways."
+  shortcuts={['reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="cm"
+          width="1000"
+          height="720"
+          role="img"
+          aria-label="Points coloured by the cluster they were put in and shaped by their true class, with a panel working out the chosen metric."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'colour is the cluster found', color: '#60a5fa' },
+          { label: 'shape is the true class', color: '#e5e7eb' },
+          { label: 'what the metric rewards', color: '#2dd4bf' },
+          { label: 'what it counts against', color: '#f87171' },
+        ]}
+        hint="Scroll to zoom, drag to pan, double-click to reset the view · hover a point to follow it through the metric · click a point to move it to the next cluster"
+      />
+      <Result label="Silhouette" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="focus"
+        label="Explain"
+        attr="f"
+        options={[
+          { value: 'sil', label: 'Silhouette' },
+          { value: 'dbi', label: 'DBI' },
+          { value: 'dbcv', label: 'DBCV' },
+          { value: 'purity', label: 'Purity' },
+          { value: 'rand', label: 'Rand' },
+          { value: 'ari', label: 'ARI' },
+        ]}
+      />
+      <Seg
+        id="data"
+        label="Data"
+        attr="d"
+        options={[
+          { value: 'blobs', label: 'Blobs' },
+          { value: 'overlap', label: 'Overlapping' },
+          { value: 'moons', label: 'Moons' },
+          { value: 'circles', label: 'Circles' },
+          { value: 'uneven', label: 'Uneven' },
+        ]}
+      />
+      <Seg
+        id="source"
+        label="Clusters from"
+        attr="s"
+        options={[
+          { value: 'kmeans', label: 'k-means' },
+          { value: 'dbscan', label: 'DBSCAN' },
+          { value: 'truth', label: 'True classes' },
+          { value: 'random', label: 'Random' },
+        ]}
+      />
+      <Slider id="k" label="Clusters k" min={2} max={6} value={3} />
+      <Slider id="eps" label="DBSCAN radius ε" min={0.1} max={0.8} step={0.02} value={0.4} display="0.40" />
+      <Slider id="minpts" label="DBSCAN min points" min={2} max={15} value={5} />
+      <Slider id="noise" label="Labels scrambled" min={0} max={100} step={5} value={0} display="0%" />
+      <Transport run={false}>
+        <button type="button" class="btn ghost" id="reseed">Rerun k-means</button>
+        <button type="button" class="btn ghost" id="home">Reset view</button>
+      </Transport>
+      <Readout
+        rows={[
+          { id: 'r-k', label: 'clusters found' },
+          { id: 'r-n', label: 'points' },
+          { id: 'r-pairs', label: 'pairs of points' },
+          { id: 'r-minority', label: 'outvoted in their cluster' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Silhouette, DBI and DBCV never see the shapes. <b>Silhouette</b> asks each
+      point whether it is closer, on average, to its own cluster (a) than to
+      the nearest other one (b). <b>Davies–Bouldin</b> asks each cluster how
+      badly it is confused with its worst neighbour, spread over separation,
+      and lower is better. <b>DBCV</b> asks whether the widest gap you have to
+      jump <em>inside</em> a cluster is smaller than the gap to the next
+      cluster. All three work on data nobody has labelled, which is the only
+      situation in which clustering is actually used.
+    </li>
+    <li>
+      Choose <b>Moons</b> and switch between <b>k-means</b> and <b>True
+      classes</b>. k-means cuts each crescent in half with a straight line, and
+      silhouette and DBI both prefer that cut to the real crescents, because
+      they measure distance to a centre and so assume clusters are round.
+      DBCV disagrees: it follows chains of dense points, so a crescent is one
+      tight cluster to it and the k-means cut jumps a gap it should not.
+      <b>Circles</b> makes the point more strongly: the true rings get a
+      silhouette near 0 and a DBI near 40 (both rings share one centre), and
+      DBCV is the only internal score that prefers them.
+    </li>
+    <li>
+      Set the clusters to <b>DBSCAN</b> on <b>Circles</b>. It finds both rings
+      exactly, so purity, Rand and ARI are all perfect, and yet silhouette sits
+      near 0 and DBI near 40. Only DBCV, built on the same idea of density as
+      DBSCAN itself, gives it credit. Hover a point to see its ε circle, and
+      shrink ε until the rings break into pieces and grey noise. Noise is
+      counted as one more cluster by silhouette, DBI and the external scores,
+      and left out of every cluster by DBCV, which still counts it in n.
+    </li>
+    <li>
+      <b>Purity</b> labels each cluster with its majority class and grades it
+      like a classifier. Choose <b>Uneven</b>, keep k-means, and push <b>k</b>
+      from 2 up to 6. The vote bars get smaller but stay one colour, so purity
+      climbs to a perfect 1. Cutting a cluster into pieces can never make a
+      piece less uniform, and one cluster per point would score 1 too. The
+      <em>inverse purity</em> reads the contingency table by columns instead
+      (is each class kept in one piece?), and it is the one that falls.
+    </li>
+    <li>
+      The <b>Rand</b> matrix has one cell for every pair of points, sorted by
+      true class, so the truth is the row of squares down the diagonal. Teal
+      is a pair both partitions keep together, red a pair only the clustering
+      puts together, amber a pair only the truth puts together. Rand is simply
+      the share of cells that are not red or amber. Split a class with a
+      higher <b>k</b> and its square fills with amber; merge two and red
+      appears between them.
+    </li>
+    <li>
+      Set the clusters to <b>Random</b>. The Rand index still reads about 0.5
+      or more, because most cells of the matrix are pairs that are apart in both,
+      and those agree for free. The <b>ARI</b> panel shows where random labels
+      of the same sizes land: a narrow spike, far from 0. ARI stretches the
+      scale so that the spike becomes 0 and a perfect match stays 1, which is
+      why it is the one to report.
+    </li>
+    <li>
+      On <b>Blobs</b>, slide <b>Labels scrambled</b> slowly from 0. Every
+      metric degrades, but not at the same rate: at 10% ARI has already lost
+      more than a quarter of its value, while purity and the Rand index have
+      lost about a tenth. DBCV collapses fastest of all: one point dropped in
+      the wrong place is a wide gap inside the cluster it lands in.
+    </li>
+    <li>
+      Click the point with the lowest silhouette (it is picked for you when the
+      pointer is off the canvas) until it lands in the cluster its b pointed
+      at. Its own s usually turns positive, and the average rises with it.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+
+  const HUES = ['#60a5fa', '#f472b6', '#a3e635', '#c084fc', '#fde047', '#94a3b8'];
+  const A_COL = '#2dd4bf'; // what a metric rewards: inside distance, agreeing pairs, the majority
+  const B_COL = '#f87171'; // what it counts against: outside distance, false pairs, the outvoted
+  const FN_COL = '#f59e0b'; // pairs the truth keeps together and the clustering splits
+  const RANGE = 2.9;
+  const NATURAL: Record<string, number> = { blobs: 3, overlap: 3, moons: 2, circles: 2, uneven: 2 };
+  const EPS: Record<string, number> = { blobs: 0.4, overlap: 0.26, moons: 0.3, circles: 0.4, uneven: 0.36 };
+  const NOISE_COL = '#6b7280';
+  const SHUFFLES = 400;
+
+  type Focus = 'sil' | 'dbi' | 'dbcv' | 'purity' | 'rand' | 'ari';
+  const state = {
+    focus: 'sil' as Focus,
+    data: 'blobs',
+    source: 'kmeans',
+    k: 3,
+    noise: 0,
+    kmSeed: 1,
+    eps: 0.4,
+    minPts: 5,
+    noiseId: -1, // the label DBSCAN's noise is filed under, -1 when there is none
+    hover: -1,
+  };
+
+  const canvas = el('cm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label, textWidth } = makeText(ctx, ink);
+  /** A label shrunk until it fits in maxW, so no text ever runs off its panel. */
+  const fit = (text: string, x: number, y: number, maxW: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 11, colour?: string) => {
+    let s = size;
+    while (s > 7 && textWidth(text, s) > maxW) s -= 0.5;
+    label(text, x, y, alpha, align, s, colour);
+  };
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const resultLabel = el('result-label');
+
+  let seed = 1;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const gauss = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd()))) * Math.cos(2 * Math.PI * rnd());
+
+  // --- the data --------------------------------------------------------------
+  let P: number[][] = [];
+  let T: number[] = [];        // true class of each point
+  let nClasses = 3;
+  let D: Float64Array;         // every pairwise distance, n × n
+  let U: number[] = [], V: number[] = [], Z: number[] = []; // fixed dice per point
+
+  function build(name: string) {
+    seed = 424242;
+    P = [];
+    T = [];
+    const blob = (cx: number, cy: number, s: number, n: number, c: number) => {
+      for (let i = 0; i < n; i++) { P.push([cx + gauss() * s, cy + gauss() * s]); T.push(c); }
+    };
+    const ring = (r: number, n: number, c: number) => {
+      for (let i = 0; i < n; i++) {
+        const t = 2 * Math.PI * rnd();
+        P.push([r * Math.cos(t) + gauss() * 0.09, r * Math.sin(t) + gauss() * 0.09]);
+        T.push(c);
+      }
+    };
+    if (name === 'blobs') {
+      blob(-1.3, -0.8, 0.42, 80, 0);
+      blob(1.3, -0.7, 0.42, 80, 1);
+      blob(0, 1.2, 0.42, 80, 2);
+    } else if (name === 'overlap') {
+      blob(-0.65, -0.45, 0.6, 80, 0);
+      blob(0.65, -0.45, 0.6, 80, 1);
+      blob(0, 0.7, 0.6, 80, 2);
+    } else if (name === 'moons') {
+      for (let i = 0; i < 120; i++) {
+        const t = Math.PI * rnd();
+        P.push([1.5 * Math.cos(t) - 0.75 + gauss() * 0.12, 1.5 * Math.sin(t) - 0.45 + gauss() * 0.12]);
+        T.push(0);
+        const u = Math.PI * rnd();
+        P.push([1.5 * Math.cos(u) + 0.75 + gauss() * 0.12, -1.5 * Math.sin(u) + 0.45 + gauss() * 0.12]);
+        T.push(1);
+      }
+    } else if (name === 'circles') {
+      ring(0.75, 90, 0);
+      ring(2.0, 150, 1);
+    } else {
+      blob(-0.8, -0.3, 0.72, 190, 0);
+      blob(1.55, 1.05, 0.26, 50, 1);
+    }
+    nClasses = Math.max(...T) + 1;
+    const n = P.length;
+    D = new Float64Array(n * n);
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++) {
+        const d = Math.hypot(P[i][0] - P[j][0], P[i][1] - P[j][1]);
+        D[i * n + j] = d;
+        D[j * n + i] = d;
+      }
+    U = P.map(() => rnd());
+    V = P.map(() => rnd());
+    Z = P.map(() => rnd());
+  }
+
+  // --- the clustering being judged -------------------------------------------
+  let KM: number[] = [];
+  let kmKey = '';
+
+  function kmeans(k: number) {
+    seed = 7919 * state.kmSeed + 13;
+    // k-means++ seeding, then Lloyd's rounds until nothing moves
+    const C: number[][] = [P[Math.floor(rnd() * P.length)].slice()];
+    while (C.length < k) {
+      const d2 = P.map((p) => Math.min(...C.map((c) => (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2)));
+      let t = rnd() * d2.reduce((a, v) => a + v, 0), i = 0;
+      while (i < P.length - 1 && (t -= d2[i]) > 0) i++;
+      C.push(P[i].slice());
+    }
+    let L = P.map(() => 0);
+    for (let round = 0; round < 100; round++) {
+      let changed = false;
+      L = P.map((p, i) => {
+        let best = 0, bd = Infinity;
+        C.forEach((c, j) => {
+          const d = (p[0] - c[0]) ** 2 + (p[1] - c[1]) ** 2;
+          if (d < bd) { bd = d; best = j; }
+        });
+        if (best !== L[i]) changed = true;
+        return best;
+      });
+      for (let j = 0; j < k; j++) {
+        let x = 0, y = 0, m = 0;
+        P.forEach((p, i) => { if (L[i] === j) { x += p[0]; y += p[1]; m++; } });
+        if (m) C[j] = [x / m, y / m];
+      }
+      if (!changed && round > 0) break;
+    }
+    return L;
+  }
+
+  /** DBSCAN: grow a cluster from every core point through its ε-neighbours. */
+  function dbscan(eps: number, minPts: number) {
+    const n = P.length;
+    const near = P.map((_, i) => {
+      const out: number[] = [];
+      for (let j = 0; j < n; j++) if (D[i * n + j] <= eps) out.push(j); // includes i itself
+      return out;
+    });
+    const lab = new Array(n).fill(-2); // -2 unvisited, -1 noise
+    let c = 0;
+    for (let i = 0; i < n; i++) {
+      if (lab[i] !== -2) continue;
+      if (near[i].length < minPts) { lab[i] = -1; continue; }
+      lab[i] = c;
+      const queue = near[i].slice();
+      while (queue.length) {
+        const j = queue.pop()!;
+        if (lab[j] === -1) lab[j] = c; // a border point
+        if (lab[j] !== -2) continue;
+        lab[j] = c;
+        if (near[j].length >= minPts) queue.push(...near[j]);
+      }
+      c++;
+    }
+    return { lab, found: c };
+  }
+
+  let manual = new Map<number, number>();
+  let L: number[] = [];
+  let dbFound = 0;
+
+  const kEff = () =>
+    state.source === 'truth' ? nClasses : state.source === 'dbscan' ? dbFound + 1 : state.k;
+
+  function relabel() {
+    const k = kEff();
+    let base: number[];
+    state.noiseId = -1;
+    if (state.source === 'dbscan') {
+      const { lab, found } = dbscan(state.eps, state.minPts);
+      dbFound = found;
+      state.noiseId = found; // noise is filed as one more label after the clusters
+      base = lab.map((c) => (c < 0 ? found : c));
+    } else if (state.source === 'truth') base = T.slice();
+    else if (state.source === 'random') base = Z.map((z) => Math.floor(z * k));
+    else {
+      const key = `${state.data}|${k}|${state.kmSeed}`;
+      if (key !== kmKey) { KM = kmeans(k); kmKey = key; }
+      base = KM.slice();
+    }
+    L = base.map((c, i) => (U[i] < state.noise ? Math.floor(V[i] * kEff()) : c));
+    manual.forEach((c, i) => (L[i] = c));
+    measure();
+  }
+
+  // --- the metrics -----------------------------------------------------------
+  const comb2 = (x: number) => (x * (x - 1)) / 2;
+  type Pairs = { tp: number; fp: number; fn: number; tn: number; total: number };
+  type DC = { edges: number[][]; sparse: number; sparseEdge: number[]; sep: number; sepPair: number[]; v: number };
+  const M = {
+    version: 0,
+    ids: [] as number[],          // cluster ids actually in use
+    size: [] as number[],
+    a: [] as number[], b: [] as number[], s: [] as number[], bOf: [] as number[],
+    sil: NaN,
+    cent: [] as number[][], spread: [] as number[], R: [] as number[][], worst: [] as number[], dbi: NaN,
+    dc: [] as DC[], dcIds: [] as number[], dbcv: NaN,
+    N: [] as number[][],          // contingency, cluster row × class column
+    purity: 0, invPurity: 0, majority: [] as number[], minority: 0,
+    pairs: { tp: 0, fp: 0, fn: 0, tn: 0, total: 0 } as Pairs,
+    rand: 0, expectedRI: 0, ari: NaN,
+    shuffled: [] as number[],     // Rand index of the same clusters with their labels shuffled
+    disagree: [] as number[],
+  };
+
+  function measure() {
+    M.version++;
+    const n = P.length;
+    const kMax = Math.max(...L) + 1;
+    const count = new Array(kMax).fill(0);
+    L.forEach((c) => count[c]++);
+    M.ids = count.map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
+    M.size = count;
+    const K = M.ids.length;
+
+    // silhouette: mean distance to own cluster against the nearest other one
+    M.a = []; M.b = []; M.s = []; M.bOf = [];
+    let sumS = 0;
+    for (let i = 0; i < n; i++) {
+      const sums = new Array(kMax).fill(0);
+      for (let j = 0; j < n; j++) if (j !== i) sums[L[j]] += D[i * n + j];
+      const own = L[i];
+      const a = count[own] > 1 ? sums[own] / (count[own] - 1) : 0;
+      let b = Infinity, bOf = -1;
+      for (const c of M.ids) if (c !== own && sums[c] / count[c] < b) { b = sums[c] / count[c]; bOf = c; }
+      const s = K < 2 || count[own] === 1 ? 0 : (b - a) / Math.max(a, b);
+      M.a.push(a); M.b.push(b); M.s.push(s); M.bOf.push(bOf);
+      sumS += s;
+    }
+    M.sil = K < 2 ? NaN : sumS / n;
+
+    // Davies–Bouldin: each cluster's worst ratio of spread to separation
+    M.cent = []; M.spread = [];
+    for (let c = 0; c < kMax; c++) {
+      let x = 0, y = 0;
+      for (let i = 0; i < n; i++) if (L[i] === c) { x += P[i][0]; y += P[i][1]; }
+      M.cent.push(count[c] ? [x / count[c], y / count[c]] : [0, 0]);
+    }
+    for (let c = 0; c < kMax; c++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) if (L[i] === c) s += Math.hypot(P[i][0] - M.cent[c][0], P[i][1] - M.cent[c][1]);
+      M.spread.push(count[c] ? s / count[c] : 0);
+    }
+    M.R = M.ids.map((c) => M.ids.map((d) => {
+      if (c === d) return NaN;
+      const sep = Math.hypot(M.cent[c][0] - M.cent[d][0], M.cent[c][1] - M.cent[d][1]);
+      return (M.spread[c] + M.spread[d]) / Math.max(1e-9, sep);
+    }));
+    M.worst = M.R.map((row) => {
+      let w = -1;
+      row.forEach((v, j) => { if (!isNaN(v) && (w < 0 || v > row[w])) w = j; });
+      return w;
+    });
+    M.dbi = K < 2 ? NaN : M.R.reduce((acc, row, r) => acc + row[M.worst[r]], 0) / K;
+
+    dbcv();
+
+    // contingency table, and everything external built on it
+    M.N = M.ids.map((c) => {
+      const row = new Array(nClasses).fill(0);
+      for (let i = 0; i < n; i++) if (L[i] === c) row[T[i]]++;
+      return row;
+    });
+    M.majority = M.N.map((row) => row.indexOf(Math.max(...row)));
+    const hits = M.N.reduce((acc, row) => acc + Math.max(...row), 0);
+    M.purity = hits / n;
+    M.minority = n - hits;
+    let invHits = 0;
+    for (let j = 0; j < nClasses; j++) invHits += Math.max(...M.N.map((row) => row[j]));
+    M.invPurity = invHits / n;
+
+    const total = comb2(n);
+    const index = M.N.reduce((acc, row) => acc + row.reduce((a, v) => a + comb2(v), 0), 0);
+    const sameCluster = M.N.reduce((acc, row) => acc + comb2(row.reduce((a, v) => a + v, 0)), 0);
+    let sameClass = 0;
+    for (let j = 0; j < nClasses; j++) sameClass += comb2(M.N.reduce((a, row) => a + row[j], 0));
+    const tp = index, fp = sameCluster - index, fn = sameClass - index;
+    M.pairs = { tp, fp, fn, tn: total - tp - fp - fn, total };
+    // The Rand index is linear in the index, so both chance and the best case
+    // carry straight over: the best case is RI = 1, chance is the index a
+    // random pairing of the same cluster sizes would expect.
+    const riOf = (idx: number) => (total - sameCluster - sameClass + 2 * idx) / total;
+    M.rand = riOf(index);
+    M.expectedRI = riOf((sameCluster * sameClass) / total);
+    M.ari = 1 - M.expectedRI < 1e-9 ? NaN : (M.rand - M.expectedRI) / (1 - M.expectedRI);
+
+    // the same clusters, their labels dealt out again at random
+    let s2 = 99991;
+    const r2 = () => ((s2 = (s2 * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const deck = L.slice();
+    const cell = new Array(kMax * nClasses);
+    M.shuffled = [];
+    for (let t = 0; t < SHUFFLES; t++) {
+      for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(r2() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+      }
+      cell.fill(0);
+      for (let i = 0; i < n; i++) cell[deck[i] * nClasses + T[i]]++;
+      let idx = 0;
+      for (const v of cell) idx += comb2(v);
+      M.shuffled.push(riOf(idx));
+    }
+
+    M.disagree = P.map((_, i) => {
+      let d = 0;
+      for (let j = 0; j < n; j++) if (j !== i && (L[i] === L[j]) !== (T[i] === T[j])) d++;
+      return d;
+    });
+  }
+
+  /**
+   * DBCV (Moulavi et al., 2014). Distances are replaced by mutual reachability,
+   * which stretches every distance out to at least the local spacing of the
+   * points at either end, so a sparse point is far from everything. Each
+   * cluster's minimum spanning tree in those distances tells you the widest
+   * gap you must jump to walk through it; the closest pair of core points in
+   * different clusters tells you the gap to the nearest neighbour.
+   */
+  function dbcv() {
+    const n = P.length;
+    M.dc = [];
+    // Noise is left out of every cluster but still counts in n, so declaring
+    // points noise is not free: it shrinks the weights of the clusters.
+    M.dcIds = M.ids.filter((c) => c !== state.noiseId);
+    const K = M.dcIds.length;
+    if (K < 2) { M.dbcv = NaN; return; }
+    const core = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const m = M.size[L[i]];
+      if (m < 2) { core[i] = 0; continue; }
+      let s = 0;
+      for (let j = 0; j < n; j++) if (j !== i && L[j] === L[i]) s += 1 / Math.max(1e-6, D[i * n + j]) ** 2;
+      core[i] = (s / (m - 1)) ** -0.5;
+    }
+    const mrd = (i: number, j: number) => Math.max(core[i], core[j], D[i * n + j]);
+
+    const internal: number[][] = [];
+    for (const c of M.dcIds) {
+      const pts = P.map((_, i) => i).filter((i) => L[i] === c);
+      const m = pts.length;
+      const edges: number[][] = [];
+      if (m > 1) {
+        // Prim's algorithm on the complete mutual-reachability graph. Mutual
+        // reachability is full of ties (many edges equal some point's core
+        // distance), so the tree is not unique, and which points come out as
+        // internal depends on how a tie is broken. It is broken as the
+        // reference implementation (hdbscan's validity_index) breaks it: a new
+        // point hangs off the lowest-indexed point already in the tree at that
+        // distance, so the scores here match the ones people actually report.
+        const inTree = new Array(m).fill(false), best = new Array(m).fill(Infinity);
+        const added: number[] = [];
+        best[0] = 0;
+        for (let it = 0; it < m; it++) {
+          let u = -1;
+          for (let v = 0; v < m; v++) if (!inTree[v] && (u < 0 || best[v] < best[u])) u = v;
+          inTree[u] = true;
+          if (added.length) {
+            const w = best[u];
+            let parent = -1;
+            for (const a of added) {
+              const d = mrd(pts[a], pts[u]);
+              if (Math.abs(d - w) <= 1e-8 + 1e-5 * Math.abs(w) && (parent < 0 || a < parent)) parent = a;
+            }
+            edges.push([pts[parent], pts[u], w]);
+          }
+          added.push(u);
+          for (let v = 0; v < m; v++) {
+            if (inTree[v]) continue;
+            const w = mrd(pts[u], pts[v]);
+            if (w < best[v]) best[v] = w;
+          }
+        }
+      }
+      const deg = new Map<number, number>();
+      for (const [i, j] of edges) { deg.set(i, (deg.get(i) ?? 0) + 1); deg.set(j, (deg.get(j) ?? 0) + 1); }
+      let core_ = pts.filter((i) => (deg.get(i) ?? 0) > 1);
+      if (!core_.length) core_ = pts;
+      internal.push(core_);
+      let inner = edges.filter(([i, j]) => (deg.get(i) ?? 0) > 1 && (deg.get(j) ?? 0) > 1);
+      if (!inner.length) inner = edges;
+      let sparseEdge: number[] = [], sparse = 0;
+      for (const e of inner) if (e[2] > sparse) { sparse = e[2]; sparseEdge = [e[0], e[1]]; }
+      M.dc.push({ edges, sparse, sparseEdge, sep: Infinity, sepPair: [], v: 0 });
+    }
+    for (let r = 0; r < K; r++)
+      for (let q = 0; q < K; q++) {
+        if (q === r) continue;
+        for (const i of internal[r])
+          for (const j of internal[q]) {
+            const w = mrd(i, j);
+            if (w < M.dc[r].sep) { M.dc[r].sep = w; M.dc[r].sepPair = [i, j]; }
+          }
+      }
+    let total = 0;
+    M.dcIds.forEach((c, r) => {
+      const d = M.dc[r];
+      d.v = M.size[c] < 2 ? 0 : (d.sep - d.sparse) / Math.max(d.sep, d.sparse);
+      total += (M.size[c] / n) * d.v;
+    });
+    M.dbcv = total;
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const SC = { x: 30, y: 66, w: 580, h: 624 };
+  const FP = { x: 650, y: 66, w: 320, h: 624 };
+  const BASE = Math.min(SC.w, SC.h) / (2 * RANGE);
+  /** The scatter's camera: the data point at its centre, and a zoom factor. */
+  const view = { x: 0, y: 0, z: 1 };
+  let scale = BASE;
+  const sx = (x: number) => SC.x + SC.w / 2 + (x - view.x) * scale;
+  const sy = (y: number) => SC.y + SC.h / 2 - (y - view.y) * scale;
+  const fromScreen = (px: number, py: number) => [view.x + (px - SC.x - SC.w / 2) / scale, view.y - (py - SC.y - SC.h / 2) / scale];
+  const inScatter = (x: number, y: number) => x >= SC.x && x <= SC.x + SC.w && y >= SC.y && y <= SC.y + SC.h;
+  const resetView = () => { view.x = 0; view.y = 0; view.z = 1; scale = BASE; };
+  const hue = (c: number) => (c === state.noiseId ? NOISE_COL : HUES[c % HUES.length]);
+
+  function panel(r: { x: number; y: number; w: number; h: number }, title: string, sub: string) {
+    fit(title, r.x, r.y - 30, r.w, 0.6, 'left', 12);
+    fit(sub, r.x, r.y - 12, r.w, 0.35, 'left', 10);
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, r.x, r.y, r.w, r.h, 10);
+    ctx.fill();
+  }
+
+  function shape(cls: number, x: number, y: number, r: number) {
+    ctx.beginPath();
+    if (cls === 0) ctx.arc(x, y, r, 0, Math.PI * 2);
+    else if (cls === 1) ctx.rect(x - r * 0.9, y - r * 0.9, r * 1.8, r * 1.8);
+    else if (cls === 2) {
+      ctx.moveTo(x, y - r * 1.2);
+      ctx.lineTo(x + r * 1.1, y + r * 0.8);
+      ctx.lineTo(x - r * 1.1, y + r * 0.8);
+      ctx.closePath();
+    } else {
+      ctx.moveTo(x, y - r * 1.25);
+      ctx.lineTo(x + r * 1.25, y);
+      ctx.lineTo(x, y + r * 1.25);
+      ctx.lineTo(x - r * 1.25, y);
+      ctx.closePath();
+    }
+  }
+
+  const segment = (i: number, j: number) => {
+    ctx.beginPath();
+    ctx.moveTo(sx(P[i][0]), sy(P[i][1]));
+    ctx.lineTo(sx(P[j][0]), sy(P[j][1]));
+    ctx.stroke();
+  };
+
+  /** The point the page talks about when the pointer is elsewhere. */
+  function pick() {
+    if (state.hover >= 0) return state.hover;
+    let best = 0;
+    if (state.focus === 'rand' || state.focus === 'ari') {
+      for (let i = 1; i < P.length; i++) if (M.disagree[i] > M.disagree[best]) best = i;
+    } else {
+      for (let i = 1; i < P.length; i++) if (M.s[i] < M.s[best]) best = i;
+    }
+    return best;
+  }
+
+  function scatter(p: number) {
+    const sub = {
+      sil: 'teal: its own cluster (a) · red: the nearest other (b)',
+      dbi: 'circle: spread · dashed: worst neighbour',
+      dbcv: 'spanning trees · red: widest gap in · teal: gap out',
+      purity: 'ringed: outvoted in their cluster',
+      rand: 'teal: agreed pairs · red, amber: disagreed',
+      ari: 'teal: agreed pairs · red, amber: disagreed',
+    }[state.focus];
+    const noise = state.noiseId >= 0 ? ' · grey: noise' : '';
+    panel(SC, 'colour: cluster · shape: true class' + noise, sub);
+    ctx.save();
+    roundRect(ctx, SC.x, SC.y, SC.w, SC.h, 10);
+    ctx.clip();
+    const n = P.length;
+
+    if (state.focus === 'sil' && p >= 0) {
+      ctx.lineWidth = 1;
+      for (let j = 0; j < n; j++) {
+        if (j === p) continue;
+        if (L[j] === L[p]) ctx.strokeStyle = A_COL;
+        else if (L[j] === M.bOf[p]) ctx.strokeStyle = B_COL;
+        else continue;
+        ctx.globalAlpha = 0.16;
+        segment(p, j);
+      }
+      ctx.globalAlpha = 1;
+    }
+    if ((state.focus === 'rand' || state.focus === 'ari') && p >= 0) {
+      ctx.lineWidth = 1;
+      for (let j = 0; j < n; j++) {
+        if (j === p) continue;
+        const sameL = L[j] === L[p], sameT = T[j] === T[p];
+        if (!sameL && !sameT) continue; // agreeing "apart" pairs would bury the rest
+        ctx.strokeStyle = sameL && sameT ? A_COL : sameL ? B_COL : FN_COL;
+        ctx.globalAlpha = sameL && sameT ? 0.12 : 0.35;
+        segment(p, j);
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (state.focus === 'dbcv') {
+      M.dcIds.forEach((c, r) => {
+        ctx.strokeStyle = hue(c);
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = 1.2;
+        for (const [i, j] of M.dc[r].edges) segment(i, j);
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = hue(L[i]);
+      ctx.globalAlpha = 0.9;
+      shape(T[i], sx(P[i][0]), sy(P[i][1]), 3.8);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    if (state.focus === 'dbcv') {
+      for (const d of M.dc) {
+        if (d.sparseEdge.length) {
+          ctx.strokeStyle = B_COL;
+          ctx.lineWidth = 4;
+          segment(d.sparseEdge[0], d.sparseEdge[1]);
+        }
+        if (d.sepPair.length) {
+          ctx.strokeStyle = A_COL;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 5]);
+          segment(d.sepPair[0], d.sepPair[1]);
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
+    if (state.focus === 'purity') {
+      ctx.strokeStyle = B_COL;
+      ctx.lineWidth = 1.6;
+      for (let i = 0; i < n; i++) {
+        const r = M.ids.indexOf(L[i]);
+        if (T[i] === M.majority[r]) continue;
+        ctx.beginPath();
+        ctx.arc(sx(P[i][0]), sy(P[i][1]), 8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    if (state.focus === 'dbi') {
+      M.ids.forEach((c, r) => {
+        const [cx, cy] = M.cent[c];
+        const w = M.worst[r];
+        if (w >= 0) {
+          const [dx, dy] = M.cent[M.ids[w]];
+          ctx.strokeStyle = ink(0.6);
+          ctx.setLineDash([5, 5]);
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(sx(cx), sy(cy));
+          ctx.lineTo(sx(dx), sy(dy));
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.strokeStyle = hue(c);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx(cx), sy(cy), M.spread[c] * scale, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = hue(c);
+        ctx.strokeStyle = ink(1);
+        ctx.beginPath();
+        ctx.arc(sx(cx), sy(cy), 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
+
+    if (state.source === 'dbscan' && state.hover >= 0) {
+      ctx.strokeStyle = ink(0.5);
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.arc(sx(P[state.hover][0]), sy(P[state.hover][1]), state.eps * scale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (p >= 0 && (state.focus === 'sil' || state.focus === 'rand' || state.focus === 'ari')) {
+      ctx.strokeStyle = ink(0.95);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(P[p][0]), sy(P[p][1]), 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    roundRect(ctx, SC.x + 0.5, SC.y + 0.5, SC.w - 1, SC.h - 1, 10);
+    ctx.stroke();
+  }
+
+  // --- the working for the chosen metric -------------------------------------
+  const TOP = FP.y + 96; // where each panel's working starts, under its headline
+  const tooFew = () => label('needs at least two clusters', FP.x + FP.w / 2, FP.y + FP.h / 2, 0.5, 'center', 11);
+
+  /** The one score this panel is about, large, with a line on how to read it. */
+  function head(name: string, value: number, how: string, colour = A_COL) {
+    fit(name, FP.x + 16, FP.y + 26, FP.w - 32, 0.5, 'left', 10);
+    label(isNaN(value) ? '—' : value.toFixed(3), FP.x + 16, FP.y + 62, 0.95, 'left', 24, isNaN(value) ? undefined : colour);
+    fit(how, FP.x + FP.w - 16, FP.y + 60, FP.w - 150, 0.38, 'right', 9);
+    ctx.fillStyle = ink(0.08);
+    ctx.fillRect(FP.x + 16, FP.y + 78, FP.w - 32, 1);
+  }
+  const note = (text: string, y: number, alpha = 0.5, colour?: string, size = 9) =>
+    fit(text, FP.x + 16, y, FP.w - 32, alpha, 'left', size, colour);
+  const swatch = (c: number, x: number, y: number) => {
+    ctx.fillStyle = hue(c);
+    ctx.fillRect(x, y - 5, 10, 10);
+  };
+
+  function silPlot(p: number) {
+    panel(FP, 'silhouette per point', 'sorted per cluster · dashed: the mean');
+    head('mean silhouette S', M.sil, '−1 to 1, higher is better', M.sil < 0 ? B_COL : A_COL);
+    if (isNaN(M.sil)) return tooFew();
+    const x0 = FP.x + 36, x1 = FP.x + FP.w - 16, top = TOP, bot = FP.y + FP.h - 30;
+    const lo = -0.5, hi = 1;
+    const px = (v: number) => x0 + ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (x1 - x0);
+    const gap = 5;
+    const rowH = (bot - top - gap * (M.ids.length - 1)) / P.length;
+    let y = top;
+    for (const c of M.ids) {
+      const members = P.map((_, i) => i).filter((i) => L[i] === c).sort((i, j) => M.s[j] - M.s[i]);
+      const yStart = y;
+      for (const i of members) {
+        ctx.fillStyle = i === p ? ink(1) : M.s[i] < 0 ? B_COL : hue(c);
+        ctx.globalAlpha = i === p ? 1 : 0.85;
+        const h = i === p ? Math.max(3, rowH) : Math.max(0.6, rowH);
+        ctx.fillRect(Math.min(px(0), px(M.s[i])), y, Math.abs(px(M.s[i]) - px(0)) || 1, h);
+        y += rowH;
+      }
+      ctx.globalAlpha = 1;
+      label(c === state.noiseId ? '∅' : String(c + 1), FP.x + 24, (yStart + y) / 2 + 5, 0.8, 'right', 10, hue(c));
+      y += gap;
+    }
+    ctx.fillStyle = ink(0.5);
+    ctx.fillRect(px(0) - 0.5, top - 4, 1, bot - top + 8);
+    ctx.strokeStyle = A_COL;
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px(M.sil), top - 4);
+    ctx.lineTo(px(M.sil), bot + 4);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const t of [-0.5, 0, 0.5, 1]) label(String(t), px(t), FP.y + FP.h - 10, 0.4, 'center', 9);
+  }
+
+  function dbiTable() {
+    panel(FP, 'Davies–Bouldin', 'each cluster against its worst neighbour');
+    head('DB', M.dbi, '0 is ideal, lower is better');
+    if (isNaN(M.dbi)) return tooFew();
+    const K = M.ids.length;
+    const cell = Math.min(40, (FP.w - 120) / K), rowH = Math.min(30, 260 / K);
+    const x0 = FP.x + 44, y0 = TOP + 34;
+    note('R_kj = (s_k + s_j) / d(c_k, c_j)', TOP + 4, 0.7, undefined, 10);
+    M.ids.forEach((c, j) => swatch(c, x0 + j * cell + cell / 2 - 5, y0 - 10));
+    label('s_k', x0 + K * cell + 36, y0 - 6, 0.5, 'center', 10);
+    M.ids.forEach((c, r) => {
+      const y = y0 + 8 + r * rowH;
+      swatch(c, FP.x + 18, y + rowH / 2);
+      M.R[r].forEach((v, j) => {
+        const worst = j === M.worst[r];
+        if (worst) {
+          ctx.fillStyle = B_COL;
+          ctx.globalAlpha = 0.25;
+          roundRect(ctx, x0 + j * cell + 2, y + 2, cell - 4, rowH - 4, 4);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        label(isNaN(v) ? '·' : v.toFixed(2), x0 + j * cell + cell / 2, y + rowH / 2 + 4, worst ? 0.95 : 0.5, 'center', 9, worst ? B_COL : undefined);
+      });
+      label(M.spread[c].toFixed(2), x0 + K * cell + 36, y + rowH / 2 + 4, 0.7, 'center', 9, hue(c));
+    });
+    const yb = y0 + 8 + K * rowH + 28;
+    note('s_k: mean distance from a cluster’s points', yb);
+    note('to its centroid (the circle on the plot)', yb + 18);
+    note('d: distance between the two centroids', yb + 40);
+    note('red: the neighbour each cluster is most', yb + 62, 0.5, B_COL);
+    note('confused with; DB averages those', yb + 80, 0.5, B_COL);
+    const worstVals = M.R.map((row, r) => row[M.worst[r]].toFixed(2));
+    note(`DB = mean(${worstVals.join(', ')}) = ${M.dbi.toFixed(3)}`, FP.y + FP.h - 16, 0.9, A_COL, 10);
+  }
+
+  function dbcvTable() {
+    panel(FP, 'DBCV', 'density, measured along spanning trees');
+    head('DBCV', M.dbcv, '−1 to 1, higher is better', M.dbcv < 0 ? B_COL : A_COL);
+    if (isNaN(M.dbcv)) return tooFew();
+    const K = M.dcIds.length;
+    const rowH = Math.min(30, 260 / K);
+    const y0 = TOP + 30;
+    const col = { size: FP.x + 62, sparse: FP.x + 116, sep: FP.x + 168, v: FP.x + 216 };
+    label('size', col.size, y0 - 12, 0.45, 'center', 9);
+    label('sparse', col.sparse, y0 - 12, 0.8, 'center', 9, B_COL);
+    label('sep', col.sep, y0 - 12, 0.8, 'center', 9, A_COL);
+    label('V', col.v, y0 - 12, 0.6, 'center', 9);
+    const bx = FP.x + 244, bw = FP.w - 260;
+    M.dcIds.forEach((c, r) => {
+      const d = M.dc[r];
+      const y = y0 + r * rowH + rowH / 2;
+      swatch(c, FP.x + 18, y);
+      label(String(M.size[c]), col.size, y + 4, 0.6, 'center', 9);
+      label(d.sparse.toFixed(2), col.sparse, y + 4, 0.9, 'center', 9, B_COL);
+      label(isFinite(d.sep) ? d.sep.toFixed(2) : '—', col.sep, y + 4, 0.9, 'center', 9, A_COL);
+      label(d.v.toFixed(2), col.v, y + 4, 0.85, 'center', 9);
+      ctx.fillStyle = ink(0.1);
+      ctx.fillRect(bx, y - 5, bw, 10);
+      const zero = bx + bw / 2, x = bx + ((Math.max(-1, Math.min(1, d.v)) + 1) / 2) * bw;
+      ctx.fillStyle = d.v < 0 ? B_COL : A_COL;
+      ctx.fillRect(Math.min(zero, x), y - 5, Math.max(1.5, Math.abs(x - zero)), 10);
+      ctx.fillStyle = ink(0.5);
+      ctx.fillRect(zero - 0.5, y - 8, 1, 16);
+    });
+    const yb = y0 + K * rowH + 30;
+    note('sparse: the widest jump needed to walk', yb, 0.5, B_COL);
+    note('through the cluster along its tree', yb + 18, 0.5, B_COL);
+    note('sep: the shortest jump out of it into', yb + 40, 0.5, A_COL);
+    note('another cluster', yb + 58, 0.5, A_COL);
+    note('V = (sep − sparse) / max(sep, sparse)', yb + 80, 0.6);
+    note('distances are mutual reachability: never', yb + 102, 0.4);
+    note('shorter than the local spacing of points', yb + 120, 0.4);
+    if (state.noiseId >= 0) note('noise sits in no cluster but counts in n', yb + 142, 0.4);
+    note(`DBCV = Σ (size/n)·V = ${M.dbcv.toFixed(3)}`, FP.y + FP.h - 16, 0.9, A_COL, 10);
+  }
+
+  function purityPanel() {
+    panel(FP, 'purity', 'each cluster votes for its largest class');
+    head('purity', M.purity, `inverse purity ${M.invPurity.toFixed(3)}`);
+    const K = M.ids.length, n = P.length;
+
+    // contingency table: clusters down, true classes across
+    note('contingency: clusters × true classes', TOP + 4, 0.6);
+    const rowH = Math.min(24, 190 / (K + 1));
+    const cell = Math.min(54, (FP.w - 110) / nClasses);
+    const x0 = FP.x + 40, y0 = TOP + 34;
+    for (let j = 0; j < nClasses; j++) {
+      ctx.fillStyle = ink(0.75);
+      shape(j, x0 + j * cell + cell / 2, y0 - 6, 5);
+      ctx.fill();
+    }
+    label('size', x0 + nClasses * cell + 28, y0 - 2, 0.45, 'center', 9);
+    const colMax = Array.from({ length: nClasses }, (_, j) => {
+      let best = 0;
+      M.N.forEach((row, r) => { if (row[j] > M.N[best][j]) best = r; });
+      return best;
+    });
+    M.ids.forEach((c, r) => {
+      const y = y0 + 8 + r * rowH;
+      swatch(c, FP.x + 18, y + rowH / 2);
+      M.N[r].forEach((v, j) => {
+        const cx = x0 + j * cell;
+        const maj = j === M.majority[r] && v > 0;
+        if (maj) {
+          ctx.fillStyle = A_COL;
+          ctx.globalAlpha = 0.22;
+          roundRect(ctx, cx + 2, y + 1, cell - 4, rowH - 2, 4);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        if (colMax[j] === r && v > 0) {
+          ctx.strokeStyle = FN_COL;
+          ctx.lineWidth = 1.2;
+          roundRect(ctx, cx + 2.5, y + 1.5, cell - 5, rowH - 3, 4);
+          ctx.stroke();
+        }
+        label(String(v), cx + cell / 2, y + rowH / 2 + 4, v ? 0.9 : 0.25, 'center', 9, maj ? A_COL : v ? B_COL : undefined);
+      });
+      label(String(M.size[c]), x0 + nClasses * cell + 28, y + rowH / 2 + 4, 0.5, 'center', 9);
+    });
+    const yt = y0 + 8 + K * rowH;
+    ctx.fillStyle = ink(0.15);
+    ctx.fillRect(x0, yt + 2, nClasses * cell, 1);
+    for (let j = 0; j < nClasses; j++) {
+      const m = M.N.reduce((a, row) => a + row[j], 0);
+      label(String(m), x0 + j * cell + cell / 2, yt + rowH / 2 + 6, 0.5, 'center', 9);
+    }
+    label(String(n), x0 + nClasses * cell + 28, yt + rowH / 2 + 6, 0.5, 'center', 9);
+    note('teal: each row’s max, the cluster’s vote', yt + rowH + 20, 0.55, A_COL);
+    note('red: points outvoted in their cluster', yt + rowH + 38, 0.55, B_COL);
+    note('amber box: each column’s max (inverse)', yt + rowH + 56, 0.55, FN_COL);
+
+    // the same rows as vote bars, length = cluster size
+    const yv = yt + rowH + 88;
+    note('the same votes as bars, length = size', yv, 0.6);
+    const rowV = Math.min(22, (FP.y + FP.h - 110 - yv) / K);
+    const bx = FP.x + 40, bw = FP.w - 110;
+    const unit = bw / Math.max(...M.ids.map((c) => M.size[c]));
+    M.ids.forEach((c, r) => {
+      const y = yv + 14 + r * rowV;
+      const h = rowV - 6;
+      swatch(c, FP.x + 18, y + h / 2);
+      const order = M.N[r].map((_, j) => j).sort((a, b) => (a === M.majority[r] ? -1 : b === M.majority[r] ? 1 : M.N[r][b] - M.N[r][a]));
+      let x = bx;
+      for (const j of order) {
+        const v = M.N[r][j];
+        if (!v) continue;
+        const w = v * unit;
+        const maj = j === M.majority[r];
+        ctx.fillStyle = maj ? A_COL : B_COL;
+        ctx.globalAlpha = maj ? 0.7 : 0.55;
+        ctx.fillRect(x, y, Math.max(1, w - 1), h);
+        ctx.globalAlpha = 1;
+        if (w > 14 && h > 8) {
+          ctx.fillStyle = inv(0.85);
+          shape(j, x + 8, y + h / 2, Math.min(4, h / 4));
+          ctx.fill();
+        }
+        x += w;
+      }
+      label(`${Math.max(...M.N[r])}/${M.size[c]}`, FP.x + FP.w - 14, y + h / 2 + 4, 0.7, 'right', 9);
+    });
+    note('singletons would score purity 1, inverse ≈ 0', FP.y + FP.h - 40, 0.38);
+    note(`purity = Σ teal / n = ${n - M.minority} / ${n} = ${M.purity.toFixed(3)}`, FP.y + FP.h - 16, 0.9, A_COL, 10);
+  }
+
+  // The pair matrix is n × n pixels, rebuilt only when the clustering changes.
+  const pairCanvas = document.createElement('canvas');
+  let pairVersion = -1;
+  let pairOrder: number[] = [];
+  const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+
+  function pairImage() {
+    if (pairVersion === M.version) return;
+    pairVersion = M.version;
+    const n = P.length;
+    pairOrder = P.map((_, i) => i).sort((i, j) => T[i] - T[j] || L[i] - L[j] || i - j);
+    pairCanvas.width = n;
+    pairCanvas.height = n;
+    const pc = pairCanvas.getContext('2d')!;
+    const img = pc.createImageData(n, n);
+    const tp = rgb(A_COL), fp = rgb(B_COL), fn = rgb(FN_COL);
+    for (let r = 0; r < n; r++)
+      for (let c = 0; c < n; c++) {
+        const i = pairOrder[r], j = pairOrder[c];
+        const sameL = L[i] === L[j], sameT = T[i] === T[j];
+        if (!sameL && !sameT) continue;
+        const col = sameL && sameT ? tp : sameL ? fp : fn;
+        const o = (r * n + c) * 4;
+        img.data[o] = col[0];
+        img.data[o + 1] = col[1];
+        img.data[o + 2] = col[2];
+        img.data[o + 3] = sameL && sameT ? 170 : 235;
+      }
+    pc.putImageData(img, 0, 0);
+  }
+
+  function pairMatrix(p: number) {
+    panel(FP, 'every pair of points', 'one cell each · sorted by true class');
+    const pr = M.pairs;
+    head('Rand index', M.rand, `${pr.tp + pr.tn} of ${pr.total} pairs agree`);
+    pairImage();
+    const n = P.length, S = FP.w - 32, x0 = FP.x + 16, y0 = TOP;
+    ctx.fillStyle = ink(0.04);
+    ctx.fillRect(x0, y0, S, S);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(pairCanvas, x0, y0, S, S);
+    // the truth's blocks down the diagonal
+    ctx.strokeStyle = ink(0.55);
+    ctx.lineWidth = 1;
+    let start = 0;
+    for (let j = 0; j < nClasses; j++) {
+      const m = T.filter((t) => t === j).length;
+      ctx.strokeRect(x0 + (start / n) * S, y0 + (start / n) * S, (m / n) * S, (m / n) * S);
+      start += m;
+    }
+    if (p >= 0) {
+      const at = y0 + ((pairOrder.indexOf(p) + 0.5) / n) * S;
+      ctx.fillStyle = ink(0.8);
+      ctx.fillRect(x0 - 8, at - 1, 6, 2);
+      ctx.fillRect(x0 + S + 2, at - 1, 6, 2);
+    }
+
+    // the same four counts as a 2 × 2 table
+    const gx = FP.x + 110, cw = (FP.x + FP.w - 16 - gx) / 2, ch = 40, gy = y0 + S + 36;
+    label('same class', gx + cw / 2, gy - 8, 0.45, 'center', 8);
+    label('other class', gx + cw * 1.5, gy - 8, 0.45, 'center', 8);
+    label('same cluster', gx - 8, gy + ch / 2 + 3, 0.45, 'right', 8);
+    label('other cluster', gx - 8, gy + ch * 1.5 + 3, 0.45, 'right', 8);
+    const box = (r: number, c: number, name: string, v: number, colour: string, alpha: number) => {
+      ctx.fillStyle = colour;
+      ctx.globalAlpha = alpha;
+      roundRect(ctx, gx + c * cw + 2, gy + r * ch + 2, cw - 4, ch - 4, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      fit(`${name} ${v}`, gx + c * cw + cw / 2, gy + r * ch + ch / 2 + 4, cw - 10, 0.95, 'center', 10, colour === ink(0.3) ? undefined : colour);
+    };
+    box(0, 0, 'TP', pr.tp, A_COL, 0.2);
+    box(0, 1, 'FP', pr.fp, B_COL, 0.2);
+    box(1, 0, 'FN', pr.fn, FN_COL, 0.2);
+    box(1, 1, 'TN', pr.tn, ink(0.3), 0.25);
+    const yb = gy + 2 * ch + 24;
+    note('Rand: the share of pairs on the diagonal', yb, 0.55);
+    note('of this table, TP and TN, where both agree', yb + 18, 0.55);
+    note('TN cells are blank above: they agree for free', yb + 36, 0.38);
+    note(`RI = (${pr.tp} + ${pr.tn}) / ${pr.total} = ${M.rand.toFixed(3)}`, FP.y + FP.h - 16, 0.9, A_COL, 10);
+  }
+
+  function ariStretch() {
+    panel(FP, 'where chance lands', `RI of ${SHUFFLES} shuffled labellings`);
+    head('adjusted Rand', M.ari, `RI ${M.rand.toFixed(3)} · chance ${M.expectedRI.toFixed(3)}`, M.ari < 0 ? B_COL : A_COL);
+    const x0 = FP.x + 34, x1 = FP.x + FP.w - 20;
+    const top = TOP + 40, axisY = TOP + 190, ariY = TOP + 340;
+    const rx = (v: number) => x0 + Math.max(0, Math.min(1, v)) * (x1 - x0);
+    const ALO = -0.25;
+    const ax = (v: number) => x0 + ((Math.max(ALO, Math.min(1, v)) - ALO) / (1 - ALO)) * (x1 - x0);
+    note('the same cluster sizes, labels dealt at random:', TOP + 4, 0.55);
+    note('the Rand index each deal would score', TOP + 22, 0.55);
+
+    // histogram of the shuffled Rand indices
+    const bins = new Array(100).fill(0);
+    for (const v of M.shuffled) bins[Math.min(99, Math.max(0, Math.floor(v * 100)))]++;
+    const peak = Math.max(...bins);
+    const bw = (x1 - x0) / 100;
+    ctx.fillStyle = B_COL;
+    ctx.globalAlpha = 0.7;
+    bins.forEach((b, k) => {
+      if (!b) return;
+      const h = (b / peak) * (axisY - top - 20);
+      ctx.fillRect(x0 + k * bw, axisY - h, Math.max(1.5, bw - 0.5), h);
+    });
+    ctx.globalAlpha = 1;
+
+    // the two axes
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 1;
+    for (const y of [axisY, ariY]) {
+      ctx.beginPath();
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x1, y);
+      ctx.stroke();
+    }
+    for (const t of [0, 0.5, 1]) label(String(t), rx(t), axisY + 16, 0.4, 'center', 8);
+    for (const t of [0, 0.5, 1]) label(String(t), ax(t), ariY + 16, 0.4, 'center', 8);
+    label('RI', x0 - 6, axisY + 4, 0.5, 'right', 8);
+    label('ARI', x0 - 6, ariY + 4, 0.5, 'right', 8);
+
+    // the stretch: chance goes to 0, a perfect match stays at 1
+    const link = (a: number, b: number, colour: string, width: number, dash: number[]) => {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(rx(a), axisY + 24);
+      ctx.lineTo(ax(b), ariY - 8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    link(M.expectedRI, 0, B_COL, 1.4, [4, 4]);
+    link(1, 1, ink(0.5), 1.2, [4, 4]);
+    if (!isNaN(M.ari)) link(M.rand, M.ari, A_COL, 2.2, []);
+
+    ctx.fillStyle = A_COL;
+    ctx.fillRect(rx(M.rand) - 1.5, top - 4, 3, axisY - top + 4);
+    label(`yours ${M.rand.toFixed(3)}`, rx(M.rand) + (M.rand > 0.6 ? -6 : 6), top + 8, 0.9, M.rand > 0.6 ? 'right' : 'left', 9, A_COL);
+    const chanceRight = M.expectedRI < M.rand;
+    label(`chance ${M.expectedRI.toFixed(3)}`, rx(M.expectedRI) + (chanceRight ? -8 : 8), axisY - 44, 0.9, chanceRight ? 'right' : 'left', 9, B_COL);
+    if (!isNaN(M.ari)) {
+      ctx.fillStyle = A_COL;
+      ctx.beginPath();
+      ctx.arc(ax(M.ari), ariY, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = B_COL;
+    ctx.beginPath();
+    ctx.arc(ax(0), ariY, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    const yb = ariY + 44;
+    note('ARI stretches the scale so that chance', yb, 0.55);
+    note('lands on 0 and a perfect match stays 1', yb + 18, 0.55);
+    note('below 0: worse than dealing at random', yb + 40, 0.38);
+    fit(`ARI = (RI − chance) / (1 − chance) = ${isNaN(M.ari) ? '—' : M.ari.toFixed(3)}`, FP.x + 16, FP.y + FP.h - 16, FP.w - 32, 0.9, 'left', 10, A_COL);
+  }
+
+  // --- words -----------------------------------------------------------------
+  const f3 = (v: number) => (isNaN(v) ? '—' : v.toFixed(3));
+  const tc = (colour: string, tex: string) => `\\textcolor{${colour}}{${tex}}`;
+
+  function words(p: number) {
+    const n = P.length;
+    const K = M.ids.length;
+    const pr = M.pairs;
+    if (state.focus === 'sil') {
+      const a = M.a[p], b = M.b[p], s = M.s[p];
+      setEq({
+        rule: [`s(i) = \\dfrac{${tc(B_COL, 'b(i)')} - ${tc(A_COL, 'a(i)')}}{\\max(${tc(A_COL, 'a(i)')},\\, ${tc(B_COL, 'b(i)')})} \\qquad S = \\tfrac1n \\textstyle\\sum_i s(i)`],
+        live: [['a = ' + a.toFixed(2), A_COL], '\\quad ', ['b = ' + (isFinite(b) ? b.toFixed(2) : '\\infty'), B_COL], `\\quad s(i) = ${s.toFixed(3)}`, `\\quad S = ${f3(M.sil)}`],
+      });
+      setResult({
+        value: f3(M.sil),
+        colour: M.sil < 0 ? B_COL : A_COL,
+        status: `${K} clusters · ${M.s.filter((v) => v < 0).length} points with s < 0`,
+        note: 'Near 1, a point sits deep in its own cluster; near 0, it is on a border; below 0, it is closer on average to another cluster than to its own. Only distances go in, so round compact clusters score best whether or not they are the right ones.',
+      });
+    } else if (state.focus === 'dbi') {
+      setEq({
+        rule: ['DB = \\frac1K \\sum_k \\max_{j \\ne k} \\frac{s_k + s_j}{d(c_k, c_j)}'],
+        live: [`K = ${K}`, ['\\quad DB = ' + f3(M.dbi), A_COL]],
+      });
+      setResult({
+        value: f3(M.dbi),
+        colour: A_COL,
+        status: `${K} clusters · lower is better, 0 is the ideal`,
+        note: 'Each cluster’s spread s_k is the mean distance from its points to its centroid. A cluster is judged by its worst neighbour: wide clusters with close centroids give a large ratio. It needs no labels either, and like silhouette it assumes clusters are blobs around a centre.',
+      });
+    } else if (state.focus === 'dbcv') {
+      const neg = M.dc.filter((d) => d.v < 0).length;
+      setEq({
+        rule: [`V_i = \\dfrac{${tc(A_COL, '\\text{sep}_i')} - ${tc(B_COL, '\\text{sparse}_i')}}{\\max(${tc(A_COL, '\\text{sep}_i')},\\, ${tc(B_COL, '\\text{sparse}_i')})} \\qquad \\text{DBCV} = \\sum_i \\tfrac{|C_i|}{n} V_i`],
+        live: [`K = ${K}`, [`\\quad \\text{DBCV} = ${f3(M.dbcv)}`, A_COL]],
+      });
+      setResult({
+        value: f3(M.dbcv),
+        colour: M.dbcv < 0 ? B_COL : A_COL,
+        status: `${K} clusters · ${neg} with a gap inside wider than the gap out`,
+        note: 'DBCV judges a cluster by density, not by a centre. It connects each cluster with its minimum spanning tree and finds the widest jump needed to walk through it (sparseness), then the shortest jump out to another cluster (separation). A long thin crescent is fine, as long as it has no gaps.',
+      });
+    } else if (state.focus === 'purity') {
+      setEq({
+        rule: [`\\text{purity} = \\frac1n \\sum_k ${tc(A_COL, '\\max_j n_{kj}')}`],
+        live: [`\\frac{${n - M.minority}}{${n}} = `, [M.purity.toFixed(3), A_COL], ['\\quad ' + M.minority + '\\text{ outvoted}', B_COL]],
+      });
+      setResult({
+        value: M.purity.toFixed(3),
+        colour: A_COL,
+        status: `${K} clusters · ${M.minority} of ${n} points outvoted · inverse purity ${M.invPurity.toFixed(3)}`,
+        note: 'Treat the clustering as a classifier: every cluster predicts its majority class, and purity is the accuracy of that prediction. It never penalises splitting, since a smaller piece can only be more uniform. Inverse purity asks the mirror question and catches exactly that.',
+      });
+    } else if (state.focus === 'rand') {
+      setEq({
+        rule: [`RI = \\dfrac{${tc(A_COL, 'TP + TN')}}{${tc(A_COL, 'TP + TN')} + ${tc(B_COL, 'FP')} + ${tc(FN_COL, 'FN')}} = \\dfrac{${tc(A_COL, 'TP + TN')}}{\\binom{n}{2}}`],
+        live: [[`\\frac{${pr.tp} + ${pr.tn}}{${pr.total}}`, A_COL], ` = ${M.rand.toFixed(3)}`],
+      });
+      setResult({
+        value: M.rand.toFixed(3),
+        colour: A_COL,
+        status: `${pr.tp + pr.tn} of ${pr.total} pairs agree · ${pr.fp} false merges · ${pr.fn} false splits`,
+        note: 'Forget which cluster is which and ask, for every pair of points, one yes-or-no question: are these two together? The Rand index is how often the clustering gives the same answer as the truth. Most pairs are apart in both, so the score starts high before the clustering has done anything.',
+      });
+    } else {
+      setEq({
+        rule: [`ARI = \\dfrac{RI - ${tc(B_COL, '\\mathbb{E}[RI]')}}{1 - ${tc(B_COL, '\\mathbb{E}[RI]')}}`],
+        live: [`\\frac{${M.rand.toFixed(3)} - ${M.expectedRI.toFixed(3)}}{1 - ${M.expectedRI.toFixed(3)}} = `, [f3(M.ari), A_COL]],
+      });
+      setResult({
+        value: f3(M.ari),
+        colour: M.ari < 0 ? B_COL : A_COL,
+        status: `Rand index ${M.rand.toFixed(3)} · chance ${M.expectedRI.toFixed(3)} · adjusted ${f3(M.ari)}`,
+        note: 'Keep the cluster sizes, deal the labels out at random, and the Rand index still lands well above 0. ARI measures how far above that chance level you are, as a share of the way from chance to a perfect match: 1 is perfect, 0 is no better than luck, and it can go negative.',
+      });
+    }
+    resultLabel.textContent = { sil: 'Silhouette', dbi: 'Davies–Bouldin', dbcv: 'DBCV', purity: 'Purity', rand: 'Rand index', ari: 'Adjusted Rand' }[state.focus];
+    setRows({
+      'r-k': state.noiseId >= 0 ? `${dbFound} + ${M.size[state.noiseId] ?? 0} noise` : String(K),
+      'r-n': String(n),
+      'r-pairs': String(pr.total),
+      'r-minority': `${M.minority} of ${n}`,
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const p = pick();
+    scatter(p);
+    if (state.focus === 'sil') silPlot(p);
+    else if (state.focus === 'dbi') dbiTable();
+    else if (state.focus === 'dbcv') dbcvTable();
+    else if (state.focus === 'purity') purityPanel();
+    else if (state.focus === 'rand') pairMatrix(p);
+    else ariStretch();
+    words(p);
+  }
+
+  // --- interaction -----------------------------------------------------------
+  const at = (e: MouseEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const nearestPoint = (x: number, y: number) => {
+    let best = -1, bd = 12;
+    for (let i = 0; i < P.length; i++) {
+      const d = Math.hypot(x - sx(P[i][0]), y - sy(P[i][1]));
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  };
+
+  // Drag to pan, wheel to zoom about the pointer, double-click to go home. A
+  // press that never moves is a click, and clicks still move points.
+  let drag: { x: number; y: number; vx: number; vy: number; moved: boolean } | null = null;
+
+  canvas.addEventListener('pointermove', (e) => {
+    const { x, y } = at(e);
+    if (drag) {
+      if (Math.hypot(x - drag.x, y - drag.y) > 4) drag.moved = true;
+      if (drag.moved) {
+        view.x = drag.vx - (x - drag.x) / scale;
+        view.y = drag.vy + (y - drag.y) / scale;
+        canvas.style.cursor = 'grabbing';
+        draw();
+      }
+      return;
+    }
+    const i = inScatter(x, y) ? nearestPoint(x, y) : -1;
+    canvas.style.cursor = i >= 0 ? 'pointer' : inScatter(x, y) ? 'grab' : 'default';
+    if (i === state.hover) return;
+    state.hover = i;
+    draw();
+  });
+  canvas.addEventListener('pointerleave', () => { if (!drag) { state.hover = -1; draw(); } });
+  canvas.addEventListener('pointerdown', (e) => {
+    const { x, y } = at(e);
+    if (!inScatter(x, y)) return;
+    drag = { x, y, vx: view.x, vy: view.y, moved: false };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (!drag) return;
+    const { x, y } = at(e);
+    const click = !drag.moved;
+    drag = null;
+    canvas.style.cursor = 'grab';
+    if (!click) return;
+    const i = nearestPoint(x, y);
+    if (i < 0) return;
+    manual.set(i, (L[i] + 1) % kEff());
+    relabel();
+    draw();
+  });
+  canvas.addEventListener('pointercancel', () => { drag = null; });
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      const { x, y } = at(e);
+      if (!inScatter(x, y)) return;
+      e.preventDefault();
+      const [wx, wy] = fromScreen(x, y);
+      view.z = Math.min(25, Math.max(0.5, view.z * Math.exp(-e.deltaY * 0.0015)));
+      scale = BASE * view.z;
+      // keep the data point under the pointer where it was
+      view.x = wx - (x - SC.x - SC.w / 2) / scale;
+      view.y = wy + (y - SC.y - SC.h / 2) / scale;
+      draw();
+    },
+    { passive: false }
+  );
+  canvas.addEventListener('dblclick', (e) => {
+    const { x, y } = at(e);
+    if (!inScatter(x, y)) return;
+    resetView();
+    draw();
+  });
+
+  const refresh = () => { manual = new Map(); relabel(); draw(); };
+
+  transport({ onReset: refresh });
+  el('reseed').addEventListener('click', () => {
+    state.kmSeed++;
+    if (state.source !== 'kmeans') { state.source = 'kmeans'; source.select('kmeans'); showKnobs(); }
+    refresh();
+  });
+  el('home').addEventListener('click', () => { resetView(); draw(); });
+  segmented('focus', (f) => { state.focus = f as Focus; draw(); });
+  const source = segmented('source', (s) => { state.source = s; showKnobs(); refresh(); });
+  const setK = slider('k', (v) => {
+    state.k = v;
+    refresh();
+  });
+  slider('noise', (v) => { state.noise = v / 100; refresh(); }, (v) => `${v}%`);
+  const setEps = slider('eps', (v) => { state.eps = v; refresh(); }, (v) => v.toFixed(2));
+  slider('minpts', (v) => { state.minPts = v; refresh(); });
+  /** Only the knobs that the chosen source actually reads are shown. */
+  const showKnobs = () => {
+    const show = (id: string, on: boolean) => ((el(id).closest('.control') as HTMLElement).style.display = on ? '' : 'none');
+    show('k', state.source === 'kmeans' || state.source === 'random');
+    show('eps', state.source === 'dbscan');
+    show('minpts', state.source === 'dbscan');
+  };
+  segmented('data', (d) => {
+    state.data = d;
+    state.k = NATURAL[d] ?? state.k;
+    setK(state.k);
+    state.eps = EPS[d] ?? state.eps;
+    setEps(state.eps);
+    resetView();
+    build(d);
+    refresh();
+  });
+
+  showKnobs();
+  build(state.data);
+  refresh();
+</script>

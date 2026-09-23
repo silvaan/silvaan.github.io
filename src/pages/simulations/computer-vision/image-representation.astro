@@ -1,0 +1,402 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="computer-vision"
+  title="Image Representation"
+  description="A photograph in memory is a grid of whole numbers and nothing else. Move the magnifier and the patch under it appears as a picture and as its numbers at the same moment. Then take the numbers apart: one channel at a time, and fewer and fewer values each."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="rep"
+          width="1000"
+          height="540"
+          role="img"
+          aria-label="A photograph with a magnifier over it, and the patch under the magnifier written out as the grid of numbers it really is."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'red', color: '#f87171' },
+          { label: 'green', color: '#34d399' },
+          { label: 'blue', color: '#60a5fa' },
+          { label: 'the patch under the magnifier', color: '#f59e0b' },
+        ]}
+        hint="Move the pointer over the photograph to take the magnifier with you"
+      />
+      <Result label="One photograph" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg id="pic" label="Photo" attr="p" options={[{ value: 'astronaut', label: 'Astronaut' }, { value: 'cat', label: 'Cat' }, { value: 'coffee', label: 'Coffee' }]} />
+      <Seg
+        id="chan"
+        label="What is shown"
+        attr="c"
+        options={[
+          { value: 'all', label: 'All three' },
+          { value: 'r', label: 'Red' },
+          { value: 'g', label: 'Green' },
+          { value: 'b', label: 'Blue' },
+          { value: 'grey', label: 'One grey' },
+        ]}
+      />
+      <Seg id="view" label="The patch" attr="v" options={[{ value: 'shade', label: 'As brightness' }, { value: 'num', label: 'As numbers' }]} active="num" />
+      <Slider id="zoom" label="Magnifier" min={2} max={16} value={6} display="6 × 6 pixels" />
+      <Slider id="bits" label="Bits per number" min={1} max={8} value={8} hint={['2 values', '256 values']} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-pix', label: 'pixels in the photo' },
+          { id: 'r-num', label: 'numbers stored' },
+          { id: 'r-lev', label: 'values one number can take' },
+          { id: 'r-size', label: 'size, uncompressed' },
+          { id: 'r-under', label: 'under the magnifier' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Move the magnifier. The same patch is a picture on the left and a table of
+      whole numbers on the right, at the same moment, and the table is not a
+      description of the picture: it is the picture. Nothing else is stored.
+    </li>
+    <li>
+      Switch the patch to <b>as brightness</b> and the table turns back into the
+      photograph. Numbers and shades are the same thing shown two ways, and the
+      only reason the left panel looks continuous is that the squares are small.
+    </li>
+    <li>
+      With <b>all three</b> shown, every cell carries three numbers, not one. A
+      colour pixel is a triple, so a photograph this size is
+      <b>76,800 numbers</b> rather than 25,600.
+    </li>
+    <li>
+      Look at <b>red</b>, then <b>green</b>, then <b>blue</b>. Three grey
+      pictures, each meaningless on its own, and none of them coloured. The
+      colour was never in a channel, it is in the ratio between them.
+    </li>
+    <li>
+      Now drag <b>bits per number</b> down. At eight nothing happens, at six you
+      have to look, at four the smooth areas break into <b>bands</b>, and at one
+      the photograph is a stencil. A picture is a quantised measurement, and the
+      bands are the moment the grid of values becomes too coarse to hide.
+    </li>
+    <li>
+      The banding appears in the sky and the skin first, never in the detailed
+      parts. Quantising is a fixed absolute error, so it only shows where the
+      picture was changing more slowly than the error.
+    </li>
+    <li>
+      One number is not an amount of light. It is a code, and the ramp from 0 to
+      255 was chosen to suit the eye, which is why 128 does not look half as
+      bright as 255.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+
+  const R = '#f87171', G = '#34d399', B = '#60a5fa', FIELD = '#f59e0b';
+  const IMG = 160; // the photographs are 160 × 160
+
+  const state = { pic: 'astronaut', chan: 'all', view: 'num', zoom: 6, bits: 8, cx: 54, cy: 116 };
+
+  const canvas = el('rep') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- the photograph, as three planes of bytes ------------------------------
+  const plane = () => new Uint8ClampedArray(IMG * IMG);
+  let src = [plane(), plane(), plane()];
+  let grey = plane();
+  let ready = false;
+
+  const shot = document.createElement('canvas');
+  shot.width = IMG;
+  shot.height = IMG;
+  const shotCx = shot.getContext('2d', { willReadFrequently: true })!;
+
+  function loadPhoto(name: string) {
+    ready = false;
+    draw();
+    const img = new Image();
+    img.onload = () => {
+      shotCx.clearRect(0, 0, IMG, IMG);
+      shotCx.drawImage(img, 0, 0, IMG, IMG);
+      const d = shotCx.getImageData(0, 0, IMG, IMG).data;
+      src = [plane(), plane(), plane()];
+      for (let i = 0; i < IMG * IMG; i++) {
+        src[0][i] = d[i * 4];
+        src[1][i] = d[i * 4 + 1];
+        src[2][i] = d[i * 4 + 2];
+        grey[i] = Math.round(0.299 * src[0][i] + 0.587 * src[1][i] + 0.114 * src[2][i]);
+      }
+      ready = true;
+      paint();
+    };
+    img.src = `/img/${name}-160.png`;
+  }
+
+  // --- quantisation ----------------------------------------------------------
+  /** How many values a number is allowed to take at the current depth. */
+  const levels = () => 1 << state.bits;
+  /** The whole number actually stored for a byte: 0 … levels − 1. */
+  const code = (v: number) => Math.round((v / 255) * (levels() - 1));
+  /** The shade that number stands for, back on the 0 … 255 scale. */
+  const shade = (c: number) => Math.round((c * 255) / (levels() - 1));
+  /** The three (or one) numbers stored for a pixel, already quantised. */
+  function pixel(i: number): number[] {
+    if (state.chan === 'all') return [code(src[0][i]), code(src[1][i]), code(src[2][i])];
+    if (state.chan === 'grey') return [code(grey[i])];
+    return [code(src[state.chan === 'r' ? 0 : state.chan === 'g' ? 1 : 2][i])];
+  }
+  /** What that pixel looks like on screen: colour for all three, grey otherwise. */
+  function rgb(i: number): [number, number, number] {
+    const p = pixel(i);
+    if (p.length === 3) return [shade(p[0]), shade(p[1]), shade(p[2])];
+    const v = shade(p[0]);
+    return [v, v, v];
+  }
+  const css = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const CHAN_NAME: Record<string, string> = {
+    all: 'three channels', r: 'red only', g: 'green only', b: 'blue only', grey: 'one grey',
+  };
+
+  // The photograph is repainted only when the numbers behind it change, not on
+  // every pointer move.
+  const shown = document.createElement('canvas');
+  shown.width = IMG;
+  shown.height = IMG;
+  const shownCx = shown.getContext('2d')!;
+  function paint() {
+    if (!ready) return;
+    const px = shownCx.createImageData(IMG, IMG);
+    for (let i = 0; i < IMG * IMG; i++) {
+      const c = rgb(i);
+      px.data[i * 4] = c[0];
+      px.data[i * 4 + 1] = c[1];
+      px.data[i * 4 + 2] = c[2];
+      px.data[i * 4 + 3] = 255;
+    }
+    shownCx.putImageData(px, 0, 0);
+    draw();
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const PHOTO = { x: 60, y: 104, s: 360 };
+  const GRID = { x: 580, y: 104, s: 360 };
+  const scale = PHOTO.s / IMG;
+  /** Top-left pixel of the patch, kept inside the picture. */
+  const patch = () => {
+    const k = state.zoom;
+    return {
+      k,
+      x: Math.max(0, Math.min(IMG - k, Math.round(state.cx - k / 2))),
+      y: Math.max(0, Math.min(IMG - k, Math.round(state.cy - k / 2))),
+    };
+  };
+
+  function frame(x: number, y: number, s: number) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = inv(0.55);
+    roundRect(ctx, x, y, s, s, 12);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, 12);
+    ctx.stroke();
+  }
+
+  function photoPanel(p: { k: number; x: number; y: number }) {
+    label('the photograph', PHOTO.x, PHOTO.y - 30, 0.55, 'left', 13);
+    label(
+      ready ? `${IMG} × ${IMG} · ${CHAN_NAME[state.chan]} · ${state.bits} bit${state.bits > 1 ? 's' : ''}` : 'loading',
+      PHOTO.x, PHOTO.y - 12, 0.32, 'left', 11
+    );
+    frame(PHOTO.x, PHOTO.y, PHOTO.s);
+    if (!ready) return;
+    ctx.save();
+    roundRect(ctx, PHOTO.x, PHOTO.y, PHOTO.s, PHOTO.s, 12);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(shown, PHOTO.x, PHOTO.y, PHOTO.s, PHOTO.s);
+    ctx.restore();
+
+    // the magnifier, and the two lines that carry it across to the table
+    const mx = PHOTO.x + p.x * scale, my = PHOTO.y + p.y * scale, ms = p.k * scale;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 3.5;
+    ctx.strokeRect(mx - 1, my - 1, ms + 2, ms + 2);
+    ctx.strokeStyle = FIELD;
+    ctx.lineWidth = 1.8;
+    ctx.strokeRect(mx - 1, my - 1, ms + 2, ms + 2);
+    ctx.strokeStyle = `${FIELD}55`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(mx + ms + 1, my - 1);
+    ctx.lineTo(GRID.x, GRID.y);
+    ctx.moveTo(mx + ms + 1, my + ms + 1);
+    ctx.lineTo(GRID.x, GRID.y + GRID.s);
+    ctx.stroke();
+
+    label(
+      `the patch starts at column ${p.x}, row ${p.y}`,
+      PHOTO.x, PHOTO.y + PHOTO.s + 26, 0.42, 'left', 11.5
+    );
+  }
+
+  function gridPanel(p: { k: number; x: number; y: number }) {
+    const cs = GRID.s / p.k;
+    const three = state.chan === 'all';
+    const room = three ? cs >= 44 : cs >= 26;
+    const numbers = state.view === 'num' && room;
+
+    label(state.view === 'num' ? 'the same patch, written out' : 'the same patch, as shades', GRID.x, GRID.y - 30, 0.55, 'left', 13);
+    label(
+      `${p.k} × ${p.k} pixels · values 0 to ${levels() - 1}`,
+      GRID.x, GRID.y - 12, 0.32, 'left', 11
+    );
+    frame(GRID.x, GRID.y, GRID.s);
+    if (!ready) return;
+
+    ctx.save();
+    roundRect(ctx, GRID.x, GRID.y, GRID.s, GRID.s, 12);
+    ctx.clip();
+    for (let r = 0; r < p.k; r++)
+      for (let c = 0; c < p.k; c++) {
+        const i = (p.y + r) * IMG + (p.x + c);
+        const bx = GRID.x + c * cs, by = GRID.y + r * cs;
+        const col = rgb(i);
+        if (!numbers) {
+          ctx.fillStyle = css(col);
+          ctx.fillRect(bx, by, cs + 0.6, cs + 0.6);
+          continue;
+        }
+        // a chip of the colour, and beside it the numbers that make it
+        ctx.fillStyle = css(col);
+        ctx.fillRect(bx + 5, by + 5, 13, 13);
+        ctx.strokeStyle = ink(0.25);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx + 5.5, by + 5.5, 12, 12);
+        const v = pixel(i);
+        if (three) {
+          const size = Math.min(11, cs / 5.2);
+          [R, G, B].forEach((colour, j) =>
+            label(String(v[j]), bx + cs - 7, by + 18 + j * (size * 1.5), 0.95, 'right', size, colour)
+          );
+        } else {
+          label(String(v[0]), bx + cs / 2 + 6, by + cs / 2 + 6, 0.85, 'center', Math.min(17, cs / 2.6));
+        }
+      }
+    ctx.strokeStyle = ink(numbers ? 0.16 : 0.1);
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= p.k; g++) {
+      const t = g * cs;
+      ctx.beginPath();
+      ctx.moveTo(GRID.x + t, GRID.y);
+      ctx.lineTo(GRID.x + t, GRID.y + GRID.s);
+      ctx.moveTo(GRID.x, GRID.y + t);
+      ctx.lineTo(GRID.x + GRID.s, GRID.y + t);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    label(
+      state.view === 'num' && !room
+        ? 'the cells are too small to print at this magnifier, so only the shades are drawn'
+        : state.view === 'num'
+          ? 'every cell is what is stored, and nothing else is'
+          : 'the same numbers, painted instead of printed',
+      GRID.x, GRID.y + GRID.s + 26, 0.42, 'left', 11.5
+    );
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const p = patch();
+    photoPanel(p);
+    gridPanel(p);
+
+    const chans = state.chan === 'all' ? 3 : 1;
+    const nums = IMG * IMG * chans;
+    const bits = nums * state.bits;
+    const kb = bits / 8 / 1024;
+    setEq({
+      rule: [
+        ['f[i,j] \\in \\{0, 1, \\dots, 2^{b}-1\\}', FIELD],
+        '\\qquad',
+        '\\text{bits} = W \\cdot H \\cdot C \\cdot b',
+      ],
+      live: [
+        `b = ${state.bits}`,
+        [`\\quad 2^{${state.bits}} = ${levels()} \\text{ values}`, FIELD],
+        `\\quad ${IMG} \\cdot ${IMG} \\cdot ${chans} = ${nums.toLocaleString('en-US')} \\text{ numbers}`,
+      ],
+    });
+    setRows({
+      'r-pix': (IMG * IMG).toLocaleString('en-US'),
+      'r-num': `${nums.toLocaleString('en-US')}${chans === 3 ? ' (three a pixel)' : ''}`,
+      'r-lev': String(levels()),
+      'r-size': `${kb.toFixed(1)} kB`,
+      'r-under': `${p.k * p.k} pixel${p.k > 1 ? 's' : ''}, ${p.k * p.k * chans} numbers`,
+    });
+    setResult({
+      value: nums.toLocaleString('en-US'),
+      colour: FIELD,
+      status: `${IMG} × ${IMG} pixels · ${chans === 3 ? 'three numbers a pixel' : 'one number a pixel'} · ${state.bits} bit${state.bits > 1 ? 's' : ''} each, so ${levels()} possible values · ${kb.toFixed(1)} kB uncompressed`,
+      note:
+        state.bits >= 7
+          ? 'At seven or eight bits the steps between neighbouring values are below what the eye can pick out, so the picture looks continuous even though it never was.'
+          : state.bits >= 4
+            ? 'The smooth areas have started to band. Nothing was lost in the detailed parts, because there the picture was already changing faster than the step between two values.'
+            : state.bits > 1
+              ? 'A handful of values left. What survives is the rough layout, which is exactly the part of the picture that does not depend on fine differences.'
+              : 'One bit a number: every pixel is either on or off, and the photograph is a stencil. It is still the same grid, with the values it is allowed to take taken away.',
+    });
+  }
+
+  // --- the magnifier follows the pointer -------------------------------------
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    const inside = x >= PHOTO.x && x <= PHOTO.x + PHOTO.s && y >= PHOTO.y && y <= PHOTO.y + PHOTO.s;
+    canvas.style.cursor = inside ? 'crosshair' : 'default';
+    if (!inside) return;
+    state.cx = (x - PHOTO.x) / scale;
+    state.cy = (y - PHOTO.y) / scale;
+    draw();
+  });
+
+  segmented('pic', (p) => { state.pic = p; loadPhoto(p); });
+  segmented('chan', (c) => { state.chan = c; paint(); });
+  segmented('view', (v) => { state.view = v; draw(); });
+  slider('zoom', (v) => { state.zoom = v; draw(); }, (v) => `${v} × ${v} pixels`);
+  slider('bits', (v) => { state.bits = v; paint(); });
+
+  loadPhoto(state.pic);
+</script>

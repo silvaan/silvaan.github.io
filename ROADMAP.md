@@ -6,33 +6,6 @@ next.
 
 ---
 
-## Image Representation
-
-**Area:** computer vision · slug `image-representation`
-
-Before any filter, before any network: what a picture actually is once it is in
-memory.
-
-**Canvas.** One photograph on the left. On the right the same photograph as the
-thing it really is: a grid of numbers, with the zoom deep enough that individual
-values are readable. Between them a magnifier that follows the pointer, so the
-patch under it appears as numbers at the same moment it is a picture.
-
-**Controls.** Zoom, the channel shown (all, red, green, blue, or a single grey),
-bit depth from eight bits down to one, and a switch between viewing the values
-as brightness and as bare numbers.
-
-**The moment.** Drop the bit depth. At eight bits nothing changes, at four the
-sky bands, at one the photograph becomes a stencil, and the point that a picture
-is only ever a quantised measurement lands without being argued. The second
-moment is the channel split: three grey pictures that mean nothing separately
-and a colour photograph together.
-
-**Notes.** This is the page every other vision page should be able to point at,
-so it should stay small and never mention convolution.
-
----
-
 ## Connected Components
 
 **Area:** computer vision · slug `connected-components`

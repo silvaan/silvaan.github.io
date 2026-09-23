@@ -1,0 +1,578 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="computer-vision"
+  title="Boxes and Overlap"
+  description="A detector does not hand you one box for one object. It hands you a heap of overlapping guesses with scores on them, and two rules turn that heap into an answer: a number for how much two boxes are the same box, and a procedure that keeps the best and deletes its neighbours. Step through it one decision at a time."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="bb"
+          width="1000"
+          height="500"
+          role="img"
+          aria-label="A scene with a heap of overlapping candidate boxes, the queue of them ordered by score, and the overlap between the two boxes being compared right now."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'a real object', color: '#f59e0b' },
+          { label: 'kept', color: '#34d399' },
+          { label: 'deleted for overlapping a better one', color: '#f87171' },
+          { label: 'still waiting its turn', color: 'rgba(229,231,235,0.55)' },
+        ]}
+        hint="Step through the decisions one at a time · click any box to compare it yourself"
+      />
+      <Result label="After the overlap rule" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport step />
+      <Slider id="conf" label="Score needed to enter" min={20} max={90} value={45} display="0.45" />
+      <Slider id="iou" label="Overlap that counts as the same box" min={5} max={95} value={45} display="0.45" />
+      <Checks
+        items={[
+          { id: 'dead', label: 'Keep the deleted boxes on screen', checked: true },
+          { id: 'marks', label: 'Mark each kept box right or wrong', checked: true },
+        ]}
+      />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-cand', label: 'boxes in the heap' },
+          { id: 'r-kept', label: 'kept' },
+          { id: 'r-dead', label: 'deleted' },
+          { id: 'r-found', label: 'objects found' },
+          { id: 'r-false', label: 'false alarms' },
+          { id: 'r-fit', label: 'how well they sit' },
+          { id: 'r-iou', label: 'overlap being judged' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      This is what a detector actually returns: not three boxes for three robots
+      but a <b>heap</b> of overlapping guesses, each with a score. Every object
+      answers at several nearby windows, and a few places answer that had no
+      object in them at all.
+    </li>
+    <li>
+      <b>Intersection over union</b> is the one number that says how much two
+      boxes are the same box. The right-hand panel draws it: the shaded part over
+      the whole outlined part. It is 1 when they coincide, 0 when they miss each
+      other entirely, and it does not care how big the boxes are, which is the
+      reason this ratio is used rather than the overlap on its own.
+    </li>
+    <li>
+      Press <b>Step</b>. The rule is three lines: take the highest-scoring box
+      left, keep it, and delete everything overlapping it by more than the
+      threshold. Repeat until nothing is left. That is non-maximum suppression,
+      and every decision you step through is one comparison against one kept box.
+    </li>
+    <li>
+      Drag <b>the overlap that counts as the same box</b> up to 0.8 and every
+      robot keeps a stack of three or four, because only near-identical boxes
+      still count as the same box. Drag it down to 0.3 and the count barely
+      moves, but <b>how well they sit</b> in the panel falls from 0.93 to 0.87:
+      a well-placed box beside the winner is now deleted for merely touching it,
+      and something worse survives in its place.
+    </li>
+    <li>
+      One robot is standing in front of another, and their two real boxes already
+      share a third of their area. That is the reason the overlap cannot simply
+      be set low: the same number has to mean "another guess at this robot" and
+      "a different robot standing behind it", and no value does both. Crowds are
+      where this rule fails, and it fails silently.
+    </li>
+    <li>
+      The order is by <b>score</b>, not by how well the box fits. Watch a
+      well-placed box get deleted by a worse-fitting one that happened to score
+      higher: the rule has no idea which box is the better outline, it only knows
+      which number is larger.
+    </li>
+    <li>
+      Lower <b>the score needed to enter</b> and the heap grows with rubbish that
+      the rule then has to clean up. The two knobs pull against each other: a low
+      bar finds every object and invents some, a high bar invents nothing and
+      misses the faint ones.
+    </li>
+    <li>
+      The same ratio grades the result. A kept box counts as correct when it
+      overlaps a real object by <b>0.5 or more</b>, and there is nothing physical
+      about 0.5: it is a convention, and every detection score you have ever read
+      was computed against a number somebody chose.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, slider, check, transport, result, readout } from '../../../lib/panel';
+
+  const TRUTH = '#f59e0b', KEEP = '#34d399', DEAD = '#f87171', WAIT = '#e5e7eb';
+  const IMG = 180;
+  const MATCH = 0.5; // what the grading convention calls a hit
+
+  // --- the scene, drawn rather than photographed -----------------------------
+  const INK = '#2a2a33';
+  const BOTS = [
+    { x: 16, y: 20, s: 1 },
+    { x: 100, y: 30, s: 0.85 },
+    { x: 48, y: 104, s: 1.15 },
+    // a small one standing in front of the first, so two real objects share
+    // most of a box and the rule has to decide whether they are one thing
+    { x: 36, y: 40, s: 0.62 },
+  ];
+  function robot(c: CanvasRenderingContext2D, b: { x: number; y: number; s: number }) {
+    c.save();
+    c.translate(b.x, b.y);
+    c.scale(b.s, b.s);
+    c.lineWidth = 2;
+    c.strokeStyle = INK;
+    c.beginPath();
+    c.moveTo(42, 2);
+    c.lineTo(48, -12);
+    c.stroke();
+    c.beginPath();
+    c.arc(48, -14, 3.4, 0, Math.PI * 2);
+    c.fillStyle = '#e2725b';
+    c.fill();
+    c.stroke();
+    roundRect(c, 0, 0, 52, 46, 9);
+    c.fillStyle = '#c9cfdb';
+    c.fill();
+    c.stroke();
+    for (const ex of [15, 37]) {
+      c.beginPath();
+      c.arc(ex, 17, 8, 0, Math.PI * 2);
+      c.fillStyle = '#ffffff';
+      c.fill();
+      c.stroke();
+      c.beginPath();
+      c.arc(ex + 2.6, 17, 4.2, 0, Math.PI * 2);
+      c.fillStyle = INK;
+      c.fill();
+    }
+    c.fillStyle = INK;
+    for (let i = 0; i < 5; i++) c.fillRect(13 + i * 6, 33, 4, 5);
+    c.restore();
+  }
+  const scene = document.createElement('canvas');
+  scene.width = IMG;
+  scene.height = IMG;
+  (() => {
+    const c = scene.getContext('2d')!;
+    c.fillStyle = '#ece7dc';
+    c.fillRect(0, 0, IMG, IMG);
+    for (const b of BOTS) robot(c, b);
+  })();
+
+  type Box = { x: number; y: number; w: number; h: number };
+  /** Where the robots really are, which the detector does not know. */
+  const REAL: Box[] = BOTS.map((b) => ({ x: b.x - 2, y: b.y - 2, w: 56 * b.s, h: 50 * b.s }));
+
+  // --- the heap a detector would have produced -------------------------------
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  type Cand = Box & { v: number; state: number; by: number; ok: boolean; fit: number };
+  const HEAP: Cand[] = (() => {
+    const r = mulberry32(20260911);
+    const out: Cand[] = [];
+    REAL.forEach((t, i) => {
+      // several windows answer for the same object, each a little off
+      const n = 4 + (i % 2);
+      for (let k = 0; k < n; k++) {
+        const j = k === 0 ? 0.04 : 0.08 + 0.17 * r();
+        const sx = 1 + (r() - 0.5) * j * 2, sy = 1 + (r() - 0.5) * j * 2;
+        const w = t.w * sx, h = t.h * sy;
+        const x = t.x + (r() - 0.5) * j * t.w * 1.6, y = t.y + (r() - 0.5) * j * t.h * 1.6;
+        // the score is only loosely tied to how well the box sits, which is
+        // true of real detectors and is what makes the ordering interesting
+        out.push({ x, y, w, h, v: Math.max(0.31, 0.97 - j * 1.6 + (r() - 0.5) * 0.2), state: 0, by: -1, ok: false, fit: 0 });
+      }
+    });
+    // and a few places answer that hold no robot at all
+    for (const [x, y, w, h, v] of [
+      [118, 124, 46, 40, 0.58], [8, 150, 40, 26, 0.41], [132, 4, 38, 30, 0.49], [70, 64, 34, 30, 0.44],
+    ] as number[][])
+      out.push({ x, y, w, h, v, state: 0, by: -1, ok: false, fit: 0 });
+    return out.sort((a, b) => b.v - a.v);
+  })();
+
+  const inter = (a: Box, b: Box) =>
+    Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) *
+    Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const iou = (a: Box, b: Box) => {
+    const i = inter(a, b);
+    return i / (a.w * a.h + b.w * b.h - i);
+  };
+
+  // --- the rule, one decision at a time --------------------------------------
+  // state: 0 waiting, 1 kept, 2 deleted, 3 never entered (below the score bar)
+  const state = { conf: 0.45, iou: 0.45, dead: true, marks: true, running: false };
+  let queue: Cand[] = [];
+  let at = 0; // how far down the queue the rule has got
+  /** The comparison the last decision turned on. */
+  let judged: { a: Cand; b: Cand | null; v: number; killed: boolean } | null = null;
+  let inspect: Cand | null = null;
+
+  function reset() {
+    for (const c of HEAP) {
+      c.state = c.v >= state.conf ? 0 : 3;
+      c.by = -1;
+      c.ok = false;
+      c.fit = 0;
+    }
+    queue = HEAP.filter((c) => c.state === 0);
+    at = 0;
+    judged = null;
+    inspect = null;
+  }
+  /** Take the next box: keep it, or delete it for overlapping a better one. */
+  function step() {
+    if (at >= queue.length) return false;
+    const c = queue[at++];
+    let worst: Cand | null = null, worstV = -1;
+    for (const k of queue) {
+      if (k.state !== 1) continue;
+      const v = iou(c, k);
+      if (v > worstV) {
+        worstV = v;
+        worst = k;
+      }
+    }
+    const killed = worst !== null && worstV > state.iou;
+    c.state = killed ? 2 : 1;
+    if (killed) c.by = queue.indexOf(worst!);
+    judged = { a: c, b: worst, v: Math.max(0, worstV), killed };
+    grade();
+    return true;
+  }
+  function runAll() {
+    while (step());
+  }
+  /** A kept box is right when it covers a real object by half or more. */
+  function grade() {
+    const taken = new Set<number>();
+    for (const c of queue) {
+      if (c.state !== 1) continue;
+      c.ok = false;
+      c.fit = 0;
+      let best = -1, bestV = MATCH;
+      REAL.forEach((t, i) => {
+        if (taken.has(i)) return;
+        const v = iou(c, t);
+        if (v >= bestV) {
+          bestV = v;
+          best = i;
+        }
+      });
+      if (best >= 0) {
+        taken.add(best);
+        c.ok = true;
+        c.fit = bestV;
+      }
+    }
+    return taken.size;
+  }
+
+  // --- drawing ---------------------------------------------------------------
+  const canvas = el('bb') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const SC = { x: 36, y: 104, s: 356 };
+  const OV = { x: 604, y: 104, s: 356 };
+  const QX = 420, QW = 156;
+
+  function panel(x: number, y: number, s: number) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = inv(0.55);
+    roundRect(ctx, x, y, s, s, 12);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, 12);
+    ctx.stroke();
+  }
+  const u = () => SC.s / IMG;
+  function rect(b: Box, colour: string, width: number, dash?: number[]) {
+    const k = u();
+    if (dash) ctx.setLineDash(dash);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = width + 1.4;
+    ctx.strokeRect(SC.x + b.x * k, SC.y + b.y * k, b.w * k, b.h * k);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.strokeRect(SC.x + b.x * k, SC.y + b.y * k, b.w * k, b.h * k);
+    ctx.setLineDash([]);
+  }
+
+  function scenePanel() {
+    const kept = queue.filter((c) => c.state === 1);
+    label('the heap, and what is left of it', SC.x, SC.y - 30, 0.55, 'left', 13);
+    label(`${at} of ${queue.length} decided`, SC.x, SC.y - 12, 0.32, 'left', 11);
+    panel(SC.x, SC.y, SC.s);
+    ctx.save();
+    roundRect(ctx, SC.x, SC.y, SC.s, SC.s, 12);
+    ctx.clip();
+    ctx.drawImage(scene, SC.x, SC.y, SC.s, SC.s);
+    for (const t of REAL) rect(t, `${TRUTH}aa`, 1.4, [4, 4]);
+    for (const c of queue) {
+      if (c.state === 0) rect(c, 'rgba(229,231,235,0.55)', 1);
+      else if (c.state === 2 && state.dead) rect(c, `${DEAD}66`, 1, [3, 3]);
+    }
+    for (const c of queue)
+      if (c.state === 1) {
+        rect(c, KEEP, 2);
+        const k = u();
+        if (state.marks)
+          label(c.ok ? '✓' : '✗', SC.x + c.x * k + 3, SC.y + c.y * k + 14, 1, 'left', 13, c.ok ? KEEP : DEAD);
+      }
+    const show = inspect ?? judged?.a;
+    if (show) rect(show, WAIT, 2.2);
+    ctx.restore();
+  }
+
+  /** The queue, in the order the rule works through it. */
+  function queuePanel() {
+    label('by score', QX + QW / 2, SC.y - 30, 0.55, 'center', 13);
+    label('the order asked', QX + QW / 2, SC.y - 12, 0.32, 'center', 11);
+    const rh = Math.min(15, SC.s / Math.max(1, queue.length));
+    queue.forEach((c, i) => {
+      const y = SC.y + i * rh;
+      const now = c === (inspect ?? judged?.a);
+      const colour = c.state === 1 ? KEEP : c.state === 2 ? DEAD : ink(0.35);
+      ctx.fillStyle = i < at ? ink(0.06) : 'transparent';
+      if (i < at) ctx.fillRect(QX, y, QW, rh - 1);
+      ctx.fillStyle = c.state === 1 ? KEEP : c.state === 2 ? `${DEAD}cc` : ink(0.28);
+      ctx.fillRect(QX + 26, y + 2, (QW - 60) * c.v, rh - 5);
+      label(c.v.toFixed(2), QX, y + rh - 3, now ? 0.95 : 0.5, 'left', 10, now ? WAIT : undefined);
+      label(c.state === 1 ? 'keep' : c.state === 2 ? 'gone' : '·', QX + QW - 2, y + rh - 3, now ? 0.95 : 0.55, 'right', 10, colour);
+      if (now) {
+        ctx.strokeStyle = WAIT;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(QX - 2.5, y + 0.5, QW + 4, rh - 1);
+      }
+    });
+  }
+
+  /** The two boxes the current decision is about, drawn big. */
+  function overlapPanel() {
+    label('how much the same box', OV.x, OV.y - 30, 0.55, 'left', 13);
+    const j = inspect ? { a: inspect, b: bestKeptAgainst(inspect), v: 0, killed: false } : judged;
+    if (j && j.b) j.v = iou(j.a, j.b);
+    label(
+      j && j.b ? 'the box being judged, against the kept one' : 'nothing to compare yet',
+      OV.x, OV.y - 12, 0.32, 'left', 11
+    );
+    panel(OV.x, OV.y, OV.s);
+    if (!j || !j.b) return;
+    const a = j.a, b = j.b;
+    const lo = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) };
+    const hi = { x: Math.max(a.x + a.w, b.x + b.w), y: Math.max(a.y + a.h, b.y + b.h) };
+    const span = Math.max(hi.x - lo.x, hi.y - lo.y) * 1.25;
+    const k = (OV.s - 80) / span;
+    const ox = OV.x + OV.s / 2 - ((lo.x + hi.x) / 2) * k, oy = OV.y + OV.s / 2 - 14 - ((lo.y + hi.y) / 2) * k;
+    const put = (r: Box) => ({ x: ox + r.x * k, y: oy + r.y * k, w: r.w * k, h: r.h * k });
+    const A = put(a), B = put(b);
+    // the shared part, and the part they cover between them
+    const ix = Math.max(A.x, B.x), iy = Math.max(A.y, B.y);
+    const iw = Math.min(A.x + A.w, B.x + B.w) - ix, ih = Math.min(A.y + A.h, B.y + B.h) - iy;
+    ctx.save();
+    roundRect(ctx, OV.x, OV.y, OV.s, OV.s, 12);
+    ctx.clip();
+    ctx.fillStyle = `${KEEP}22`;
+    ctx.fillRect(B.x, B.y, B.w, B.h);
+    ctx.fillStyle = 'rgba(229,231,235,0.10)';
+    ctx.fillRect(A.x, A.y, A.w, A.h);
+    if (iw > 0 && ih > 0) {
+      ctx.fillStyle = `${TRUTH}66`;
+      ctx.fillRect(ix, iy, iw, ih);
+    }
+    ctx.strokeStyle = KEEP;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(B.x, B.y, B.w, B.h);
+    ctx.strokeStyle = WAIT;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(A.x, A.y, A.w, A.h);
+    ctx.setLineDash([]);
+    ctx.restore();
+    label('the kept one', B.x + 4, B.y - 6, 0.9, 'left', 11, KEEP);
+    label('the one being judged', A.x + 4, A.y + A.h + 14, 0.9, 'left', 11, WAIT);
+    const v = iou(a, b);
+    label(`shared ${Math.round(inter(a, b))} ÷ covered ${Math.round(a.w * a.h + b.w * b.h - inter(a, b))} = ${v.toFixed(2)}`, OV.x + OV.s / 2, OV.y + OV.s - 34, 0.5, 'center', 12, TRUTH);
+    label(
+      v > state.iou ? `${v.toFixed(2)} is over ${state.iou.toFixed(2)}, so it goes` : `${v.toFixed(2)} is under ${state.iou.toFixed(2)}, so it stays`,
+      OV.x + OV.s / 2, OV.y + OV.s - 14, 0.9, 'center', 12.5, v > state.iou ? DEAD : KEEP
+    );
+  }
+  const bestKeptAgainst = (c: Cand) => {
+    let best: Cand | null = null, bv = -1;
+    for (const k of queue) {
+      if (k.state !== 1 || k === c) continue;
+      const v = iou(c, k);
+      if (v > bv) {
+        bv = v;
+        best = k;
+      }
+    }
+    return best;
+  };
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    scenePanel();
+    queuePanel();
+    overlapPanel();
+
+    const kept = queue.filter((c) => c.state === 1);
+    const found = kept.filter((c) => c.ok).length;
+    const j = inspect ? { a: inspect, b: bestKeptAgainst(inspect) } : judged;
+    const v = j && j.b ? iou(j.a, j.b) : -1;
+    setEq({
+      rule: [
+        ['\\text{IoU}(A,B) = \\dfrac{|A \\cap B|}{|A \\cup B|}', TRUTH],
+        '\\qquad',
+        ['\\text{keep if } \\max_k \\text{IoU} \\le t', KEEP],
+      ],
+      live: [
+        [`t = ${state.iou.toFixed(2)}`, KEEP],
+        v >= 0 ? [`\\quad \\text{this pair} = ${v.toFixed(2)}`, TRUTH] : '',
+        [`\\quad ${kept.length} \\text{ kept of } ${queue.length}`, KEEP],
+      ],
+    });
+    setRows({
+      'r-cand': String(queue.length),
+      'r-kept': String(kept.length),
+      'r-dead': String(queue.filter((c) => c.state === 2).length),
+      'r-found': `${found} of ${REAL.length}`,
+      'r-false': String(kept.length - found),
+      'r-fit': found ? (kept.reduce((a, c) => a + c.fit, 0) / found).toFixed(3) : '—',
+      'r-iou': v >= 0 ? v.toFixed(3) : '—',
+    });
+    const done = at >= queue.length;
+    setResult({
+      value: `${kept.length} box${kept.length === 1 ? '' : 'es'}`,
+      colour: kept.length === REAL.length && found === REAL.length ? KEEP : TRUTH,
+      status: `${queue.length} in the heap · ${at} decided · ${found} of ${REAL.length} robots found, ${kept.length - found} false alarm${kept.length - found === 1 ? '' : 's'} · overlap allowed ${state.iou.toFixed(2)}`,
+      note: !done
+        ? 'The rule has not finished. Every box still waiting will be kept or deleted by exactly one comparison against the boxes already kept.'
+        : state.iou < 0.15
+          ? 'At this overlap almost anything counts as the same box, so boxes on genuinely different robots delete each other and objects go missing.'
+          : state.iou > 0.6
+            ? 'At this overlap only near-identical boxes count as the same, so each robot keeps a small stack of its own guesses and the count comes out too high.'
+            : found === REAL.length && kept.length === REAL.length
+              ? 'One box per robot and nothing else, which is what the two rules are for. Neither of them knows anything about robots.'
+              : found === REAL.length
+                ? 'Every robot has exactly one box, and the extras are boxes on places where there is no robot at all. No overlap rule can remove those, because they overlap nothing: only the score can.'
+                : 'Some robots have no box at all now. Between them, the score needed to enter and the overlap allowed have thrown away every guess at them.',
+    });
+  }
+
+  // --- controls --------------------------------------------------------------
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    if (x < SC.x || x > SC.x + SC.s || y < SC.y || y > SC.y + SC.s) return;
+    const ix = ((x - SC.x) / SC.s) * IMG, iy = ((y - SC.y) / SC.s) * IMG;
+    let pick: Cand | null = null, area = Infinity;
+    for (const c of queue)
+      if (ix >= c.x && ix <= c.x + c.w && iy >= c.y && iy <= c.y + c.h && c.w * c.h < area) {
+        area = c.w * c.h;
+        pick = c;
+      }
+    inspect = pick === inspect ? null : pick;
+    draw();
+  });
+
+  /** Changing a rule re-runs it, so the page always shows a finished answer. */
+  function redo() {
+    state.running = false;
+    controls.setRunning(false);
+    reset();
+    runAll();
+    inspect = queue.find((c) => c.state === 2) ?? null;
+    draw();
+  }
+  slider('conf', (v) => { state.conf = v / 100; redo(); }, (v) => (v / 100).toFixed(2));
+  slider('iou', (v) => { state.iou = v / 100; redo(); }, (v) => (v / 100).toFixed(2));
+  check('dead', (on) => { state.dead = on; draw(); });
+  check('marks', (on) => { state.marks = on; draw(); });
+
+  const controls = transport({
+    onRun: (running) => {
+      if (running && at >= queue.length) reset();
+      state.running = running;
+    },
+    onStep: () => {
+      if (at >= queue.length) reset();
+      inspect = null;
+      step();
+      draw();
+    },
+    onReset: () => {
+      state.running = false;
+      controls.setRunning(false);
+      reset();
+      draw();
+    },
+  });
+
+  let last = 0;
+  function frame(t: number) {
+    if (state.running && t - last > 420) {
+      last = t;
+      inspect = null;
+      if (!step()) {
+        state.running = false;
+        controls.setRunning(false);
+      }
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  reset();
+  runAll();
+  // open on a decision that turned on a real overlap rather than the last one
+  inspect = queue.find((c) => c.state === 2) ?? null;
+  draw();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  #bb {
+    cursor: pointer;
+  }
+</style>

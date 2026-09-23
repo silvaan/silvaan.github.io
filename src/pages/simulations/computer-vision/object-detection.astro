@@ -1,0 +1,869 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="computer-vision"
+  title="Finding an Object"
+  description="A detector is a picture of the thing you want and a window that walks the whole scene asking how much this looks like that. Drag the window anywhere to read its answer, or set it running and watch it sweep, filling in a score for every position and every size. The boxes come last, out of a threshold and an overlap rule."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="det"
+          width="1000"
+          height="500"
+          role="img"
+          aria-label="A drawn scene with a search window sweeping over it, the template and the current window side by side, and the score of every window drawn as a map."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the thing being looked for', color: '#f59e0b' },
+          { label: 'the window right now', color: '#e5e7eb' },
+          { label: 'a box that survived', color: '#34d399' },
+          { label: 'the score, once that window has been asked', color: '#7c8cff' },
+        ]}
+        hint="Drag the window anywhere on the scene · Run sweeps it over everything"
+      />
+      <Result label="Found" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport step>
+        <button type="button" class="btn ghost" id="all-now">Score everything</button>
+      </Transport>
+      <Seg
+        id="obj"
+        label="Look for"
+        attr="o"
+        active="eye"
+        options={[
+          { value: 'eye', label: 'An eye' },
+          { value: 'head', label: 'A whole robot' },
+          { value: 'window', label: 'A window' },
+          { value: 'chip', label: 'A chip' },
+        ]}
+      />
+      <Seg id="pic" label="Search in" attr="p" active="robots" options={[{ value: 'robots', label: 'Robots' }, { value: 'town', label: 'Town' }, { value: 'board', label: 'Board' }]} />
+      <Seg
+        id="score"
+        label="Score by"
+        attr="s"
+        active="ncc"
+        options={[
+          { value: 'raw', label: 'Bare sum' },
+          { value: 'ncc', label: 'Brightness' },
+          { value: 'edge', label: 'Edges' },
+        ]}
+      />
+      <Slider id="scales" label="Sizes tried" min={1} max={9} value={1} hint={['one size only', 'half to one and a third']} />
+      <Checks items={[{ id: 'mirror', label: 'Also look for its mirror image' }]} />
+      <Slider id="thresh" label="Threshold" min={0} max={95} value={60} display="0.60" />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-win', label: 'windows asked' },
+          { id: 'r-here', label: 'score right here' },
+          { id: 'r-best', label: 'best so far' },
+          { id: 'r-cost', label: 'multiplications' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the white window around the scene. It is the whole detector: it reads
+      whatever is under it as <b>16 × 16 numbers</b>, compares them against the
+      same reading of the template, and returns one number. The map on the right
+      fills in wherever you have been, because that is all a score map is: the
+      answer at every place you bothered to ask.
+    </li>
+    <li>
+      Press <b>Run</b> and it asks everywhere, row by row. Nothing clever is
+      happening: the same comparison, at every position, over and over. That is
+      why the multiplication count in the panel climbs the way it does.
+    </li>
+    <li>
+      A box is not something the detector finds, it is something you make out of
+      a <b>threshold</b>. Drag it down and the scene fills with boxes, drag it up
+      and the detector goes silent, and the scores never changed. Each object
+      answers at a little pile of nearby windows, and thinning that pile down to
+      one box is <a href="/simulations/computer-vision/bounding-boxes">Boxes and
+      Overlap</a>.
+    </li>
+    <li>
+      There are ten eyes in the robot scene, two on each of five robots, and one
+      size at one handedness finds <b>four</b>: the two robots that happen to be
+      the template's size and facing its way. Raise <b>sizes tried</b> to nine
+      and the pair on the small robot appears, making six. Switch that off and
+      turn on <b>the mirror image</b> instead and it is the reversed robot that
+      turns up, again six. Turn on both and all <b>ten</b> are found. A template
+      knows one size and one handedness, and every other invariance has to be
+      paid for with another sweep.
+    </li>
+    <li>
+      Look for <b>a chip</b> on the board. The chip lying on its side is never
+      found, at any size, in either handedness, because there is no slider here
+      that turns a template around. That missing slider is the honest summary of
+      the whole approach.
+    </li>
+    <li>
+      One of the five robots is drawn faintly, at a third of the contrast of the
+      others, and <b>brightness</b> finds its eyes anyway, at 0.98. Dividing by
+      the spread of the window throws the contrast away and leaves only the
+      pattern, so a faded copy is the same object. Switch to <b>bare sum</b> and
+      those two boxes disappear: an unnormalised total is just smaller when the
+      numbers are smaller, and it confuses faint with unlike.
+    </li>
+    <li>
+      Hunt an eye in the <b>town</b> and nothing clears a sensible threshold,
+      which is what a detector should do when the thing is absent. Watch the
+      multiplication count while you do it: every size is another sweep of the
+      whole scene, nearly all of it spent on places that were never going to
+      answer, and that bill is what made people compute features once and share
+      them instead.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+
+  const OBJ = '#f59e0b', KEEP = '#34d399', HEAT = '#7c8cff', NOW = '#e5e7eb';
+  const IMG = 180; // the scenes are drawn this big
+  const G = 16; // the window is always read as this many numbers
+  const STRIDE = 2;
+
+  // ---------------------------------------------------------------------------
+  // The scenes. They are drawn rather than photographed, so the repeats are
+  // exact: the same eye at three sizes and both ways round, the same window on
+  // three houses, the same chip lying on its side.
+  // ---------------------------------------------------------------------------
+  const INK = '#2a2a33';
+  const BOTS = [
+    { x: 10, y: 14, s: 1, flip: false, faint: false },
+    { x: 112, y: 10, s: 1, flip: true, faint: false },
+    { x: 16, y: 104, s: 0.8, flip: false, faint: false },
+    { x: 104, y: 100, s: 1.3, flip: true, faint: false },
+    // the same robot, drawn faintly: the same shape at a third of the contrast
+    { x: 58, y: 62, s: 1, flip: false, faint: true },
+  ];
+  const WINDOWS: [number, number, number][] = [
+    [20, 92, 16], [44, 92, 16], [20, 118, 16],
+    [84, 104, 11], [100, 104, 11],
+    [132, 84, 21], [132, 116, 16], [152, 116, 16],
+  ];
+  const CHIPS = [
+    { x: 20, y: 26, s: 1, flip: false, rot: 0 },
+    { x: 96, y: 30, s: 1, flip: true, rot: 0 },
+    { x: 30, y: 96, s: 0.75, flip: false, rot: 0 },
+    { x: 86, y: 96, s: 1.25, flip: false, rot: 0 },
+    { x: 150, y: 92, s: 1, flip: false, rot: 90 },
+  ];
+
+  function robotEye(c: CanvasRenderingContext2D, x: number, y: number) {
+    c.beginPath();
+    c.arc(x, y, 8, 0, Math.PI * 2);
+    c.fillStyle = '#ffffff';
+    c.fill();
+    c.stroke();
+    // the pupil sits off to one side, so the eye is not its own mirror image
+    c.beginPath();
+    c.arc(x + 2.6, y, 4.2, 0, Math.PI * 2);
+    c.fillStyle = INK;
+    c.fill();
+    c.beginPath();
+    c.arc(x + 4.4, y - 2, 1.5, 0, Math.PI * 2);
+    c.fillStyle = '#ffffff';
+    c.fill();
+  }
+  function robot(c: CanvasRenderingContext2D, b: { x: number; y: number; s: number; flip: boolean; faint: boolean }) {
+    c.save();
+    if (b.faint) c.globalAlpha = 0.32;
+    c.translate(b.x, b.y);
+    c.scale(b.flip ? -b.s : b.s, b.s);
+    if (b.flip) c.translate(-52, 0);
+    c.lineWidth = 2;
+    c.strokeStyle = INK;
+    c.beginPath();
+    c.moveTo(42, 2);
+    c.lineTo(48, -12);
+    c.stroke();
+    c.beginPath();
+    c.arc(48, -14, 3.4, 0, Math.PI * 2);
+    c.fillStyle = '#e2725b';
+    c.fill();
+    c.stroke();
+    roundRect(c, 0, 0, 52, 46, 9);
+    c.fillStyle = '#c9cfdb';
+    c.fill();
+    c.stroke();
+    robotEye(c, 15, 17);
+    robotEye(c, 37, 17);
+    c.fillStyle = INK;
+    for (let i = 0; i < 5; i++) c.fillRect(13 + i * 6, 33, 4, 5);
+    c.restore();
+  }
+  function drawRobots(c: CanvasRenderingContext2D) {
+    c.fillStyle = '#ece7dc';
+    c.fillRect(0, 0, IMG, IMG);
+    for (const b of BOTS) robot(c, b);
+  }
+
+  function house(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, wall: string) {
+    c.fillStyle = wall;
+    c.fillRect(x, y, w, h);
+    c.strokeStyle = INK;
+    c.lineWidth = 1.6;
+    c.strokeRect(x, y, w, h);
+    c.beginPath();
+    c.moveTo(x - 5, y);
+    c.lineTo(x + w / 2, y - 22);
+    c.lineTo(x + w + 5, y);
+    c.closePath();
+    c.fillStyle = '#a3574a';
+    c.fill();
+    c.stroke();
+  }
+  function sash(c: CanvasRenderingContext2D, x: number, y: number, s: number) {
+    c.fillStyle = '#f7f3e8';
+    c.fillRect(x, y, s, s);
+    c.strokeStyle = INK;
+    c.lineWidth = Math.max(1, s / 11);
+    c.strokeRect(x, y, s, s);
+    c.beginPath();
+    c.moveTo(x + s / 2, y);
+    c.lineTo(x + s / 2, y + s);
+    c.moveTo(x, y + s / 2);
+    c.lineTo(x + s, y + s / 2);
+    c.stroke();
+    // a sill, so a window is not its own reflection top to bottom
+    c.fillStyle = INK;
+    c.fillRect(x - s * 0.1, y + s, s * 1.2, Math.max(1.2, s / 9));
+  }
+  function drawTown(c: CanvasRenderingContext2D) {
+    c.fillStyle = '#dfe6ee';
+    c.fillRect(0, 0, IMG, IMG);
+    c.fillStyle = '#c8bfa8';
+    c.fillRect(0, 150, IMG, IMG - 150);
+    house(c, 10, 78, 56, 72, '#e8d9c0');
+    house(c, 76, 92, 40, 58, '#dcc9b0');
+    house(c, 124, 66, 46, 84, '#e8d9c0');
+    for (const [x, y, s] of WINDOWS) sash(c, x, y, s);
+    c.fillStyle = '#8a6a4f';
+    c.fillRect(44, 118, 14, 32);
+    c.strokeStyle = INK;
+    c.lineWidth = 1.4;
+    c.strokeRect(44, 118, 14, 32);
+    c.fillRect(146, 134, 16, 16);
+  }
+
+  function chip(c: CanvasRenderingContext2D, k: { x: number; y: number; s: number; flip: boolean; rot: number }) {
+    c.save();
+    c.translate(k.x, k.y);
+    c.rotate((k.rot * Math.PI) / 180);
+    c.scale(k.flip ? -k.s : k.s, k.s);
+    if (k.flip) c.translate(-40, 0);
+    c.fillStyle = '#c9b458';
+    for (let i = 0; i < 6; i++) {
+      c.fillRect(4 + i * 6, -3.5, 3.5, 4);
+      c.fillRect(4 + i * 6, 25.5, 3.5, 4);
+    }
+    roundRect(c, 0, 0, 40, 26, 3);
+    c.fillStyle = '#22232a';
+    c.fill();
+    c.strokeStyle = '#4a4c58';
+    c.lineWidth = 1.4;
+    c.stroke();
+    // the notch tells one end from the other
+    c.beginPath();
+    c.arc(6, 13, 3.6, 0, Math.PI * 2);
+    c.fillStyle = '#3d3f4a';
+    c.fill();
+    c.restore();
+  }
+  function drawBoard(c: CanvasRenderingContext2D) {
+    c.fillStyle = '#2f4f3f';
+    c.fillRect(0, 0, IMG, IMG);
+    c.strokeStyle = '#3f6a54';
+    c.lineWidth = 2;
+    for (let i = 0; i < 7; i++) {
+      c.beginPath();
+      c.moveTo(4, 10 + i * 26);
+      c.lineTo(120 - i * 8, 10 + i * 26);
+      c.lineTo(176, 60 + i * 14);
+      c.stroke();
+    }
+    for (const [x, y] of [[70, 66], [126, 140], [16, 132], [150, 20]] as [number, number][]) {
+      c.fillStyle = '#c8a06a';
+      c.fillRect(x, y, 20, 8);
+      c.fillStyle = INK;
+      for (let i = 0; i < 3; i++) c.fillRect(x + 4 + i * 5, y, 2, 8);
+    }
+    for (const [x, y] of [[10, 60], [168, 120], [60, 152], [104, 10]] as [number, number][]) {
+      c.strokeStyle = '#c9b458';
+      c.lineWidth = 2.4;
+      c.beginPath();
+      c.arc(x, y, 3.6, 0, Math.PI * 2);
+      c.stroke();
+    }
+    for (const k of CHIPS) chip(c, k);
+  }
+
+  const SCENES: Record<string, (c: CanvasRenderingContext2D) => void> = {
+    robots: drawRobots, town: drawTown, board: drawBoard,
+  };
+  /** Each thing worth looking for, and the scene it was cut out of. */
+  const OBJECTS: Record<string, { pic: string; box: number[]; name: string }> = {
+    eye: { pic: 'robots', box: [16, 22, 18, 18], name: 'an eye' },
+    head: { pic: 'robots', box: [8, 12, 56, 50], name: 'a whole robot' },
+    window: { pic: 'town', box: [18, 90, 20, 22], name: 'a window' },
+    chip: { pic: 'board', box: [16, 20, 48, 36], name: 'a chip' },
+    own: { pic: 'robots', box: [18, 30, 22, 22], name: 'the window you took' },
+  };
+
+  type Scene = { grey: Float32Array; edge: Float32Array; cv: HTMLCanvasElement };
+  const scenes: Record<string, Scene> = {};
+  function buildScenes() {
+    for (const [name, fn] of Object.entries(SCENES)) {
+      const cv = document.createElement('canvas');
+      cv.width = IMG;
+      cv.height = IMG;
+      const c = cv.getContext('2d', { willReadFrequently: true })!;
+      c.lineJoin = 'round';
+      fn(c);
+      const d = c.getImageData(0, 0, IMG, IMG).data;
+      const grey = new Float32Array(IMG * IMG);
+      for (let i = 0; i < IMG * IMG; i++)
+        grey[i] = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) / 255;
+      const edge = new Float32Array(IMG * IMG);
+      for (let y = 0; y < IMG; y++)
+        for (let x = 0; x < IMG; x++) {
+          const l = grey[y * IMG + Math.max(0, x - 1)], r = grey[y * IMG + Math.min(IMG - 1, x + 1)];
+          const u = grey[Math.max(0, y - 1) * IMG + x], w = grey[Math.min(IMG - 1, y + 1) * IMG + x];
+          edge[y * IMG + x] = Math.hypot(r - l, w - u);
+        }
+      scenes[name] = { grey, edge, cv };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  const state = {
+    obj: 'eye', pic: 'robots', score: 'ncc', scales: 1,
+    mirror: false, thresh: 0.6, running: false,
+  };
+  /** Boxes on the same object are thinned by a fixed overlap rule; the rule
+   *  itself has a page of its own. */
+  const IOU = 0.3;
+  /** Where the window has just been, so a sweep reads as movement. */
+  let trail: { x: number; y: number; w: number; h: number }[] = [];
+
+  const canvas = el('det') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const field = (pic: string) => (state.score === 'edge' ? scenes[pic].edge : scenes[pic].grey);
+
+  /** Whatever is under a window, read as G × G numbers however big it is. */
+  function readWindow(f: Float32Array, x: number, y: number, w: number, h: number, out: Float32Array) {
+    for (let j = 0; j < G; j++) {
+      const sy = Math.min(IMG - 1, Math.max(0, Math.round(y + ((j + 0.5) * h) / G - 0.5)));
+      for (let i = 0; i < G; i++) {
+        const sx = Math.min(IMG - 1, Math.max(0, Math.round(x + ((i + 0.5) * w) / G - 0.5)));
+        out[j * G + i] = f[sy * IMG + sx];
+      }
+    }
+  }
+
+  const buf = new Float32Array(G * G);
+  let tpl = new Float32Array(G * G), tplMirror = new Float32Array(G * G), tplShown = new Float32Array(G * G);
+  let tplNorm = 1;
+
+  function buildTemplate() {
+    const o = OBJECTS[state.obj];
+    readWindow(field(o.pic), o.box[0], o.box[1], o.box[2], o.box[3], tplShown);
+    let m = 0;
+    for (let i = 0; i < G * G; i++) m += tplShown[i];
+    m /= G * G;
+    let s = 0;
+    for (let i = 0; i < G * G; i++) {
+      tpl[i] = tplShown[i] - m;
+      s += tpl[i] * tpl[i];
+    }
+    tplNorm = Math.sqrt(s) || 1;
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) tplMirror[j * G + i] = tpl[j * G + (G - 1 - i)];
+  }
+
+  // --- the sweep -------------------------------------------------------------
+  const UNASKED = -9;
+  type Size = { s: number; w: number; h: number; map: Float32Array; flip: Uint8Array; cols: number; rows: number };
+  let sizes: Size[] = [];
+  let cur = { si: 0, x: 0, y: 0, v: UNASKED, flip: 0 };
+  let asked = 0, total = 0, bestSoFar = { v: -2, s: 1 };
+
+  function rebuild() {
+    buildTemplate();
+    const o = OBJECTS[state.obj];
+    const n = state.scales;
+    const ladder = n <= 1 ? [1] : Array.from({ length: n }, (_, i) => 0.5 + (0.8 * i) / (n - 1));
+    sizes = [];
+    total = 0;
+    for (const s of ladder) {
+      const w = Math.max(6, Math.round(o.box[2] * s)), h = Math.max(6, Math.round(o.box[3] * s));
+      if (w > IMG || h > IMG) continue;
+      const cols = Math.floor((IMG - w) / STRIDE) + 1, rows = Math.floor((IMG - h) / STRIDE) + 1;
+      sizes.push({ s, w, h, map: new Float32Array(IMG * IMG).fill(UNASKED), flip: new Uint8Array(IMG * IMG), cols, rows });
+      total += cols * rows;
+    }
+    rewind();
+  }
+  function rewind() {
+    trail = [];
+    for (const z of sizes) z.map.fill(UNASKED);
+    asked = 0;
+    bestSoFar = { v: -2, s: 1 };
+    cur = { si: 0, x: 0, y: 0, v: UNASKED, flip: 0 };
+    ask(0, 0, 0);
+    collect();
+  }
+
+  /** The one thing this whole page does: score a window against the template. */
+  function ask(si: number, x: number, y: number) {
+    const z = sizes[si];
+    if (!z) return;
+    readWindow(field(state.pic), x, y, z.w, z.h, buf);
+    let sum = 0;
+    for (let i = 0; i < G * G; i++) sum += buf[i];
+    const m = sum / (G * G);
+    let dot = 0, dotM = 0, nn = 0;
+    for (let i = 0; i < G * G; i++) {
+      const d = buf[i] - m;
+      dot += tpl[i] * d;
+      if (state.mirror) dotM += tplMirror[i] * d;
+      nn += d * d;
+    }
+    // the bare sum is not divided by the window, so a loud window always wins
+    const norm = state.score === 'raw' ? tplNorm * tplNorm : tplNorm * (Math.sqrt(nn) || 1e-9);
+    let v = dot / norm, flip = 0;
+    if (state.mirror && dotM / norm > v) {
+      v = dotM / norm;
+      flip = 1;
+    }
+    if (z.map[y * IMG + x] === UNASKED) asked++;
+    z.map[y * IMG + x] = v;
+    z.flip[y * IMG + x] = flip;
+    if (v > bestSoFar.v) bestSoFar = { v, s: z.s };
+    cur = { si, x, y, v, flip };
+  }
+
+  /** One window on: along the row, then down, then on to the next size. */
+  function step() {
+    const z = sizes[cur.si];
+    if (!z) return false;
+    let { si, x, y } = cur;
+    x += STRIDE;
+    if (x + z.w > IMG) {
+      x = 0;
+      y += STRIDE;
+      if (y + z.h > IMG) {
+        y = 0;
+        si++;
+        if (si >= sizes.length) return false;
+      }
+    }
+    ask(si, x, y);
+    return true;
+  }
+  function scoreAll() {
+    for (const [si, z] of sizes.entries())
+      for (let y = 0; y + z.h <= IMG; y += STRIDE)
+        for (let x = 0; x + z.w <= IMG; x += STRIDE) ask(si, x, y);
+    collect();
+    park();
+  }
+  /** Leave the window on something worth reading, not in the last corner. */
+  function park() {
+    const b = kept[1] ?? kept[0];
+    const si = b ? sizes.findIndex((z) => z.s === b.s) : 0;
+    if (b && si >= 0) ask(si, b.x, b.y);
+    else ask(0, OBJECTS[state.obj].box[0], OBJECTS[state.obj].box[1]);
+  }
+
+  // --- from a field of numbers to boxes --------------------------------------
+  type Box = { x: number; y: number; w: number; h: number; v: number; s: number; flip: number };
+  let over: Box[] = [], kept: Box[] = [];
+  const overlap = (a: Box, b: Box) => {
+    const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+    const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    const i = ix * iy;
+    return i / (a.w * a.h + b.w * b.h - i);
+  };
+  function collect() {
+    over = [];
+    for (const z of sizes)
+      for (let y = 0; y + z.h <= IMG; y += STRIDE)
+        for (let x = 0; x + z.w <= IMG; x += STRIDE) {
+          const v = z.map[y * IMG + x];
+          if (v !== UNASKED && v >= state.thresh)
+            over.push({ x, y, w: z.w, h: z.h, v, s: z.s, flip: z.flip[y * IMG + x] });
+        }
+    over.sort((a, b) => b.v - a.v);
+    kept = [];
+    for (const c of over) {
+      if (kept.every((k) => overlap(c, k) < IOU)) kept.push(c);
+      if (kept.length >= 16) break;
+    }
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const PH = { x: 36, y: 104, s: 356 };
+  const MAP = { x: 604, y: 104, s: 356 };
+  const MIDX = 496;
+
+  function panel(x: number, y: number, s: number) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
+    ctx.fillStyle = inv(0.55);
+    roundRect(ctx, x, y, s, s, 12);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, 12);
+    ctx.stroke();
+  }
+  function boxOn(b: { x: number; y: number; s: number }, r: { x: number; y: number; w: number; h: number }, colour: string, width: number, text?: string) {
+    const u = b.s / IMG;
+    const x = b.x + r.x * u, y = b.y + r.y * u, w = r.w * u, h = r.h * u;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = width + 1.6;
+    ctx.strokeRect(x, y, w, h);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.strokeRect(x, y, w, h);
+    if (text) label(text, x + 2, Math.min(b.y + b.s - 4, y + h + 13), 1, 'left', 11, colour);
+  }
+
+  function scenePanel() {
+    const z = sizes[cur.si];
+    label('the scene', PH.x, PH.y - 30, 0.55, 'left', 13);
+    label(`${kept.length} box${kept.length === 1 ? '' : 'es'} from ${over.length} window${over.length === 1 ? '' : 's'}`, PH.x, PH.y - 12, 0.32, 'left', 11);
+    panel(PH.x, PH.y, PH.s);
+    ctx.save();
+    roundRect(ctx, PH.x, PH.y, PH.s, PH.s, 12);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(scenes[state.pic].cv, PH.x, PH.y, PH.s, PH.s);
+    const o = OBJECTS[state.obj];
+    if (o.pic === state.pic) {
+      const u = PH.s / IMG;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = OBJ;
+      ctx.lineWidth = 1.6;
+      ctx.strokeRect(PH.x + o.box[0] * u, PH.y + o.box[1] * u, o.box[2] * u, o.box[3] * u);
+      ctx.setLineDash([]);
+      label('taken from here', PH.x + o.box[0] * u, PH.y + o.box[1] * u - 6, 0.9, 'left', 11, OBJ);
+    }
+    kept.forEach((r, i) => boxOn(PH, r, KEEP, 2, i < 6 ? r.v.toFixed(2) : ''));
+    // the trail turns a sweep that would otherwise look like a jump into a walk
+    const u = PH.s / IMG;
+    trail.forEach((t, i) => {
+      ctx.strokeStyle = `rgba(229,231,235,${0.06 + (0.22 * i) / trail.length})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(PH.x + t.x * u, PH.y + t.y * u, t.w * u, t.h * u);
+    });
+    if (z) boxOn(PH, { x: cur.x, y: cur.y, w: z.w, h: z.h }, NOW, 2);
+    ctx.restore();
+  }
+
+  // --- the template, and whatever the window is looking at now ---------------
+  const thumb = document.createElement('canvas');
+  thumb.width = G;
+  thumb.height = G;
+  const thumbCx = thumb.getContext('2d')!;
+  function paintThumb(src: Float32Array, mirror: boolean) {
+    const px = thumbCx.createImageData(G, G);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < G * G; i++) {
+      lo = Math.min(lo, src[i]);
+      hi = Math.max(hi, src[i]);
+    }
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) {
+        const v = src[j * G + (mirror ? G - 1 - i : i)];
+        const g = Math.round(255 * ((v - lo) / Math.max(1e-6, hi - lo)));
+        const o = (j * G + i) * 4;
+        px.data[o] = px.data[o + 1] = px.data[o + 2] = g;
+        px.data[o + 3] = 255;
+      }
+    thumbCx.putImageData(px, 0, 0);
+  }
+  function thumbAt(x: number, y: number, T: number, src: Float32Array, mirror: boolean, colour: string, text: string) {
+    paintThumb(src, mirror);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(thumb, x, y, T, T);
+    ctx.restore();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
+    label(text, x + T / 2, y + T + 15, 0.45, 'center', 11);
+  }
+
+  function middle() {
+    const T = 74;
+    const o = OBJECTS[state.obj];
+    label('the comparison', MIDX, PH.y - 30, 0.55, 'center', 13);
+    label(`${G} × ${G} numbers each`, MIDX, PH.y - 12, 0.32, 'center', 11);
+    thumbAt(MIDX - T - 5, PH.y, T, tplShown, state.mirror && cur.flip === 1, OBJ, state.mirror && cur.flip === 1 ? 'mirrored' : 'template');
+    const z = sizes[cur.si];
+    if (z) {
+      readWindow(field(state.pic), cur.x, cur.y, z.w, z.h, buf);
+      thumbAt(MIDX + 5, PH.y, T, buf, false, NOW, 'window');
+    }
+    label(cur.v === UNASKED ? '—' : cur.v.toFixed(2), MIDX, PH.y + T + 46, 1, 'center', 21, cur.v > state.thresh ? KEEP : HEAT);
+    label(`${o.box[2]}×${o.box[3]}${z ? ` · now ${z.s.toFixed(2)}×` : ''}`, MIDX, PH.y + T + 66, 0.3, 'center', 10.5);
+
+    const top = PH.y + T + 92;
+    label('every size tried', MIDX, top - 6, 0.45, 'center', 11.5);
+    const rh = Math.min(20, (PH.s - (top - PH.y) - 6) / Math.max(1, sizes.length));
+    sizes.forEach((z2, i) => {
+      const y = top + 8 + i * rh;
+      let best = -2;
+      for (let k = 0; k < IMG * IMG; k++) if (z2.map[k] !== UNASKED && z2.map[k] > best) best = z2.map[k];
+      const on = i === cur.si;
+      label(`${z2.s.toFixed(2)}×`, MIDX - 86, y + 4, on ? 0.9 : 0.4, 'left', 10.5, on ? NOW : undefined);
+      const bw = 96, t = Math.max(0, Math.min(1, best));
+      ctx.fillStyle = ink(0.08);
+      ctx.fillRect(MIDX - 44, y - 5, bw, 10);
+      ctx.fillStyle = on ? NOW : `${HEAT}99`;
+      ctx.fillRect(MIDX - 44, y - 5, bw * t, 10);
+      label(best < -1 ? '—' : best.toFixed(2), MIDX + 56, y + 4, on ? 0.9 : 0.4, 'left', 10.5, on ? NOW : undefined);
+    });
+  }
+
+  // --- the score at every window ---------------------------------------------
+  const heat = document.createElement('canvas');
+  heat.width = IMG;
+  heat.height = IMG;
+  const heatCx = heat.getContext('2d')!;
+  function paintHeat() {
+    const px = heatCx.createImageData(IMG, IMG);
+    let hi = 1e-6;
+    if (state.score === 'raw') for (const z of sizes) for (let i = 0; i < IMG * IMG; i++) if (z.map[i] !== UNASKED) hi = Math.max(hi, z.map[i]);
+    const span = state.score === 'raw' ? hi : 1;
+    for (let y = 0; y < IMG; y++)
+      for (let x = 0; x < IMG; x++) {
+        let v = UNASKED;
+        // a window is scored at its corner but it is about its middle
+        for (const z of sizes) {
+          const gx = Math.round((x - z.w / 2) / STRIDE) * STRIDE, gy = Math.round((y - z.h / 2) / STRIDE) * STRIDE;
+          if (gx < 0 || gy < 0 || gx + z.w > IMG || gy + z.h > IMG) continue;
+          const u = z.map[gy * IMG + gx];
+          if (u !== UNASKED && u > v) v = u;
+        }
+        const o = (y * IMG + x) * 4;
+        if (v === UNASKED) {
+          px.data[o] = 16;
+          px.data[o + 1] = 17;
+          px.data[o + 2] = 23;
+        } else {
+          const t = Math.max(0, Math.min(1, v / span));
+          const a = Math.min(1, t / 0.7), b = Math.max(0, (t - 0.7) / 0.3);
+          px.data[o] = Math.round(12 + a * 112 + b * 131);
+          px.data[o + 1] = Math.round(14 + a * 126 + b * 115);
+          px.data[o + 2] = Math.round(22 + a * 233);
+        }
+        px.data[o + 3] = 255;
+      }
+    heatCx.putImageData(px, 0, 0);
+  }
+  function mapPanel() {
+    label('what every window answered', MAP.x, MAP.y - 30, 0.55, 'left', 13);
+    label(`${asked.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} asked so far`, MAP.x, MAP.y - 12, 0.32, 'left', 11);
+    panel(MAP.x, MAP.y, MAP.s);
+    if (!sizes.length) return;
+    paintHeat();
+    ctx.save();
+    roundRect(ctx, MAP.x, MAP.y, MAP.s, MAP.s, 12);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(heat, MAP.x, MAP.y, MAP.s, MAP.s);
+    kept.forEach((r) => boxOn(MAP, r, KEEP, 1.4));
+    const z = sizes[cur.si];
+    if (z) boxOn(MAP, { x: cur.x, y: cur.y, w: z.w, h: z.h }, NOW, 1.4);
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    scenePanel();
+    middle();
+    mapPanel();
+
+    const o = OBJECTS[state.obj];
+    const cost = asked * G * G * (state.mirror ? 2 : 1);
+    setEq({
+      rule: [
+        state.score === 'raw'
+          ? ['\\text{score} = \\sum_i t_i\\,(w_i - \\bar w)', HEAT]
+          : ['\\text{score} = \\dfrac{\\sum_i (t_i - \\bar t)(w_i - \\bar w)}{\\lVert t - \\bar t\\rVert\; \\lVert w - \\bar w\\rVert}', HEAT],
+      ],
+      live: [
+        [`\\text{here} = ${cur.v === UNASKED ? '?' : cur.v.toFixed(2)}`, NOW],
+        [`\\quad \\text{best} = ${bestSoFar.v < -1 ? '?' : bestSoFar.v.toFixed(2)}`, HEAT],
+        [`\\quad ${kept.length} \\text{ kept}`, KEEP],
+      ],
+    });
+    setRows({
+      'r-win': `${asked.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}`,
+      'r-here': cur.v === UNASKED ? '—' : cur.v.toFixed(3),
+      'r-best': bestSoFar.v < -1 ? '—' : bestSoFar.v.toFixed(3),
+      'r-cost': `${(cost / 1e6).toFixed(2)} million`,
+    });
+    const done = asked >= total;
+    setResult({
+      value: `${kept.length} box${kept.length === 1 ? '' : 'es'}`,
+      colour: kept.length ? KEEP : OBJ,
+      status: `looking for ${o.name} in the ${state.pic} · ${asked.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} windows asked over ${sizes.length} size${sizes.length === 1 ? '' : 's'}${state.mirror ? ', both ways round' : ''} · ${over.length} cleared ${state.thresh.toFixed(2)}`,
+      note: !done
+        ? 'The sweep has not finished, so the map is only filled in where the window has been and the boxes are only the ones found so far.'
+        : !kept.length
+          ? 'Nothing cleared the threshold. A detector that can only say yes is not a detector, so this is an answer too, and the right one when the thing is not there.'
+          : state.scales === 1
+            ? 'One size only, so anything larger or smaller than the template is read by a window that does not fit it, and loses marks for a reason that has nothing to do with what is inside it.'
+            : 'Every extra size is another sweep of the whole scene, and the mirror doubles that again. The boxes get better and the bill goes up, which is the trade every sliding-window detector makes.',
+    });
+  }
+
+  // --- moving the window by hand ---------------------------------------------
+  let dragging = false;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const onScene = (p: { x: number; y: number }) => p.x >= PH.x && p.x <= PH.x + PH.s && p.y >= PH.y && p.y <= PH.y + PH.s;
+  function moveTo(p: { x: number; y: number }) {
+    const z = sizes[cur.si];
+    if (!z) return;
+    const ix = ((p.x - PH.x) / PH.s) * IMG - z.w / 2, iy = ((p.y - PH.y) / PH.s) * IMG - z.h / 2;
+    const x = Math.max(0, Math.min(IMG - z.w, Math.round(ix / STRIDE) * STRIDE));
+    const y = Math.max(0, Math.min(IMG - z.h, Math.round(iy / STRIDE) * STRIDE));
+    ask(cur.si, x, y);
+    collect();
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = local(e);
+    if (!onScene(p)) return;
+    dragging = true;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    moveTo(p);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = local(e);
+    canvas.style.cursor = onScene(p) ? 'grab' : 'default';
+    if (dragging) moveTo(p);
+  });
+  const drop = () => (dragging = false);
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  // --- the panel -------------------------------------------------------------
+  /** Any change to the question itself is answered in full, at once. */
+  function restart() {
+    state.running = false;
+    controls.setRunning(false);
+    rebuild();
+    scoreAll();
+    draw();
+  }
+  segmented('obj', (o) => {
+    state.obj = o;
+    state.pic = OBJECTS[o].pic;
+    pics.select(state.pic);
+    restart();
+  });
+  const pics = segmented('pic', (p) => { state.pic = p; restart(); });
+  segmented('score', (s) => { state.score = s; restart(); });
+  slider('scales', (v) => { state.scales = v; restart(); });
+  check('mirror', (on) => { state.mirror = on; restart(); });
+  slider('thresh', (v) => { state.thresh = v / 100; collect(); draw(); }, (v) => (v / 100).toFixed(2));
+
+  const controls = transport({
+    onRun: (running) => {
+      if (running && asked >= total) rewind();
+      state.running = running;
+    },
+    onStep: () => {
+      if (asked >= total) rewind();
+      step();
+      collect();
+      draw();
+    },
+    onReset: () => {
+      state.running = false;
+      controls.setRunning(false);
+      rewind();
+      draw();
+    },
+  });
+  el('all-now').addEventListener('click', () => {
+    state.running = false;
+    controls.setRunning(false);
+    scoreAll();
+    draw();
+  });
+
+  function frame() {
+    if (state.running) {
+      // a few windows a frame, so the walk along the row can actually be seen
+      for (let i = 0; i < 10; i++) {
+        const z = sizes[cur.si];
+        if (z) trail.push({ x: cur.x, y: cur.y, w: z.w, h: z.h });
+        if (!step()) {
+          state.running = false;
+          controls.setRunning(false);
+          break;
+        }
+      }
+      if (trail.length > 12) trail.splice(0, trail.length - 12);
+      collect();
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  buildScenes();
+  rebuild();
+  scoreAll();
+  draw();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  #det {
+    cursor: grab;
+  }
+</style>

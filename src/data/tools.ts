@@ -369,6 +369,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'clustering-metrics',
+        title: 'Clustering Metrics',
+        description:
+          'Silhouette, Davies–Bouldin and DBCV judge a clustering by its geometry alone; purity, the Rand index and ARI hold it up against the true classes. Split, scramble and hand-edit clusters and watch where the six scores part ways.',
+        href: '/simulations/machine-learning/clustering-metrics',
+        status: 'live',
+      },
+      {
         slug: 'linear-models',
         title: 'Linear Models',
         description:
@@ -444,7 +452,7 @@ export const AREAS: Area[] = [
         slug: 'batch-noise',
         title: 'Batch Size & Gradient Noise',
         description:
-          'Nobody computes the real gradient. Watch a cloud of batch estimates fan out around it, shrink like one over the square root of the batch, and leave a run rattling in a ball instead of stopping at a point.',
+          'Nobody computes the real gradient. Watch which examples get drawn, watch each one pull the step its own way, and watch their average swing into line with the truth as the batch grows.',
         href: '/simulations/deep-learning/batch-noise',
         status: 'live',
       },
@@ -537,11 +545,35 @@ export const AREAS: Area[] = [
     icon: 'M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2',
     simulators: [
       {
+        slug: 'image-representation',
+        title: 'Image Representation',
+        description:
+          'A photograph in memory is a grid of whole numbers and nothing else. Move the magnifier and the same patch is a picture and its numbers at once, then take the numbers apart: one channel at a time, and fewer and fewer values each.',
+        href: '/simulations/computer-vision/image-representation',
+        status: 'live',
+      },
+      {
         slug: 'image-filters',
         title: 'Image Filters',
         description:
           'A filter is a small square of numbers. Slide it over a photograph and the same handful of weights will blur it, sharpen it or leave nothing but its edges. Pick one, resize it, or drag the weights until it is yours.',
         href: '/simulations/computer-vision/image-filters',
+        status: 'live',
+      },
+      {
+        slug: 'object-detection',
+        title: 'Finding an Object',
+        description:
+          'A detector is a picture of the thing you want and a window that walks the scene asking how much this looks like that. Drag the window about, or set it sweeping, and watch a score appear at every position and every size before any box exists.',
+        href: '/simulations/computer-vision/object-detection',
+        status: 'live',
+      },
+      {
+        slug: 'bounding-boxes',
+        title: 'Boxes and Overlap',
+        description:
+          'A detector returns a heap of overlapping guesses, not one box per object. Two rules turn the heap into an answer: a number for how much two boxes are the same box, and a procedure that keeps the best and deletes its neighbours.',
+        href: '/simulations/computer-vision/bounding-boxes',
         status: 'live',
       },
       {
