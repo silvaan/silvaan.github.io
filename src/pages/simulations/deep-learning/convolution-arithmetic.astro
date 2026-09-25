@@ -5,6 +5,8 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Seg from '../../../components/sim/Seg.astro';
 ---
 
 <SimLayout
@@ -27,10 +29,12 @@ import Readout from '../../../components/sim/Readout.astro';
         legend={[
           { label: 'where the window is', color: '#f59e0b' },
           { label: 'what it has already read', color: '#a78bfa' },
-          { label: 'the output so far', color: '#5eead4' },
+          { label: 'positive output', color: '#5eead4' },
+          { label: 'negative output', color: '#f472b6' },
           { label: 'padding', color: '#52525b' },
+          { label: 'never read', color: '#f87171' },
         ]}
-        hint="Run to walk the window across · every position produces exactly one output cell"
+        hint="Run to walk the window across · click an output cell to jump the window there"
       />
       <Result label="Output size" />
     </div>
@@ -41,13 +45,28 @@ import Readout from '../../../components/sim/Readout.astro';
       <Slider id="s" label="Stride" min={1} max={4} value={1} />
       <Slider id="p" label="Padding" min={0} max={3} value={0} />
       <Slider id="d" label="Dilation" min={1} max={3} value={1} />
-      <Transport step />
+      <Seg
+        id="wkind"
+        label="Weights"
+        attr="w"
+        options={[
+          { value: 'random', label: 'Random' },
+          { value: 'vedge', label: 'Edge' },
+          { value: 'blur', label: 'Blur' },
+          { value: 'sharpen', label: 'Sharpen' },
+        ]}
+      />
+      <Checks items={[{ id: 'nums', label: 'Show the numbers', checked: true }]} />
+      <Transport step>
+        <button type="button" class="btn ghost" id="shuffle">New weights</button>
+      </Transport>
       <Readout
         rows={[
           { id: 'r-in', label: 'input' },
           { id: 'r-pad', label: 'padded to' },
           { id: 'r-span', label: 'window covers' },
           { id: 'r-out', label: 'output' },
+          { id: 'r-cost', label: 'multiplications' },
           { id: 'r-at', label: 'window at' },
         ]}
       />
@@ -84,11 +103,33 @@ import Readout from '../../../components/sim/Readout.astro';
     <li>
       Watch the floor in the formula. When the stride does not divide evenly the
       last hop falls off the edge and is simply dropped, so a column of the input
-      is never read at all.
+      is never read at all. Those cells turn red: whatever is in them cannot
+      affect the output.
+    </li>
+    <li>
+      Make the window wider than the padded input and the formula goes to zero or
+      below. There is no position where the window fits, so there is no output,
+      not a tiny one.
+    </li>
+    <li>
+      Read <b>the numbers</b>. Each output cell is a sum of products, one per
+      weight, and wherever the window hangs over the edge the padding contributes
+      a zero. Padding adds room, not information.
+    </li>
+    <li>
+      Pick <b>Edge</b>. Over the flat background and the flat middle of the square
+      the weights cancel and the output is zero; only where the brightness jumps
+      does it light up, one sign on the left side and the other on the right.
+      <b>Blur</b> smears the square, and <b>Sharpen</b> exaggerates its rim.
     </li>
     <li>
       What the weights in the window actually do to a picture is
       <a href="/simulations/computer-vision/image-filters">Image Filters</a>.
+    </li>
+    <li>
+      Real images have more than one channel, and so do the layers after the
+      first. The window then reads every channel at once, which is
+      <a href="/simulations/deep-learning/convolution-channels">Convolution Channels</a>.
     </li>
   </Fragment>
 </SimLayout>
@@ -97,14 +138,16 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, slider, segmented, check, transport, result, readout } from '../../../lib/panel';
+  import { hash, kernel, tint, beam, shade, KIND_NAMES, type Kind } from '../../../lib/conv';
 
   const NOW = '#f59e0b';
   const SEEN = '#a78bfa';
   const OUTC = '#5eead4';
   const PAD = '#52525b';
+  const NEVER = '#f87171';
 
-  const state = { n: 8, k: 3, s: 1, p: 0, d: 1, running: false, cell: 0 };
+  const state = { n: 8, k: 3, s: 1, p: 0, d: 1, nums: true, kind: 'random' as Kind, seed: 1, running: false, cell: 0 };
 
   const canvas = el('arith') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -117,21 +160,54 @@ import Readout from '../../../components/sim/Readout.astro';
   // --- the arithmetic --------------------------------------------------------
   const span = () => state.d * (state.k - 1) + 1;
   const padded = () => state.n + 2 * state.p;
-  const outN = () => Math.max(1, Math.floor((padded() - span()) / state.s) + 1);
+  /** The formula as written, which goes to zero or below when nothing fits. */
+  const rawN = () => Math.floor((padded() - span()) / state.s) + 1;
+  const outN = () => Math.max(0, rawN());
+
+  // --- the numbers: a bright square on a dark background, so an edge filter
+  // has edges to find and a blur has something to smear -----------------------
+  /** A pixel of the real input, by its own coordinates (padding excluded). */
+  function pixel(x: number, y: number) {
+    const lo = Math.floor(state.n / 4), hi = state.n - lo;
+    const inside = x >= lo && x < hi && y >= lo && y < hi;
+    return inside ? 7 + (hash(x, y, 1) % 3) : hash(x, y, 2) % 2;
+  }
+  const weight = (i: number, j: number) => kernel(state.kind, state.k, i, j, state.seed);
+  /** What the window reads at a padded coordinate: zero anywhere in the ring. */
+  const read = (x: number, y: number) => {
+    const P = padded();
+    if (x < state.p || y < state.p || x >= P - state.p || y >= P - state.p) return 0;
+    return pixel(x - state.p, y - state.p);
+  };
+  function terms(ox: number, oy: number) {
+    const out: { v: number; w: number }[] = [];
+    for (let dy = 0; dy < state.k; dy++)
+      for (let dx = 0; dx < state.k; dx++)
+        out.push({ v: read(ox * state.s + dx * state.d, oy * state.s + dy * state.d), w: weight(dy, dx) });
+    return out;
+  }
+  const value = (ox: number, oy: number) => terms(ox, oy).reduce((a, t) => a + t.v * t.w, 0);
+  const minus = (v: number) => String(v).replace('-', '−');
 
   let touched = new Uint8Array(1);
   let done = new Uint8Array(1);
+  /** Per axis: whether any window position ever reads that row or column. */
+  let reach = new Uint8Array(1);
 
   function reset(keep = false) {
-    const P = padded();
+    const P = padded(), N = outN();
     touched = new Uint8Array(P * P);
-    done = new Uint8Array(outN() * outN());
+    done = new Uint8Array(Math.max(1, N * N));
+    reach = new Uint8Array(P);
+    for (let o = 0; o < N; o++)
+      for (let j = 0; j < state.k; j++) reach[o * state.s + j * state.d] = 1;
     if (!keep) state.cell = 0;
     mark();
   }
   /** Everything the window covers at its current position. */
   function mark() {
     const N = outN(), P = padded();
+    if (!N) return;
     if (state.cell >= N * N) state.cell = 0;
     done[state.cell] = 1;
     const oy = Math.floor(state.cell / N), ox = state.cell % N;
@@ -141,11 +217,23 @@ import Readout from '../../../components/sim/Readout.astro';
         if (y < P && x < P) touched[y * P + x] = 1;
       }
   }
+  /**
+   * Rows (equally columns) of the real input that no position ever reads:
+   * gaps between hops, and a tail past the last hop.
+   */
+  function unread() {
+    const P = padded();
+    let gaps = 0, tail = 0, end = P - 1;
+    while (end >= 0 && !reach[end]) end--;
+    for (let x = state.p; x < P - state.p; x++) if (!reach[x]) x > end ? tail++ : gaps++;
+    return { gaps, tail, total: gaps + tail };
+  }
 
   // --- layout ----------------------------------------------------------------
   const IN = { x: 50, y: 116, s: 360 };
   const OUT = { x: 600, y: 116, s: 360 };
   const MID = 505;
+  let geo = { outX: 0, co: 0 };
 
   function cell(x: number, y: number, s: number, fill: string, stroke: string, dash = false) {
     ctx.fillStyle = fill;
@@ -157,14 +245,24 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.stroke();
     ctx.setLineDash([]);
   }
+  /** A number centred in a cell, sized to the cell. */
+  function num(v: number, x: number, y: number, s: number, alpha: number, colour?: string) {
+    const size = Math.max(6, Math.min(11, s * 0.34));
+    label(minus(v), x + s / 2, y + s / 2 + size * 0.5, alpha, 'center', size, colour);
+  }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    const N = outN(), P = padded();
+    const N = outN(), P = padded(), fits = N > 0;
     // one cell is one cell on both sides, so the output visibly shrinks
     const c = Math.min(40, IN.s / P), co = c;
     const inX = IN.x + (IN.s - P * c) / 2, outX = OUT.x + (OUT.s - N * co) / 2;
-    const oy = Math.floor(state.cell / N), ox = state.cell % N;
+    geo = { outX, co };
+    const oy = fits ? Math.floor(state.cell / N) : 0, ox = fits ? state.cell % N : 0;
+    // the largest output in size, so the colours mean the same across the grid
+    let big = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) big = Math.max(big, Math.abs(value(x, y)));
+    const win = fits ? NOW : NEVER;
 
     // --- the input, with its ring of padding
     label('the input', inX, IN.y - 34, 0.55, 'left', 13);
@@ -173,105 +271,155 @@ import Readout from '../../../components/sim/Readout.astro';
       for (let x = 0; x < P; x++) {
         const real = x >= state.p && y >= state.p && x < P - state.p && y < P - state.p;
         const px = inX + x * c, py = IN.y + y * c;
-        if (!real) cell(px, py, c, 'none', PAD, true);
-        else cell(px, py, c, touched[y * P + x] ? 'rgba(167,139,250,0.22)' : ink(0.06), ink(0.14));
+        if (!real) {
+          cell(px, py, c, 'none', PAD, true);
+          if (state.nums) num(0, px, py, c, 0.22);
+          continue;
+        }
+        const never = fits && (!reach[x] || !reach[y]);
+        // brighter cells hold bigger numbers
+        const v = pixel(x - state.p, y - state.p), a = shade(v);
+        cell(
+          px, py, c,
+          never ? `rgba(248,113,113,${a})` : touched[y * P + x] ? `rgba(167,139,250,${a})` : ink(a),
+          never ? 'rgba(248,113,113,0.55)' : ink(0.14)
+        );
+        if (state.nums) num(v, px, py, c, 0.7, a > 0.45 ? inv(0.95) : undefined);
       }
     // where the window is now: only the cells it actually reads
     for (let dy = 0; dy < state.k; dy++)
       for (let dx = 0; dx < state.k; dx++) {
         const y = oy * state.s + dy * state.d, x = ox * state.s + dx * state.d;
         if (y >= P || x >= P) continue;
-        cell(inX + x * c, IN.y + y * c, c, 'rgba(245,158,11,0.85)', NOW);
+        cell(inX + x * c, IN.y + y * c, c, fits ? 'rgba(245,158,11,0.85)' : 'rgba(248,113,113,0.5)', win);
+        if (state.nums) num(read(x, y), inX + x * c, IN.y + y * c, c, 0.9, '#111');
       }
     ctx.save();
-    ctx.strokeStyle = NOW;
+    // a window that does not fit is drawn hanging off the edge, cut at the stage
+    ctx.beginPath();
+    ctx.rect(IN.x - 12, IN.y - 12, IN.s + 40, IN.s + 40);
+    ctx.clip();
+    ctx.strokeStyle = win;
     ctx.lineWidth = 2;
-    ctx.shadowColor = NOW;
+    ctx.shadowColor = win;
     ctx.shadowBlur = 10;
+    if (!fits) ctx.setLineDash([6, 4]);
     roundRect(ctx, inX + ox * state.s * c - 1, IN.y + oy * state.s * c - 1, span() * c + 2, span() * c + 2, 5);
     ctx.stroke();
     ctx.restore();
+    // the window shaded across to the cell it becomes
+    if (fits)
+      beam(
+        ctx,
+        { x: inX + ox * state.s * c, y: IN.y + oy * state.s * c, s: span() * c },
+        { x: outX + ox * co, y: OUT.y + oy * co, s: co },
+        'rgba(245,158,11,0.16)'
+      );
 
     // --- the window on its own, so dilation is visible as spacing
     const sp = span(), sc = Math.min(30, 150 / sp);
     const wx = MID - (sp * sc) / 2, wy = 200;
     label('the window', MID, wy - 30, 0.55, 'center', 13);
-    label(`${state.k} × ${state.k} weights`, MID, wy - 12, 0.32, 'center', 11);
+    label(`${state.k} × ${state.k}, ${state.k === 1 ? 'one weight' : KIND_NAMES[state.kind]}`, MID, wy - 12, 0.32, 'center', 11);
     for (let y = 0; y < sp; y++)
       for (let x = 0; x < sp; x++) {
         const on = y % state.d === 0 && x % state.d === 0;
         cell(wx + x * sc, wy + y * sc, sc, on ? 'rgba(245,158,11,0.8)' : 'none', on ? NOW : ink(0.12), !on);
+        if (on && state.nums) num(weight(y / state.d, x / state.d), wx + x * sc, wy + y * sc, sc, 0.9, '#111');
       }
     label(`covers ${sp} × ${sp}`, MID, wy + sp * sc + 24, 0.35, 'center', 11);
 
-    // a thread from the window to the cell it becomes
-    ctx.strokeStyle = 'rgba(245,158,11,0.35)';
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(inX + (ox * state.s + sp / 2) * c, IN.y + (oy * state.s + sp / 2) * c);
-    ctx.lineTo(outX + (ox + 0.5) * co, OUT.y + (oy + 0.5) * co);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
     // --- the output
-    label('the output', outX, OUT.y - 34, 0.55, 'left', 13);
-    label(`${N} × ${N}, one cell per position`, outX, OUT.y - 15, 0.32, 'left', 11);
-    for (let y = 0; y < N; y++)
-      for (let x = 0; x < N; x++)
-        cell(outX + x * co, OUT.y + y * co, co, done[y * N + x] ? 'rgba(94,234,212,0.28)' : ink(0.05), ink(0.14));
-    ctx.save();
-    ctx.strokeStyle = NOW;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = NOW;
-    ctx.shadowBlur = 10;
-    roundRect(ctx, outX + ox * co - 1, OUT.y + oy * co - 1, co + 2, co + 2, 4);
-    ctx.stroke();
-    ctx.restore();
+    label('the output', fits ? outX : OUT.x, OUT.y - 34, 0.55, 'left', 13);
+    if (!fits) {
+      label('empty', OUT.x, OUT.y - 15, 0.32, 'left', 11);
+      label(`the window spans ${sp} cells`, OUT.x + OUT.s / 2, OUT.y + OUT.s / 2 - 10, 0.5, 'center', 12, NEVER);
+      label(`but the padded input has only ${P}`, OUT.x + OUT.s / 2, OUT.y + OUT.s / 2 + 12, 0.5, 'center', 12, NEVER);
+      label('so there is nowhere to put it', OUT.x + OUT.s / 2, OUT.y + OUT.s / 2 + 34, 0.35, 'center', 11);
+    } else {
+      label(`${N} × ${N}, one cell per position`, outX, OUT.y - 15, 0.32, 'left', 11);
+      for (let y = 0; y < N; y++)
+        for (let x = 0; x < N; x++) {
+          const on = done[y * N + x];
+          cell(outX + x * co, OUT.y + y * co, co, on ? tint(value(x, y), big) : ink(0.05), ink(0.14));
+          if (on && state.nums) num(value(x, y), outX + x * co, OUT.y + y * co, co, 0.75);
+        }
+      ctx.save();
+      ctx.strokeStyle = NOW;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = NOW;
+      ctx.shadowBlur = 10;
+      roundRect(ctx, outX + ox * co - 1, OUT.y + oy * co - 1, co + 2, co + 2, 4);
+      ctx.stroke();
+      ctx.restore();
+    }
 
-    const num = `\\lfloor (${state.n} + 2\\cdot${state.p} - ${state.d}\\cdot${state.k - 1} - 1)/${state.s} \\rfloor + 1`;
+    // --- the sum of products behind the current cell
+    if (state.nums && fits) {
+      const t = terms(ox, oy);
+      const show = t.length <= 9 ? t : t.slice(0, 4);
+      const w = (x: number) => (x < 0 ? `(${minus(x)})` : String(x));
+      let text = show.map((q) => `${q.v}·${w(q.w)}`).join(' + ');
+      if (show.length < t.length) text += ` + … (${t.length} products)`;
+      label(`${text} = ${minus(value(ox, oy))}`, W / 2, 530, 0.6, 'center', 11);
+    }
+
+    const num1 = `\\lfloor (${state.n} + 2\\cdot${state.p} - ${state.d}\\cdot${state.k - 1} - 1)/${state.s} \\rfloor + 1`;
+    const raw = rawN();
     setEq({
       rule: [['W_{\\text{out}} = \\lfloor (W + 2p - d(k-1) - 1)/s \\rfloor + 1', NOW]],
-      live: [[`${num} = ${N}`, OUTC]],
+      live: [[fits ? `${num1} = ${N}` : `${num1} = ${raw} \\le 0`, fits ? OUTC : NEVER]],
     });
+    const lost = fits ? unread() : { gaps: 0, tail: 0, total: 0 };
     setRows({
       'r-in': `${state.n} × ${state.n}`,
       'r-pad': `${P} × ${P}`,
       'r-span': `${sp} × ${sp} cells, ${state.k * state.k} weights`,
-      'r-out': `${N} × ${N}`,
-      'r-at': `row ${oy + 1}, column ${ox + 1}`,
+      'r-out': fits ? `${N} × ${N}` : 'empty',
+      'r-cost': `${state.k * state.k} per cell × ${N * N} cells = ${state.k * state.k * N * N}`,
+      'r-at': fits ? `row ${oy + 1}, column ${ox + 1}` : 'nowhere',
     });
     setResult({
-      value: `${N} × ${N}`,
-      colour: OUTC,
+      value: fits ? `${N} × ${N}` : 'empty',
+      colour: fits ? OUTC : NEVER,
       status: `${state.n} × ${state.n} in · kernel ${state.k} · stride ${state.s} · padding ${state.p} · dilation ${state.d}`,
-      note:
-        N === state.n
-          ? 'The padding exactly covers what the window loses at the edges, so the picture comes out the size it went in.'
-          : state.s > 1
-            ? 'The window hops rather than steps, so most positions never happen and the output is a fraction of the input.'
-            : state.p === 0 && state.k > 1
-              ? 'With no padding the window has to stay inside, so the output is smaller by k − 1 in each direction.'
-              : 'Every position of the window contributes exactly one cell, so counting positions is all there is to it.',
+      note: !fits
+        ? 'The window is wider than the padded input, so it has no position at all. The formula comes out at zero or below, and there is no output.'
+        : lost.total
+          ? `${lost.gaps ? 'The window hops further than it reaches, leaving gaps between positions' : 'The next hop would fall off the edge, so it is dropped'}${lost.gaps && lost.tail ? ', and the last hop falls off the edge' : ''}. ${lost.total} of the ${state.n} rows (and as many columns) of the input are never read.`
+          : N === state.n
+            ? 'The padding exactly covers what the window loses at the edges, so the picture comes out the size it went in.'
+            : state.k % 2 === 0 && state.s === 1 && state.d === 1
+              ? 'An even kernel has no centre, so (k − 1)/2 is not a whole number and no symmetric padding keeps the size.'
+              : state.s > 1
+                ? 'The window hops rather than steps, so most positions never happen and the output is a fraction of the input.'
+                : state.p === 0 && state.k > 1
+                  ? 'With no padding the window has to stay inside, so the output is smaller by k − 1 in each direction.'
+                  : 'Every position of the window contributes exactly one cell, so counting positions is all there is to it.',
     });
   }
 
   // --- the walk --------------------------------------------------------------
+  function advance() {
+    const N = outN();
+    if (!N) return;
+    state.cell = (state.cell + 1) % (N * N);
+    if (state.cell === 0) reset(true);
+    mark();
+  }
   let acc = 0, last = 0;
   function loop(ts: number) {
     if (!last) last = ts;
     const dt = (ts - last) / 1000;
     last = ts;
-    if (state.running) {
-      const N = outN();
+    const N = outN();
+    if (state.running && N) {
       acc += dt;
-      const per = Math.max(0.05, 2.5 / (N * N));
+      const per = Math.max(state.nums ? 0.35 : 0.05, 2.5 / (N * N));
       let moved = false;
       while (acc >= per) {
         acc -= per;
-        state.cell = (state.cell + 1) % (N * N);
-        if (state.cell === 0) reset(true);
-        mark();
+        advance();
         moved = true;
       }
       if (moved) draw();
@@ -279,21 +427,37 @@ import Readout from '../../../components/sim/Readout.astro';
     requestAnimationFrame(loop);
   }
 
+  // click an output cell and the window jumps to where it came from
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    const N = outN();
+    const cx = Math.floor((x - geo.outX) / geo.co), cy = Math.floor((y - OUT.y) / geo.co);
+    if (!N || cx < 0 || cy < 0 || cx >= N || cy >= N) return;
+    state.cell = cy * N + cx;
+    mark();
+    draw();
+  });
+
   const change = () => { reset(); draw(); };
   slider('n', (v) => { state.n = v; change(); });
   slider('k', (v) => { state.k = v; change(); });
   slider('s', (v) => { state.s = v; change(); });
   slider('p', (v) => { state.p = v; change(); });
   slider('d', (v) => { state.d = v; change(); });
+  check('nums', (on) => { state.nums = on; draw(); });
+  const kinds = segmented('wkind', (v) => { state.kind = v as Kind; draw(); });
+  el('shuffle').addEventListener('click', () => {
+    state.seed = 1 + Math.floor(Math.random() * 1e6);
+    state.kind = 'random';
+    kinds.select('random');
+    draw();
+  });
+  state.kind = (kinds.value() || 'random') as Kind;
+  state.nums = (el('nums') as HTMLInputElement).checked;
   transport({
     onRun: (running) => (state.running = running),
-    onStep: () => {
-      const N = outN();
-      state.cell = (state.cell + 1) % (N * N);
-      if (state.cell === 0) reset(true);
-      mark();
-      draw();
-    },
+    onStep: () => { advance(); draw(); },
     onReset: () => change(),
   });
 

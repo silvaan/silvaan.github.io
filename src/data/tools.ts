@@ -521,6 +521,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'convolution-channels',
+        title: 'Convolution Channels',
+        description:
+          'A kernel is as deep as its input. Watch each slice read its own channel, the slices sum into one number, and every extra filter add a whole output channel.',
+        href: '/simulations/deep-learning/convolution-channels',
+        status: 'live',
+      },
+      {
         slug: 'receptive-field',
         title: 'Receptive Field',
         description:

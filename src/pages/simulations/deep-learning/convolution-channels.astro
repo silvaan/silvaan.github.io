@@ -1,0 +1,446 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Convolution Channels"
+  description="A colour image is three pictures stacked, and a convolution reads all of them at once. Each filter is a block as deep as its input, its slices are summed into one number, and the number of filters is the number of channels that come out."
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="chan"
+          width="1000"
+          height="560"
+          role="img"
+          aria-label="The input channels with the window on each, the current filter with one slice per input channel, and the output channels filling in one cell per position."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'where the window is', color: '#f59e0b' },
+          { label: 'what it has already read', color: '#a78bfa' },
+          { label: 'positive output', color: '#5eead4' },
+          { label: 'negative output', color: '#f472b6' },
+        ]}
+        hint="Run to walk the window across · click an output cell to jump the window there"
+      />
+      <Result label="Output" />
+    </div>
+
+    <div class="sim-panel">
+      <Slider id="cin" label="Input channels" min={1} max={4} value={3} />
+      <Slider id="cout" label="Filters (output channels)" min={1} max={4} value={2} />
+      <Seg
+        id="ksize"
+        label="Kernel"
+        attr="k"
+        active="3"
+        options={[
+          { value: '1', label: '1 × 1' },
+          { value: '3', label: '3 × 3' },
+        ]}
+      />
+      <Seg
+        id="wkind"
+        label="Filters"
+        attr="w"
+        options={[
+          { value: 'random', label: 'Random' },
+          { value: 'classic', label: 'Edges, blur, sharpen' },
+        ]}
+      />
+      <Transport step>
+        <button type="button" class="btn ghost" id="shuffle">New weights</button>
+      </Transport>
+      <Readout
+        rows={[
+          { id: 'r-in', label: 'input' },
+          { id: 'r-f', label: 'one filter' },
+          { id: 'r-params', label: 'weights' },
+          { id: 'r-out', label: 'output' },
+          { id: 'r-at', label: 'window at' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      A "3 × 3 kernel" is shorthand. The real kernel is as deep as its input:
+      with three input channels it is <b>3 × 3 × 3</b>, one slice laid on each
+      channel at the same place. Each slice gives its own sum, and those sums are
+      added into a <b>single</b> number. Channels go in separately and come out
+      mixed.
+    </li>
+    <li>
+      One filter makes one output channel. Raise <b>filters</b> and you add whole
+      filters, each with its own full depth of weights and its own bias, so the
+      weights are <b>C<sub>out</sub> × C<sub>in</sub> × k × k</b>.
+    </li>
+    <li>
+      Each channel holds a different shape: a vertical bar, a horizontal bar, a
+      diagonal, a square. Switch to <b>edges, blur, sharpen</b> and filter 1
+      lights up on the vertical bar while filter 2 ignores it and finds the
+      horizontal one instead. Same pixels, different weights, different answers.
+    </li>
+    <li>
+      Switch to <b>1 × 1</b>. The window sees one pixel and no neighbours, so the
+      layer is a dense layer from C<sub>in</sub> numbers to C<sub>out</sub>,
+      applied at every pixel. It changes the number of channels without looking
+      around at all.
+    </li>
+    <li>
+      The number of channels never changes the size of the picture, and the
+      picture size never changes the number of weights. How big the output comes
+      out is <a href="/simulations/deep-learning/convolution-arithmetic">Convolution Arithmetic</a>.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect, arrow } from '../../../lib/draw';
+  import { el, slider, segmented, transport, result, readout } from '../../../lib/panel';
+  import { kernel, tint, hash, beam, shade, KIND_NAMES, type Kind } from '../../../lib/conv';
+
+  const NOW = '#f59e0b';
+  const OUTC = '#5eead4';
+  /** One hue per input channel, only for its name and its partial sum. */
+  const CH = ['#60a5fa', '#e879f9', '#a3e635', '#fb923c'];
+
+  /** The picture is 5 × 5 with no padding: this page is about depth, not size. */
+  const S = 5;
+  const state = { cin: 3, cout: 2, k: 3, classic: false, seed: 1, running: false, o: 0, cell: 0 };
+
+  const canvas = el('chan') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label, textWidth } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- the numbers -----------------------------------------------------------
+  const N = () => S - state.k + 1;
+  /** Each channel holds a different shape, so each filter finds something else in each. */
+  const SHAPES = [
+    (x: number, _y: number) => x === 2,
+    (_x: number, y: number) => y === 2,
+    (x: number, y: number) => x === y,
+    (x: number, y: number) => x >= 1 && x <= 3 && y >= 1 && y <= 3,
+  ];
+  const pixel = (c: number, x: number, y: number) =>
+    SHAPES[c](x, y) ? 7 + (hash(c, x, y, 1) % 3) : hash(c, x, y, 2) % 2;
+  /** In the classic set, filter 1 finds vertical edges, 2 horizontal, 3 blurs, 4 sharpens. */
+  const CLASSIC: Kind[] = ['vedge', 'hedge', 'blur', 'sharpen'];
+  const weight = (o: number, c: number, u: number, v: number) =>
+    state.classic ? kernel(CLASSIC[o], state.k, u, v, state.seed, o * 4 + c) : kernel('random', state.k, u, v, state.seed, o * 4 + c);
+  const bias = (o: number) => (state.classic ? 0 : (hash(o, 9, 9, state.seed) % 3) - 1);
+  /** What slice c of filter o adds at output position (x, y). */
+  function partial(o: number, c: number, x: number, y: number) {
+    let s = 0;
+    for (let u = 0; u < state.k; u++)
+      for (let v = 0; v < state.k; v++) s += weight(o, c, u, v) * pixel(c, x + v, y + u);
+    return s;
+  }
+  function output(o: number, x: number, y: number) {
+    let s = bias(o);
+    for (let c = 0; c < state.cin; c++) s += partial(o, c, x, y);
+    return s;
+  }
+  const minus = (v: number) => String(v).replace('-', '−');
+
+  // --- the walk: every position for filter 1, then filter 2, ... -------------
+  let touched = new Uint8Array(S * S);
+  let done = new Uint8Array(1);
+  function reset(keep = false) {
+    touched = new Uint8Array(S * S);
+    done = new Uint8Array(state.cout * N() * N());
+    if (!keep) { state.o = 0; state.cell = 0; }
+    mark();
+  }
+  function mark() {
+    const n = N();
+    state.o = Math.min(state.o, state.cout - 1);
+    if (state.cell >= n * n) state.cell = 0;
+    done[state.o * n * n + state.cell] = 1;
+    const oy = Math.floor(state.cell / n), ox = state.cell % n;
+    for (let u = 0; u < state.k; u++)
+      for (let v = 0; v < state.k; v++) touched[(oy + u) * S + ox + v] = 1;
+  }
+  function advance() {
+    const n = N();
+    state.cell++;
+    if (state.cell === n * n) {
+      state.cell = 0;
+      state.o++;
+      touched = new Uint8Array(S * S);
+      if (state.o === state.cout) { state.o = 0; reset(true); return; }
+    }
+    mark();
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const TOP = 92, AREA = 400, GAP = 14;
+  const IN_X = 90, MID = 340, SUM_X = 505, OUT_X = 575, WT_X = 800, WT_W = 170;
+  let rows: { y: number; h: number }[] = [];
+  let hit: { y: number; c: number }[] = [];
+
+  function cell(x: number, y: number, s: number, fill: string, stroke: string) {
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    roundRect(ctx, x + 0.5, y + 0.5, s - 1, s - 1, Math.min(4, s / 5));
+    ctx.fill();
+    ctx.stroke();
+  }
+  function num(v: number, x: number, y: number, s: number, alpha: number, colour?: string) {
+    const size = Math.max(6, Math.min(11, s * 0.34));
+    label(minus(v), x + s / 2, y + s / 2 + size * 0.5, alpha, 'center', size, colour);
+  }
+  function glow(x: number, y: number, w: number, h: number) {
+    ctx.save();
+    ctx.strokeStyle = NOW;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = NOW;
+    ctx.shadowBlur = 10;
+    roundRect(ctx, x - 1, y - 1, w + 2, h + 2, 5);
+    ctx.stroke();
+    ctx.restore();
+  }
+  /** Top edges of n stacked grids of height h, centred in the area. */
+  const stack = (n: number, h: number) => {
+    const total = n * h + (n - 1) * GAP, y0 = TOP + (AREA - total) / 2;
+    return Array.from({ length: n }, (_, i) => y0 + i * (h + GAP));
+  };
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const { cin, cout, k, o } = state;
+    const n = N();
+    // one cell is one cell everywhere, so the output visibly shrinks
+    const c = Math.min(36, Math.floor((AREA - (cin - 1) * GAP) / (cin * S)), Math.floor((AREA - (cout - 1) * GAP) / (cout * n)));
+    const oy = Math.floor(state.cell / n), ox = state.cell % n;
+
+    // --- the input channels, the window at the same place on every one
+    const inY = stack(cin, S * c);
+    label('the input', IN_X, TOP - 44, 0.55, 'left', 13);
+    label(`${cin} × ${S} × ${S}`, IN_X, TOP - 25, 0.32, 'left', 11);
+    label(`${cin} channel${cin > 1 ? 's' : ''}`, IN_X, TOP - 9, 0.32, 'left', 11);
+    for (let ch = 0; ch < cin; ch++) {
+      const y0 = inY[ch];
+      label(`x${ch + 1}`, IN_X - 12, y0 + (S * c) / 2 + 5, 0.9, 'right', 11, CH[ch]);
+      for (let y = 0; y < S; y++)
+        for (let x = 0; x < S; x++) {
+          const inWin = x >= ox && x < ox + k && y >= oy && y < oy + k;
+          const px = IN_X + x * c, py = y0 + y * c;
+          // brighter cells hold bigger numbers
+          const val = pixel(ch, x, y), a = shade(val);
+          cell(px, py, c, inWin ? 'rgba(245,158,11,0.85)' : touched[y * S + x] ? `rgba(167,139,250,${a})` : ink(a), inWin ? NOW : ink(0.14));
+          num(val, px, py, c, inWin ? 0.9 : 0.7, inWin ? '#111' : a > 0.45 ? inv(0.95) : undefined);
+        }
+      glow(IN_X + ox * c, y0 + oy * c, k * c, k * c);
+    }
+
+    // --- the filter: one slice of weights per input channel
+    const kc = Math.min(30, c);
+    label(`filter ${o + 1} of ${cout}`, MID, TOP - 44, 0.55, 'center', 13);
+    label(`${cin} × ${k} × ${k}`, MID, TOP - 25, 0.32, 'center', 11);
+    label(state.classic && k > 1 ? KIND_NAMES[CLASSIC[o]] : 'random weights', MID, TOP - 9, 0.32, 'center', 11);
+    const parts: number[] = [];
+    for (let ch = 0; ch < cin; ch++) {
+      const my = inY[ch] + (S * c) / 2, ky = my - (k * kc) / 2, kx = MID - (k * kc) / 2;
+      // the window on this channel shaded across to the slice that reads it
+      beam(ctx, { x: IN_X + ox * c, y: inY[ch] + oy * c, s: k * c }, { x: kx, y: ky, s: k * kc }, CH[ch] + '2e');
+      for (let u = 0; u < k; u++)
+        for (let v = 0; v < k; v++) {
+          cell(kx + v * kc, ky + u * kc, kc, 'rgba(245,158,11,0.8)', NOW);
+          num(weight(o, ch, u, v), kx + v * kc, ky + u * kc, kc, 0.9, '#111');
+        }
+      const part = partial(o, ch, ox, oy);
+      parts.push(part);
+      label(`= ${minus(part)}`, kx + k * kc + 12, my + 5, 0.9, 'left', 11, CH[ch]);
+    }
+
+    // --- the output channels, one per filter
+    const outY = stack(cout, n * c);
+    label('the output', OUT_X, TOP - 44, 0.55, 'left', 13);
+    label(`${cout} × ${n} × ${n}`, OUT_X, TOP - 25, 0.32, 'left', 11);
+    label('one per filter', OUT_X, TOP - 9, 0.32, 'left', 11);
+    hit = outY.map((y) => ({ y, c }));
+
+    // the slices' sums meet in one place, then become one output cell
+    const sy = TOP + AREA / 2;
+    ctx.strokeStyle = ink(0.25);
+    ctx.lineWidth = 1;
+    for (let ch = 0; ch < cin; ch++) {
+      const my = inY[ch] + (S * c) / 2;
+      ctx.beginPath();
+      ctx.moveTo(MID + (k * kc) / 2 + 62, my);
+      ctx.lineTo(SUM_X - 15, sy);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = ink(0.6);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(SUM_X, sy, 14, 0, Math.PI * 2);
+    ctx.stroke();
+    label('Σ', SUM_X, sy + 6, 0.8, 'center', 12);
+    label(`+ b = ${minus(bias(o))}`, SUM_X, sy + 34, 0.5, 'center', 10);
+    ctx.strokeStyle = 'rgba(245,158,11,0.6)';
+    ctx.fillStyle = 'rgba(245,158,11,0.6)';
+    ctx.lineWidth = 1.2;
+    arrow(ctx, SUM_X + 16, sy, OUT_X + ox * c - 3, outY[o] + (oy + 0.5) * c, 6);
+
+    let big = 0;
+    for (let f = 0; f < cout; f++)
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) big = Math.max(big, Math.abs(output(f, x, y)));
+    for (let f = 0; f < cout; f++) {
+      label(`y${f + 1}`, OUT_X + n * c + 10, outY[f] + (n * c) / 2 + 5, f === o ? 0.9 : 0.4, 'left', 11, f === o ? OUTC : undefined);
+      for (let y = 0; y < n; y++)
+        for (let x = 0; x < n; x++) {
+          const on = done[f * n * n + y * n + x];
+          cell(OUT_X + x * c, outY[f] + y * c, c, on ? tint(output(f, x, y), big) : ink(0.05), ink(0.14));
+          if (on) num(output(f, x, y), OUT_X + x * c, outY[f] + y * c, c, 0.75);
+        }
+    }
+    glow(OUT_X + ox * c, outY[o] + oy * c, c, c);
+
+    // --- every filter at a glance, the one at work picked out
+    label('the filters', WT_X, TOP - 44, 0.55, 'left', 13);
+    label(`${cout} × ${cin} × ${k} × ${k}`, WT_X, TOP - 25, 0.32, 'left', 11);
+    label('click to switch', WT_X, TOP - 9, 0.32, 'left', 11);
+    const colW = WT_W / cin, mc = Math.min(12, Math.floor((colW - 8) / k));
+    const rowH = k * mc + 20, gy0 = TOP + (AREA - rowH * cout) / 2 + 10;
+    rows = [];
+    for (let ch = 0; ch < cin; ch++)
+      label(`x${ch + 1}`, WT_X + ch * colW + (k * mc) / 2, gy0 - 10, 0.8, 'center', 10, CH[ch]);
+    for (let f = 0; f < cout; f++) {
+      const ry = gy0 + f * rowH;
+      rows.push({ y: ry - 6, h: rowH });
+      label(`f${f + 1}`, WT_X - 10, ry + (k * mc) / 2 + 4, f === o ? 0.9 : 0.4, 'right', 10, f === o ? NOW : undefined);
+      for (let ch = 0; ch < cin; ch++)
+        for (let u = 0; u < k; u++)
+          for (let v = 0; v < k; v++)
+            cell(WT_X + ch * colW + v * mc, ry + u * mc, mc, tint(weight(f, ch, u, v), 2), ink(0.12));
+      if (f === o) glow(WT_X - 4, ry - 4, (cin - 1) * colW + k * mc + 8, k * mc + 8);
+    }
+
+    // --- the sum behind the current cell, each channel in its colour
+    const b = bias(o), y = output(o, ox, oy);
+    const segs: [string, string | undefined][] = [[`bias ${minus(b)}`, undefined]];
+    parts.forEach((p, ch) => segs.push([p < 0 ? ` − ${-p}` : ` + ${p}`, CH[ch]]));
+    segs.push([` = ${minus(y)}`, OUTC]);
+    const total = segs.reduce((a, [t]) => a + textWidth(t, 12), 0);
+    let sx = W / 2 - total / 2;
+    for (const [t, col] of segs) {
+      label(t, sx, 530, 0.6, 'left', 12, col);
+      sx += textWidth(t, 12);
+    }
+
+    const live: [string, string][] = [[`y_{${o + 1}} = ${b}`, OUTC]];
+    parts.forEach((p, ch) => live.push([p < 0 ? ` - ${-p}` : ` + ${p}`, CH[ch]]));
+    live.push([` = ${y}`, OUTC]);
+    setEq({
+      rule: [['y_o = b_o + ', OUTC], ['\\sum_{c=1}^{C_{\\text{in}}} W_{o,c} \\star x_c', NOW]],
+      live,
+    });
+
+    const params = cout * (cin * k * k + 1);
+    setRows({
+      'r-in': `${cin} × ${S} × ${S}`,
+      'r-f': `${cin} × ${k} × ${k} + 1 bias`,
+      'r-params': `${cout} × (${cin}·${k * k} + 1) = ${params}`,
+      'r-out': `${cout} × ${n} × ${n}`,
+      'r-at': `filter ${o + 1}, row ${oy + 1}, column ${ox + 1}`,
+    });
+    setResult({
+      value: `${cout} × ${n} × ${n}`,
+      colour: OUTC,
+      status: `${cin} in · ${cout} filters · ${k} × ${k} · ${params} weights`,
+      note:
+        k === 1
+          ? `A 1 × 1 filter never looks at neighbours: it just mixes the ${cin} numbers at each pixel into one, like a dense layer applied everywhere.`
+          : cin === 1
+            ? 'With one input channel each filter is a single flat slice, the familiar picture. Add channels and every filter grows a slice for each.'
+            : `Every filter reads all ${cin} channels, so each output cell is ${cin} sums added together, and each filter costs ${cin * k * k + 1} weights.`,
+    });
+  }
+
+  // --- running ---------------------------------------------------------------
+  let acc = 0, last = 0;
+  function loop(ts: number) {
+    if (!last) last = ts;
+    const dt = (ts - last) / 1000;
+    last = ts;
+    if (state.running) {
+      acc += dt;
+      let moved = false;
+      while (acc >= 0.4) {
+        acc -= 0.4;
+        advance();
+        moved = true;
+      }
+      if (moved) draw();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // click an output cell and the window jumps to where it came from
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    const n = N();
+    // a row of the filter panel switches filter and keeps the position
+    if (x >= WT_X - 30 && x <= WT_X + WT_W)
+      rows.forEach((rw, f) => {
+        if (y < rw.y || y >= rw.y + rw.h || f === state.o) return;
+        touched = new Uint8Array(S * S);
+        state.o = f;
+        mark();
+        draw();
+      });
+    hit.forEach((h, f) => {
+      const j = Math.floor((x - OUT_X) / h.c), i = Math.floor((y - h.y) / h.c);
+      if (i < 0 || j < 0 || i >= n || j >= n) return;
+      if (f !== state.o) touched = new Uint8Array(S * S);
+      state.o = f;
+      state.cell = i * n + j;
+      mark();
+      draw();
+    });
+  });
+
+  const change = () => { reset(); draw(); };
+  slider('cin', (v) => { state.cin = v; change(); });
+  slider('cout', (v) => { state.cout = v; change(); });
+  segmented('ksize', (v) => { state.k = +v; change(); });
+  const kinds = segmented('wkind', (v) => { state.classic = v === 'classic'; draw(); });
+  el('shuffle').addEventListener('click', () => {
+    state.seed = 1 + Math.floor(Math.random() * 1e6);
+    state.classic = false;
+    kinds.select('random');
+    draw();
+  });
+  state.classic = kinds.value() === 'classic';
+  transport({
+    onRun: (running) => (state.running = running),
+    onStep: () => { advance(); draw(); },
+    onReset: () => change(),
+  });
+
+  state.cin = +(el('cin') as HTMLInputElement).value;
+  state.cout = +(el('cout') as HTMLInputElement).value;
+  change();
+  requestAnimationFrame(loop);
+</script>
