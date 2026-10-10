@@ -633,6 +633,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'wavefunction-collapse',
+        title: 'Wavefunction Collapse',
+        description:
+          'A matter wave spreads through space as a cloud of probability until a measurement finds it at one single point. Fire particles at a screen one by one and the interference fringes build up dot by dot.',
+        href: '/simulations/physics/wavefunction-collapse',
+        status: 'live',
+      },
+      {
         slug: 'stern-gerlach',
         title: 'Stern-Gerlach Experiment',
         description:
