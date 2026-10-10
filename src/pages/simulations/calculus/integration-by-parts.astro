@@ -2,11 +2,10 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Checks from '../../../components/sim/Checks.astro';
-import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -34,57 +33,39 @@ import Readout from '../../../components/sim/Readout.astro';
       </div>
       <Slider id="b" label="Upper limit b" min={0} max={100} value={80} display="1.68" />
       <Slider id="n" label="Strips" min={1} max={60} value={10} hint={['a few wide ones', 'too fine to see']} />
-      <div class="readout" id="rows"></div>
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-ub', label: 'u at b' },
+          { id: 'r-vb', label: 'v at b' },
+          { id: 'r-udv', label: '∫ u dv' },
+          { id: 'r-vdu', label: '∫ v du' },
+          { id: 'r-uv', label: '[uv] from a to b' },
+          { id: 'r-res', label: 'the two minus [uv]' },
+          { id: 'r-strips', label: 'the strips on screen' },
+          { id: 'r-sres', label: 'strips minus [uv]' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      The curve is one factor plotted against the other as x runs from a to b.
-      Nothing else is plotted, and that single curve does all the work: it
-      splits the corner of the plane into <b>the area underneath it</b> and
-      <b>the area beside it</b>. Those two are exactly ∫v du and ∫u dv.
+      The curve (u, v) cuts the corner in two: the area <b>under</b> it is ∫v du,
+      the area <b>beside</b> it is ∫u dv, and together they fill exactly
+      <b>[uv]</b>. <Try id="tile" />
     </li>
     <li>
-      Watch what the two pieces have to add up to. The big rectangle is
-      <b>u(b)·v(b)</b>, the small one tucked in the corner is <b>u(a)·v(a)</b>,
-      and everything between them is covered by the two shaded regions with
-      nothing left over and no overlap. That is the whole theorem:
-      <b>∫u dv + ∫v du = [uv]</b>, which is just the product rule with an
-      integral sign in front of it.
+      Call <b>eˣ</b> u in ∫x eˣ dx and the leftover becomes ∫(x²/2)eˣ dx, worse
+      than where you started. Choosing u is choosing the leftover. <Try id="worse" />
     </li>
     <li>
-      Drag <b>strips</b>. The vertical ones stack along the u-axis and measure
-      ∫v du; the horizontal ones stack up the v-axis and measure ∫u dv. Same
-      curve, same region, sliced two different ways, and the residual in the
-      panel falls towards zero as they get thinner.
+      <b>∫ ln x dx</b> has only one factor, but dv = dx is always available: the
+      leftover is ∫1 dx. <Try id="ln" />
     </li>
     <li>
-      Now the part that matters in practice. Switch <b>which factor you call
-      u</b> and the curve is replaced by a completely different one, but the two
-      areas still tile the same kind of corner. What changes is the
-      <b>leftover</b>: with u = x the integral you are handed back is ∫eˣ dx,
-      and with u = eˣ it is ∫(x²/2)eˣ dx, which is worse than what you started
-      with. That is the whole of the LIATE rule of thumb, and you can see it
-      rather than memorise it.
-    </li>
-    <li>
-      Pick <b>∫ ln x dx</b>, where there is apparently only one factor. Taking
-      u = ln x and dv = dx makes the leftover ∫x·(1/x) dx, which is just ∫1 dx.
-      The trick is not that a second factor appeared, it is that <b>dv = dx</b>
-      was always available.
-    </li>
-    <li>
-      Pick <b>∫ x² eˣ dx</b>. The leftover is ∫2x eˣ dx: not finished, but one
-      power of x lighter than before. Apply the same move again and the x is
-      gone entirely. Integration by parts is often not a solution but a
-      <b>staircase</b>, and each step is one of these pictures.
-    </li>
-    <li>
-      One quiet freedom: v is <i>any</i> antiderivative of dv, so the constant is
-      yours to choose. For ∫x sin x dx this page uses v = 1 − cos x instead of
-      the usual −cos x, purely so the curve starts on the axis and the region
-      stays in view. The identity never noticed.
+      On <b>∫ x² eˣ dx</b> the leftover ∫2x eˣ dx is one power lighter. Repeat the
+      move and it is gone: by parts is often a <b>staircase</b>. <Try id="stair" />
     </li>
   </Fragment>
 </SimLayout>
@@ -92,7 +73,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // ∫u dv + ∫v du = [uv], drawn as a picture. Plot the point (u(x), v(x)) as x
@@ -434,8 +415,7 @@ import Readout from '../../../components/sim/Readout.astro';
     updateRows(want, left, rect);
   }
 
-  const rows = el('rows');
-  const row = (a: string, b: string) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
+  const setRows = readout();
   function updateRows(want: number, left: number, rect: number) {
     const c = C(), p = P(), b = bOf();
     // the same two areas, but measured from the strips actually on screen
@@ -447,15 +427,16 @@ import Readout from '../../../components/sim/Readout.astro';
       sA += c.v(xm) * (c.u(x1) - c.u(x0));
       sB += c.u(xm) * (c.v(x1) - c.v(x0));
     }
-    rows.innerHTML =
-      row('u at b', c.u(b).toFixed(4)) +
-      row('v at b', c.v(b).toFixed(4)) +
-      row('∫ u dv', want.toFixed(4)) +
-      row('∫ v du', left.toFixed(4)) +
-      row('[uv] from a to b', rect.toFixed(4)) +
-      row('the two minus [uv]', (want + left - rect).toExponential(1)) +
-      row(`strips, ${state.n} of them`, (sA + sB).toFixed(4)) +
-      row('strips minus [uv]', (sA + sB - rect).toExponential(1));
+    setRows({
+      'r-ub': c.u(b).toFixed(4),
+      'r-vb': c.v(b).toFixed(4),
+      'r-udv': want.toFixed(4),
+      'r-vdu': left.toFixed(4),
+      'r-uv': rect.toFixed(4),
+      'r-res': (want + left - rect).toExponential(1),
+      'r-strips': `${(sA + sB).toFixed(4)} (${state.n} each way)`,
+      'r-sres': (sA + sB - rect).toExponential(1),
+    });
   }
 
   // --- controls --------------------------------------------------------------
@@ -471,13 +452,15 @@ import Readout from '../../../components/sim/Readout.astro';
     el('ctl-choice').hidden = p.choices.length <= 1;
   }
 
-  segmented('prob', (v) => {
-    state.pi = +v;
-    state.ci = 0;
+  const probs = segmented('prob', (v) => pick(+v, 0));
+  function pick(pi: number, ci: number) {
+    state.pi = pi;
+    state.ci = ci;
+    probs.select(String(pi));
     renderChoices();
     computeScale();
     draw();
-  });
+  }
   el('choice').addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('button');
     if (!b) return;
@@ -491,8 +474,13 @@ import Readout from '../../../components/sim/Readout.astro';
   slider('b', (v) => { state.bs = v; draw(); }, () => bOf().toFixed(2));
   slider('n', (v) => { state.n = v; draw(); });
 
-  renderChoices();
-  computeScale();
+  tries({
+    tile: () => pick(0, 0),
+    worse: () => pick(0, 1),
+    ln: () => pick(2, 0),
+    stair: () => pick(3, 0),
+  });
+
   renderChoices();
   computeScale();
   draw();

@@ -5,6 +5,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -66,44 +67,20 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      At zero merges the vocabulary is just the alphabet, and every word is one
-      token per letter. The sentence at the bottom costs as many tokens as it has
-      characters. That is the worst tokenizer that still works.
+      At zero merges the vocabulary is the alphabet and the sentence costs one
+      token per character. <Try id="zero" />
     </li>
     <li>
-      Step once. The pair panel shows why that pair won: it is simply the one
-      with the most occurrences across the whole text, weighted by how often each
-      word appears. Nothing linguistic is consulted, only counting.
+      Each merge glues the <b>commonest pair</b>, counted over the whole text:
+      first <b>a + t</b>, then ▁t + h and ▁th + e, so "the" is now one token. <Try id="three" />
     </li>
     <li>
-      Keep stepping and watch common short words get swallowed whole:
-      <b>▁t + h</b> becomes <b>▁th</b>, then <b>▁the</b>. Frequent words end up
-      as single tokens while rare ones stay in pieces, which is exactly the
-      trade a tokenizer is for.
+      After every merge the sentence drops from 27 tokens to 11. <b>flat</b>
+      never appears in training, yet it still tokenizes, as ▁f, l, at. <Try id="all" />
     </li>
     <li>
-      Watch the sentence at the bottom as merges accumulate. The same characters
-      keep collapsing into fewer tokens, and characters per token climbs. That
-      number is what a tokenizer is judged on: it is how much text fits in a
-      context window.
-    </li>
-    <li>
-      The test sentence contains words the training text never had. They still
-      tokenize, because whatever is left over falls back on shorter pieces, down
-      to single letters. <b>A BPE tokenizer can never be stumped by a new word</b>,
-      only made inefficient by it.
-    </li>
-    <li>
-      Type a word with a letter that does not appear in the training text at all
-      and it goes red. That is the one real failure mode, and why real
-      tokenizers work on <b>bytes</b>: with 256 byte values in the base
-      vocabulary there is nothing left to be unknown.
-    </li>
-    <li>
-      Edit the training text and the vocabulary is rebuilt from it. Feed it one
-      topic and the tokenizer becomes efficient at that topic and clumsy at
-      everything else, which is why tokenizers trained on English cut other
-      languages into far more tokens per word.
+      A letter the training text never had goes red: it is not in the vocabulary.
+      That is why real tokenizers start from the 256 <b>bytes</b>. <Try id="unknown" />
     </li>
   </Fragment>
 </SimLayout>
@@ -111,7 +88,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // Byte pair encoding, the whole of it: count neighbouring pairs, glue the
@@ -669,6 +646,24 @@ the fattest rat ran fastest of all the rats.`;
     debounce = window.setTimeout(() => retrain(trainEl.value), 350);
   });
   testEl.addEventListener('input', () => (state.test = testEl.value));
+
+  /** Back to the default texts, at a given number of merges. */
+  function show(m: number, test = DEFAULT_TEST) {
+    stopRun();
+    if (trainEl.value !== DEFAULT_TRAIN) {
+      trainEl.value = DEFAULT_TRAIN;
+      retrain(DEFAULT_TRAIN);
+    }
+    testEl.value = test;
+    state.test = test;
+    setM(m);
+  }
+  tries({
+    zero: () => show(0),
+    three: () => show(3),
+    all: () => show(model.merges.length),
+    unknown: () => show(model.merges.length, 'the zebra sat'),
+  });
 
   retrain(DEFAULT_TRAIN);
   requestAnimationFrame(loop);

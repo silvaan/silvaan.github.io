@@ -3,81 +3,87 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="physics"
   title="Wave Interference"
   description="Two sources send out ripples that cross and combine. Where crests meet crests the wave doubles; where crest meets trough it cancels to stillness. Those cancellations trace the dark fringes behind the double-slit experiment."
+  shortcuts={['run', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
         <canvas id="wi" class="wi-canvas" width="640" height="460" role="img" aria-label="Ripples from one or two point sources spreading across a plane and interfering, with still nodal lines where they cancel."></canvas>
       </div>
-      <Caption hint="Drag either white source; the dark lines that never move are nodal lines, where the two waves are exactly out of phase" />
+      <Caption hint="Drag either source. The colourless lines that never move are nodal lines, where the two waves are exactly out of phase" />
       <Result label="Source separation" />
     </div>
 
     <div class="sim-panel">
-      <Transport reset={false} />
-
-      <div class="control">
-        <label>Wavelength <b id="wlval">40</b></label>
-        <input type="range" id="wl" min="16" max="90" value="40" />
-      </div>
-
-      <div class="control">
-        <label>Sources</label>
-        <div class="seg" id="src">
-          <button data-n="1">1</button>
-          <button data-n="2" class="active">2</button>
-        </div>
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Source separation</span><b id="sep">—</b></div>
-        <div class="row"><span>Wavelength</span><b id="wl2">—</b></div>
-      </div>
-
-      <div class="legend"><span>trough</span><span class="bar"></span><span>crest</span></div>
-
+      <Transport running reset={false} />
+      <Seg
+        id="view"
+        label="Show"
+        attr="view"
+        options={[{ value: 'wave', label: 'Wave now' }, { value: 'int', label: 'Time-averaged intensity' }]}
+      />
+      <Slider id="wl" label="Wavelength" min={16} max={90} value={40} display="40 px" />
+      <Seg id="src" label="Sources" attr="n" active="2" options={[{ value: '1', label: '1' }, { value: '2', label: '2' }]} />
+      <Readout
+        rows={[
+          { id: 'sep', label: 'Source separation' },
+          { id: 'wl2', label: 'Wavelength' },
+        ]}
+      />
+      <div class="legend"><span id="lg-lo">trough</span><span class="bar" id="lg-bar"></span><span id="lg-hi">crest</span></div>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Follow one of the <b>dark bands</b>: it stays put while the waves stream
-      through it. Along that line the two sources are always a half-wavelength out
-      of step, so they <b>cancel</b>. This is destructive interference.
+      Watch the waves stream out: the <b>nodal lines</b> stay put while crests and
+      troughs pass on either side. Along them the two paths differ by half a
+      wavelength, so the waves cancel. <Try id="nodes" />
     </li>
     <li>
-      Move the sources <b>farther apart</b> or shorten the <b>wavelength</b> and
-      the fringes crowd together. It is the ratio λ / separation that sets their
-      spacing, exactly the double-slit formula.
+      Switch to <b>time-averaged intensity</b>. The moving ripples average away and
+      only the fixed fringes remain: bright where the waves add, blank where they
+      cancel. <Try id="avg" />
     </li>
     <li>
-      Drop to <b>1 source</b>: plain circular ripples, no fringes. Interference
-      needs at least two coherent waves to add and subtract.
+      Move the sources <b>farther apart</b> or shorten the wavelength and the
+      fringes crowd together. Their spacing is set by λ / separation, the
+      double-slit formula. <Try id="crowd" />
+    </li>
+    <li>
+      Drop to <b>1 source</b>: plain circular ripples and no fringes. Interference
+      needs two coherent waves. <Try id="one" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
-  import { result } from '../../../lib/panel';
+  import { equation } from '../../../lib/equation';
+  import { el, result, readout, slider, segmented, transport, tries } from '../../../lib/panel';
 
-  const state = { wl: 40, n: 2, playing: false };
-  const sources = [
+  const state = { wl: 40, n: 2, view: 'wave' as 'wave' | 'int' };
+  const START = [
     { x: 250, y: 230 },
     { x: 390, y: 230 },
   ];
+  const sources = START.map((p) => ({ ...p }));
 
-  const setEq = equationBar();
+  const setEq = equation();
   const setResult = result();
-  const canvas = document.getElementById('wi') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas);
+  const setRows = readout();
+  const canvas = el('wi') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => (dirty = true)); // theme or fullscreen change
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
   const GW = 256, GH = 184;
@@ -87,42 +93,64 @@ import Caption from '../../../components/sim/Caption.astro';
   const octx = off.getContext('2d')!;
   const img = octx.createImageData(GW, GH);
   let t = 0;
+  let dirty = true;
 
-  function palette() {
+  type RGB = number[];
+  function palette(): { lo: RGB; mid: RGB; hi: RGB } {
     const light = css('--stage-light') === '1';
     return light
       ? { lo: [70, 60, 220], mid: [246, 247, 249], hi: [13, 148, 136] }
       : { lo: [96, 116, 255], mid: [13, 14, 18], hi: [45, 212, 191] };
   }
+  const mix = (a: RGB, b: RGB, u: number) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+  const rgb = (c: RGB) => `rgb(${c.map((x) => Math.round(x)).join(',')})`;
 
-  function render() {
+  /** The legend follows the theme and the view: trough-neutral-crest, or neutral-bright. */
+  function paintLegend(P: ReturnType<typeof palette>) {
+    const bar = el('lg-bar');
+    if (state.view === 'wave') {
+      bar.style.background = `linear-gradient(to right, ${rgb(P.lo)}, ${rgb(P.mid)}, ${rgb(P.hi)})`;
+      el('lg-lo').textContent = 'trough';
+      el('lg-hi').textContent = 'crest';
+    } else {
+      bar.style.background = `linear-gradient(to right, ${rgb(P.mid)}, ${rgb(P.hi)})`;
+      el('lg-lo').textContent = 'cancels';
+      el('lg-hi').textContent = 'adds';
+    }
+  }
+
+  function field() {
     const P = palette();
+    paintLegend(P);
     const k = (2 * Math.PI) / state.wl;
     const omega = 0.12;
     const sxScale = W / GW;
     const syScale = H / GH;
     const nS = state.n;
+    const avg = state.view === 'int';
     for (let j = 0; j < GH; j++) {
       const wy = j * syScale;
       for (let i = 0; i < GW; i++) {
         const wx = i * sxScale;
-        let a = 0;
+        let a = 0, re = 0, im = 0;
         for (let s = 0; s < nS; s++) {
           const dx = wx - sources[s].x;
           const dy = wy - sources[s].y;
           const r = Math.sqrt(dx * dx + dy * dy);
-          a += Math.sin(k * r - omega * t) / (1 + r * 0.012);
+          const amp = 1 / (1 + r * 0.012);
+          if (avg) {
+            re += amp * Math.cos(k * r);
+            im += amp * Math.sin(k * r);
+          } else a += amp * Math.sin(k * r - omega * t);
         }
-        // normalise to about [-1,1]
-        const v = Math.max(-1, Math.min(1, a / nS));
-        const tt = (v + 1) / 2;
         let c: number[];
-        if (tt < 0.5) {
-          const u = tt * 2;
-          c = [P.lo[0] + (P.mid[0] - P.lo[0]) * u, P.lo[1] + (P.mid[1] - P.lo[1]) * u, P.lo[2] + (P.mid[2] - P.lo[2]) * u];
+        if (avg) {
+          // time average of the summed wave: half its squared complex amplitude
+          const I = (re * re + im * im) / (nS * nS);
+          c = mix(P.mid, P.hi, Math.min(1, Math.sqrt(I) * 1.4));
         } else {
-          const u = (tt - 0.5) * 2;
-          c = [P.mid[0] + (P.hi[0] - P.mid[0]) * u, P.mid[1] + (P.hi[1] - P.mid[1]) * u, P.mid[2] + (P.hi[2] - P.mid[2]) * u];
+          const v = Math.max(-1, Math.min(1, a / nS));
+          c = v < 0 ? mix(P.mid, P.lo, -v) : mix(P.mid, P.hi, v);
         }
         const idx = (j * GW + i) * 4;
         img.data[idx] = c[0];
@@ -132,12 +160,16 @@ import Caption from '../../../components/sim/Caption.astro';
       }
     }
     octx.putImageData(img, 0, 0);
+  }
+
+  function render() {
+    field();
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(off, 0, 0, W, H);
 
     // source markers
     const ink = css('--stage-ink') || '232,233,236';
-    for (let s = 0; s < nS; s++) {
+    for (let s = 0; s < state.n; s++) {
       ctx.fillStyle = `rgba(${ink},1)`;
       ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
       ctx.lineWidth = 2;
@@ -147,35 +179,41 @@ import Caption from '../../../components/sim/Caption.astro';
       ctx.stroke();
     }
 
+    const two = state.n === 2;
     const sep = Math.hypot(sources[0].x - sources[1].x, sources[0].y - sources[1].y);
-    (document.getElementById('sep') as HTMLElement).textContent = state.n === 2 ? sep.toFixed(0) + ' px' : '—';
-    (document.getElementById('wl2') as HTMLElement).textContent = state.wl + ' px';
+    setRows({ sep: two ? sep.toFixed(0) + ' px' : '—', wl2: state.wl + ' px' });
     setResult({
-      value: state.n === 2 ? `${sep.toFixed(0)} px` : 'one source',
-      status: `wavelength ${state.wl} px${state.n === 2 ? ` · ${(sep / state.wl).toFixed(1)} wavelengths apart` : ''}`,
-      note: state.n === 2 ? 'Move the sources apart and the nodal lines crowd together: more wavelengths of separation, more fringes.' : 'A single source makes rings and nothing cancels. Add the second one to see the still lines appear.',
+      value: two ? `${sep.toFixed(0)} px` : 'one source',
+      status: `wavelength ${state.wl} px${two ? ` · ${(sep / state.wl).toFixed(1)} wavelengths apart` : ''}`,
+      note: two
+        ? 'Only the difference in path length matters, so the pattern is a set of fixed fringes. Move the sources apart and they crowd together.'
+        : 'A single source makes rings and nothing cancels. Add the second one to see the still lines appear.',
     });
-    setEq([
-      [
+    setEq({
+      rule: [
         ['\\Delta r = m\\lambda', '#5eead4'],
         '\\Rightarrow\\text{ bright},\\quad',
-        ['\\Delta r = (m+\\tfrac12)\\lambda', '#f59e0b'],
-        '\\Rightarrow\\text{ dark}',
+        '\\Delta r = (m+\\tfrac12)\\lambda',
+        '\\Rightarrow\\text{ node}',
       ],
-      [
-        `d = ${state.n === 2 ? sep.toFixed(0) + '\\,\\text{px}' : '\\text{--}'}`,
+      live: [
+        `d = ${two ? sep.toFixed(0) + '\\,\\text{px}' : '\\text{--}'}`,
         `\\quad\\lambda = ${state.wl}\\,\\text{px}`,
-        `\\quad d/\\lambda = ${state.n === 2 ? (sep / state.wl).toFixed(1) : '\\text{--}'}`,
+        `\\quad d/\\lambda = ${two ? (sep / state.wl).toFixed(1) : '\\text{--}'}`,
       ],
-      [
-        'only the difference in path length matters, so the pattern is a set of fixed fringes',
-      ],
-    ]);
+    });
   }
 
   function loop() {
-    if (state.playing) t += 1;
-    render();
+    // the wave view changes with time; the averaged view only when something moves
+    if (tp.running() && state.view === 'wave') {
+      t += 1;
+      dirty = true;
+    }
+    if (dirty) {
+      dirty = false;
+      render();
+    }
     requestAnimationFrame(loop);
   }
 
@@ -195,27 +233,35 @@ import Caption from '../../../components/sim/Caption.astro';
     const rect = canvas.getBoundingClientRect();
     sources[drag].x = Math.max(10, Math.min(W - 10, ((e.clientX - rect.left) / rect.width) * W));
     sources[drag].y = Math.max(10, Math.min(H - 10, ((e.clientY - rect.top) / rect.height) * H));
+    dirty = true;
   });
   const stop = () => (drag = -1);
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
-  document.getElementById('src')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#src button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.n = +btn.dataset.n!;
-  });
-  const wlEl = document.getElementById('wl') as HTMLInputElement;
-  wlEl.addEventListener('input', () => {
-    state.wl = +wlEl.value;
-    (document.getElementById('wlval') as HTMLElement).textContent = wlEl.value;
-  });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    runBtn.textContent = state.playing ? 'Pause' : 'Play';
+  const tp = transport({ onRun: () => (dirty = true) });
+  const srcSeg = segmented('src', (v) => { state.n = +v; dirty = true; });
+  const viewSeg = segmented('view', (v) => { state.view = v as 'wave' | 'int'; dirty = true; });
+  const setWl = slider('wl', (v) => { state.wl = v; dirty = true; }, (v) => `${v} px`);
+
+  function show(o: { view: 'wave' | 'int'; n: number; wl: number; sep: number }) {
+    state.view = o.view;
+    viewSeg.select(o.view);
+    state.n = o.n;
+    srcSeg.select(String(o.n));
+    state.wl = o.wl;
+    setWl(o.wl);
+    const cx = W / 2, cy = H / 2;
+    sources[0] = { x: cx - o.sep / 2, y: cy };
+    sources[1] = { x: cx + o.sep / 2, y: cy };
+    if (!tp.running()) el('run').click();
+    dirty = true;
+  }
+  tries({
+    nodes: () => show({ view: 'wave', n: 2, wl: 40, sep: 140 }),
+    avg: () => show({ view: 'int', n: 2, wl: 40, sep: 140 }),
+    crowd: () => show({ view: 'int', n: 2, wl: 24, sep: 240 }),
+    one: () => show({ view: 'wave', n: 1, wl: 40, sep: 140 }),
   });
 
   requestAnimationFrame(loop);
@@ -240,6 +286,5 @@ import Caption from '../../../components/sim/Caption.astro';
     flex: 1;
     height: 8px;
     border-radius: 4px;
-    background: linear-gradient(to right, rgb(96, 116, 255), #16181d, rgb(45, 212, 191));
   }
 </style>

@@ -4,6 +4,8 @@ import Seg from '../../../components/sim/Seg.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -43,12 +45,12 @@ import Readout from '../../../components/sim/Readout.astro';
         </select>
       </div>
       <div class="wlist" id="list"></div>
-      <div class="control">
-        <div class="checks">
-          <label class="check"><input type="checkbox" id="unit" /> <span>Force the query to length 1</span></label>
-          <label class="check"><input type="checkbox" id="proj" checked /> <span id="projlbl">Show the shadow the query casts</span></label>
-        </div>
-      </div>
+      <Checks
+        items={[
+          { id: 'unit', label: 'Force the query to length 1' },
+          { id: 'proj', label: 'Show the shadow the query casts', checked: true },
+        ]}
+      />
       <Readout
         title="Values"
         rows={[
@@ -64,48 +66,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Swing the query around the circle. The match changes the moment the
-      <b>angle</b> changes, and it never changes while you only make the arrow
-      longer or shorter. Cosine similarity divides the length out, so it measures
-      <b>direction alone</b>.
+      Lay the query on <b>puppy</b>: cos θ reads 1.00, dog and thing come next, car
+      near 0 and king below zero. Drag it longer or shorter and nothing changes:
+      the cosine measures <b>direction alone</b>. <Try id="cos" />
     </li>
     <li>
-      cos θ runs from <b>1</b> (same direction, same meaning) through <b>0</b> (at
-      right angles, unrelated) to <b>−1</b> (opposite). Lay the query straight on
-      <b>puppy</b> and the number reads 1.00, with dog just behind it, car near 0
-      and king below zero. Those numbers are the whole of semantic search.
+      The <b>shadow</b> is the query dropped onto the word's direction. Its
+      length is |q| cos θ, the dot product divided by the word's length.
+      <Try id="shadow" />
     </li>
     <li>
-      Turn on the shadow. The dashed line drops the query tip onto the word's
-      direction, and the bright segment left behind has length |q| cos θ. That
-      shadow is what the dot product measures; the cosine is the same shadow after
-      dividing by both lengths.
+      Rank by <b>dot product</b> and the long generic word <b>thing</b> takes
+      the top spot from puppy. Raw dot products reward long vectors, which is
+      why retrieval normalises first. <Try id="dot" />
     </li>
     <li>
-      Now switch the ranking to <b>dot product</b>. The generic word <b>thing</b>,
-      drawn long because it appears everywhere, takes over the top spot from
-      whatever you are actually pointing at. Raw dot products reward long vectors,
-      which is exactly why retrieval systems normalise and use the cosine.
-    </li>
-    <li>
-      Tick <b>force the query to length 1</b>. Every arrow now sits on the circle,
-      the dot product and the cosine become the same number, and the shadow is
-      literally cos θ. Normalised embeddings are used precisely so these two agree.
-    </li>
-    <li>
-      Switch the ranking to <b>distance</b>. The picture changes shape: the
-      cosine's level sets are <b>rays out of the origin</b>, so length is
-      invisible to it, while distance measures rings <b>around the query tip</b>,
-      so a word can lose simply by being long. Watch <b>kitten</b>, a short arrow,
-      beat <b>cat</b> whenever your query is short, even though cat points more
-      the way you are pointing.
-    </li>
-    <li>
-      Then put both on the circle: tick <b>length 1</b> and click a word whose
-      arrow is already about that long. Now the two rankings agree, always, and
-      they must, because ‖q−w‖² = 2 − 2 cos θ when both have length one. That one
-      identity is why a vector database can index cosine similarity with a
-      nearest-neighbour structure that only knows how to measure distance.
+      Rank by <b>distance</b> with a short query between cat and kitten:
+      <b>kitten</b>, a short arrow, wins although <b>cat</b> points closer to the
+      query's direction. <Try id="dist" />
     </li>
   </Fragment>
 </SimLayout>
@@ -114,7 +92,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, check, result, readout, tries } from '../../../lib/panel';
 
   const ACCENT = '#7c8cff', TEAL = '#5eead4';
   const canvas = el('cos') as HTMLCanvasElement;
@@ -258,7 +236,7 @@ import Readout from '../../../components/sim/Readout.astro';
         return `<div class="cs-row${euc ? ' full' : ''}${r.w === t.w ? ' sel' : ''}" data-w="${r.w}"><span class="nm">${r.w}</span><span class="bar"><i style="${side};width:${w}%"></i><s></s></span><b>${shown.toFixed(2)}</b></div>`;
       })
       .join('');
-    el('projlbl').textContent = euc ? 'Show rings of equal distance' : 'Show the shadow the query casts';
+    (el('proj').nextElementSibling as HTMLElement).textContent = euc ? 'Show rings of equal distance' : 'Show the shadow the query casts';
 
     const dot = qlen() * t.r * c;
     const Q = (x: string) => `\\textcolor{${ACCENT}}{${x}}`, Wc = (x: string) => `\\textcolor{${TEAL}}{${x}}`;
@@ -302,9 +280,29 @@ import Readout from '../../../components/sim/Readout.astro';
     sel.value = state.compare;
     draw();
   });
-  segmented('score', (s) => { state.score = s as 'cos' | 'dot' | 'euc'; draw(); });
-  check('unit', (on) => { state.unit = on; draw(); });
-  check('proj', (on) => { state.proj = on; draw(); });
+  const scores = segmented('score', (s) => { state.score = s as 'cos' | 'dot' | 'euc'; draw(); });
+  const setUnit = check('unit', (on) => { state.unit = on; draw(); });
+  const setProj = check('proj', (on) => { state.proj = on; draw(); });
+
+  function show(score: 'cos' | 'dot' | 'euc', deg: number, len: number, compare = 'best', proj = state.proj) {
+    state.score = score;
+    scores.select(score);
+    state.qa = rad(deg);
+    state.ql = len;
+    state.unit = false;
+    setUnit(false);
+    state.proj = proj;
+    setProj(proj);
+    state.compare = compare;
+    sel.value = compare;
+    draw();
+  }
+  tries({
+    cos: () => show('cos', 224, 0.8),
+    shadow: () => show('cos', 200, 1.2, 'cat', true),
+    dot: () => show('dot', 224, 0.8),
+    dist: () => show('euc', 168, 0.5),
+  });
 
   let dragging = false;
   const pointer = (e: PointerEvent) => {

@@ -3,10 +3,10 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
 import Checks from '../../../components/sim/Checks.astro';
-import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -43,26 +43,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Lower the <b>decay a</b> towards zero. The pole at s = −a slides right
-      until it sits on the imaginary axis, and the whole landscape lifts near
-      it: a signal that never dies out makes the transform blow up on the axis.
+      Lower the <b>decay a</b> to zero: the pole slides onto the imaginary axis
+      and the amber slice spikes right there. A signal that never dies out has no
+      finite Fourier transform. <Try id="edge" />
     </li>
     <li>
-      Push <b>a</b> negative. The signal now grows, the <b>ROC</b> half-plane
-      retreats to the right of the axis, and the amber slice no longer lives
-      inside it. That is exactly when the Fourier transform stops existing
-      while the Laplace transform is still perfectly fine.
+      Push <b>a</b> negative: the signal grows, the <b>region of convergence</b>
+      retreats to the right of the axis, and the Fourier transform no longer
+      exists. The Laplace transform still does. <Try id="grow" />
     </li>
     <li>
-      Switch to <b>e<sup>−at</sup>sin ωt</b> and raise ω. The single spike
-      splits into a conjugate pair at s = −a ± jω, and the amber slice grows two
-      resonant humps at those frequencies: poles near the axis are exactly what
-      a sharp resonance looks like from the frequency side.
+      On <b>e<sup>−at</sup>sin ωt</b> the poles are a pair at −a ± jω, and the
+      slice has humps at ±ω. With a small a they become a sharp
+      <b>resonance</b>. <Try id="resonance" />
     </li>
     <li>
-      Compare <b>e<sup>−at</sup></b> with <b>t·e<sup>−at</sup></b>. Same pole
-      location, but the double pole makes a taller, broader spike: repeated
-      poles are polynomial factors of t in time.
+      Compare <b>e<sup>−at</sup></b> with <b>t·e<sup>−at</sup></b>: same pole,
+      but the double pole is wider near it and falls off faster away from it.
+      A repeated pole is a factor of t in time. <Try id="double" />
     </li>
   </Fragment>
 </SimLayout>
@@ -70,7 +68,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
 
   // --- complex helpers -----------------------------------------------------
   type C = { re: number; im: number };
@@ -84,6 +82,7 @@ import Readout from '../../../components/sim/Readout.astro';
 
   const setEq = equation();
   const setResult = result();
+  const setRows = readout();
   const state = { sig: 'exp', a: 0.6, w: 2.5, roc: true, slice: true, yaw: 0.72, pitch: -0.62 };
 
   // F(s) for each signal, plus the time-domain formula and a pretty label.
@@ -316,18 +315,13 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   function updateReadout() {
-    const set = (id: string, v: string) => { const n = document.getElementById(id); if (n) n.textContent = v; };
     const p = poles();
     const rep = state.sig === 'ramp';
-    set('fs', formula());
-    set(
-      'poles',
-      p.length === 1
-        ? `s = ${p[0].re.toFixed(2)}${rep ? ' (double)' : ''}`
-        : `s = ${p[0].re.toFixed(2)} ± ${state.w.toFixed(1)}j`
-    );
-    set('rocv', `Re(s) > ${(-state.a).toFixed(2)}`);
-    set('fourier', -state.a < 0 ? 'exists (axis inside ROC)' : 'does not converge');
+    setRows({
+      fs: formula(),
+      rocv: `Re(s) > ${(-state.a).toFixed(2)}`,
+      fourier: -state.a < 0 ? 'exists (axis inside ROC)' : 'does not converge',
+    });
     const TIME: Record<string, string> = {
       exp: 'e^{-at}',
       ramp: 't\\,e^{-at}',
@@ -378,18 +372,33 @@ import Readout from '../../../components/sim/Readout.astro';
     wctl.style.opacity = usable ? '1' : '0.4';
     (el('w') as HTMLInputElement).disabled = !usable;
   }
-  segmented('sig', (s) => {
+  const sigSeg = segmented('sig', (s) => {
     state.sig = s;
     syncFreqControl();
     draw();
   });
-  slider('a', (v) => { state.a = v; draw(); }, (v) => v.toFixed(2));
-  slider('w', (v) => { state.w = v; draw(); }, (v) => v.toFixed(2));
+  const setA = slider('a', (v) => { state.a = v; draw(); }, (v) => v.toFixed(2));
+  const setW = slider('w', (v) => { state.w = v; draw(); }, (v) => v.toFixed(2));
   check('roc', (on) => { state.roc = on; draw(); });
   check('slice', (on) => { state.slice = on; draw(); });
 
-  syncFreqControl();
-  draw();
+  function show(sig: string, a: number, w = state.w) {
+    state.sig = sig;
+    sigSeg.select(sig);
+    state.a = a;
+    setA(a);
+    state.w = w;
+    setW(w);
+    syncFreqControl();
+    draw();
+  }
+  tries({
+    edge: () => show('exp', 0),
+    grow: () => show('exp', -0.5),
+    resonance: () => show('sin', 0.15, 3),
+    double: () => show('ramp', 0.6),
+  });
+
   syncFreqControl();
   draw();
 </script>

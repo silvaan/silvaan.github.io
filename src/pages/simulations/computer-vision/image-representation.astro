@@ -5,6 +5,7 @@ import Slider from '../../../components/sim/Slider.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -61,6 +62,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { id: 'r-lev', label: 'values one number can take' },
           { id: 'r-size', label: 'size, uncompressed' },
           { id: 'r-under', label: 'under the magnifier' },
+          { id: 'r-light', label: 'centre pixel: light emitted, share of 255' },
         ]}
       />
     </div>
@@ -68,40 +70,21 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Move the magnifier. The same patch is a picture on the left and a table of
-      whole numbers on the right, at the same moment, and the table is not a
-      description of the picture: it is the picture. Nothing else is stored.
+      Move the magnifier. The table of whole numbers on the right is not a
+      description of the patch: it <b>is</b> the patch, and nothing else is stored. <Try id="table" />
     </li>
     <li>
-      Switch the patch to <b>as brightness</b> and the table turns back into the
-      photograph. Numbers and shades are the same thing shown two ways, and the
-      only reason the left panel looks continuous is that the squares are small.
+      Show <b>red</b> alone: a grey picture, as are green and blue. A colour
+      pixel is a triple, and the colour lives in the ratio between the three. <Try id="red" />
     </li>
     <li>
-      With <b>all three</b> shown, every cell carries three numbers, not one. A
-      colour pixel is a triple, so a photograph this size is
-      <b>76,800 numbers</b> rather than 25,600.
+      Drag <b>bits per number</b> down. Around four bits the smooth areas break
+      into <b>bands</b>, at one the photograph is a stencil. <Try id="bits" />
     </li>
     <li>
-      Look at <b>red</b>, then <b>green</b>, then <b>blue</b>. Three grey
-      pictures, each meaningless on its own, and none of them coloured. The
-      colour was never in a channel, it is in the ratio between them.
-    </li>
-    <li>
-      Now drag <b>bits per number</b> down. At eight nothing happens, at six you
-      have to look, at four the smooth areas break into <b>bands</b>, and at one
-      the photograph is a stencil. A picture is a quantised measurement, and the
-      bands are the moment the grid of values becomes too coarse to hide.
-    </li>
-    <li>
-      The banding appears in the sky and the skin first, never in the detailed
-      parts. Quantising is a fixed absolute error, so it only shows where the
-      picture was changing more slowly than the error.
-    </li>
-    <li>
-      One number is not an amount of light. It is a code, and the ramp from 0 to
-      255 was chosen to suit the eye, which is why 128 does not look half as
-      bright as 255.
+      A number is a code, not an amount of light. Grey 128 looks roughly
+      <b>halfway</b> but emits only about 22% of the light of 255 (sRGB); the
+      readout shows the light behind the centre pixel. <Try id="light" />
     </li>
   </Fragment>
 </SimLayout>
@@ -110,7 +93,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   const R = '#f87171', G = '#34d399', B = '#60a5fa', FIELD = '#f59e0b';
   const IMG = 160; // the photographs are 160 × 160
@@ -176,6 +159,16 @@ import Readout from '../../../components/sim/Readout.astro';
     if (p.length === 3) return [shade(p[0]), shade(p[1]), shade(p[2])];
     const v = shade(p[0]);
     return [v, v, v];
+  }
+  /** sRGB decoding: the share of full light a stored 0 … 255 shade really emits. */
+  const linear = (v: number) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  /** Light of a displayed pixel relative to white: Rec. 709 luminance of the decoded channels. */
+  function light(i: number) {
+    const [r, g, b] = rgb(i);
+    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
   }
   const css = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
   const CHAN_NAME: Record<string, string> = {
@@ -335,6 +328,13 @@ import Readout from '../../../components/sim/Readout.astro';
     );
   }
 
+  function centreLight(p: { k: number; x: number; y: number }) {
+    const i = (p.y + (p.k >> 1)) * IMG + (p.x + (p.k >> 1));
+    const v = rgb(i);
+    const txt = v[0] === v[1] && v[1] === v[2] ? `shade ${v[0]}` : `(${v.join(', ')})`;
+    return `${txt}: ${(light(i) * 100).toFixed(0)}%`;
+  }
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
     const p = patch();
@@ -363,6 +363,7 @@ import Readout from '../../../components/sim/Readout.astro';
       'r-lev': String(levels()),
       'r-size': `${kb.toFixed(1)} kB`,
       'r-under': `${p.k * p.k} pixel${p.k > 1 ? 's' : ''}, ${p.k * p.k * chans} numbers`,
+      'r-light': ready ? centreLight(p) : '—',
     });
     setResult({
       value: nums.toLocaleString('en-US'),
@@ -393,10 +394,32 @@ import Readout from '../../../components/sim/Readout.astro';
   });
 
   segmented('pic', (p) => { state.pic = p; loadPhoto(p); });
-  segmented('chan', (c) => { state.chan = c; paint(); });
-  segmented('view', (v) => { state.view = v; draw(); });
-  slider('zoom', (v) => { state.zoom = v; draw(); }, (v) => `${v} × ${v} pixels`);
-  slider('bits', (v) => { state.bits = v; paint(); });
+  const chanSeg = segmented('chan', (c) => { state.chan = c; paint(); });
+  const views = segmented('view', (v) => { state.view = v; draw(); });
+  const setZoom = slider('zoom', (v) => { state.zoom = v; draw(); }, (v) => `${v} × ${v} pixels`);
+  const setBits = slider('bits', (v) => { state.bits = v; paint(); });
+
+  function show(o: { chan?: string; view?: string; zoom?: number; bits?: number }) {
+    if (o.chan) { state.chan = o.chan; chanSeg.select(o.chan); }
+    if (o.view) { state.view = o.view; views.select(o.view); }
+    if (o.zoom) { state.zoom = o.zoom; setZoom(o.zoom); }
+    if (o.bits) { state.bits = o.bits; setBits(o.bits); }
+    paint();
+    draw();
+  }
+  tries({
+    table: () => show({ chan: 'all', view: 'num', zoom: 6, bits: 8 }),
+    red: () => show({ chan: 'r', view: 'shade', bits: 8 }),
+    bits: () => show({ chan: 'all', view: 'shade', bits: 3 }),
+    light: () => {
+      // centre the magnifier on the pixel whose grey value is closest to 128
+      let best = 0;
+      for (let i = 0; i < IMG * IMG; i++) if (Math.abs(grey[i] - 128) < Math.abs(grey[best] - 128)) best = i;
+      state.cx = best % IMG;
+      state.cy = Math.floor(best / IMG);
+      show({ chan: 'grey', view: 'num', zoom: 6, bits: 8 });
+    },
+  });
 
   loadPhoto(state.pic);
 </script>

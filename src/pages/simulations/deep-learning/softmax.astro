@@ -5,6 +5,7 @@ import Slider from '../../../components/sim/Slider.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -57,40 +58,23 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Drag <b>add the same to every score</b>. Every bar on the left slides, and
-      not one probability on the right moves. Softmax reads only the
-      <b>differences</b> between scores, so the absolute values carry no meaning
-      at all.
+      Drag <b>add the same to every score</b>. Every score slides and not one
+      probability moves: softmax reads only the <b>differences</b>. <Try id="shift" />
     </li>
     <li>
-      Now take <b>temperature</b> down towards 0.1. The gap between the scores is
-      divided by a smaller and smaller number, so it grows, and the winner
-      swallows everything. At the limit softmax is just <b>pick the largest</b>,
-      which is where the name comes from.
+      Take <b>temperature</b> down to 0.1. The gaps are divided by a small
+      number, so they grow and the winner swallows everything: softmax becomes
+      <b>pick the largest</b>. <Try id="cold" />
     </li>
     <li>
-      Take it up instead. The differences are divided away to nothing, every
-      class converges on 1/5, and the model has stopped saying anything. The
-      lower plot is that whole journey: every curve starts apart on the left and
-      meets in the middle on the right.
+      Take it up instead. The gaps are divided away, every class heads for 1/5,
+      and <b>classes it really uses</b> (1 over the sum of squared
+      probabilities) climbs towards 5. <Try id="hot" />
     </li>
     <li>
-      Watch <b>classes it really uses</b>, which is 1 over the sum of the squared
-      probabilities. Near τ = 0 it is 1, near the far end it is 5, and in between
-      it tells you how many options are genuinely in play, which no single
-      probability can.
-    </li>
-    <li>
-      Pick <b>two are close</b> and sweep the temperature. The two leaders trade
-      almost all of the mass between them while the rest stay near zero, so
-      temperature does not spread attention evenly: it spreads it among whatever
-      was already competitive.
-    </li>
-    <li>
-      This is the same knob everywhere. It is the sampling temperature of a
-      language model, it is the τ that sharpens or flattens attention, and it is
-      the √d in the attention formula, which exists precisely to stop the scores
-      arriving too large and freezing the distribution.
+      On <b>Two are close</b>, the two leaders trade almost all the mass as τ
+      moves while the rest stay small: temperature spreads attention only among
+      what was already competitive. <Try id="close" />
     </li>
   </Fragment>
 </SimLayout>
@@ -99,7 +83,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   const WIN = '#5eead4', OTHER = '#7c8cff';
   const NAMES = ['cat', 'dog', 'bird', 'fish', 'tree'];
@@ -360,9 +344,30 @@ import Readout from '../../../components/sim/Readout.astro';
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
-  segmented('preset', (p) => { state.base = PRESETS[p].slice(); draw(); });
-  slider('temp', (v) => { state.temp = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
-  slider('shift', (v) => { state.shift = v / 100; draw(); }, (v) => fixed(v / 100, 2));
+  const presets = segmented('preset', (p) => { state.base = PRESETS[p].slice(); draw(); });
+  const setTemp = slider('temp', (v) => { state.temp = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  const setShift = slider('shift', (v) => { state.shift = v / 100; draw(); }, (v) => fixed(v / 100, 2));
+
+  /** A preset at a temperature and a shift, with the panel kept in step. */
+  function show(preset: string, temp: number, shift: number) {
+    state.base = PRESETS[preset].slice();
+    presets.select(preset);
+    state.temp = temp;
+    setTemp(Math.round(temp * 100));
+    state.shift = shift;
+    setShift(Math.round(shift * 100));
+    draw();
+  }
+  tries({
+    shift: () => {
+      state.shift = 2;
+      setShift(200);
+      draw();
+    },
+    cold: () => show('clear', 0.1, 0),
+    hot: () => show('clear', 4, 0),
+    close: () => show('close', 0.5, 0),
+  });
 
   draw();
 </script>

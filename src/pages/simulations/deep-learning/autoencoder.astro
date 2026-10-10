@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -37,6 +38,7 @@ import Readout from '../../../components/sim/Readout.astro';
       <Slider id="lat" label="Numbers in the gap" min={1} max={4} value={2} hint={['one', 'four']} />
       <Seg id="data" label="Pictures" attr="d" options={[{ value: 'digits', label: 'Digits' }, { value: 'blobs', label: 'Blobs' }]} />
       <Readout
+        title="Numbers"
         rows={[
           { id: 'r-err', label: 'reconstruction error' },
           { id: 'r-steps', label: 'training steps' },
@@ -51,38 +53,27 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Each picture arrives as 256 numbers and has to come back out of a gap of
-      two. Nothing is told to the network about digits, strokes or position: the
-      only instruction is to rebuild what it was given.
+      Train on digits. Nobody says what a digit is, yet similar pictures land
+      near each other: rebuilding from two numbers forces a <b>map</b>.
+      <Try id="train" label="Train" />
     </li>
     <li>
-      Let it train and watch the map fill in. Pictures that look alike end up
-      near each other, so the gap becomes a <b>map of pictures</b> rather than a
-      list of them, and that happened on its own.
+      Drag into the empty space between clusters. Nothing in the loss covers
+      those points, so what comes out there is a blend or junk: a plain
+      autoencoder's map has <b>holes</b>. A variational autoencoder adds noise to
+      the codes and pulls them towards one smooth cloud, which is what lets you
+      sample from it.
     </li>
     <li>
-      Drag through the empty parts between the points. A picture comes out
-      everywhere, and it changes smoothly as you move, sliding from one digit
-      into another. That smoothness is the property every generative model is
-      built on.
+      With <b>1</b> number everything lies on a line and the error jumps; each
+      extra number helps less. The panel keeps the best error per width.
+      <Try id="one" />
     </li>
     <li>
-      Set <b>numbers in the gap</b> to 1. Everything collapses onto a line, the
-      error jumps, and the reconstructions turn into an average of whatever was
-      nearby. One number is simply not enough addresses to go round.
-    </li>
-    <li>
-      Then try 3 and 4. The panel keeps the best error at each width, and the
-      gain from each extra number gets smaller. Where it stops mattering is the
-      number of things that genuinely vary in the data, which is what
-      <a href="/simulations/generative-ai/data-manifold">The Data Manifold</a>
-      is about.
-    </li>
-    <li>
-      Switch to <b>blobs</b>, where only the position of a spot ever changes. Two
-      numbers reach almost zero error and a third adds nothing, because the data
-      really is two-dimensional. Digits never get that clean, which is the honest
-      difference between a toy and a real dataset.
+      On <b>blobs</b> only a spot's position varies, so two numbers suffice:
+      the data really is two-dimensional, see
+      <a href="/simulations/generative-ai/data-manifold">The Data Manifold</a>.
+      <Try id="blobs" />
     </li>
   </Fragment>
 </SimLayout>
@@ -92,7 +83,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
   import { digitSet } from '../../../lib/digits';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   const PICK = '#7c8cff', DOT = '#5eead4', ERR = '#f87171';
   const IMG = 16, D = IMG * IMG, HID = 48, M = 500, BATCH = 10, SHOWN = 320;
@@ -494,9 +485,23 @@ import Readout from '../../../components/sim/Readout.astro';
     lastErr = measure();
   }
 
-  slider('lat', (v) => { state.lat = v; restart(); });
-  segmented('data', (d) => { state.data = d; restart(); });
-  transport({ onRun: (running) => (state.running = running), onReset: () => restart() });
+  const setLat = slider('lat', (v) => { state.lat = v; restart(); });
+  const datas = segmented('data', (d) => { state.data = d; restart(); });
+  const run = transport({ onRun: (running) => (state.running = running), onReset: () => restart() });
+
+  function train(data: string, lat: number) {
+    state.data = data;
+    datas.select(data);
+    state.lat = lat;
+    setLat(lat);
+    restart();
+    if (!run.running()) el('run').click();
+  }
+  tries({
+    train: () => train('digits', 2),
+    one: () => train('digits', 1),
+    blobs: () => train('blobs', 2),
+  });
 
   restart();
   requestAnimationFrame(frame);

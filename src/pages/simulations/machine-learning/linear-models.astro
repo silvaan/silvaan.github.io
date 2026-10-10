@@ -6,12 +6,15 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="machine-learning"
   title="Linear Models"
-  description="Linear and logistic regression score the input with the same line, z = wx + b. Change what the score turns into and the same descent fits both."
+  description="Linear and logistic regression score the input with the same line, z = wx + b. Draw each residual as a literal square, snap to the least-squares optimum, and watch the same descent fit both models."
 >
   <div class="sim">
     <div class="sim-view">
@@ -30,6 +33,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { label: 'class 1', color: '#5eead4', id: 'legend-class' },
           { label: 'the model', color: '#fbbf24' },
           { label: 'the gap the loss measures', color: '#f87171' },
+          { label: 'mean point (x̄, ȳ)', color: '#5eead4', id: 'legend-mean' },
         ]}
         hint="Drag a point to move it · click empty space to add one"
       />
@@ -43,31 +47,48 @@ import Readout from '../../../components/sim/Readout.astro';
       </Transport>
       <Slider id="w" label="Weight w" min={-200} max={500} value={0} display="0.00" />
       <Slider id="b" label="Bias b" min={-300} max={300} value={0} display="0.00" />
-      <Readout rows={[{ id: 'r-fit', label: 'R²' }, { id: 'r-steps', label: 'descent steps' }]} />
+      <div id="reg-tools" style="display: contents">
+        <Actions>
+          <button type="button" class="btn ghost" id="snap">Snap to least squares</button>
+        </Actions>
+        <Checks
+          items={[
+            { id: 'squares', label: 'Draw the residuals as squares', checked: true },
+            { id: 'ghost', label: 'Show the least-squares line' },
+          ]}
+        />
+      </div>
+      <Readout
+        rows={[
+          { id: 'r-fit', label: 'R²' },
+          { id: 'r-sse', label: 'sum of squares Σr²' },
+          { id: 'r-opt', label: 'least-squares optimum' },
+          { id: 'r-steps', label: 'descent steps' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Flip between the two models and watch what actually changes. The score
-      <b>z = wx + b is the same line either way</b>. Only what it turns into
-      changes: regression hands z back as the answer, classification squashes it
-      into a probability between 0 and 1.
+      Switch the <b>Model</b>. The score z = wx + b is the same line either way:
+      regression hands it back as the answer, classification squashes it into a
+      probability between 0 and 1. <Try id="clf" />
     </li>
     <li>
-      Press <b>Run</b> in both. The same descent loop fits both models, because
-      the gradient shown above the stage comes out
-      <b>identical</b>: (prediction − y)·x, averaged over the points.
+      Press <b>Run</b> in either model. One descent loop fits both, because the
+      gradient comes out identical: (prediction − y)·x, averaged over the points.
+      <Try id="run" label="Run" />
     </li>
     <li>
-      In regression, drag one point far away from the others. The whole line
-      swings toward it, because its error is <b>squared</b>.
+      Each residual is drawn as a square. Tilt the line and the squares grow;
+      <b>Snap to least squares</b> gives the smallest total area, and that line
+      passes through the mean point (x̄, ȳ). <Try id="worse" />
     </li>
     <li>
-      In classification, drag a point across to the wrong side. The curve leans
-      to reach it, but a probability can only ever slide between 0 and 1, so a
-      few stragglers <b>cannot pull the model apart</b> the way one outlier pulls
-      a regression line.
+      Drag one point far off the trend. Its square dwarfs the rest, so the
+      optimum swings toward it: least squares is not <b>robust</b>.
+      <Try id="outlier" />
     </li>
   </Fragment>
 </SimLayout>
@@ -76,7 +97,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   type Pt = { x: number; y: number };
   type Mode = 'reg' | 'clf';
@@ -86,9 +107,9 @@ import Readout from '../../../components/sim/Readout.astro';
   const YRR = [-5, 5] as const; // targets, regression
   const YRC = [-0.3, 1.3] as const; // targets, classification
   const LR = 0.3;
-  const C0 = '#7c8cff', C1 = '#5eead4', MODEL = '#fbbf24', ERR = '#f87171';
+  const C0 = '#7c8cff', C1 = '#5eead4', MODEL = '#fbbf24', ERR = '#f87171', MEAN = '#5eead4';
 
-  const state = { mode: 'reg' as Mode, w: 0, b: 0, running: false, steps: 0, seed: 7 };
+  const state = { mode: 'reg' as Mode, w: 0, b: 0, running: false, steps: 0, seed: 7, squares: true, ghost: false };
   const DATA: Record<Mode, Pt[]> = { reg: [], clf: [] };
 
   const canvas = el('lm') as HTMLCanvasElement;
@@ -149,6 +170,22 @@ import Readout from '../../../components/sim/Readout.astro';
     const n = Math.max(1, P.length);
     return { L: L / n, gw: gw / n, gb: gb / n, pred };
   }
+  /** The closed-form least-squares line for the regression points, and their mean point. */
+  function ols() {
+    const P = DATA.reg, n = P.length;
+    if (!n) return null;
+    let mx = 0, my = 0;
+    for (const p of P) { mx += p.x; my += p.y; }
+    mx /= n; my /= n;
+    let sxx = 0, sxy = 0;
+    for (const p of P) { sxx += (p.x - mx) ** 2; sxy += (p.x - mx) * (p.y - my); }
+    if (n < 2 || sxx < 1e-9) return { mx, my, w: NaN, b: NaN, sse: NaN };
+    const w = sxy / sxx, b = my - w * mx;
+    let sse = 0;
+    for (const p of P) sse += (p.y - (w * p.x + b)) ** 2;
+    return { mx, my, w, b, sse };
+  }
+
   /** R² for regression, plain accuracy for classification. */
   function quality(pred: number[]) {
     const P = pts();
@@ -192,6 +229,26 @@ import Readout from '../../../components/sim/Readout.astro';
     label('x', W - PAD.r, H - PAD.b + 19, 0.5, 'right', 11);
     label(reg ? 'y' : 'class', PAD.l - 9, PAD.t + 2, 0.5, 'right', 11);
 
+    const opt = reg ? ols() : null;
+    // in regression each residual is also drawn as a literal square of side |ŷ − y|
+    if (reg && state.squares) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(PAD.l, PAD.t, W - PAD.l - PAD.r, H - PAD.t - PAD.b);
+      ctx.clip();
+      ctx.fillStyle = `${ERR}24`;
+      ctx.strokeStyle = `${ERR}66`;
+      ctx.lineWidth = 1;
+      P.forEach((p, i) => {
+        const a = sy(p.y), c = sy(r.pred[i]);
+        const side = Math.abs(a - c);
+        const dir = p.y >= r.pred[i] ? 1 : -1;
+        ctx.fillRect(sx(p.x), Math.min(a, c), dir * side, side);
+        ctx.strokeRect(sx(p.x), Math.min(a, c), dir * side, side);
+      });
+      ctx.restore();
+    }
+
     // the gap each point contributes to the loss
     ctx.strokeStyle = `${ERR}80`;
     ctx.lineWidth = 1.6;
@@ -206,6 +263,16 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.beginPath();
     ctx.rect(PAD.l, PAD.t, W - PAD.l - PAD.r, H - PAD.t - PAD.b);
     ctx.clip();
+    if (opt && state.ghost && Number.isFinite(opt.w)) {
+      ctx.setLineDash([7, 6]);
+      ctx.strokeStyle = ink(0.45);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(sx(XR[0]), sy(opt.w * XR[0] + opt.b));
+      ctx.lineTo(sx(XR[1]), sy(opt.w * XR[1] + opt.b));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.strokeStyle = MODEL;
     ctx.lineWidth = 2.6;
     ctx.beginPath();
@@ -241,10 +308,20 @@ import Readout from '../../../components/sim/Readout.astro';
       ctx.fill();
       ctx.stroke();
     }
-    words(r);
+    if (opt) {
+      ctx.fillStyle = MEAN;
+      ctx.strokeStyle = bg();
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx(opt.mx), sy(opt.my), 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      label('(x̄, ȳ)', sx(opt.mx) + 9, sy(opt.my) - 8, 0.6, 'left', 11, MEAN);
+    }
+    words(r, opt);
   }
 
-  function words(r: ReturnType<typeof evalModel>) {
+  function words(r: ReturnType<typeof evalModel>, opt: ReturnType<typeof ols>) {
     const reg = state.mode === 'reg';
     const n = pts().length;
     const q = quality(r.pred);
@@ -262,16 +339,28 @@ import Readout from '../../../components/sim/Readout.astro';
       ],
     });
     el('result-label').textContent = reg ? 'Loss, squared error' : 'Loss, log-loss';
+    const sse = 2 * n * r.L; // L is half the mean squared error
+    const optSse = opt && Number.isFinite(opt.sse) ? opt.sse : NaN;
+    const gap = sse - optSse;
     setResult({
       value: n ? fixed(r.L, 4) : '—',
       colour: ERR,
       status: Number.isNaN(q) ? 'Add some points' : reg ? `R² = ${q.toFixed(3)} · ${state.steps} descent steps` : `Accuracy ${(q * 100).toFixed(0)}% · ${state.steps} descent steps`,
       note: reg
-        ? 'The prediction is the score itself, and the error it is scored on is squared.'
+        ? Number.isFinite(gap)
+          ? gap < 1e-3 * Math.max(1, optSse)
+            ? 'At the least-squares optimum: no line gives the squares a smaller total area, and it passes through (x̄, ȳ).'
+            : `The squares total ${sse.toFixed(2)}, which is ${gap.toFixed(2)} more than the least-squares line manages.`
+          : 'The prediction is the score itself, and the error it is scored on is squared.'
         : 'The score is squashed into a probability, yet the gradient formula is unchanged.',
     });
     el('r-fit').previousElementSibling!.textContent = reg ? 'R²' : 'accuracy';
-    setRows({ 'r-fit': Number.isNaN(q) ? '—' : reg ? q.toFixed(3) : `${(q * 100).toFixed(0)}%`, 'r-steps': String(state.steps) });
+    setRows({
+      'r-fit': Number.isNaN(q) ? '—' : reg ? q.toFixed(3) : `${(q * 100).toFixed(0)}%`,
+      'r-sse': reg && n ? sse.toFixed(3) : '—',
+      'r-opt': reg && Number.isFinite(optSse) ? optSse.toFixed(3) : '—',
+      'r-steps': String(state.steps),
+    });
   }
 
   // ---- descent ------------------------------------------------------------
@@ -333,13 +422,34 @@ import Readout from '../../../components/sim/Readout.astro';
   const setB = slider('b', (v) => { state.b = v / 100; state.steps = 0; stopRun(); draw(); }, (v) => (v / 100).toFixed(2));
   const syncSliders = () => { setW(Math.round(state.w * 100)); setB(Math.round(state.b * 100)); };
 
-  segmented('mode', (m) => {
-    state.mode = m as Mode;
-    el('legend-class').hidden = state.mode === 'reg';
-    el('legend-data').textContent = state.mode === 'reg' ? 'data' : 'class 0';
+  function setMode(m: Mode) {
+    state.mode = m;
+    modes.select(m);
+    const reg = m === 'reg';
+    el('legend-class').hidden = reg;
+    el('legend-mean').hidden = !reg;
+    el('legend-data').textContent = reg ? 'data' : 'class 0';
+    el('reg-tools').style.display = reg ? 'contents' : 'none';
+    el('r-sse').parentElement!.style.display = reg ? '' : 'none';
+    el('r-opt').parentElement!.style.display = reg ? '' : 'none';
     resetWeights();
     draw();
-  });
+  }
+  const modes = segmented('mode', (m) => setMode(m as Mode));
+
+  function snapToOptimum() {
+    const o = ols();
+    if (!o || !Number.isFinite(o.w)) return;
+    stopRun();
+    state.w = o.w;
+    state.b = o.b;
+    state.steps = 0;
+    syncSliders();
+    draw();
+  }
+  el('snap').addEventListener('click', snapToOptimum);
+  const setSquares = check('squares', (on) => { state.squares = on; draw(); });
+  check('ghost', (on) => { state.ghost = on; draw(); });
   const controls = transport({
     onRun: (running) => (state.running = running),
     onStep: () => { stopRun(); stepOnce(); draw(); },
@@ -369,9 +479,42 @@ import Readout from '../../../components/sim/Readout.astro';
     requestAnimationFrame(loop);
   }
 
+  tries({
+    clf: () => {
+      setMode('clf');
+      controls.setRunning(true);
+      state.running = true;
+    },
+    run: () => {
+      if (state.mode !== 'reg') setMode('reg');
+      else resetWeights();
+      controls.setRunning(true);
+      state.running = true;
+    },
+    worse: () => {
+      if (state.mode !== 'reg') setMode('reg');
+      stopRun();
+      state.squares = true;
+      setSquares(true);
+      state.w = 0.3;
+      state.b = 1.5;
+      state.steps = 0;
+      syncSliders();
+      draw();
+    },
+    outlier: () => {
+      setMode('reg');
+      state.seed = 7;
+      genData();
+      DATA.reg[DATA.reg.length - 2] = { x: 2.6, y: -4.4 };
+      state.squares = true;
+      setSquares(true);
+      snapToOptimum();
+    },
+  });
+
   genData();
-  el('legend-class').hidden = true;
-  draw();
+  setMode('reg');
   requestAnimationFrame(loop);
 </script>
 

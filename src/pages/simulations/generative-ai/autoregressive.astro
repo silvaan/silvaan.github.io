@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -66,48 +67,21 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Look at the vocabulary map at the bottom: <b>every one of the 40 words has
-      a bar at every step</b>, even the absurd ones. Words the model has seen
-      after this context get most of the probability, the rest get a sliver.
-      That sliver is the whole reason top-k and top-p exist.
+      Every one of the 40 words has a bar at every step, never zero. Leave both
+      cuts off and run: sooner or later a <b>tail</b> word wins and the sentence
+      derails. <Try id="tail" label="Run" />
     </li>
     <li>
-      Set <b>top-k</b> to 1. That is greedy: the tallest bar wins every time,
-      nothing is random, and the text falls into a loop. Slide it back up and
-      the loop breaks.
+      Set <b>top-k</b> to 1. The tallest bar always wins, nothing is random, and
+      the text falls into a <b>loop</b>. <Try id="greedy" label="Run" />
     </li>
     <li>
-      Leave both cuts off and run. The dart can land anywhere, so sooner or
-      later a word from the sliver tail wins and the sentence derails. Any one
-      of them is unlikely, but there are 35 of them.
+      <b>Top-p</b> keeps the fewest words that add up to p, so "kept by the cut"
+      shrinks where the model is sure and grows where it hesitates. <Try id="topp" label="Run" />
     </li>
     <li>
-      <b>Top-k</b> keeps a fixed count. When the model is certain, k = 10 drags
-      in nine words it did not believe in; when it is genuinely torn, the same
-      k = 10 may cut off good ones. The count is fixed, the confidence is not.
-    </li>
-    <li>
-      <b>Top-p</b> instead keeps the fewest words whose probabilities already
-      add up to p. Watch "kept by the cut" as you step: it shrinks to 1 or 2
-      where the model is sure and swells where it hesitates. Holding the mass
-      fixed is what makes the cut adapt.
-    </li>
-    <li>
-      Drag <b>temperature</b> without stepping. The pale bars, the model's own
-      probabilities, never move; the solid bars do. Near 0 everything collapses
-      onto the top word, high up they flatten toward uniform. The same numbers,
-      only reshaped before the cut.
-    </li>
-    <li>
-      The strip is where sampling becomes concrete: the surviving words laid end
-      to end from 0 to 1, each as wide as its probability, and a random number
-      thrown at it. Wide segments win often, slivers win rarely, and that is all
-      "sampling from a distribution" means.
-    </li>
-    <li>
-      Raise <b>context length</b>. With one word the text wanders; with three it
-      can only replay phrases it has seen. Fluent and unoriginal, or original
-      and unhinged, is the trade every language model lives on.
+      Drag <b>temperature</b>: the pale bars (the model's own probabilities)
+      stay put while the solid ones flatten as T rises. <Try id="hot" />
     </li>
   </Fragment>
 </SimLayout>
@@ -115,7 +89,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // The next-token loop, one panel per stage: the text so far, a probability for
@@ -718,19 +692,42 @@ import Readout from '../../../components/sim/Readout.astro';
     state.greedy = g;
     wrapEl.classList.toggle('greedy', g);
   };
-  segmented('mode', (m) => setGreedy(m === 'greedy'));
+  const modes = segmented('mode', (m) => setGreedy(m === 'greedy'));
 
   (el('k') as HTMLInputElement).max = String(V);
   (el('k') as HTMLInputElement).value = String(V);
   slider('n', (v) => (state.n = v));
-  slider('t', (v) => (state.temp = v / 100), (v) => (v / 100).toFixed(2));
-  slider('k', (v) => (state.k = v), (v) => (v >= V ? 'off' : v === 1 ? '1 (greedy)' : String(v)));
-  slider('p', (v) => (state.p = v / 100), (v) => (v >= 100 ? 'off' : (v / 100).toFixed(2)));
+  const setT = slider('t', (v) => (state.temp = v / 100), (v) => (v / 100).toFixed(2));
+  const setK = slider('k', (v) => (state.k = v), (v) => (v >= V ? 'off' : v === 1 ? '1 (greedy)' : String(v)));
+  const setP = slider('p', (v) => (state.p = v / 100), (v) => (v >= 100 ? 'off' : (v / 100).toFixed(2)));
   slider('sp', (v) => (state.speed = v));
-  transport({
+  const controls = transport({
     onRun: (running) => (state.running = running),
     onStep: () => stepOnce(),
     onReset: () => seed(),
+  });
+
+  /** Sampling mode with the given knobs; optionally restart the text and run. */
+  function show(o: { temp: number; k: number; p: number; run: boolean }) {
+    setGreedy(false);
+    modes.select('sample');
+    state.temp = o.temp;
+    setT(Math.round(o.temp * 100));
+    state.k = o.k;
+    setK(o.k);
+    state.p = o.p;
+    setP(Math.round(o.p * 100));
+    if (o.run) {
+      seed();
+      state.running = true;
+      controls.setRunning(true);
+    }
+  }
+  tries({
+    tail: () => show({ temp: 0.8, k: V, p: 1, run: true }),
+    greedy: () => show({ temp: 0.8, k: 1, p: 1, run: true }),
+    topp: () => show({ temp: 0.8, k: V, p: 0.9, run: true }),
+    hot: () => show({ temp: 1.8, k: V, p: 1, run: false }),
   });
 
   buildModels();

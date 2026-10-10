@@ -105,6 +105,29 @@ export function result(id = 'result') {
   };
 }
 
+/**
+ * The "Show me" buttons of the What-to-observe list (the Try component). Each
+ * handler puts the sim in the state its item talks about; the stage is
+ * scrolled back into view so the result is actually seen. A button with no
+ * handler is hidden rather than left dead.
+ */
+export function tries(handlers: Record<string, () => void>) {
+  document.querySelectorAll<HTMLButtonElement>('button[data-try]').forEach((btn) => {
+    const go = handlers[btn.dataset.try ?? ''];
+    if (!go) {
+      btn.hidden = true;
+      return;
+    }
+    btn.addEventListener('click', () => {
+      go();
+      const stage = document.querySelector('.sim-stage');
+      const box = stage?.getBoundingClientRect();
+      if (stage && box && (box.top < 0 || box.bottom > window.innerHeight))
+        stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+}
+
 /** Write a set of readout rows by id, skipping the DOM when nothing changed. */
 export function readout() {
   const cache = new Map<string, string>();

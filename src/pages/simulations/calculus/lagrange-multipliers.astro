@@ -7,12 +7,14 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Lagrange Multipliers"
   description="Stand the objective up as a hill and the constraint becomes a fence winding across it. Walk the fence to its highest point: there the ground is tangent to a contour line, which is exactly the statement that the two gradients line up."
+  shortcuts={['animate', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -21,43 +23,47 @@ import Readout from '../../../components/sim/Readout.astro';
       </div>
       <Caption
         legend={[{ label: 'the fence, f along the constraint', color: '#f59e0b' }, { label: '∇f', color: '#a78bfa' }, { label: '∇g', color: '#22d3ee' }, { label: 'the top of the fence', color: '#34d399' }]}
-        hint="Drag to orbit · scroll to zoom · the ball rolls to wherever the slope along the fence is zero"
+        hint="Drag to orbit · scroll to zoom · Walk uphill climbs the fence until the slope along it is zero"
       />
       <Result label="Slope along the fence" />
     </div>
     <div class="sim-panel">
-      <Transport reset={false}>
-        <button type="button" class="btn ghost" id="snap">Walk to the top</button>
-      </Transport>
       <Seg id="obj" label="Objective f(x, y)" attr="o" options={[{ value: 'sum', label: 'x + y' }, { value: 'prod', label: 'x · y' }, { value: 'tilt', label: '2x + y' }]} />
       <Slider id="theta" label="Where on the fence" min={0} max={360} value={40} display="40°" />
+      <Slider id="rad" label="Circle radius r (g = x² + y² = r²)" min={0.4} max={1.4} step={0.01} value={1} display="1.00" />
+      <Transport animate="Walk uphill" reset={false} />
       <Checks items={[{ id: 'wall', label: 'Show the constraint wall', checked: true }, { id: 'spin', label: 'Spin the scene' }]} />
-      <Readout rows={[{ id: 'r1', label: 'height f here' }, { id: 'r3', label: '∠(∇f, ∇g)' }, { id: 'r4', label: 'multiplier λ' }]} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r1', label: 'height f here' },
+          { id: 'r3', label: '∠(∇f, ∇g)' },
+          { id: 'r4', label: 'multiplier λ here' },
+          { id: 'r5', label: 'best height f* on this circle' },
+          { id: 'r6', label: 'df* / d(r²)' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      The fence is the constraint circle lifted onto the hill, so its height is
-      the objective. Optimizing under a constraint is just <b>finding the highest
-      point of that fence</b>, and the flat spots are where walking along it
-      stops changing your height.
+      Press <b>Walk uphill</b>: the ball climbs the fence and stops where the
+      slope along it is zero. There the floor contour is tangent to the circle.
+      <Try id="walk" label="Walk" />
     </li>
     <li>
-      Watch the slope-along-the-fence readout as you drag. Where the contour on
-      the ground <b>crosses</b> the circle the slope is nonzero, so you can still
-      climb. At the top it passes through <b>zero</b>: the contour there is
-      tangent to the circle.
+      At the top ∇f and ∇g are 0° apart, so <b>∇f = λ∇g</b>. Away from the peaks
+      and dips they disagree and there is still uphill left. <Try id="align" />
     </li>
     <li>
-      Tangent contours mean the two ground gradients point the same way, so
-      <b>∇f = λ∇g</b>. The angle between them hits 0° exactly when the slope
-      along the fence hits 0. That is the whole method in one picture.
+      Change the radius <b>r</b> and the best height changes with it. At the
+      top, λ equals df*/d(r²): the multiplier is the price of loosening the
+      constraint. <Try id="price" />
     </li>
     <li>
-      The multiplier λ is how steeply the peak height would rise if you let the
-      circle grow. Switch objectives: x · y gives four flat spots, two peaks and
-      two dips, and the fence has a top and a bottom to match.
+      On <b>x · y</b> the fence has two peaks and two dips. Walking uphill finds
+      the peak on your side, not always the same one. <Try id="twin" />
     </li>
   </Fragment>
 </SimLayout>
@@ -65,24 +71,25 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
 
   type Obj = {
     f: (x: number, y: number) => number;
     grad: (x: number, y: number) => [number, number];
   };
-  const OBJ: Record<string, Obj> = {
-    sum: { f: (x, y) => x + y, grad: () => [1, 1] },
-    prod: { f: (x, y) => x * y, grad: (x, y) => [y, x] },
-    tilt: { f: (x, y) => 2 * x + y, grad: () => [2, 1] },
+  const OBJ: Record<string, Obj & { deg: number }> = {
+    sum: { f: (x, y) => x + y, grad: () => [1, 1], deg: 1 },
+    prod: { f: (x, y) => x * y, grad: (x, y) => [y, x], deg: 2 },
+    tilt: { f: (x, y) => 2 * x + y, grad: () => [2, 1], deg: 1 },
   };
 
   const state = {
     obj: 'sum',
     theta: (40 * Math.PI) / 180,
+    r: 1,
     wall: true,
     spin: false,
-    running: false,
+    walking: false,
     yaw: 0.7,
     pitch: -0.62,
     zoom: 1,
@@ -160,7 +167,7 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   const gpt = (th: number) => {
-    const x = Math.cos(th), y = Math.sin(th);
+    const x = state.r * Math.cos(th), y = state.r * Math.sin(th);
     return { x, y, z: f(x, y) * ZS };
   };
 
@@ -171,7 +178,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.beginPath();
     for (let i = 0; i <= 90; i++) {
       const a = (i / 90) * Math.PI * 2;
-      const p = project(Math.cos(a), Math.sin(a), 0);
+      const p = project(state.r * Math.cos(a), state.r * Math.sin(a), 0);
       i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
     }
     ctx.stroke();
@@ -263,14 +270,28 @@ import Readout from '../../../components/sim/Readout.astro';
   // --- the current point ------------------------------------------------------
 
   function slopeAlong(th: number) {
-    // d/dθ f(cosθ, sinθ) = ∇f · (−sinθ, cosθ)
-    const g = OBJ[state.obj].grad(Math.cos(th), Math.sin(th));
-    return g[0] * -Math.sin(th) + g[1] * Math.cos(th);
+    // d/dθ f(r cosθ, r sinθ) = ∇f · r(−sinθ, cosθ)
+    const g = OBJ[state.obj].grad(state.r * Math.cos(th), state.r * Math.sin(th));
+    return state.r * (g[0] * -Math.sin(th) + g[1] * Math.cos(th));
+  }
+  /** The fence height at angle θ. */
+  const fAt = (th: number) => f(state.r * Math.cos(th), state.r * Math.sin(th));
+  /** The highest point of the fence, sampled finely. */
+  function best() {
+    let v = -Infinity;
+    for (let i = 0; i < 3600; i++) v = Math.max(v, fAt((i / 3600) * Math.PI * 2));
+    return v;
+  }
+  /** The largest |slope| on the fence, to scale the walk to the objective. */
+  function slopeScale() {
+    let m = 1e-6;
+    for (let i = 0; i < 360; i++) m = Math.max(m, Math.abs(slopeAlong((i / 360) * Math.PI * 2)));
+    return m;
   }
 
   function drawPoint() {
     const th = state.theta;
-    const x = Math.cos(th), y = Math.sin(th);
+    const x = state.r * Math.cos(th), y = state.r * Math.sin(th);
     const g = gpt(th);
 
     // ground gradients: ∇f and ∇g (radial), the tangency test
@@ -315,7 +336,7 @@ import Readout from '../../../components/sim/Readout.astro';
     const px = SIDE.x + 40, py = SIDE.y + 40, pw = SIDE.w - 62, ph = SIDE.h - 160;
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i <= 200; i++) {
-      const v = f(Math.cos((i / 200) * Math.PI * 2), Math.sin((i / 200) * Math.PI * 2));
+      const v = fAt((i / 200) * Math.PI * 2);
       lo = Math.min(lo, v);
       hi = Math.max(hi, v);
     }
@@ -348,7 +369,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.beginPath();
     for (let i = 0; i <= 200; i++) {
       const th = (i / 200) * Math.PI * 2;
-      const v = f(Math.cos(th), Math.sin(th));
+      const v = fAt(th);
       i ? ctx.lineTo(X(th), Y(v)) : ctx.moveTo(X(th), Y(v));
     }
     ctx.stroke();
@@ -357,7 +378,7 @@ import Readout from '../../../components/sim/Readout.astro';
     for (let i = 0; i < 360; i++) {
       const a = (i / 360) * Math.PI * 2, b = ((i + 1) / 360) * Math.PI * 2;
       if (slopeAlong(a) >= 0 !== slopeAlong(b) >= 0) {
-        const th = (a + b) / 2, v = f(Math.cos(th), Math.sin(th));
+        const th = (a + b) / 2, v = fAt(th);
         const up = slopeAlong(a) > 0;
         ctx.fillStyle = up ? BALL : GRADF;
         ctx.beginPath();
@@ -367,7 +388,7 @@ import Readout from '../../../components/sim/Readout.astro';
     }
 
     // the current point
-    const th = state.theta, v = f(Math.cos(th), Math.sin(th));
+    const th = state.theta, v = fAt(th);
     ctx.strokeStyle = inkA(0.35);
     ctx.beginPath();
     ctx.moveTo(X(th), py);
@@ -397,19 +418,28 @@ import Readout from '../../../components/sim/Readout.astro';
   const setRows = readout();
 
   function updateReadout() {
-    const th = state.theta, x = Math.cos(th), y = Math.sin(th);
+    const th = state.theta, r = state.r, x = r * Math.cos(th), y = r * Math.sin(th);
     const gf = OBJ[state.obj].grad(x, y);
     const slope = slopeAlong(th);
     const dotv = gf[0] * x + gf[1] * y;
     const crossv = gf[0] * y - gf[1] * x;
     const ang = (Math.atan2(Math.abs(crossv), dotv) * 180) / Math.PI;
     const aligned = Math.min(ang, 180 - ang);
-    const lam = (gf[0] * x + gf[1] * y) / 2; // ∇f·∇g / |∇g|², with ∇g=(2x,2y), |∇g|²=4
-    const optimal = Math.abs(slope) < 0.02;
-    setRows({ r1: f(x, y).toFixed(3), r3: `${aligned.toFixed(1)}°`, r4: lam.toFixed(3) });
+    const lam = dotv / (2 * r * r); // ∇f·∇g / |∇g|², with ∇g = (2x, 2y), |∇g|² = 4r²
+    const optimal = Math.abs(slope) < 0.01 * slopeScale();
+    // f is homogeneous of degree k, so f* = c^(k/2)·f*(1) with c = r², and df*/dc = k f* / (2c)
+    const fStar = best();
+    const dfdc = (OBJ[state.obj].deg * fStar) / (2 * r * r);
+    setRows({
+      r1: f(x, y).toFixed(3),
+      r3: `${aligned.toFixed(1)}°`,
+      r4: lam.toFixed(3),
+      r5: fStar.toFixed(3),
+      r6: dfdc.toFixed(3),
+    });
     setEq({
-      rule: [['\\nabla f', GRADF], '=\\lambda', ['\\nabla g', GRADG], '\\quad\\text{at the best point on the fence}'],
-      live: [[`\\angle(\\nabla f,\\nabla g)=${aligned.toFixed(1)}^{\\circ}`, aligned < 3 ? BALL : FENCE], `\\quad\\lambda = ${lam.toFixed(3)}`, [`\\quad\\text{slope along the fence}=${slope.toFixed(3)}`, optimal ? BALL : FENCE]],
+      rule: [['\\nabla f', GRADF], '=\\lambda', ['\\nabla g', GRADG], `,\\quad g = x^2+y^2 = r^2`],
+      live: [[`\\angle(\\nabla f,\\nabla g)=${aligned.toFixed(1)}^{\\circ}`, aligned < 3 ? BALL : FENCE], `\\quad\\lambda = ${lam.toFixed(3)}`, `\\quad \\tfrac{df^*}{d(r^2)} = ${dfdc.toFixed(3)}`],
     });
     setResult({
       value: slope.toFixed(3),
@@ -417,7 +447,9 @@ import Readout from '../../../components/sim/Readout.astro';
       status: optimal
         ? `${dotv > 0 ? 'at a peak' : 'at a dip'} · the two gradients line up, ${aligned.toFixed(1)}° apart · λ = ${lam.toFixed(3)}`
         : `can still climb · ∇f and ∇g are ${aligned.toFixed(1)}° apart · height ${f(x, y).toFixed(3)}`,
-      note: 'While the two arrows disagree there is uphill left along the fence; when they line up there is none. λ is how much of ∇g it takes to make ∇f.',
+      note: optimal && dotv > 0
+        ? `λ = ${lam.toFixed(3)} matches df*/d(r²) = ${dfdc.toFixed(3)}: how fast the best height rises as the constraint loosens.`
+        : 'While the two arrows disagree there is uphill left along the fence; when they line up there is none. λ is how much of ∇g it takes to make ∇f.',
     });
   }
 
@@ -442,37 +474,55 @@ import Readout from '../../../components/sim/Readout.astro';
   function frame(now: number) {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
-    if (state.running && state.spin) state.yaw += dt * 0.3;
+    if (state.spin) state.yaw += dt * 0.3;
+    if (state.walking) walk(dt);
     draw();
     requestAnimationFrame(frame);
   }
 
   // --- controls ---------------------------------------------------------------
 
-  // Run is the spin here, so pressing it switches the spin on rather than
-  // leaving the button doing nothing at all.
-  transport({
-    onRun: (running) => {
-      state.running = running;
-      if (running && !state.spin) {
-        state.spin = true;
-        setSpin(true);
-      }
-    },
-  });
-  const setTheta = slider('theta', (v) => (state.theta = (v * Math.PI) / 180), (v) => `${v}°`);
-  el('snap').addEventListener('click', () => {
-    let bestT = 0, bestV = -Infinity;
-    for (let i = 0; i < 3600; i++) {
-      const t = (i / 3600) * Math.PI * 2, v = f(Math.cos(t), Math.sin(t));
-      if (v > bestV) { bestV = v; bestT = t; }
-    }
-    state.theta = bestT;
-    setTheta(Math.round((bestT * 180) / Math.PI));
-  });
-  segmented('obj', (o) => (state.obj = o));
+  const TAU = Math.PI * 2;
+  const setTheta = slider('theta', (v) => { state.walking = false; state.theta = (v * Math.PI) / 180; }, (v) => `${v}°`);
+  const setRad = slider('rad', (v) => (state.r = v), (v) => v.toFixed(2));
+  const showTheta = () => setTheta(Math.round((state.theta * 180) / Math.PI) % 360);
+
+  // Walk uphill: gradient ascent along the fence, θ moving with the slope
+  // along it, so the ball stops at the first flat spot uphill of where it is.
+  let walkScale = 1;
+  function walk(dt: number) {
+    const s = slopeAlong(state.theta) / walkScale;
+    state.theta = (((state.theta + 2.5 * s * dt) % TAU) + TAU) % TAU;
+    showTheta();
+    if (Math.abs(s) < 0.002) state.walking = false;
+  }
+  function startWalk() {
+    walkScale = slopeScale();
+    // sitting exactly on a dip, nudge off it so there is a way up
+    if (Math.abs(slopeAlong(state.theta)) < 1e-3 * walkScale) state.theta += 0.05;
+    state.walking = true;
+  }
+  el('run').addEventListener('click', startWalk);
+  const objs = segmented('obj', (o) => { state.walking = false; state.obj = o; });
   check('wall', (on) => (state.wall = on));
-  const setSpin = check('spin', (on) => (state.spin = on));
+  check('spin', (on) => (state.spin = on));
+
+  function show(obj: string, deg: number, r: number, go = false) {
+    state.obj = obj;
+    objs.select(obj);
+    state.r = r;
+    setRad(r);
+    state.walking = false;
+    state.theta = (deg * Math.PI) / 180;
+    showTheta();
+    if (go) startWalk();
+  }
+  tries({
+    walk: () => show('sum', 200, 1, true),
+    align: () => show('tilt', (Math.atan2(1, 2) * 180) / Math.PI, 1),
+    price: () => show('tilt', (Math.atan2(1, 2) * 180) / Math.PI, 1.3),
+    twin: () => show('prod', 160, 1, true),
+  });
 
   let dragging = false, lx = 0, ly = 0;
   canvas.addEventListener('pointerdown', (e) => {

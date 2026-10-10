@@ -3,15 +3,17 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
 import Actions from '../../../components/sim/Actions.astro';
+import Checks from '../../../components/sim/Checks.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="generative-ai"
   title="The Data Manifold"
-  description="An image is one point in a space with a dimension per pixel value. Real images crowd onto a thin sheet inside it; step off the sheet and the picture turns to noise."
+  description="A 28 × 28 image is one point in a space of 784 dimensions, yet every image of one kind sits on a thin curved sheet inside it. Walk the sheet, average two images, add noise and pull it back: generative models live on that sheet."
   shortcuts={['reset', 'fullscreen']}
 >
   <div class="sim">
@@ -20,58 +22,107 @@ import Readout from '../../../components/sim/Readout.astro';
         <canvas
           id="manifold"
           width="1000"
-          height="600"
+          height="640"
           role="img"
-          aria-label="A three-dimensional sketch of pixel space with a thin twisted ribbon for the data manifold and a dot for the current image, with that image previewed beside it."
+          aria-label="Hundreds of small grey images, drawn as points in the first three principal axes of pixel space, forming a glowing curved sheet. Beside it, the current image enlarged, two strips of seven images going from A to B by averaging pixels and by walking along the sheet, and a gauge of the distance to the sheet."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'the data manifold, high p(x)', color: '#5eead4' },
-          { label: 'your current image', color: '#7c8cff' },
-          { label: 'a random pixel array', color: '#f59e0b' },
-          { label: 'the rest of pixel space', color: 'rgba(160,165,175,0.6)' },
+          { label: 'the sheet of real images', color: '#2dd4bf' },
+          { label: 'your image x', color: '#818cf8' },
+          { label: 'A → B by averaging pixels', color: '#f59e0b' },
+          { label: 'A → B along the sheet', color: '#c084fc' },
+          { label: 'noise', color: '#f472b6' },
         ]}
-        hint="Drag to orbit · scroll to zoom"
+        hint="Drag on the sheet to move x · drag A or B · drag empty space to orbit · scroll to zoom · click a frame in a strip"
       />
-      <Result label="Relative density p(x)" />
+      <Result label="Distance to the sheet" />
     </div>
 
     <div class="sim-panel">
       <Seg
-        id="resolution"
-        label="Image resolution"
-        attr="n"
-        active="16"
-        options={[{ value: '8', label: '8 × 8' }, { value: '16', label: '16 × 16' }, { value: '32', label: '32 × 32' }]}
+        id="family"
+        label="Image family"
+        attr="f"
+        active="seven"
+        options={[
+          { value: 'seven', label: 'Digit 7' },
+          { value: 'ring', label: 'Ring' },
+          { value: 'dot', label: 'Dot' },
+        ]}
       />
-      <Slider id="along" label="Move along the manifold" min={0} max={100} value={42} display="42%" />
-      <Slider id="distance" label="Step off the manifold" min={-100} max={100} value={0} display="0.00" />
+      <Slider id="k1" label="Rotation" min={0} max={1000} value={500} display="0°" />
+      <Slider id="k2" label="Stroke width" min={0} max={1000} value={350} display="2.7 px" />
+      <Seg
+        id="mode"
+        label="Go from A to B by"
+        attr="m"
+        active="pixels"
+        options={[
+          { value: 'pixels', label: 'Averaging pixels' },
+          { value: 'manifold', label: 'Walking the sheet' },
+        ]}
+      />
+      <Slider id="t" label="Position along A → B" min={0} max={100} value={50} display="0.50" />
       <Actions>
-        <button type="button" class="btn" id="sample-real">Sample p(x)</button>
-        <button type="button" class="btn ghost" id="sample-space">Random pixels</button>
+        <button type="button" class="btn" id="animate">Animate A → B</button>
+      </Actions>
+      <Slider id="sigma" label="Noise σ" min={0} max={50} value={0} display="0.00" hint={['clean', 'noisy']} />
+      <Actions>
+        <button type="button" class="btn" id="denoise">Denoise</button>
+        <button type="button" class="btn ghost" id="random">Random pixels</button>
         <button type="button" class="btn ghost" id="reset">Reset</button>
       </Actions>
-      <Readout rows={[{ id: 'r-dims', label: 'pixel-space dimensions' }, { id: 'r-dist', label: 'distance to the manifold' }]} />
+      <Checks
+        label="Show"
+        items={[
+          { id: 'show-fog', label: 'Density fog', checked: true },
+          { id: 'show-mesh', label: 'Knob grid', checked: true },
+          { id: 'show-thumbs', label: 'Thumbnails', checked: true },
+          { id: 'show-field', label: 'Denoising field' },
+        ]}
+      />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-dims', label: 'pixel-space dimensions' },
+          { id: 'r-knobs', label: 'knobs that make the images' },
+          { id: 'r-var', label: 'variance in PC1 · PC2 · PC3' },
+          { id: 'r-z', label: 'knobs of x' },
+          { id: 'r-near', label: 'knobs of the nearest sheet image' },
+          { id: 'r-dist', label: 'distance to the sheet' },
+          { id: 'r-pca', label: 'x in PC1, PC2, PC3' },
+          { id: 'r-diam', label: 'width of the sheet' },
+          { id: 'r-rand', label: 'random pixels to the sheet' },
+          { id: 'r-ms', label: 'render + PCA time' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Nudge <b>Step off the manifold</b> just a little. The <b>density collapses</b>
-      and the tidy picture crumbles into static: almost every possible array of
-      pixel values looks like nothing at all.
+      Drag <b>along the sheet</b>. The digit turns and thickens smoothly and its
+      distance to the sheet stays 0: 784 pixel values, all fixed by just
+      <b>two knobs</b>. <Try id="walk" label="Walk" />
     </li>
     <li>
-      Move <b>along</b> the ribbon instead. Many pixels change at once, yet the
-      image stays coherent. Those correlated changes are exactly why the real-image
-      region is <b>low-dimensional</b> compared with the ambient pixel space.
+      Go from A to B by <b>averaging pixels</b> and the path is a straight chord
+      that leaves the sheet: the midpoint is a ghostly double exposure. <b>Walk
+      the sheet</b> instead and every frame is a real image.
+      <Try id="pixels" label="Average pixels" /> <Try id="manifold" label="Walk the sheet" />
     </li>
     <li>
-      Raise the resolution 8 × 8 → 32 × 32. The picture barely changes, but the
-      ambient space jumps from <b>192 to 3,072 dimensions</b>. Real photos live in
-      millions of dimensions; <b>Random pixels</b> essentially never lands near the
-      data by chance, which is precisely why generative models must learn p(x).
+      Add <b>noise</b> and the image lifts off the sheet, while its PCA dot hardly
+      moves. <b>Denoise</b> pulls it back to the nearest real image, which is what a
+      diffusion model learns: a field pointing back to the sheet.
+      <Try id="noise" label="Add noise" /> <Try id="clean" label="Denoise" />
+    </li>
+    <li>
+      <b>Random pixels</b> are static, about as far from the nearest real image as
+      the whole sheet is wide. Yet in PC1-PC3 the dot lands somewhere ordinary:
+      three axes hide the other 781. <Try id="rand" />
     </li>
   </Fragment>
 </SimLayout>
@@ -80,200 +131,1265 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
+  import { Camera3D, orbitControls, drawBox, drawBackdrop, ramp32, V, type Vec } from '../../../lib/scene3d';
+  import { VolumeView } from '../../../lib/volume3d';
 
-  const TEAL = '#5eead4', ACCENT = '#7c8cff', AMBER = '#f59e0b';
   const canvas = el('manifold') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { ink, inv, css } = stageInk(canvas);
+  const { label, textWidth } = makeText(ctx, ink);
+  const isLight = () => css('--stage-light') === '1';
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  const state = { t: 0.42, d: 0, n: 16, random: false };
-  const plot = { x: 30, y: 30, w: 600, h: 540 };
-  const PREVIEW = { x: 690, y: 110, size: 270 };
-  const camera = { yaw: -0.62, pitch: -0.3, distance: 8.5 };
-  let dragging = false;
-  let lastPointer = { x: 0, y: 0 };
+  // ---------------------------------------------------------------- palette
+  const PAL = {
+    dark: { teal: '#5eead4', cur: '#a5b4fc', avg: '#fbbf24', walk: '#d8b4fe', noise: '#f9a8d4', rand: '#fda4af' },
+    light: { teal: '#0d9488', cur: '#4f46e5', avg: '#d97706', walk: '#9333ea', noise: '#db2777', rand: '#e11d48' },
+  };
+  const pal = () => (isLight() ? PAL.light : PAL.dark);
+  const EQ = { teal: '#14b8a6', cur: '#6366f1', avg: '#f59e0b', walk: '#a855f7', noise: '#ec4899', rand: '#f43f5e' };
 
-  type V3 = { x: number; y: number; z: number };
-  const curve3 = (t: number): V3 => { const a = (t - 0.5) * Math.PI * 2.25; return { x: (t - 0.5) * 2.5, y: 0.62 * Math.sin(a), z: 0.62 * Math.cos(a) }; };
-  const normal3 = (t: number): V3 => { const a = (t - 0.5) * Math.PI * 2.25; return { x: 0, y: Math.cos(a), z: -Math.sin(a) }; };
-  function rotate(v: V3): V3 {
-    const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw), cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
-    const x = v.x * cy - v.z * sy, z1 = v.x * sy + v.z * cy;
-    return { x, y: v.y * cp - z1 * sp, z: v.y * sp + z1 * cp };
+  // ---------------------------------------------------------------- the images
+  // Every image is 28 × 28 grey values in 0..1: one point of a 784-dimensional space.
+  const S = 28, D = S * S, G = 24, N = G * G;
+
+  function segDist(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+    const dx = bx - ax, dy = by - ay;
+    let t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ex = px - ax - t * dx, ey = py - ay - t * dy;
+    return Math.sqrt(ex * ex + ey * ey);
   }
-  function project(v: V3) {
-    const r = rotate(v);
-    const depth = Math.max(0.7, camera.distance + r.z), scale = 430 / depth;
-    return { x: plot.x + plot.w / 2 + r.x * scale, y: plot.y + plot.h / 2 - r.y * scale, z: r.z, visible: camera.distance + r.z > 0.5 };
-  }
-  const density = () => (state.random ? 0 : Math.exp(-10 * state.d * state.d));
-  function noise(x: number, y: number, seed = 0) {
-    const v = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
-    return v - Math.floor(v);
-  }
-  function structuredPixel(x: number, y: number, n: number) {
-    const u = (x + 0.5) / n, v = (y + 0.5) / n;
-    const phase = state.t * Math.PI * 2;
-    const horizon = 0.5 + 0.08 * Math.sin(phase);
-    const sunX = 0.2 + state.t * 0.62, sunY = 0.22 + 0.05 * Math.cos(phase * 1.4);
-    if (Math.hypot(u - sunX, v - sunY) < 0.11) return [255, 202, 92];
-    const mountain = horizon - 0.17 * Math.abs(Math.sin(u * 8 + phase)) - 0.05 * Math.sin(u * 19 - phase);
-    if (v < mountain) {
-      const glow = Math.max(0, 1 - Math.hypot(u - sunX, v - sunY) * 1.5);
-      return [58 + 78 * glow, 80 + 72 * glow, 126 + 80 * glow];
-    }
-    if (v < horizon + 0.13) return [44 + 25 * u, 72 + 20 * u, 91 + 18 * u];
-    const water = 0.5 + 0.5 * Math.sin(y * 2.4 + x * 0.8 + phase * 2);
-    return [22 + 18 * water, 67 + 35 * water, 83 + 43 * water];
-  }
-  function pixel(x: number, y: number) {
-    if (state.random) return [noise(x, y, 1), noise(x, y, 2), noise(x, y, 3)].map((v) => v * 255);
-    const base = structuredPixel(x, y, state.n);
-    const mix = Math.min(1, Math.abs(state.d) * 1.25);
-    return base.map((v, c) => v * (1 - mix) + noise(x, y, c + Math.round(state.d * 97)) * 255 * mix);
+  /** Soft-edged ink: 1 inside, 0 outside, a ~1.3 px anti-aliased edge. */
+  const edge = (inside: number, soft: number) => {
+    let q = 0.5 + inside / soft;
+    q = q < 0 ? 0 : q > 1 ? 1 : q;
+    return q * q * (3 - 2 * q);
+  };
+  const SEVEN = [[-0.62, -0.78], [0.62, -0.78], [0.05, 0.1], [-0.2, 0.86]];
+
+  type Fam = 'seven' | 'ring' | 'dot';
+  type FamSpec = {
+    knobs: [string, string];
+    short: [string, string];
+    fmt: [(u: number) => string, (v: number) => string];
+    render: (u: number, v: number, out: Float32Array) => void;
+    A: [number, number];
+    B: [number, number];
+    start: [number, number];
+  };
+  const FAMS: Record<Fam, FamSpec> = {
+    seven: {
+      knobs: ['Rotation', 'Stroke width'],
+      short: ['rotation', 'stroke'],
+      fmt: [(u) => `${Math.round((u - 0.5) * 1.5 * 180 / Math.PI)}°`, (v) => `${(1.6 + v * 3.2).toFixed(1)} px`],
+      render(u, v, out) {
+        const th = (u - 0.5) * 1.5, w = 1.6 + v * 3.2, c = Math.cos(th), s = Math.sin(th), k = 9.5;
+        const P = SEVEN.map(([x, y]) => [14 + k * (x * c - y * s), 14 + k * (x * s + y * c)]);
+        for (let y = 0; y < S; y++)
+          for (let x = 0; x < S; x++) {
+            const px = x + 0.5, py = y + 0.5;
+            let d = 1e9;
+            for (let i = 0; i < 3; i++) {
+              const q = segDist(px, py, P[i][0], P[i][1], P[i + 1][0], P[i + 1][1]);
+              if (q < d) d = q;
+            }
+            out[y * S + x] = edge(w / 2 - d, 1.3);
+          }
+      },
+      A: [0.1, 0.12], B: [0.9, 0.85], start: [0.42, 0.55],
+    },
+    ring: {
+      knobs: ['Radius', 'Stroke width'],
+      short: ['radius', 'stroke'],
+      fmt: [(u) => `${(3 + u * 8).toFixed(1)} px`, (v) => `${(1.2 + v * 3).toFixed(1)} px`],
+      render(u, v, out) {
+        const R = 3 + u * 8, w = 1.2 + v * 3;
+        for (let y = 0; y < S; y++)
+          for (let x = 0; x < S; x++)
+            out[y * S + x] = edge(w / 2 - Math.abs(Math.hypot(x + 0.5 - 14, y + 0.5 - 14) - R), 1.3);
+      },
+      A: [0.08, 0.5], B: [0.92, 0.5], start: [0.5, 0.4],
+    },
+    dot: {
+      knobs: ['Position x', 'Position y'],
+      short: ['x', 'y'],
+      fmt: [(u) => `${(7 + u * 14).toFixed(1)} px`, (v) => `${(7 + v * 14).toFixed(1)} px`],
+      render(u, v, out) {
+        const cx = 7 + u * 14, cy = 7 + v * 14;
+        for (let y = 0; y < S; y++)
+          for (let x = 0; x < S; x++) out[y * S + x] = edge(4 - Math.hypot(x + 0.5 - cx, y + 0.5 - cy), 1.5);
+      },
+      A: [0.1, 0.15], B: [0.9, 0.85], start: [0.5, 0.5],
+    },
+  };
+
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
   }
 
-  function drawPreview() {
-    const { x: px, y: py, size } = PREVIEW;
-    const cell = size / state.n;
-    label('x, as the picture it is', px, py - 16, 0.6, 'left', 11);
-    ctx.strokeStyle = ink(0.4);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(px - 6, py - 6, size + 12, size + 12);
-    for (let y = 0; y < state.n; y++)
-      for (let x = 0; x < state.n; x++) {
-        const c = pixel(x, y).map(Math.round);
-        ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
-        ctx.fillRect(px + x * cell, py + y * cell, Math.ceil(cell), Math.ceil(cell));
-      }
-    label(`${state.n} × ${state.n} × 3 = ${(state.n * state.n * 3).toLocaleString()} numbers`, px, py + size + 26, 0.45, 'left', 11.5);
-  }
+  // ---------------------------------------------------------------- one family's data, its PCA and its sheet
+  type Dense = { u: number; v: number; w: Vec };
+  type Data = {
+    spec: FamSpec;
+    X: Float32Array; // N images × D pixels, grid index j·G + i for knobs (i, j)/(G−1)
+    mean: Float32Array;
+    Q: Float64Array; // 3 principal axes × D
+    varFrac: number[];
+    sc: number; // world units per unit of pixel-space distance
+    world: Vec[];
+    dense: Dense[];
+    upN: Vec;
+    vol: Float32Array;
+    lo: [number, number, number];
+    hi: [number, number, number];
+    diam: number;
+    randD: number;
+    field: { p: Vec; f: Vec; m: number }[];
+    ms: number;
+    thumbs: { i: number; j: number; c: HTMLCanvasElement }[];
+    thumbsLight: boolean | null;
+  };
+  const cache = new Map<Fam, Data>();
+  const tmp = new Float32Array(D);
+  const GN = 56;
+  const HALF = 2.15;
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    label('pixel space, three of its thousands of axes', plot.x, plot.y - 12, 0.45, 'left', 11.5);
-
-    for (const size of [2.5, 5, 9]) {
-      const corners: V3[] = [];
-      for (const x of [-size, size]) for (const y of [-size, size]) for (const z of [-size, size]) corners.push({ x, y, z });
-      ctx.strokeStyle = ink(size === 2.5 ? 0.16 : size === 5 ? 0.08 : 0.03);
-      ctx.lineWidth = 1;
-      for (let i = 0; i < corners.length; i++)
-        for (let j = i + 1; j < corners.length; j++) {
-          const c0 = corners[i], c1 = corners[j];
-          if (+(c0.x !== c1.x) + +(c0.y !== c1.y) + +(c0.z !== c1.z) !== 1) continue;
-          const p = project(c0), q = project(c1);
-          if (!p.visible || !q.visible) continue;
-          ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+  /** Top principal axes of the centred images by orthogonal (subspace) iteration. */
+  function pca(Xc: Float32Array) {
+    const k = 5;
+    let Q = new Float64Array(k * D);
+    const rnd = mulberry32(7);
+    for (let i = 0; i < Q.length; i++) Q[i] = rnd() - 0.5;
+    const orth = (Q: Float64Array) => {
+      for (let a = 0; a < k; a++) {
+        const qa = a * D;
+        for (let b = 0; b < a; b++) {
+          const qb = b * D;
+          let dt = 0;
+          for (let d = 0; d < D; d++) dt += Q[qa + d] * Q[qb + d];
+          for (let d = 0; d < D; d++) Q[qa + d] -= dt * Q[qb + d];
         }
+        let nn = 0;
+        for (let d = 0; d < D; d++) nn += Q[qa + d] * Q[qa + d];
+        nn = Math.sqrt(nn) || 1;
+        for (let d = 0; d < D; d++) Q[qa + d] /= nn;
+      }
+    };
+    orth(Q);
+    const P = new Float64Array(N * k);
+    for (let it = 0; it < 18; it++) {
+      for (let n = 0; n < N; n++) {
+        const o = n * D;
+        for (let a = 0; a < k; a++) {
+          let s = 0;
+          const qa = a * D;
+          for (let d = 0; d < D; d++) s += Xc[o + d] * Q[qa + d];
+          P[n * k + a] = s;
+        }
+      }
+      const Y = new Float64Array(k * D);
+      for (let n = 0; n < N; n++) {
+        const o = n * D;
+        for (let a = 0; a < k; a++) {
+          const p = P[n * k + a], ya = a * D;
+          for (let d = 0; d < D; d++) Y[ya + d] += p * Xc[o + d];
+        }
+      }
+      orth(Y);
+      Q = Y;
     }
-    const cloud: ReturnType<typeof project>[] = [];
-    for (let i = 0; i < 850; i++) {
-      const p = project({ x: (noise(i, 2, 4) - 0.5) * 18, y: (noise(i, 3, 5) - 0.5) * 18, z: (noise(i, 7, 6) - 0.5) * 18 });
-      if (p.visible && p.x > plot.x && p.x < plot.x + plot.w && p.y > plot.y && p.y < plot.y + plot.h) cloud.push(p);
-    }
-    cloud.sort((a, b) => b.z - a.z).forEach((p) => {
-      ctx.fillStyle = ink(0.08 + (p.z + 1.5) * 0.018);
-      ctx.fillRect(p.x, p.y, 1.5, 1.5);
-    });
-
-    const strips: { p: ReturnType<typeof project>[]; z: number }[] = [];
-    for (let i = 0; i < 72; i++) {
-      const t0 = i / 72, t1 = (i + 1) / 72, c0 = curve3(t0), c1 = curve3(t1), n0 = normal3(t0), n1 = normal3(t1), w = 0.105;
-      const p = [
-        project({ x: c0.x + n0.x * w, y: c0.y + n0.y * w, z: c0.z + n0.z * w }),
-        project({ x: c1.x + n1.x * w, y: c1.y + n1.y * w, z: c1.z + n1.z * w }),
-        project({ x: c1.x - n1.x * w, y: c1.y - n1.y * w, z: c1.z - n1.z * w }),
-        project({ x: c0.x - n0.x * w, y: c0.y - n0.y * w, z: c0.z - n0.z * w }),
-      ];
-      strips.push({ p, z: p.reduce((s, q) => s + q.z, 0) / 4 });
-    }
-    strips.sort((a, b) => b.z - a.z).forEach((s) => {
-      ctx.beginPath();
-      s.p.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(94,234,212,0.34)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(94,234,212,0.65)';
-      ctx.stroke();
-    });
-
-    const c = curve3(state.t), n = normal3(state.t);
-    const base = project(c);
-    let q = project({ x: c.x + n.x * state.d * 1.15, y: c.y + n.y * state.d * 1.15, z: c.z + n.z * state.d * 1.15 });
-    if (state.random) q = project({ x: 1.18, y: 0.94, z: -0.98 });
-    ctx.setLineDash([4, 5]);
-    ctx.strokeStyle = ink(0.35);
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(base.x, base.y); ctx.lineTo(q.x, q.y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = state.random ? AMBER : ACCENT;
-    ctx.beginPath(); ctx.arc(q.x, q.y, 8, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = inv(0.75);
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    label('x', q.x + 12, q.y + 4, 1, 'left', 12, state.random ? AMBER : ACCENT);
-    drawPreview();
-
-    const den = density();
-    const dims = state.n * state.n * 3;
-    const region = state.random || den < 0.01 ? 'noise' : den < 0.45 ? 'unlikely' : 'realistic';
-    const denText = den < 0.0001 ? '≈ 0%' : `${(den * 100).toFixed(den < 0.1 ? 2 : 0)}%`;
-    setEq({
-      rule: [['p(\\mathbf x) \\propto e^{-d(\\mathbf x,\\,\\mathcal M)^2 / 2\\sigma^2}', TEAL], '\\qquad\\dim(\\text{pixel space}) = n \\times n \\times 3'],
-      live: [state.random ? '\\text{a random point: } d \\gg \\sigma' : `d = ${Math.abs(state.d).toFixed(2)}`, [`\\quad p(\\mathbf x) = ${denText.replace('%', '\\%').replace('≈', '\\approx')}`, TEAL], `\\quad\\dim = ${dims.toLocaleString()}`],
-    });
-    setResult({
-      value: denText,
-      colour: region === 'noise' ? AMBER : region === 'unlikely' ? '#facc15' : TEAL,
-      status: `${region} · ${dims.toLocaleString()} pixel-space dimensions${state.random ? '' : ` · distance to the manifold ${Math.abs(state.d).toFixed(2)}`}`,
-      note: state.random
-        ? 'A uniformly random pixel array. It essentially never lands near the data, which is why generative models must learn p(x).'
-        : region === 'realistic'
-          ? 'On or near the manifold: many pixels change together, yet the picture stays coherent.'
-          : 'Off the manifold the density collapses and the picture dissolves into static.',
-    });
-    setRows({ 'r-dims': dims.toLocaleString(), 'r-dist': state.random ? 'far' : Math.abs(state.d).toFixed(2) });
+    return Q.slice(0, 3 * D);
   }
 
-  const setAlong = slider('along', (v) => { state.t = v / 100; state.random = false; draw(); }, (v) => `${Math.round(v)}%`);
-  const setDist = slider('distance', (v) => { state.d = v / 100; state.random = false; draw(); }, (v) => Math.abs(v / 100).toFixed(2));
-  segmented('resolution', (n) => { state.n = +n; draw(); });
-  const sync = () => { setAlong(Math.round(state.t * 100)); setDist(Math.round(state.d * 100)); draw(); };
-  el('sample-real').addEventListener('click', () => { state.t = Math.random(); state.d = (Math.random() - 0.5) * 0.08; state.random = false; sync(); });
-  el('sample-space').addEventListener('click', () => { state.random = true; draw(); });
-  el('reset').addEventListener('click', () => { state.t = 0.42; state.d = 0; state.random = false; Object.assign(camera, { yaw: -0.62, pitch: -0.3, distance: 8.5 }); sync(); });
+  function build(f: Fam): Data {
+    const t0 = performance.now();
+    const spec = FAMS[f];
+    const X = new Float32Array(N * D);
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) spec.render(i / (G - 1), j / (G - 1), X.subarray((j * G + i) * D, (j * G + i + 1) * D));
+    const mean = new Float32Array(D);
+    for (let n = 0; n < N; n++) for (let d = 0; d < D; d++) mean[d] += X[n * D + d];
+    for (let d = 0; d < D; d++) mean[d] /= N;
+    const Xc = new Float32Array(N * D);
+    let tot = 0;
+    for (let n = 0; n < N; n++)
+      for (let d = 0; d < D; d++) {
+        const q = X[n * D + d] - mean[d];
+        Xc[n * D + d] = q;
+        tot += q * q;
+      }
+    const Q = pca(Xc);
+    const coords = new Float64Array(N * 3);
+    const varFrac = [0, 0, 0];
+    for (let n = 0; n < N; n++)
+      for (let a = 0; a < 3; a++) {
+        let s = 0;
+        for (let d = 0; d < D; d++) s += Xc[n * D + d] * Q[a * D + d];
+        coords[n * 3 + a] = s;
+        varFrac[a] += s * s;
+      }
+    for (let a = 0; a < 3; a++) varFrac[a] /= tot;
+    // a fixed sign per axis, so the sheet always reads the same way round
+    for (let a = 0; a < 3; a++) {
+      let c = 0;
+      for (let n = 0; n < N; n++) c += coords[n * 3 + a] * ((n % G) + Math.floor(n / G) * 0.5);
+      if (c < 0) {
+        for (let n = 0; n < N; n++) coords[n * 3 + a] *= -1;
+        for (let d = 0; d < D; d++) Q[a * D + d] *= -1;
+      }
+    }
+    let maxAbs = 0;
+    for (let i = 0; i < coords.length; i++) maxAbs = Math.max(maxAbs, Math.abs(coords[i]));
+    const sc = 1.85 / maxAbs;
+    const toW = (c0: number, c1: number, c2: number): Vec => ({ x: c0 * sc, y: c2 * sc, z: -c1 * sc });
+    const world: Vec[] = [];
+    for (let n = 0; n < N; n++) world.push(toW(coords[n * 3], coords[n * 3 + 1], coords[n * 3 + 2]));
 
-  canvas.addEventListener('pointerdown', (e) => { dragging = true; lastPointer = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    camera.yaw += (e.clientX - lastPointer.x) * 0.009;
-    camera.pitch = Math.max(-1.15, Math.min(1.15, camera.pitch + (e.clientY - lastPointer.y) * 0.009));
-    lastPointer = { x: e.clientX, y: e.clientY };
+    const bil = (u: number, v: number): Vec => {
+      const fi = u * (G - 1), fj = v * (G - 1);
+      const i0 = Math.min(G - 2, Math.floor(fi)), j0 = Math.min(G - 2, Math.floor(fj));
+      const a = fi - i0, b = fj - j0;
+      const p00 = world[j0 * G + i0], p10 = world[j0 * G + i0 + 1], p01 = world[(j0 + 1) * G + i0], p11 = world[(j0 + 1) * G + i0 + 1];
+      return V.add(V.mix(p00, p10, a), V.mul(V.sub(V.mix(p01, p11, a), V.mix(p00, p10, a)), b));
+    };
+    const DN = 72;
+    const dense: Dense[] = [];
+    for (let j = 0; j < DN; j++)
+      for (let i = 0; i < DN; i++) {
+        const u = i / (DN - 1), v = j / (DN - 1);
+        dense.push({ u, v, w: bil(u, v) });
+      }
+    const upN = V.unit(V.cross(V.sub(bil(0.6, 0.5), bil(0.4, 0.5)), V.sub(bil(0.5, 0.6), bil(0.5, 0.4))));
+
+    // the fog: a small Gaussian at every point of the sheet, on a cubic grid
+    let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const p of dense) {
+      const q = [p.w.x, p.w.y, p.w.z];
+      for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], q[a]); hi[a] = Math.max(hi[a], q[a]); }
+    }
+    const ext = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) + 0.6;
+    const mid = [0, 1, 2].map((a) => (lo[a] + hi[a]) / 2);
+    const vlo: [number, number, number] = [mid[0] - ext / 2, mid[1] - ext / 2, mid[2] - ext / 2];
+    const vhi: [number, number, number] = [mid[0] + ext / 2, mid[1] + ext / 2, mid[2] + ext / 2];
+    const vol = new Float32Array(GN * GN * GN);
+    const sig = 1.15, R = 3, wx = new Float32Array(7), wy = new Float32Array(7), wz = new Float32Array(7);
+    for (const p of dense) {
+      const g = [(p.w.x - vlo[0]) / ext * GN - 0.5, (p.w.y - vlo[1]) / ext * GN - 0.5, (p.w.z - vlo[2]) / ext * GN - 0.5];
+      const b = g.map((x) => Math.round(x));
+      for (let k = -R; k <= R; k++) {
+        wx[k + R] = Math.exp(-((b[0] + k - g[0]) ** 2) / (2 * sig * sig));
+        wy[k + R] = Math.exp(-((b[1] + k - g[1]) ** 2) / (2 * sig * sig));
+        wz[k + R] = Math.exp(-((b[2] + k - g[2]) ** 2) / (2 * sig * sig));
+      }
+      for (let kz = -R; kz <= R; kz++) {
+        const z = b[2] + kz;
+        if (z < 0 || z >= GN) continue;
+        for (let ky = -R; ky <= R; ky++) {
+          const y = b[1] + ky;
+          if (y < 0 || y >= GN) continue;
+          const wyz = wy[ky + R] * wz[kz + R], row = (z * GN + y) * GN;
+          for (let kx = -R; kx <= R; kx++) {
+            const x = b[0] + kx;
+            if (x >= 0 && x < GN) vol[row + x] += wx[kx + R] * wyz;
+          }
+        }
+      }
+    }
+    // scale so the bulk of the sheet sits near 1 (a percentile, so a fold does not set it)
+    const nz: number[] = [];
+    for (let i = 0; i < vol.length; i += 3) if (vol[i] > 0.05) nz.push(vol[i]);
+    nz.sort((a, b) => a - b);
+    const ref = nz.length ? nz[Math.floor(nz.length * 0.97)] : 1;
+    for (let i = 0; i < vol.length; i++) vol[i] = Math.min(1.6, vol[i] / ref);
+
+    // width of the sheet: the largest distance between two of its images
+    let diam = 0;
+    const sub: number[] = [];
+    for (let j = 0; j < G; j += 3) for (let i = 0; i < G; i += 3) sub.push(j * G + i);
+    for (const k of [G - 1, G * (G - 1), N - 1]) sub.push(k);
+    for (let a = 0; a < sub.length; a++)
+      for (let b = a + 1; b < sub.length; b++) {
+        let s = 0;
+        const oa = sub[a] * D, ob = sub[b] * D;
+        for (let d = 0; d < D; d++) { const q = X[oa + d] - X[ob + d]; s += q * q; }
+        diam = Math.max(diam, s);
+      }
+    diam = Math.sqrt(diam);
+
+    // the denoising field, drawn in PCA space: from a lattice of points toward the nearest point of the sheet
+    const field: Data['field'] = [];
+    const FL = 6;
+    for (let a = 0; a < FL; a++)
+      for (let b = 0; b < FL; b++)
+        for (let e = 0; e < FL; e++) {
+          const p = {
+            x: vlo[0] + ((a + 0.5) / FL) * ext,
+            y: vlo[1] + ((b + 0.5) / FL) * ext,
+            z: vlo[2] + ((e + 0.5) / FL) * ext,
+          };
+          let best = Infinity, bw = p;
+          for (const q of dense) {
+            const dd = (q.w.x - p.x) ** 2 + (q.w.y - p.y) ** 2 + (q.w.z - p.z) ** 2;
+            if (dd < best) { best = dd; bw = q.w; }
+          }
+          const m = Math.sqrt(best);
+          if (m < 0.2 || m > 1.0) continue;
+          field.push({ p, f: V.sub(bw, p), m });
+        }
+
+    const data: Data = {
+      spec, X, mean, Q, varFrac, sc, world, dense, upN, vol, lo: vlo, hi: vhi, diam, randD: 0, field,
+      ms: 0, thumbs: [], thumbsLight: null,
+    };
+    const TI = [0, 8, 15, 23];
+    for (const j of TI) for (const i of TI) {
+      const cv = document.createElement('canvas');
+      cv.width = S; cv.height = S;
+      data.thumbs.push({ i, j, c: cv });
+    }
+    data.ms = performance.now() - t0;
+    return data;
+  }
+
+  let F: Data;
+  function data(f: Fam) {
+    let d = cache.get(f);
+    if (!d) {
+      d = build(f);
+      cache.set(f, d);
+      F = d;
+      d.randD = nearest(randomImage(424242)).d;
+    }
+    return d;
+  }
+
+  // ---------------------------------------------------------------- geometry in pixel space
+  const render = (u: number, v: number, out: Float32Array) => F.spec.render(u, v, out);
+  function dist2(a: Float32Array, b: Float32Array) {
+    let s = 0;
+    for (let d = 0; d < D; d++) { const q = a[d] - b[d]; s += q * q; }
+    return s;
+  }
+  /**
+   * The distance from x to the sheet: the closest of all 576 sampled images,
+   * then refined over the two knobs by a pattern search, re-rendering the
+   * image each time, so the answer is the distance to the continuous sheet.
+   */
+  function nearest(x: Float32Array) {
+    const X = F.X;
+    let best = Infinity, bi = 0;
+    for (let n = 0; n < N; n++) {
+      const o = n * D;
+      let s = 0;
+      for (let d = 0; d < D; d++) { const q = x[d] - X[o + d]; s += q * q; }
+      if (s < best) { best = s; bi = n; }
+    }
+    let u = (bi % G) / (G - 1), v = Math.floor(bi / G) / (G - 1), h = 1 / (G - 1);
+    let evals = 0;
+    while (h > 0.0015 && evals < 120) {
+      let moved = false;
+      for (const [du, dv] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nu = Math.max(0, Math.min(1, u + du * h)), nv = Math.max(0, Math.min(1, v + dv * h));
+        if (nu === u && nv === v) continue;
+        render(nu, nv, tmp);
+        evals++;
+        const s = dist2(x, tmp);
+        if (s < best) { best = s; u = nu; v = nv; moved = true; break; }
+      }
+      if (!moved) h /= 2;
+    }
+    return { d: Math.sqrt(best), u, v };
+  }
+  /** x in the first three principal axes, as a point of the 3D view. */
+  function project(x: Float32Array): Vec {
+    const c = [0, 0, 0], Q = F.Q, m = F.mean;
+    for (let a = 0; a < 3; a++) {
+      let s = 0;
+      const qa = a * D;
+      for (let d = 0; d < D; d++) s += (x[d] - m[d]) * Q[qa + d];
+      c[a] = s;
+    }
+    return { x: c[0] * F.sc, y: c[2] * F.sc, z: -c[1] * F.sc };
+  }
+  const gImg = (u: number, v: number) => { const o = new Float32Array(D); render(u, v, o); return o; };
+  const sheetAt = (u: number, v: number) => project(gImg(u, v));
+  /** The sheet's normal in the 3D view, turned to agree with the family's overall up side. */
+  function normalAt(u: number, v: number) {
+    const h = 0.03;
+    const u0 = Math.max(0, u - h), u1 = Math.min(1, u + h), v0 = Math.max(0, v - h), v1 = Math.min(1, v + h);
+    const n = V.unit(V.cross(V.sub(sheetAt(u1, v), sheetAt(u0, v)), V.sub(sheetAt(u, v1), sheetAt(u, v0))));
+    return V.dot(n, F.upN) < 0 ? V.mul(n, -1) : n;
+  }
+  function gaussImage(seed: number) {
+    const r = mulberry32(seed), o = new Float32Array(D);
+    for (let d = 0; d < D; d += 2) {
+      const a = Math.sqrt(-2 * Math.log(r() + 1e-12)), b = 2 * Math.PI * r();
+      o[d] = a * Math.cos(b);
+      if (d + 1 < D) o[d + 1] = a * Math.sin(b);
+    }
+    return o;
+  }
+  function randomImage(seed: number) {
+    const r = mulberry32(seed), o = new Float32Array(D);
+    for (let d = 0; d < D; d++) o[d] = r();
+    return o;
+  }
+
+  F = data('seven');
+
+  // ---------------------------------------------------------------- state
+  type Mode = 'pixels' | 'manifold';
+  const state = {
+    fam: 'seven' as Fam,
+    u: FAMS.seven.start[0],
+    v: FAMS.seven.start[1],
+    sigma: 0,
+    seed: 3,
+    random: false,
+    interp: false,
+    mode: 'pixels' as Mode,
+    t: 0.5,
+    A: [0.1, 0.12] as [number, number],
+    B: [0.9, 0.85] as [number, number],
+    den: 0,
+    fog: true,
+    mesh: true,
+    thumbs: true,
+    field: false,
+  };
+  let eps = gaussImage(state.seed);
+  let rnd = randomImage(state.seed);
+
+  type Probe = {
+    x: Float32Array;
+    d: number;
+    nu: number; // knobs of the nearest sheet image
+    nv: number;
+    w: Vec; // x in the 3D view
+    nw: Vec; // the nearest sheet image in the 3D view
+    n: Vec; // the sheet's normal there
+    kind: 'clean' | 'noise' | 'random' | 'pixels' | 'manifold';
+  };
+  let probeKey = '';
+  let probe: Probe;
+  let baseKey = '';
+  let base = new Float32Array(D);
+  let target: { d: number; u: number; v: number; img: Float32Array } | null = null;
+
+  /** The image before any denoising: clean, noisy or random. */
+  function baseImage() {
+    const key = `${state.fam}|${state.random}|${state.seed}|${state.u}|${state.v}|${state.sigma}`;
+    if (key !== baseKey) {
+      baseKey = key;
+      target = null;
+      if (state.random) base = rnd.slice();
+      else {
+        render(state.u, state.v, base);
+        if (state.sigma > 0)
+          for (let d = 0; d < D; d++) base[d] = Math.max(0, Math.min(1, base[d] + state.sigma * eps[d]));
+      }
+    }
+    return base;
+  }
+  function denoiseTarget() {
+    if (!target) {
+      const b = baseImage();
+      const r = nearest(b);
+      target = { ...r, img: gImg(r.u, r.v) };
+    }
+    return target;
+  }
+
+  function lerpImg(a: Float32Array, b: Float32Array, t: number, out = new Float32Array(D)) {
+    for (let d = 0; d < D; d++) out[d] = a[d] + (b[d] - a[d]) * t;
+    return out;
+  }
+  const lerpZ = (t: number): [number, number] => [state.A[0] + (state.B[0] - state.A[0]) * t, state.A[1] + (state.B[1] - state.A[1]) * t];
+
+  function getProbe(): Probe {
+    const key = `${state.fam}|${state.interp}|${state.mode}|${state.t}|${state.A}|${state.B}|${state.random}|${state.seed}|${state.u}|${state.v}|${state.sigma}|${state.den}`;
+    if (key === probeKey) return probe;
+    probeKey = key;
+    let x: Float32Array, kind: Probe['kind'], near: { d: number; u: number; v: number };
+    if (state.interp) {
+      kind = state.mode;
+      if (state.mode === 'pixels') {
+        x = lerpImg(gImg(...state.A), gImg(...state.B), state.t);
+        near = nearest(x);
+      } else {
+        const z = lerpZ(state.t);
+        x = gImg(z[0], z[1]);
+        near = { d: 0, u: z[0], v: z[1] };
+      }
+    } else {
+      const b = baseImage();
+      kind = state.random ? 'random' : state.sigma > 0 ? 'noise' : 'clean';
+      if (kind === 'clean') {
+        x = b.slice();
+        near = { d: 0, u: state.u, v: state.v };
+      } else if (state.den > 0) {
+        const tg = denoiseTarget();
+        x = lerpImg(b, tg.img, state.den);
+        near = state.den >= 1 ? { d: 0, u: tg.u, v: tg.v } : nearest(x);
+      } else {
+        x = b.slice();
+        const tg = denoiseTarget();
+        near = { d: tg.d, u: tg.u, v: tg.v };
+      }
+    }
+    probe = {
+      x, kind, d: near.d, nu: near.u, nv: near.v,
+      w: project(x), nw: sheetAt(near.u, near.v), n: normalAt(near.u, near.v),
+    };
+    return probe;
+  }
+
+  // the two strips: seven frames from A to B each way, with their distances
+  type Frame = { img: Float32Array; d: number; w: Vec; c: HTMLCanvasElement };
+  let stripKey = '';
+  let strips: Record<Mode, Frame[]> = { pixels: [], manifold: [] };
+  let walkPath: Vec[] = [];
+  const NF = 7;
+  function getStrips() {
+    const key = `${state.fam}|${state.A}|${state.B}`;
+    if (key === stripKey) return strips;
+    stripKey = key;
+    const gA = gImg(...state.A), gB = gImg(...state.B);
+    const mk = (): Frame[] => [];
+    strips = { pixels: mk(), manifold: mk() };
+    for (let f = 0; f < NF; f++) {
+      const t = f / (NF - 1);
+      const xp = lerpImg(gA, gB, t);
+      strips.pixels.push({ img: xp, d: nearest(xp).d, w: project(xp), c: document.createElement('canvas') });
+      const z = lerpZ(t), xm = gImg(z[0], z[1]);
+      strips.manifold.push({ img: xm, d: 0, w: project(xm), c: document.createElement('canvas') });
+    }
+    walkPath = [];
+    for (let k = 0; k <= 40; k++) { const z = lerpZ(k / 40); walkPath.push(sheetAt(z[0], z[1])); }
+    stripTheme = null;
+    return strips;
+  }
+  let stripTheme: boolean | null = null;
+
+  // ---------------------------------------------------------------- images as pictures
+  /** An opaque tile (black paper, white ink; in the light theme the other way round). */
+  function paintTile(x: Float32Array, cv: HTMLCanvasElement, light: boolean) {
+    cv.width = S; cv.height = S;
+    const c = cv.getContext('2d')!;
+    const im = c.createImageData(S, S);
+    for (let d = 0; d < D; d++) {
+      const v = Math.max(0, Math.min(1, x[d]));
+      const g = light ? 252 - v * 232 : 10 + v * 245;
+      im.data[d * 4] = g; im.data[d * 4 + 1] = g; im.data[d * 4 + 2] = light ? g + 2 * (1 - v) : g; im.data[d * 4 + 3] = 255;
+    }
+    c.putImageData(im, 0, 0);
+  }
+  /** A sprite for the 3D view: the ink only, so it floats in the fog. */
+  function paintSprite(x: Float32Array, cv: HTMLCanvasElement, light: boolean) {
+    const c = cv.getContext('2d')!;
+    const im = c.createImageData(S, S);
+    for (let d = 0; d < D; d++) {
+      const v = Math.max(0, Math.min(1, x[d]));
+      if (light) { im.data[d * 4] = 15; im.data[d * 4 + 1] = 50; im.data[d * 4 + 2] = 60; }
+      else { im.data[d * 4] = 236; im.data[d * 4 + 1] = 255; im.data[d * 4 + 2] = 250; }
+      im.data[d * 4 + 3] = 255 * v;
+    }
+    c.putImageData(im, 0, 0);
+  }
+  const preview = document.createElement('canvas');
+
+  // ---------------------------------------------------------------- the view
+  const PX = 668; // the right-hand column starts here
+  const CAM0 = { yaw: 0.3, pitch: -0.36, zoom: 1.5 };
+  const cam = new Camera3D(PX, H + 20, { dist: 12, ...CAM0 });
+  const fog = VolumeView.create(canvas, W, H, 'scalar');
+  let fogTheme: boolean | null = null, fogFam = '';
+  /** Fog gain and opacity, dark and light stage: thin enough that the knob grid shows through. */
+  const fogOpt = { dg: 0.5, do: 0.8, lg: 1.1, lo: 1.4 };
+
+  function fogRamp(light: boolean) {
+    return ramp32(
+      light
+        ? [[0, 204, 251, 241, 0], [0.25, 94, 234, 212, 0.35], [0.6, 20, 184, 166, 0.6], [1, 15, 118, 110, 0.85]]
+        : [[0, 19, 78, 74, 0], [0.3, 20, 184, 166, 0.4], [0.66, 94, 234, 212, 0.62], [1, 220, 252, 246, 0.85]]
+    );
+  }
+  const hex = (h: string, a: number) => {
+    const n = parseInt(h.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
+  const rgbOf = (h: string): [number, number, number] => {
+    const n = parseInt(h.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+
+  function glowDot(x: number, y: number, r: number, col: string, light: boolean) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.2);
+    g.addColorStop(0, hex(col, light ? 0.35 : 0.55));
+    g.addColorStop(1, hex(col, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r * 3.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+  }
+  /** Screen boxes already taken by labels this frame, so the headline can avoid them. */
+  let taken: { x: number; y: number; w: number; h: number }[] = [];
+  /** Text on a soft halo, so it reads over the fog. */
+  function tag(text: string, x: number, y: number, col: string, align: CanvasTextAlign = 'left', size = 8.5) {
+    const w = textWidth(text, size), px = Math.round(size * 1.42);
+    const left = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+    ctx.fillStyle = inv(0.62);
+    ctx.beginPath();
+    ctx.roundRect(left - 4, y - px * 0.85, w + 8, px * 1.2, 4);
+    ctx.fill();
+    taken.push({ x: left - 4, y: y - px * 0.85, w: w + 8, h: px * 1.2 });
+    label(text, x, y, 1, align, size, col);
+  }
+
+  function drawMesh(light: boolean) {
+    const P = F.world.map((w) => cam.project(w));
+    const col = rgbOf(pal().teal);
+    const seg = (a: number, b: number, alpha: number, wd: number) => {
+      const p = P[a], q = P[b];
+      if (p.zc < 0.2 || q.zc < 0.2) return;
+      const f = cam.fog((p.zc + q.zc) / 2, HALF);
+      ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${alpha * f})`;
+      ctx.lineWidth = wd;
+      ctx.beginPath(); ctx.moveTo(p.sx, p.sy); ctx.lineTo(q.sx, q.sy); ctx.stroke();
+    };
+    const base = light ? 0.32 : 0.26;
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G - 1; i++) {
+        const border = j === 0 || j === G - 1;
+        seg(j * G + i, j * G + i + 1, border ? 0.85 : j % 4 === 0 ? base * 1.6 : base, border ? 1.6 : 1);
+      }
+    for (let i = 0; i < G; i++)
+      for (let j = 0; j < G - 1; j++) {
+        const border = i === 0 || i === G - 1;
+        seg(j * G + i, (j + 1) * G + i, border ? 0.85 : i % 4 === 0 ? base * 1.6 : base, border ? 1.6 : 1);
+      }
+  }
+  /** Without the fog: the sheet as translucent quads, far ones first. */
+  function drawSurface(light: boolean) {
+    const P = F.world.map((w) => cam.project(w));
+    const quads: { z: number; k: number }[] = [];
+    for (let j = 0; j < G - 1; j++)
+      for (let i = 0; i < G - 1; i++) {
+        const k = j * G + i;
+        quads.push({ z: P[k].zc + P[k + 1].zc + P[k + G].zc + P[k + G + 1].zc, k });
+      }
+    quads.sort((a, b) => b.z - a.z);
+    const col = rgbOf(pal().teal);
+    for (const { k, z } of quads) {
+      const ps = [P[k], P[k + 1], P[k + G + 1], P[k + G]];
+      if (ps.some((p) => p.zc < 0.2)) continue;
+      ctx.fillStyle = `rgba(${col[0]},${col[1]},${col[2]},${(light ? 0.14 : 0.16) * cam.fog(z / 4, HALF)})`;
+      ctx.beginPath();
+      ps.forEach((p, i) => (i ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy)));
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  function drawThumbs(light: boolean) {
+    if (F.thumbsLight !== light) {
+      F.thumbsLight = light;
+      for (const t of F.thumbs) paintSprite(F.X.subarray((t.j * G + t.i) * D, (t.j * G + t.i + 1) * D), t.c, light);
+    }
+    const items = F.thumbs.map((t) => ({ t, p: cam.project(F.world[t.j * G + t.i]) })).filter((o) => o.p.zc > 0.3);
+    items.sort((a, b) => b.p.zc - a.p.zc);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    for (const { t, p } of items) {
+      const sz = Math.max(14, Math.min(46, 0.25 * p.s * cam.scale));
+      const f = cam.fog(p.zc, HALF);
+      ctx.globalAlpha = 0.35 + 0.65 * f;
+      ctx.fillStyle = light ? 'rgba(255,255,255,0.78)' : 'rgba(6,10,14,0.62)';
+      ctx.strokeStyle = hex(pal().teal, light ? 0.55 : 0.45);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(p.sx - sz / 2 - 1.5, p.sy - sz / 2 - 1.5, sz + 3, sz + 3, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.drawImage(t.c, p.sx - sz / 2, p.sy - sz / 2, sz, sz);
+    }
+    ctx.restore();
+  }
+  function drawField(light: boolean) {
+    const col = rgbOf(pal().noise);
+    ctx.lineCap = 'round';
+    for (const a of F.field) {
+      const u = V.unit(a.f), len = Math.min(0.3, a.m * 0.7);
+      const p = cam.project(a.p), q = cam.project(V.add(a.p, V.mul(u, len)));
+      if (p.zc < 0.3 || q.zc < 0.3) continue;
+      const dx = q.sx - p.sx, dy = q.sy - p.sy, m = Math.hypot(dx, dy);
+      if (m < 4) continue;
+      const al = (light ? 0.6 : 0.55) * cam.fog((p.zc + q.zc) / 2, HALF);
+      ctx.strokeStyle = ctx.fillStyle = `rgba(${col[0]},${col[1]},${col[2]},${al})`;
+      ctx.lineWidth = 1.3;
+      const ux = dx / m, uy = dy / m, hs = Math.min(6, m * 0.45);
+      ctx.beginPath(); ctx.moveTo(p.sx, p.sy); ctx.lineTo(q.sx - ux * hs * 0.6, q.sy - uy * hs * 0.6); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(q.sx, q.sy);
+      ctx.lineTo(q.sx - ux * hs - uy * hs * 0.5, q.sy - uy * hs + ux * hs * 0.5);
+      ctx.lineTo(q.sx - ux * hs + uy * hs * 0.5, q.sy - uy * hs - ux * hs * 0.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.lineCap = 'butt';
+  }
+
+  /** Which way PC1, PC2, PC3 point, in the corner of the view. */
+  function drawAxes(light: boolean) {
+    const ox = 46, oy = H - 44, len = 26;
+    const axes = [
+      { v: { x: 1, y: 0, z: 0 }, l: 'PC1' },
+      { v: { x: 0, y: 0, z: -1 }, l: 'PC2' },
+      { v: { x: 0, y: 1, z: 0 }, l: 'PC3' },
+    ].map((a) => { const c = cam.toCam(a.v); return { ...a, ex: ox + c.x * len, ey: oy - c.y * len, z: c.z }; })
+      .sort((a, b) => b.z - a.z);
+    for (const a of axes) {
+      ctx.strokeStyle = ink(light ? 0.55 : 0.5);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(a.ex, a.ey); ctx.stroke();
+      const dx = a.ex - ox, dy = a.ey - oy, m = Math.hypot(dx, dy) || 1;
+      label(a.l, a.ex + (dx / m) * 13, a.ey + (dy / m) * 11 + 4, 0.75, 'center', 7);
+    }
+  }
+
+  /** A screen point on the sheet → its knobs, or null if the pointer is not on it. */
+  function pick(x: number, y: number, maxD = 14) {
+    if (x > PX - 4) return null;
+    let best = maxD * maxD, hit: Dense | null = null;
+    for (const p of F.dense) {
+      const q = cam.project(p.w);
+      if (q.zc < 0.3) continue;
+      const dd = (q.sx - x) ** 2 + (q.sy - y) ** 2;
+      if (dd < best) { best = dd; hit = p; }
+    }
+    return hit;
+  }
+
+  // ---------------------------------------------------------------- the right-hand column
+  const STRIP = { x: PX + 14, y0: 262, y1: 352, size: 37, gap: 7 };
+  function drawColumn(pr: Probe, light: boolean) {
+    const c = pal();
+    const x0 = PX + 14, cw = W - PX - 26;
+    ctx.fillStyle = light ? 'rgba(248,250,252,0.86)' : 'rgba(9,11,16,0.66)';
+    ctx.strokeStyle = ink(0.08);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(PX, 10, W - PX - 10, H - 20, 10); ctx.fill(); ctx.stroke();
+
+    // the image itself, as its 784 pixels
+    const kcol = pr.kind === 'clean' ? c.cur : pr.kind === 'noise' ? c.noise : pr.kind === 'random' ? c.rand : pr.kind === 'pixels' ? c.avg : c.walk;
+    label('x, the image itself', x0, 34, 0.55, 'left', 8.5);
+    paintTile(pr.x, preview, light);
+    const ps = 150, py = 44;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(preview, x0, py, ps, ps);
+    ctx.restore();
+    ctx.strokeStyle = kcol;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x0 - 1, py - 1, ps + 2, ps + 2);
+    label('28 × 28 = 784 numbers', x0, py + ps + 18, 0.45, 'left', 7.5);
+
+    const tx = x0 + ps + 16;
+    const spec = F.spec;
+    const what = pr.kind === 'clean' ? 'a real image' : pr.kind === 'noise' ? 'a noisy image' : pr.kind === 'random' ? 'random pixels' : pr.kind === 'pixels' ? 'a pixel average' : 'a sheet image';
+    label(what, tx, 58, 1, 'left', 9, kcol);
+    if (pr.kind === 'clean' || pr.kind === 'manifold') {
+      label(`${spec.short[0]} ${spec.fmt[0](pr.nu)}`, tx, 84, 0.75, 'left', 8);
+      label(`${spec.short[1]} ${spec.fmt[1](pr.nv)}`, tx, 104, 0.75, 'left', 8);
+    } else {
+      label('nearest real image:', tx, 84, 0.5, 'left', 7.5);
+      label(`${spec.short[0]} ${spec.fmt[0](pr.nu)}`, tx, 102, 0.75, 'left', 8);
+      label(`${spec.short[1]} ${spec.fmt[1](pr.nv)}`, tx, 120, 0.75, 'left', 8);
+    }
+    label('distance to sheet', tx, 152, 0.5, 'left', 7.5);
+    label(pr.d < 0.005 ? '0' : pr.d.toFixed(2), tx, 182, 1, 'left', 16, pr.d < 0.05 ? c.teal : kcol);
+
+    // the two strips
+    const st = getStrips();
+    if (stripTheme !== light) {
+      stripTheme = light;
+      for (const m of ['pixels', 'manifold'] as Mode[]) for (const f of st[m]) paintTile(f.img, f.c, light);
+    }
+    const cur = state.interp ? Math.round(state.t * (NF - 1)) : -1;
+    const strip = (m: Mode, y: number, title: string, col: string) => {
+      const on = state.interp && state.mode === m;
+      label(title, x0, y - 8, on ? 1 : 0.85, 'left', 8, col);
+      st[m].forEach((f, k) => {
+        const fx = x0 + k * (STRIP.size + STRIP.gap);
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(f.c, fx, y, STRIP.size, STRIP.size);
+        ctx.restore();
+        const hl = on && k === cur;
+        ctx.strokeStyle = hl ? col : k === 0 || k === NF - 1 ? ink(0.4) : hex(col, 0.35);
+        ctx.lineWidth = hl ? 2.2 : 1;
+        ctx.strokeRect(fx - 0.5, y - 0.5, STRIP.size + 1, STRIP.size + 1);
+        const tl = k === 0 ? 'A' : k === NF - 1 ? 'B' : f.d < 0.05 ? '0' : f.d.toFixed(1);
+        label(tl, fx + STRIP.size / 2, y + STRIP.size + 13, k === 0 || k === NF - 1 ? 0.7 : 1, 'center', 7, k === 0 || k === NF - 1 ? undefined : f.d < 0.05 ? c.teal : col);
+      });
+    };
+    strip('pixels', STRIP.y0, 'A → B averaging pixels', c.avg);
+    strip('manifold', STRIP.y1, 'A → B walking the sheet', c.walk);
+    label('numbers: distance to the sheet', x0, STRIP.y1 + STRIP.size + 32, 0.4, 'left', 7);
+
+    // a gauge of distances in pixel space
+    const gy = 476, gx0 = x0 + 4, gx1 = x0 + cw - 8;
+    label('distances in pixel space', x0, gy - 34, 0.55, 'left', 8);
+    const M = Math.max(F.diam, F.randD, pr.d) * 1.08;
+    const X = (d: number) => gx0 + (d / M) * (gx1 - gx0);
+    ctx.strokeStyle = ink(0.25);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(gx0, gy); ctx.lineTo(gx1, gy); ctx.stroke();
+    // the sheet's own width as a teal bar
+    ctx.fillStyle = hex(c.teal, light ? 0.3 : 0.28);
+    ctx.fillRect(gx0, gy - 3, X(F.diam) - gx0, 6);
+    const tick = (d: number, text: string, col: string, row: number) => {
+      const x = X(d);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x, gy - 7); ctx.lineTo(x, gy + 7 + row * 14); ctx.stroke();
+      label(text, x - 4, gy + 18 + row * 14, 1, 'right', 7, col);
+    };
+    tick(F.diam, `sheet width ${F.diam.toFixed(1)}`, c.teal, 0);
+    tick(F.randD, `random pixels ${F.randD.toFixed(1)}`, c.rand, 1);
+    // you
+    const xd = X(pr.d);
+    ctx.fillStyle = kcol;
+    ctx.beginPath(); ctx.moveTo(xd, gy - 4); ctx.lineTo(xd - 6, gy - 14); ctx.lineTo(xd + 6, gy - 14); ctx.closePath(); ctx.fill();
+    label(`x ${pr.d.toFixed(1)}`, xd, gy - 18, 1, xd < gx0 + 20 ? 'left' : xd > gx1 - 30 ? 'right' : 'center', 7.5, kcol);
+
+    // dimensions
+    const dy = 532;
+    label('pixel space', x0, dy, 0.6, 'left', 8);
+    label('784 dims', x0 + cw - 4, dy, 1, 'right', 9);
+    label('this data', x0, dy + 22, 0.6, 'left', 8);
+    label(`2 knobs (${spec.short[0]}, ${spec.short[1]})`, x0 + cw - 4, dy + 22, 1, 'right', 9, c.teal);
+    const vy = dy + 44;
+    const bw = (cw - 20) / 3;
+    F.varFrac.forEach((f, a) => {
+      const bx = x0 + a * (bw + 10);
+      ctx.fillStyle = ink(0.08);
+      ctx.fillRect(bx, vy, bw, 7);
+      ctx.fillStyle = hex(c.teal, 0.75);
+      ctx.fillRect(bx, vy, bw * Math.min(1, f / 0.5), 7);
+      label(`PC${a + 1} ${(f * 100).toFixed(0)}%`, bx, vy + 22, 0.7, 'left', 7);
+    });
+  }
+
+  // ---------------------------------------------------------------- frame
+  let bgLight: boolean | null = null;
+  function draw() {
+    const light = isLight();
+    const c = pal();
+    taken = [];
+    ctx.clearRect(0, 0, W, H);
+    if (!fog) drawBackdrop(ctx, PX, H, light);
+    else if (bgLight !== light) {
+      bgLight = light;
+      fog.canvas.style.background = `radial-gradient(circle at 34% 48%, ${light ? 'rgba(20,184,166,0.07)' : 'rgba(20,184,166,0.10)'}, rgba(20,184,166,0) 55%), var(--stage-bg)`;
+    }
+    if (fog) {
+      if (fogTheme !== light) { fogTheme = light; fog.setColours(fogRamp(light)); }
+      if (fogFam !== state.fam) { fogFam = state.fam; fog.setVolume(F.vol, [GN, GN, GN], F.lo, F.hi); }
+      fog.render(cam, { cloud: state.fog, plane: false, gain: light ? fogOpt.lg : fogOpt.dg, opacity: light ? fogOpt.lo : fogOpt.do, len: 0.35, light });
+    }
+    const pr = getProbe();
+
+    drawBox(ctx, cam, HALF, css('--stage-ink') || '232,233,236', light);
+    drawAxes(light);
+    if (!fog || !state.fog) drawSurface(light);
+    if (state.mesh) drawMesh(light);
+    if (state.field) drawField(light);
+    if (state.thumbs) drawThumbs(light);
+
+    // knob directions along two edges of the sheet
+    if (state.mesh) {
+      const lab = (u: number, v: number, du: number, dv: number, text: string) => {
+        const p = sheetAt(u, v), q = sheetAt(u + du, v + dv);
+        const out = V.add(p, V.mul(V.sub(p, q), 1.6));
+        const s = cam.project(out);
+        if (s.zc > 0.3) tag(text, s.sx, s.sy, c.teal, 'center', 7.5);
+      };
+      lab(0.5, 0, 0, 0.12, `${F.spec.short[0]} →`);
+      lab(0, 0.5, 0.12, 0, `${F.spec.short[1]} →`);
+    }
+
+    // interpolation paths
+    if (state.interp) {
+      const st = getStrips();
+      const pa = cam.project(st.pixels[0].w), pb = cam.project(st.pixels[NF - 1].w);
+      const onP = state.mode === 'pixels';
+      ctx.setLineDash(onP ? [] : [5, 5]);
+      ctx.strokeStyle = hex(c.avg, onP ? 0.95 : 0.45);
+      ctx.lineWidth = onP ? 2.4 : 1.4;
+      ctx.beginPath(); ctx.moveTo(pa.sx, pa.sy); ctx.lineTo(pb.sx, pb.sy); ctx.stroke();
+      ctx.setLineDash(state.mode === 'manifold' ? [] : [5, 5]);
+      ctx.strokeStyle = hex(c.walk, state.mode === 'manifold' ? 0.95 : 0.45);
+      ctx.lineWidth = state.mode === 'manifold' ? 2.4 : 1.4;
+      ctx.beginPath();
+      walkPath.forEach((w, i) => { const p = cam.project(w); if (i) ctx.lineTo(p.sx, p.sy); else ctx.moveTo(p.sx, p.sy); });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const m of ['pixels', 'manifold'] as Mode[])
+        st[m].forEach((f, k) => {
+          if (k === 0 || k === NF - 1) return;
+          const p = cam.project(f.w);
+          ctx.fillStyle = hex(m === 'pixels' ? c.avg : c.walk, state.mode === m ? 0.9 : 0.45);
+          ctx.beginPath(); ctx.arc(p.sx, p.sy, 2.6, 0, Math.PI * 2); ctx.fill();
+        });
+      for (const [w, t] of [[st.pixels[0].w, 'A'], [st.pixels[NF - 1].w, 'B']] as [Vec, string][]) {
+        const p = cam.project(w);
+        ctx.fillStyle = light ? '#fff' : '#0b0d12';
+        ctx.strokeStyle = ink(0.9);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = ink(0.95);
+        ctx.font = "700 11px 'JetBrains Mono', ui-monospace, monospace";
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(t, p.sx, p.sy + 0.5);
+        ctx.textBaseline = 'alphabetic';
+        taken.push({ x: p.sx - 10, y: p.sy - 10, w: 20, h: 20 });
+      }
+    }
+
+    // x, its nearest sheet image, and how far off the sheet it really is
+    const kcol = pr.kind === 'clean' ? c.cur : pr.kind === 'noise' ? c.noise : pr.kind === 'random' ? c.rand : pr.kind === 'pixels' ? c.avg : c.walk;
+    const px = cam.project(pr.w);
+    if (pr.d > 0.05) {
+      const pn = cam.project(pr.nw);
+      // the true distance, to the same scale as the axes, stood up along the sheet's normal
+      const tipW = V.add(pr.nw, V.mul(pr.n, pr.d * F.sc));
+      const tip = cam.project(tipW);
+      ctx.setLineDash([3, 4]);
+      ctx.strokeStyle = hex(kcol, 0.55);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(px.sx, px.sy); ctx.lineTo(pn.sx, pn.sy); ctx.stroke();
+      ctx.setLineDash([]);
+      const g = ctx.createLinearGradient(pn.sx, pn.sy, tip.sx, tip.sy);
+      g.addColorStop(0, hex(kcol, 0.2));
+      g.addColorStop(1, hex(kcol, 0.95));
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(pn.sx, pn.sy); ctx.lineTo(tip.sx, tip.sy); ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = kcol;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(tip.sx, tip.sy, 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = hex(c.teal, 0.95);
+      ctx.beginPath(); ctx.arc(pn.sx, pn.sy, 4, 0, Math.PI * 2); ctx.fill();
+      const right = tip.sx < PX - 190;
+      tag(`${pr.d.toFixed(1)} off the sheet`, tip.sx + (right ? 10 : -10), tip.sy - 6, kcol, right ? 'left' : 'right', 8.5);
+      tag('true distance, to scale', tip.sx + (right ? 10 : -10), tip.sy + 12, ink(0.6), right ? 'left' : 'right', 6.5);
+    }
+    glowDot(px.sx, px.sy, 6.5, kcol, light);
+    tag('x', px.sx + 11, px.sy - 9, kcol, 'left', 8);
+    if (pr.kind === 'random') {
+      const t = 'its PCA shadow looks ordinary', w = textWidth(t, 7) + 8;
+      for (const dy of [26, -26, 44]) {
+        const y = px.sy + dy;
+        if (taken.some((r) => px.sx - w / 2 < r.x + r.w && px.sx + w / 2 > r.x && y - 11 < r.y + r.h && y + 4 > r.y)) continue;
+        tag(t, px.sx, y, ink(0.75), 'center', 7);
+        break;
+      }
+    }
+
+    // the headline label on the sheet: above its top-most corner, or below its lowest one if that is taken
+    const corners = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => cam.project(F.world[v * (G - 1) * G + u * (G - 1)]));
+    const topC = corners.reduce((a, b) => (b.sy < a.sy ? b : a)), botC = corners.reduce((a, b) => (b.sy > a.sy ? b : a));
+    const head = 'real images live on this thin sheet';
+    const hw = textWidth(head, 8.5) + 8;
+    const hits = (lx: number, ly: number) =>
+      taken.some((r) => lx - hw / 2 < r.x + r.w && lx + hw / 2 > r.x && ly - 14 < r.y + r.h && ly + 5 > r.y);
+    for (const [c0, dy] of [[topC, -34], [botC, 40]] as [typeof topC, number][]) {
+      const lx = Math.max(hw / 2 + 12, Math.min(PX - hw / 2 - 12, c0.sx)), ly = Math.max(70, Math.min(H - 20, c0.sy + dy));
+      if (hits(lx, ly)) continue;
+      ctx.strokeStyle = hex(c.teal, 0.6);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (dy < 0) { ctx.moveTo(lx, ly + 5); ctx.lineTo(c0.sx, c0.sy - 6); }
+      else { ctx.moveTo(lx, ly - 14); ctx.lineTo(c0.sx, c0.sy + 6); }
+      ctx.stroke();
+      tag(head, lx, ly, c.teal, 'center', 8.5);
+      break;
+    }
+    const vs = (F.varFrac[0] + F.varFrac[1] + F.varFrac[2]) * 100;
+    label('pixel space has 784 axes; this is the shadow on three of them', 16, 30, 0.75, 'left', 8.5);
+    label(`PC1, PC2, PC3: the directions in which these images vary most (${vs.toFixed(0)}% of the variance)`, 16, 50, 0.5, 'left', 7);
+
+    drawColumn(pr, light);
+    panelText(pr);
+  }
+
+  function panelText(pr: Probe) {
+    const spec = F.spec;
+    const dTex = pr.d < 0.005 ? '0' : pr.d.toFixed(2);
+    const kc = pr.kind === 'clean' ? EQ.cur : pr.kind === 'noise' ? EQ.noise : pr.kind === 'random' ? EQ.rand : pr.kind === 'pixels' ? EQ.avg : EQ.walk;
+    setEq({
+      rule: [
+        ['x = g(z)', EQ.teal],
+        '\\qquad',
+        ['\\operatorname{dist}(x, M) = \\min_z \\lVert x - g(z) \\rVert', kc],
+      ],
+      live: [
+        [`\\operatorname{dist} = ${dTex}`, kc],
+        `\\qquad x \\in \\mathbb{R}^{784},\\; z \\in \\mathbb{R}^2`,
+      ],
+    });
+    const status =
+      pr.d < 0.05 ? 'on the sheet: a real image'
+        : pr.d < 2.5 ? 'just off the sheet: almost an image'
+          : pr.d < F.diam * 0.6 ? 'off the sheet: not a real image'
+            : 'far off the sheet: nothing like these images';
+    const notes: Record<Probe['kind'], string> = {
+      clean: 'Every point of the sheet is a real image, set by two knobs. Moving along it changes many pixels at once, smoothly.',
+      manifold: 'Turning the knobs from A to B stays on the sheet: every frame on the way is a real image.',
+      pixels: 'Averaging pixels is a straight chord in pixel space. The sheet curves, so the chord leaves it and the middle frames are double exposures.',
+      noise: state.den > 0
+        ? 'Denoising moves the image back to the nearest real image, the way a diffusion model steps back to the sheet.'
+        : 'Noise moves the image into the other 781 directions: far from the sheet, while its PCA dot barely moves.',
+      random: `Uniform random pixels: static, ${pr.d.toFixed(1)} from the nearest real image, against a sheet ${F.diam.toFixed(1)} wide. In PC1-PC3 it still lands somewhere ordinary, because those three axes hide the other 781.`,
+    };
+    setResult({ value: dTex, colour: pr.d < 0.05 ? '#14b8a6' : kc, status, note: notes[pr.kind] });
+    const c = project(pr.x);
+    setRows({
+      'r-dims': '784',
+      'r-knobs': `2 (${spec.short[0]}, ${spec.short[1]})`,
+      'r-var': F.varFrac.map((f) => `${(f * 100).toFixed(1)}%`).join(' · '),
+      'r-z': pr.kind === 'clean' || pr.kind === 'manifold' ? `${spec.fmt[0](pr.nu)} · ${spec.fmt[1](pr.nv)}` : 'not on the sheet',
+      'r-near': `${spec.fmt[0](pr.nu)} · ${spec.fmt[1](pr.nv)}`,
+      'r-dist': pr.d.toFixed(3),
+      'r-pca': [c.x, -c.z, c.y].map((v) => (v / F.sc).toFixed(2)).join(', '),
+      'r-diam': F.diam.toFixed(2),
+      'r-rand': F.randD.toFixed(2),
+      'r-ms': `${F.ms.toFixed(0)} ms`,
+    });
+  }
+
+  // ---------------------------------------------------------------- animation
+  type Anim = { kind: 'interp' | 'denoise' | 'walk'; t0: number; dur: number };
+  let anim: Anim | null = null;
+  let raf = 0;
+  const ease = (p: number) => (p < 0.5 ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p));
+  function requestDraw() { if (!raf) raf = requestAnimationFrame(frame); }
+  function frame(now: number) {
+    raf = 0;
+    if (anim) {
+      const p = Math.min(1, (now - anim.t0) / anim.dur);
+      if (anim.kind === 'interp') {
+        // A to B, then back to the midpoint, where the two paths differ most
+        state.t = p < 0.75 ? ease(p / 0.75) : 1 - 0.5 * ease((p - 0.75) / 0.25);
+        state.t = Math.round(state.t * 1000) / 1000;
+      } else if (anim.kind === 'denoise') {
+        state.den = Math.round(ease(p) * 1000) / 1000;
+      } else {
+        const a = p * Math.PI * 2;
+        // a figure of eight over the sheet, from its middle and back
+        state.u = Math.round((0.5 + 0.42 * Math.sin(a)) * 1000) / 1000;
+        state.v = Math.round((0.5 + 0.4 * Math.sin(2 * a)) * 1000) / 1000;
+      }
+      if (p >= 1) {
+        if (anim.kind === 'denoise') {
+          const tg = denoiseTarget();
+          state.u = Math.round(tg.u * 1000) / 1000;
+          state.v = Math.round(tg.v * 1000) / 1000;
+          state.sigma = 0;
+          state.random = false;
+          state.den = 0;
+        }
+        anim = null;
+      }
+      sync(false);
+    }
     draw();
+    if (anim) requestDraw();
+  }
+  function start(kind: Anim['kind'], dur: number) {
+    anim = { kind, t0: performance.now(), dur };
+    requestDraw();
+  }
+  const stop = () => { anim = null; };
+
+  // ---------------------------------------------------------------- panel
+  const setK1 = slider('k1', (v) => { stop(); leaveInterp(); state.u = v / 1000; state.den = 0; requestDraw(); }, (v) => F.spec.fmt[0](v / 1000));
+  const setK2 = slider('k2', (v) => { stop(); leaveInterp(); state.v = v / 1000; state.den = 0; requestDraw(); }, (v) => F.spec.fmt[1](v / 1000));
+  const setT = slider('t', (v) => { stop(); state.interp = true; state.t = v / 100; requestDraw(); }, (v) => (v / 100).toFixed(2));
+  const setSigma = slider('sigma', (v) => { stop(); leaveInterp(); state.sigma = v / 100; state.random = false; state.den = 0; requestDraw(); }, (v) => (v / 100).toFixed(2));
+  const modeSeg = segmented('mode', (m) => { stop(); state.mode = m as Mode; state.interp = true; requestDraw(); });
+  const famSeg = segmented('family', (f) => setFamily(f as Fam));
+  const setFog = check('show-fog', (on) => { state.fog = on; requestDraw(); });
+  const setMesh = check('show-mesh', (on) => { state.mesh = on; requestDraw(); });
+  const setThumbs = check('show-thumbs', (on) => { state.thumbs = on; requestDraw(); });
+  const setField = check('show-field', (on) => { state.field = on; requestDraw(); });
+  function leaveInterp() { state.interp = false; }
+
+  function knobLabels() {
+    const l1 = document.querySelector('label[for="k1"] span'), l2 = document.querySelector('label[for="k2"] span');
+    if (l1) l1.textContent = F.spec.knobs[0];
+    if (l2) l2.textContent = F.spec.knobs[1];
+  }
+  function sync(all = true) {
+    setK1(Math.round(state.u * 1000));
+    setK2(Math.round(state.v * 1000));
+    setT(Math.round(state.t * 100));
+    setSigma(Math.round(state.sigma * 100));
+    if (all) {
+      modeSeg.select(state.mode);
+      famSeg.select(state.fam);
+      setFog(state.fog); setMesh(state.mesh); setThumbs(state.thumbs); setField(state.field);
+      knobLabels();
+    }
+  }
+  function setFamily(f: Fam) {
+    stop();
+    state.fam = f;
+    F = data(f);
+    const s = F.spec;
+    state.u = s.start[0]; state.v = s.start[1];
+    state.A = [...s.A]; state.B = [...s.B];
+    state.den = 0;
+    probeKey = baseKey = stripKey = '';
+    sync();
+    requestDraw();
+  }
+
+  el('animate').addEventListener('click', () => { state.interp = true; state.random = false; start('interp', 3600); });
+  el('denoise').addEventListener('click', () => {
+    if (state.interp || (!state.random && state.sigma === 0)) return;
+    state.den = 0;
+    start('denoise', 1500);
   });
-  canvas.addEventListener('pointerup', () => (dragging = false));
-  canvas.addEventListener('pointercancel', () => (dragging = false));
-  canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    camera.distance = Math.max(3, Math.min(20, camera.distance + e.deltaY * 0.008));
-    draw();
-  }, { passive: false });
+  el('random').addEventListener('click', () => {
+    stop();
+    leaveInterp();
+    state.seed++;
+    rnd = randomImage(state.seed);
+    eps = gaussImage(state.seed);
+    state.random = true;
+    state.den = 0;
+    sync(false);
+    requestDraw();
+  });
+  function reset() {
+    stop();
+    Object.assign(state, { interp: false, mode: 'pixels', t: 0.5, sigma: 0, random: false, den: 0, fog: true, mesh: true, thumbs: true, field: false });
+    Object.assign(cam, CAM0);
+    setFamily('seven');
+  }
+  el('reset').addEventListener('click', reset);
+
+  tries({
+    walk: () => { stop(); leaveInterp(); Object.assign(state, { sigma: 0, random: false, den: 0 }); sync(); start('walk', 6000); },
+    pixels: () => { Object.assign(state, { mode: 'pixels', interp: true, random: false }); sync(); start('interp', 3600); },
+    manifold: () => { Object.assign(state, { mode: 'manifold', interp: true, random: false }); sync(); start('interp', 3600); },
+    noise: () => {
+      stop(); leaveInterp();
+      const s = F.spec;
+      Object.assign(state, { random: false, den: 0, sigma: 0.3, field: true, u: s.start[0], v: s.start[1] });
+      sync();
+      requestDraw();
+    },
+    clean: () => {
+      if (state.interp || (!state.random && state.sigma === 0)) {
+        leaveInterp();
+        Object.assign(state, { random: false, sigma: 0.3, field: true });
+        sync();
+      }
+      el('denoise').click();
+    },
+    rand: () => { Object.assign(state, { field: false }); sync(); el('random').click(); },
+  });
+
+  // ---------------------------------------------------------------- pointer
+  let dragging: 'cur' | 'A' | 'B' | null = null;
+  function handleAt(x: number, y: number): 'A' | 'B' | null {
+    if (!state.interp) return null;
+    const st = getStrips();
+    for (const [w, h] of [[st.pixels[0].w, 'A'], [st.pixels[NF - 1].w, 'B']] as [Vec, 'A' | 'B'][]) {
+      const p = cam.project(w);
+      if (Math.hypot(p.sx - x, p.sy - y) < 13) return h;
+    }
+    return null;
+  }
+  function applyHit(hit: Dense) {
+    const u = Math.round(hit.u * 1000) / 1000, v = Math.round(hit.v * 1000) / 1000;
+    if (dragging === 'A') state.A = [u, v];
+    else if (dragging === 'B') state.B = [u, v];
+    else {
+      leaveInterp();
+      Object.assign(state, { u, v, sigma: 0, random: false, den: 0 });
+    }
+    sync(false);
+    requestDraw();
+  }
+  function stripHit(x: number, y: number) {
+    for (const [m, y0] of [['pixels', STRIP.y0], ['manifold', STRIP.y1]] as [Mode, number][]) {
+      if (y < y0 - 14 || y > y0 + STRIP.size + 16) continue;
+      const k = Math.floor((x - STRIP.x + STRIP.gap / 2) / (STRIP.size + STRIP.gap));
+      if (k >= 0 && k < NF) return { m, k };
+    }
+    return null;
+  }
+  orbitControls(canvas, cam, W, H, {
+    changed: () => requestDraw(),
+    grab: (x, y) => {
+      if (x > PX) return false;
+      const h = handleAt(x, y);
+      if (h) { stop(); dragging = h; return true; }
+      const hit = pick(x, y);
+      if (!hit) return false;
+      stop();
+      dragging = 'cur';
+      applyHit(hit);
+      return true;
+    },
+    drag: (x, y) => {
+      const hit = pick(x, y, 60);
+      if (hit) applyHit(hit);
+    },
+    release: () => { dragging = null; },
+    click: (x, y) => {
+      const s = stripHit(x, y);
+      if (!s) return;
+      stop();
+      state.interp = true;
+      state.mode = s.m;
+      state.t = s.k / (NF - 1);
+      sync();
+      requestDraw();
+    },
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.buttons) return;
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    canvas.style.cursor = handleAt(x, y) || pick(x, y) ? 'pointer' : x > PX && stripHit(x, y) ? 'pointer' : 'grab';
+  });
 
   sync();
+  draw();
 </script>
 
 <style>
   #manifold {
     cursor: grab;
     touch-action: none;
-  }
-  #manifold:active {
-    cursor: grabbing;
   }
 </style>

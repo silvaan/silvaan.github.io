@@ -3,364 +3,1073 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="physics"
   title="Heat Equation"
-  description="The heat equation says temperature spreads out over time. Here it plays out in a room: a radiator warms one corner, a cold window chills another, and heat diffuses between them. Drag inside to add your own."
+  description="The heat equation says temperature spreads out over time. Here it plays out in a 3D room: a radiator on one wall warms it, a cold window on the opposite wall chills it, and heat diffuses between them as glowing fog. Paint your own heat or cold on the slice and watch a thermometer settle."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="heat" class="heat-canvas" width="560" height="560" role="img" aria-label="A room seen from above, coloured by temperature, with a hot radiator, a cold window and a thermometer probe you can move."></canvas>
+        <canvas id="heat3d" class="heat-canvas" width="820" height="720" role="img" aria-label="A room in three dimensions filled with fog coloured by temperature: orange where it is warmer than 18 °C, blue where it is colder. A radiator warms one wall, a window cools the opposite one, a slice plane shows the temperature with isotherms, and a thermometer probe reads the temperature at one point."></canvas>
       </div>
-      <Caption hint="Orange is the radiator, the blue strip is the window; in Paint heat mode drag to add heat, in Thermometer mode drag the white ring" />
-      <Result label="Thermometer" />
+      <Caption
+        legend={[
+          { label: 'warmer than 18 °C', color: '#f97316' },
+          { label: 'colder than 18 °C', color: '#60a5fa' },
+          { label: 'thermometer', color: '#2dd4bf' },
+        ]}
+        hint="Drag on the slice to paint heat or cold · drag the thermometer to move it · drag empty space to orbit · scroll to zoom"
+      />
+      <Result label="Room average" />
     </div>
 
     <div class="sim-panel">
-      <Transport />
-
-      <div class="control">
-        <label>Diffusivity <b id="diffval">0.18</b></label>
-        <input type="range" id="diff" min="2" max="24" value="18" />
+      <Transport step running />
+      <Slider id="alpha" label="Diffusivity α" min={0.5} max={10} step={0.5} value={5} display="5.0 × 10⁻³ m²/s" hint={['slow', 'fast']} />
+      <Slider id="trad" label="Radiator temperature" min={25} max={70} step={1} value={55} display="55 °C" />
+      <Slider id="tout" label="Outside temperature (window)" min={-10} max={15} step={1} value={0} display="0 °C" />
+      <Checks
+        items={[
+          { id: 'radOn', label: 'Radiator on', checked: true },
+          { id: 'winOpen', label: 'Window open' },
+          { id: 'leaky', label: 'Leaky walls', checked: true },
+          { id: 'sofa', label: 'Sofa (does not conduct)' },
+        ]}
+      />
+      <Seg
+        id="brush"
+        label="Brush"
+        attr="b"
+        options={[
+          { value: 'heat', label: 'Heat' },
+          { value: 'cold', label: 'Cold' },
+        ]}
+      />
+      <Seg
+        id="view"
+        label="Show"
+        options={[
+          { value: 'both', label: 'Fog + plane' },
+          { value: 'plane', label: 'Plane' },
+          { value: 'fog', label: 'Fog' },
+        ]}
+      />
+      <div id="plane-wrap">
+        <Seg
+          id="plane"
+          label="Plane"
+          options={[
+            { value: 'xy', label: 'XY' },
+            { value: 'xz', label: 'XZ' },
+            { value: 'yz', label: 'YZ' },
+          ]}
+        />
+        <Slider id="offset" label="Plane offset" min={-1} max={1} step={0.02} value={0} display="z = 0.00 m" />
+      </div>
+      <div id="opac-wrap">
+        <Slider id="opac" label="Fog opacity" min={0.2} max={3} step={0.05} value={1} display="1.00" hint={['thin', 'dense']} />
       </div>
 
       <div class="control">
-        <label>Click action</label>
-        <div class="seg" id="tool">
-          <button data-tool="paint" class="active">Paint heat</button>
-          <button data-tool="probe">Thermometer</button>
-        </div>
+        <span class="section-label">Thermometer over time</span>
+        <canvas id="thermo" class="mini-canvas" width="300" height="140"></canvas>
       </div>
 
-      <div class="readout">
-        <div class="row"><span>Temp at cursor</span><b id="temp">—</b></div>
-        <div class="row"><span>Thermometer</span><b id="ptemp">—</b></div>
-      </div>
-
-      <div class="control">
-        <label>Thermometer over time</label>
-        <canvas id="thermo" class="mini-canvas" width="300" height="150"></canvas>
-      </div>
-
-      <div class="legend">
-        <span>cold</span>
-        <span class="bar"></span>
-        <span>hot</span>
-      </div>
-
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'tOut', label: 'time' },
+          { id: 'meanOut', label: 'room average' },
+          { id: 'probeOut', label: 'thermometer' },
+          { id: 'inOut', label: 'heat in (radiator)' },
+          { id: 'winOutW', label: 'heat out (window)' },
+          { id: 'wallOutW', label: 'heat out (walls)' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Drop the thermometer <b>next to the radiator</b>: its temperature shoots up
-      fast, then levels off as the region around it warms and the gradient
-      driving the flow shrinks.
+      Warmth spreads from the radiator toward the open window. The thermometer
+      rises, then levels off in a <b>steady state</b>: ∇²T = 0, and the heat in
+      equals the heat out. <Try id="steady" />
     </li>
     <li>
-      Place it <b>midway</b> between radiator and window. It settles at a steady
-      in-between value: heat flows continuously through it from hot to cold
-      (steady state, not "no flow").
+      A <b>hot spot</b> spreads and its peak drops. Its width grows like √(αt),
+      so spreading twice as far takes four times as long. <Try id="spot" />
     </li>
     <li>
-      Lower the <b>diffusivity</b> and reset. The same final picture emerges, but
-      the thermometer curve rises far more slowly: diffusivity sets the timescale,
-      not the destination.
+      <b>Open the window</b> in a warm room. Cold pours in and the average
+      falls by about 5 °C, until the radiator and the window balance again. <Try id="window" />
+    </li>
+    <li>
+      Lower <b>α</b>. The same final picture emerges, only far more slowly:
+      diffusivity sets the timescale, not the destination. <Try id="slow" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
-  import { result } from '../../../lib/panel';
-  const setEq = equationBar();
-  const setResult = result();
-  const canvas = document.getElementById('heat') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => render());
-  const thermoCanvas = document.getElementById('thermo') as HTMLCanvasElement;
-  const th = setupCanvas(thermoCanvas, () => drawThermo());
-  const G = 120; // grid resolution
+  import { equation } from '../../../lib/equation';
+  import { el, result, readout, slider, segmented, check, transport, tries } from '../../../lib/panel';
+  import {
+    Camera3D, orbitControls, drawBackdrop, drawGizmo, line3, planePoint, planeNormal,
+    PlaneShade, ramp32, type Vec, type PlaneAxis,
+  } from '../../../lib/scene3d';
+  import { VolumeView } from '../../../lib/volume3d';
 
-  const off = document.createElement('canvas');
-  off.width = G;
-  off.height = G;
-  const octx = off.getContext('2d')!;
-  const img = octx.createImageData(G, G);
+  const canvas = el('heat3d') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const ink = () => css('--stage-ink') || '232,233,236';
 
-  let u = new Float32Array(G * G);
-  let v = new Float32Array(G * G);
-  const idx = (x: number, y: number) => y * G + x;
+  // ---- the room ----------------------------------------------------------------------
+  // Lengths in metres: a 4 m × 2.8 m × 4 m room, x from the radiator wall to the
+  // window wall, y up, z across. Cells are 10 cm cubes, padded by one ghost layer.
+  const NX = 40, NY = 28, NZ = 40;
+  const HXZ = 2, HY = 1.4, CELL = 0.1;
+  const PX = NX + 2, PY = NY + 2, PZ = NZ + 2;
+  const SY = PX, SZ = PX * PY, N = PX * PY * PZ;
+  const at = (ix: number, iy: number, iz: number) => (iz + 1) * SZ + (iy + 1) * SY + ix + 1;
 
-  const AMBIENT = 0.3;
+  // physics: air's ρ c_p, a fixed time step (stable up to α = 0.01 m²/s), the
+  // number of steps per frame, and U-values for the glass and the leaky walls
+  const RHO_CP = 1200;          // J / (m³ K)
+  const DT = 0.16;              // s
+  const STEPS = 6;
+  const U_GLASS = 5.8;          // W / (m² K), single glazing
+  const U_WALL = 0.25;          // W / (m² K), an insulated wall
+  const C_CELL = RHO_CP * CELL ** 3; // J / K per cell
+  const K_OUT = DT / (RHO_CP * CELL); // per W/(m²K) of coupling: the fraction of (T_out − T) per step
+
+  // colours: temperature relative to a 18 °C room, a fixed scale so a colour is a temperature
+  const TREF = 18, TMAX = 70, TMIN = -10;
+  const HOT = TMAX - TREF, COLD = TREF - TMIN;
+  const PROBE = '#2dd4bf', MEAN = '#fbbf24';
+
+  // what is where (cell index ranges, inclusive)
+  const RAD = { x: [0, 1], y: [2, 8], z: [12, 27] };
+  const WIN = { x: [39, 39], y: [10, 23], z: [11, 28] };
+  const SOFA = [
+    { x: [22, 28], y: [0, 5], z: [4, 24] },
+    { x: [27, 29], y: [6, 9], z: [4, 24] },
+  ];
+  const inBox = (b: { x: number[]; y: number[]; z: number[] }, ix: number, iy: number, iz: number) =>
+    ix >= b.x[0] && ix <= b.x[1] && iy >= b.y[0] && iy <= b.y[1] && iz >= b.z[0] && iz <= b.z[1];
+  /** World corners of a cell box. */
+  const boxLo = (b: { x: number[]; y: number[]; z: number[] }): Vec => ({ x: -HXZ + b.x[0] * CELL, y: -HY + b.y[0] * CELL, z: -HXZ + b.z[0] * CELL });
+  const boxHi = (b: { x: number[]; y: number[]; z: number[] }): Vec => ({ x: -HXZ + (b.x[1] + 1) * CELL, y: -HY + (b.y[1] + 1) * CELL, z: -HXZ + (b.z[1] + 1) * CELL });
+
+  // cell kinds: 0 air, 1 radiator (fixed hot), 2 open window (fixed cold), 3 solid, 4 outside
+  const AIR = 0, RADK = 1, WINK = 2, SOLID = 3, OUT = 4;
+  const kind = new Uint8Array(N);
+  const open = new Uint8Array(N);   // faces of an air cell open to a neighbour that conducts
+  const kOut = new Float32Array(N); // coupling to the outside per step (glass + leaky walls)
+  const nWall = new Uint8Array(N);  // faces on an outer wall
+  const glass = new Uint8Array(N);  // 1 for a cell behind closed glass
+  let T = new Float32Array(N);
+  let T2 = new Float32Array(N);
+  let radFaces = new Int32Array(0); // air cells touching the radiator, one entry per face
+  let winFaces = new Int32Array(0); // air cells touching the open window
+  let nAir = 1;
+
   const state = {
-    playing: false,
-    diff: 0.18,
-    cursor: -1,
-    tool: 'paint' as 'paint' | 'probe',
-    probe: { x: Math.round(G * 0.5), y: Math.round(G * 0.5) },
+    playing: true,
+    alpha: 0.005,
+    tRad: 55,
+    tOut: 0,
+    radOn: true,
+    winOpen: false,
+    leaky: true,
+    sofa: false,
+    brush: 'heat' as 'heat' | 'cold',
+    view: 'both' as 'both' | 'plane' | 'fog',
+    plane: 'xy' as PlaneAxis,
+    frac: 0,
+    opacity: 1,
+    probe: { x: 0.4, y: -0.3, z: 0 } as Vec,
   };
-  const toCelsius = (v: number) => 10 + v * 20;
-  let history: number[] = [];
+  let tSim = 0;
+  let dirty = true;
 
-  function inRadiator(x: number, y: number) {
-    return x >= 3 && x <= 7 && y >= G * 0.4 && y <= G * 0.6;
-  }
-  function inWindow(x: number, y: number) {
-    return x >= G - 2 && y >= G * 0.28 && y <= G * 0.72;
+  const NB = [-1, 1, -SY, SY, -SZ, SZ];
+
+  function build() {
+    for (let iz = -1; iz <= NZ; iz++)
+      for (let iy = -1; iy <= NY; iy++)
+        for (let ix = -1; ix <= NX; ix++) {
+          const i = at(ix, iy, iz);
+          let k = AIR;
+          if (ix < 0 || iy < 0 || iz < 0 || ix >= NX || iy >= NY || iz >= NZ) k = OUT;
+          else if (inBox(RAD, ix, iy, iz)) k = state.radOn ? RADK : SOLID;
+          else if (inBox(WIN, ix, iy, iz) && state.winOpen) k = WINK;
+          else if (state.sofa && SOFA.some((b) => inBox(b, ix, iy, iz))) k = SOLID;
+          // a cell that was solid and is now air takes the room's temperature
+          if (k === AIR && kind[i] === SOLID) T[i] = T2[i] = meanT();
+          kind[i] = k;
+        }
+    const rf: number[] = [], wf: number[] = [];
+    nAir = 0;
+    for (let iz = 0; iz < NZ; iz++)
+      for (let iy = 0; iy < NY; iy++)
+        for (let ix = 0; ix < NX; ix++) {
+          const i = at(ix, iy, iz);
+          open[i] = 0; kOut[i] = 0; nWall[i] = 0; glass[i] = 0;
+          if (kind[i] !== AIR) continue;
+          nAir++;
+          for (let f = 0; f < 6; f++) {
+            const k = kind[i + NB[f]];
+            if (k === AIR || k === RADK || k === WINK) open[i] |= 1 << f;
+            if (k === RADK) rf.push(i);
+            if (k === WINK) wf.push(i);
+            if (k === OUT) {
+              // the window's outer face is glass; the rest of the shell is wall
+              if (f === 1 && inBox(WIN, ix, iy, iz)) glass[i] = 1;
+              else nWall[i]++;
+            }
+          }
+          kOut[i] = K_OUT * (glass[i] * U_GLASS + (state.leaky ? nWall[i] * U_WALL : 0));
+        }
+    radFaces = Int32Array.from(rf);
+    winFaces = Int32Array.from(wf);
+    nAir = Math.max(1, nAir);
+    applyFixed();
+    dirty = true;
   }
 
-  function applyFixed(a: Float32Array) {
-    for (let x = 0; x < G; x++) {
-      a[idx(x, 0)] = AMBIENT;
-      a[idx(x, G - 1)] = AMBIENT;
+  function applyFixed() {
+    for (let i = 0; i < N; i++) {
+      if (kind[i] === RADK) T[i] = T2[i] = state.tRad;
+      else if (kind[i] === WINK) T[i] = T2[i] = state.tOut;
     }
-    for (let y = 0; y < G; y++) {
-      a[idx(0, y)] = AMBIENT;
-      a[idx(G - 1, y)] = AMBIENT;
-    }
-    for (let y = 0; y < G; y++)
-      for (let x = 0; x < G; x++) {
-        if (inRadiator(x, y)) a[idx(x, y)] = 1.0;
-        else if (inWindow(x, y)) a[idx(x, y)] = 0.0;
+    dirty = true;
+  }
+
+  function reset(start = TREF) {
+    T.fill(start);
+    T2.fill(start);
+    tSim = 0;
+    hist.n = 0;
+    hist.stride = 1;
+    hist.skip = 0;
+    applyFixed();
+  }
+
+  /** One explicit (FTCS) step of ∂T/∂t = α∇²T, insulating walls unless coupled. */
+  function step() {
+    const a = T, b = T2, r = (state.alpha * DT) / (CELL * CELL), to = state.tOut;
+    for (let iz = 0; iz < NZ; iz++)
+      for (let iy = 0; iy < NY; iy++) {
+        let i = at(0, iy, iz);
+        for (let ix = 0; ix < NX; ix++, i++) {
+          if (kind[i] !== AIR) { b[i] = a[i]; continue; }
+          const t = a[i], m = open[i];
+          let lap: number;
+          if (m === 63) lap = a[i - 1] + a[i + 1] + a[i - SY] + a[i + SY] + a[i - SZ] + a[i + SZ] - 6 * t;
+          else {
+            lap = 0;
+            if (m & 1) lap += a[i - 1] - t;
+            if (m & 2) lap += a[i + 1] - t;
+            if (m & 4) lap += a[i - SY] - t;
+            if (m & 8) lap += a[i + SY] - t;
+            if (m & 16) lap += a[i - SZ] - t;
+            if (m & 32) lap += a[i + SZ] - t;
+          }
+          b[i] = t + r * lap + kOut[i] * (to - t);
+        }
       }
+    T = b;
+    T2 = a;
+    tSim += DT;
+    dirty = true;
   }
 
-  function reset() {
-    u = new Float32Array(G * G).fill(AMBIENT);
-    v = new Float32Array(G * G);
-    applyFixed(u);
-    history = [];
+  function meanT() {
+    let s = 0, n = 0;
+    for (let i = 0; i < N; i++) if (kind[i] === AIR) { s += T[i]; n++; }
+    return n ? s / n : TREF;
   }
 
+  /** Heat flows in watts: in from the radiator, out through the window and the walls. */
+  function flows() {
+    const g = RHO_CP * state.alpha * CELL; // W/K through one air face
+    let pin = 0, pwin = 0, pwall = 0, sum = 0;
+    for (let k = 0; k < radFaces.length; k++) pin += (state.tRad - T[radFaces[k]]) * g;
+    for (let k = 0; k < winFaces.length; k++) pwin += (T[winFaces[k]] - state.tOut) * g;
+    const toW = C_CELL / DT;
+    for (let i = 0; i < N; i++) {
+      if (kind[i] !== AIR) continue;
+      const t = T[i];
+      sum += t;
+      if (glass[i]) pwin += K_OUT * U_GLASS * (t - state.tOut) * toW;
+      if (state.leaky && nWall[i]) pwall += K_OUT * U_WALL * nWall[i] * (t - state.tOut) * toW;
+    }
+    return { pin, pwin, pwall, mean: sum / nAir };
+  }
+
+  /** Temperature at a world point, trilinear over the cells. */
+  function sampleT(p: Vec) {
+    const fx = Math.max(0, Math.min(NX - 1.001, (p.x + HXZ) / CELL - 0.5));
+    const fy = Math.max(0, Math.min(NY - 1.001, (p.y + HY) / CELL - 0.5));
+    const fz = Math.max(0, Math.min(NZ - 1.001, (p.z + HXZ) / CELL - 0.5));
+    const x0 = fx | 0, y0 = fy | 0, z0 = fz | 0;
+    const ax = fx - x0, ay = fy - y0, az = fz - z0;
+    let s = 0, w = 0;
+    for (let c = 0; c < 8; c++) {
+      const dx = c & 1, dy = (c >> 1) & 1, dz = (c >> 2) & 1;
+      const i = at(x0 + dx, y0 + dy, z0 + dz);
+      if (kind[i] === SOLID) continue;
+      const wt = (dx ? ax : 1 - ax) * (dy ? ay : 1 - ay) * (dz ? az : 1 - az);
+      s += T[i] * wt;
+      w += wt;
+    }
+    return w > 1e-6 ? s / w : TREF;
+  }
+
+  /** Signed temperature level: +1 at 70 °C, −1 at −10 °C, 0 at 18 °C. */
+  const level = (t: number) => {
+    const d = t - TREF;
+    return d >= 0 ? Math.min(1, d / HOT) : Math.max(-1, d / COLD);
+  };
+
+  // ---- brush -------------------------------------------------------------------------
+  const BRUSH_R = 0.4;
+  function paint(p: Vec, strength: number) {
+    const target = state.brush === 'heat' ? 65 : -5;
+    const cx = (p.x + HXZ) / CELL - 0.5, cy = (p.y + HY) / CELL - 0.5, cz = (p.z + HXZ) / CELL - 0.5;
+    const R = BRUSH_R / CELL;
+    for (let iz = Math.max(0, Math.floor(cz - R)); iz <= Math.min(NZ - 1, Math.ceil(cz + R)); iz++)
+      for (let iy = Math.max(0, Math.floor(cy - R)); iy <= Math.min(NY - 1, Math.ceil(cy + R)); iy++)
+        for (let ix = Math.max(0, Math.floor(cx - R)); ix <= Math.min(NX - 1, Math.ceil(cx + R)); ix++) {
+          const d2 = ((ix - cx) ** 2 + (iy - cy) ** 2 + (iz - cz) ** 2) / (R * R);
+          if (d2 > 1) continue;
+          const i = at(ix, iy, iz);
+          if (kind[i] !== AIR) continue;
+          T[i] += (target - T[i]) * strength * (1 - d2);
+        }
+    dirty = true;
+  }
+
+  /** A ball of hot air (for the hot-spot experiment). */
+  function hotBall(c: Vec, r: number, temp: number) {
+    for (let iz = 0; iz < NZ; iz++)
+      for (let iy = 0; iy < NY; iy++)
+        for (let ix = 0; ix < NX; ix++) {
+          const x = -HXZ + (ix + 0.5) * CELL, y = -HY + (iy + 0.5) * CELL, z = -HXZ + (iz + 0.5) * CELL;
+          const d2 = ((x - c.x) ** 2 + (y - c.y) ** 2 + (z - c.z) ** 2) / (r * r);
+          const i = at(ix, iy, iz);
+          if (kind[i] === AIR && d2 < 1) T[i] = T2[i] = TREF + (temp - TREF) * Math.exp(-3 * d2);
+        }
+    dirty = true;
+  }
+
+  // ---- thermometer history ------------------------------------------------------------
+  // the whole run since the last reset; when the buffer fills, it keeps every other sample
+  const HN = 480;
+  const hist = { n: 0, stride: 1, skip: 0, p: new Float32Array(HN), m: new Float32Array(HN), t: new Float32Array(HN) };
+  function record(probe: number, mean: number) {
+    if (hist.skip++ % hist.stride) return;
+    if (hist.n === HN) {
+      for (let k = 0; k < HN / 2; k++) {
+        hist.p[k] = hist.p[2 * k]; hist.m[k] = hist.m[2 * k]; hist.t[k] = hist.t[2 * k];
+      }
+      hist.n = HN / 2;
+      hist.stride *= 2;
+    }
+    hist.p[hist.n] = probe; hist.m[hist.n] = mean; hist.t[hist.n] = tSim; hist.n++;
+  }
+
+  const thermoCanvas = el('thermo') as HTMLCanvasElement;
+  const th = setupCanvas(thermoCanvas, () => drawThermo());
   function drawThermo() {
     const c = th.ctx, Ws = th.W, Hs = th.H;
-    const pad = { l: 30, r: 8, t: 10, b: 14 };
-    const lo = 10, hi = 30;
-    const sy = (val: number) =>
-      pad.t + (1 - (Math.max(lo, Math.min(hi, val)) - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
-    const ink = getComputedStyle(canvas).getPropertyValue('--stage-ink').trim() || '232,233,236';
+    const pad = { l: 30, r: 8, t: 8, b: 16 };
+    let lo = 10, hi = 30;
+    for (let k = 0; k < hist.n; k++) {
+      lo = Math.min(lo, hist.p[k], hist.m[k]);
+      hi = Math.max(hi, hist.p[k], hist.m[k]);
+    }
+    lo = Math.floor(lo / 10) * 10;
+    hi = Math.ceil(hi / 10) * 10;
+    const sy = (v: number) => pad.t + (1 - (v - lo) / (hi - lo)) * (Hs - pad.t - pad.b);
+    const inkc = getComputedStyle(thermoCanvas).getPropertyValue('--stage-ink').trim() || '232,233,236';
+    const faint = getComputedStyle(thermoCanvas).getPropertyValue('--text-faint').trim() || '#8b93a5';
     c.clearRect(0, 0, Ws, Hs);
-    c.strokeStyle = `rgba(${ink},0.16)`;
-    c.fillStyle = getComputedStyle(canvas).getPropertyValue('--text-faint').trim() || '#8b93a5';
     c.lineWidth = 1;
     c.font = "10px 'JetBrains Mono', monospace";
-    for (const t of [10, 20, 30]) {
-      const y = sy(t);
+    c.fillStyle = faint;
+    c.textAlign = 'left';
+    const stepT = hi - lo > 40 ? 20 : 10;
+    for (let v = lo; v <= hi; v += stepT) {
+      const y = sy(v);
+      c.strokeStyle = `rgba(${inkc},0.14)`;
       c.beginPath();
       c.moveTo(pad.l, y);
       c.lineTo(Ws - pad.r, y);
       c.stroke();
-      c.fillText(t + '°', 6, y + 3);
+      c.fillText(v + '°', 4, y + 3);
     }
-    if (history.length < 2) return;
-    const n = history.length;
-    const sx = (i: number) => pad.l + (i / (n - 1)) * (Ws - pad.l - pad.r);
-    c.strokeStyle = '#5eead4';
-    c.lineWidth = 2;
-    c.beginPath();
-    history.forEach((val, i) => (i ? c.lineTo(sx(i), sy(val)) : c.moveTo(sx(i), sy(val))));
-    c.stroke();
+    const tEnd = Math.max(60, tSim);
+    c.textAlign = 'right';
+    c.fillText(clock(tEnd), Ws - pad.r, Hs - 3);
+    c.textAlign = 'left';
+    c.fillText('0', pad.l, Hs - 3);
+    if (hist.n < 2) return;
+    const sx = (t: number) => pad.l + (t / tEnd) * (Ws - pad.l - pad.r);
+    const trace = (arr: Float32Array, col: string, dash: number[]) => {
+      c.strokeStyle = col;
+      c.setLineDash(dash);
+      c.lineWidth = 2;
+      c.beginPath();
+      for (let k = 0; k < hist.n; k++) {
+        const x = sx(hist.t[k]), y = sy(arr[k]);
+        if (k) c.lineTo(x, y); else c.moveTo(x, y);
+      }
+      c.stroke();
+      c.setLineDash([]);
+    };
+    trace(hist.m, MEAN, [4, 3]);
+    trace(hist.p, PROBE, []);
   }
 
-  function step() {
-    const r = state.diff;
-    for (let y = 1; y < G - 1; y++) {
-      for (let x = 1; x < G - 1; x++) {
-        const i = idx(x, y);
-        const lap = u[i - 1] + u[i + 1] + u[i - G] + u[i + G] - 4 * u[i];
-        v[i] = u[i] + r * lap;
+  const clock = (s: number) => {
+    const m = Math.floor(s / 60);
+    return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  };
+
+  // ---- colours -----------------------------------------------------------------------
+  // the hot and cold ramps, indexed by |level|: transparent at 18 °C
+  const ramps = (light: boolean) =>
+    light
+      ? {
+          hot: [[0, 255, 244, 230, 0], [0.08, 253, 196, 150, 0.32], [0.3, 249, 125, 60, 0.58], [0.6, 220, 60, 30, 0.74], [1, 140, 20, 24, 0.86]],
+          cold: [[0, 232, 242, 255, 0], [0.08, 186, 212, 250, 0.32], [0.3, 96, 158, 240, 0.58], [0.6, 37, 99, 220, 0.74], [1, 23, 45, 125, 0.86]],
+        }
+      : {
+          hot: [[0, 120, 40, 20, 0], [0.08, 170, 56, 24, 0.32], [0.3, 226, 88, 32, 0.6], [0.6, 249, 146, 48, 0.8], [1, 255, 232, 170, 0.92]],
+          cold: [[0, 20, 40, 90, 0], [0.08, 32, 64, 150, 0.32], [0.3, 46, 116, 226, 0.6], [0.6, 96, 174, 250, 0.8], [1, 205, 236, 255, 0.92]],
+        };
+  let lutLight: boolean | null = null;
+  let lutHot = new Uint32Array(256), lutCold = new Uint32Array(256);
+  let stopsNow = ramps(false);
+  function buildLuts() {
+    const light = isLight();
+    if (light === lutLight) return false;
+    lutLight = light;
+    stopsNow = ramps(light);
+    lutHot = ramp32(stopsNow.hot);
+    lutCold = ramp32(stopsNow.cold);
+    return true;
+  }
+  /** rgba() of a temperature on the current ramps. */
+  function tempColour(t: number) {
+    const l = level(t);
+    const stops = l >= 0 ? stopsNow.hot : stopsNow.cold;
+    const a = Math.abs(l);
+    let i = 1;
+    while (i < stops.length - 1 && a > stops[i][0]) i++;
+    const s0 = stops[i - 1], s1 = stops[i];
+    const u = Math.max(0, Math.min(1, (a - s0[0]) / (s1[0] - s0[0])));
+    const m = (k: number) => s0[k] + (s1[k] - s0[k]) * u;
+    return `rgba(${m(1) | 0},${m(2) | 0},${m(3) | 0},${m(4).toFixed(3)})`;
+  }
+
+  // ---- camera, fog, plane ------------------------------------------------------------
+  const cam = new Camera3D(W, H - 70, { dist: 11, yaw: 0.6, pitch: -0.42, zoom: 1.3 });
+  const fog = VolumeView.create(canvas, W, H, 'signed');
+  const PG = 40; // the plane grid: 10 cm cells over its 4 m square
+  const fogBuf = new Float32Array(NX * NY * NZ);
+  const planeBuf = new Float32Array(PG * PG);
+  const sliceT = new Float32Array(PG * PG); // °C on the plane, NaN outside the air
+  const shade = fog ? null : new PlaneShade(W, H, { half: HXZ, grid: PG, step: 2 });
+
+  const planeExtent = (p: PlaneAxis) => (p === 'xz' ? HY - CELL / 2 : HXZ - CELL / 2);
+  const planeAxisName = (p: PlaneAxis) => ({ xy: 'z', xz: 'y', yz: 'x' })[p];
+  const offset = () => state.frac * planeExtent(state.plane);
+
+  function fillVolume() {
+    let k = 0;
+    for (let iz = 0; iz < NZ; iz++)
+      for (let iy = 0; iy < NY; iy++) {
+        let i = at(0, iy, iz);
+        for (let ix = 0; ix < NX; ix++, i++, k++) {
+          const kd = kind[i];
+          if (kd === SOLID) { fogBuf[k] = 0; continue; }
+          const l = level(T[i]), a = l < 0 ? -l : l;
+          // a gentle lift (about a^0.8) so a room a few degrees off 18 °C already reads
+          fogBuf[k] = l * (1.6 - 0.6 * a);
+        }
+      }
+  }
+
+  /** Cell temperature, NaN for solids; ix, iy, iz may be fractional along one axis. */
+  function cellT(ix: number, iy: number, iz: number) {
+    const i = at(ix, iy, iz);
+    return kind[i] === SOLID ? NaN : T[i];
+  }
+  function lerpT(a: number, b: number, f: number) {
+    if (a !== a) return f > 0.5 || b === b ? b : NaN;
+    if (b !== b) return a;
+    return a + (b - a) * f;
+  }
+
+  function fillSlice() {
+    const off = offset();
+    const n = state.plane === 'xy' ? (off + HXZ) / CELL - 0.5 : state.plane === 'xz' ? (off + HY) / CELL - 0.5 : (off + HXZ) / CELL - 0.5;
+    const nMax = state.plane === 'xz' ? NY - 1 : state.plane === 'xy' ? NZ - 1 : NX - 1;
+    const c = Math.max(0, Math.min(nMax, n));
+    const n0 = Math.min(nMax - 1, Math.floor(c)), f = c - n0;
+    const yShift = Math.round((HXZ - HY) / CELL); // plane rows below the floor
+    for (let j = 0; j < PG; j++)
+      for (let i = 0; i < PG; i++) {
+        let t = NaN;
+        if (state.plane === 'xy') {
+          const iy = j - yShift;
+          if (iy >= 0 && iy < NY) t = lerpT(cellT(i, iy, n0), cellT(i, iy, n0 + 1), f);
+        } else if (state.plane === 'xz') {
+          t = lerpT(cellT(i, n0, j), cellT(i, n0 + 1, j), f);
+        } else {
+          const iy = i - yShift;
+          if (iy >= 0 && iy < NY) t = lerpT(cellT(n0, iy, j), cellT(n0 + 1, iy, j), f);
+        }
+        const q = j * PG + i;
+        sliceT[q] = t;
+        const l = t === t ? level(t) : 0;
+        // the plane's brightness is log(1 + 16ρ)/log 17: invert it, so colour is linear in T
+        planeBuf[q] = Math.sign(l) * (Math.pow(17, Math.abs(l)) - 1) / 16;
+        if (shade) shade.a[q] = l;
+      }
+  }
+
+  // ---- drawing -------------------------------------------------------------------------
+  function quadPath(pts: Vec[]) {
+    const pr = pts.map((p) => cam.project(p));
+    ctx.moveTo(pr[0].sx, pr[0].sy);
+    for (let k = 1; k < pr.length; k++) ctx.lineTo(pr[k].sx, pr[k].sy);
+    ctx.closePath();
+  }
+
+  /** A solid-looking box: the faces turned toward the camera, filled, then its edges. */
+  function cuboid(lo: Vec, hi: Vec, fill: string, edge: string) {
+    const eye = cam.eye();
+    const c = (x: number, y: number, z: number): Vec => ({ x: x ? hi.x : lo.x, y: y ? hi.y : lo.y, z: z ? hi.z : lo.z });
+    const faces: [Vec, Vec[]][] = [
+      [{ x: -1, y: 0, z: 0 }, [c(0, 0, 0), c(0, 1, 0), c(0, 1, 1), c(0, 0, 1)]],
+      [{ x: 1, y: 0, z: 0 }, [c(1, 0, 0), c(1, 1, 0), c(1, 1, 1), c(1, 0, 1)]],
+      [{ x: 0, y: -1, z: 0 }, [c(0, 0, 0), c(1, 0, 0), c(1, 0, 1), c(0, 0, 1)]],
+      [{ x: 0, y: 1, z: 0 }, [c(0, 1, 0), c(1, 1, 0), c(1, 1, 1), c(0, 1, 1)]],
+      [{ x: 0, y: 0, z: -1 }, [c(0, 0, 0), c(1, 0, 0), c(1, 1, 0), c(0, 1, 0)]],
+      [{ x: 0, y: 0, z: 1 }, [c(0, 0, 1), c(1, 0, 1), c(1, 1, 1), c(0, 1, 1)]],
+    ];
+    ctx.lineWidth = 1;
+    for (const [n, pts] of faces) {
+      const p = pts[0];
+      if ((eye.x - p.x) * n.x + (eye.y - p.y) * n.y + (eye.z - p.z) * n.z <= 0) continue;
+      ctx.beginPath();
+      quadPath(pts);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = edge;
+      ctx.stroke();
+    }
+  }
+
+  function drawRoom(light: boolean) {
+    const k = ink();
+    const s = { x: HXZ, y: HY, z: HXZ };
+    const c = (i: number): Vec => ({ x: i & 1 ? s.x : -s.x, y: i & 2 ? s.y : -s.y, z: i & 4 ? s.z : -s.z });
+    const edges = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+    for (const [a, b] of edges) {
+      const z = (cam.toCam(c(a)).zc + cam.toCam(c(b)).zc) / 2;
+      line3(ctx, cam, c(a), c(b), `rgba(${k},${(light ? 0.3 : 0.24) * cam.fog(z, 2.5)})`, 1);
+    }
+    // floorboards
+    for (let x = -HXZ + 0.5; x < HXZ; x += 0.5)
+      line3(ctx, cam, { x, y: -HY, z: -HXZ }, { x, y: -HY, z: HXZ }, `rgba(${k},${light ? 0.07 : 0.05})`, 1);
+    for (let z = -HXZ + 0.5; z < HXZ; z += 0.5)
+      line3(ctx, cam, { x: -HXZ, y: -HY, z }, { x: HXZ, y: -HY, z }, `rgba(${k},${light ? 0.07 : 0.05})`, 1);
+  }
+
+  function drawRadiator(light: boolean) {
+    const lo = boxLo(RAD), hi = boxHi(RAD);
+    const on = state.radOn;
+    const edge = on ? (light ? 'rgba(194,65,12,0.85)' : 'rgba(253,186,116,0.8)') : `rgba(${ink()},0.4)`;
+    cuboid(lo, hi, on ? (light ? 'rgba(234,88,12,0.10)' : 'rgba(249,115,22,0.08)') : `rgba(${ink()},0.06)`, edge);
+    // fins on the face toward the room
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1;
+    for (let z = lo.z + 0.1; z < hi.z - 0.01; z += 0.1) line3(ctx, cam, { x: hi.x, y: lo.y + 0.04, z }, { x: hi.x, y: hi.y - 0.04, z }, edge, 0.8);
+  }
+
+  function drawWindow(light: boolean) {
+    const lo = boxLo(WIN), hi = boxHi(WIN);
+    const x = HXZ;
+    const col = light ? 'rgba(37,99,235,0.85)' : 'rgba(147,197,253,0.85)';
+    ctx.beginPath();
+    quadPath([{ x, y: lo.y, z: lo.z }, { x, y: hi.y, z: lo.z }, { x, y: hi.y, z: hi.z }, { x, y: lo.y, z: hi.z }]);
+    ctx.fillStyle = state.winOpen ? 'rgba(0,0,0,0)' : light ? 'rgba(96,165,250,0.10)' : 'rgba(96,165,250,0.07)';
+    ctx.fill();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    const zm = (lo.z + hi.z) / 2;
+    if (!state.winOpen) {
+      line3(ctx, cam, { x, y: lo.y, z: zm }, { x, y: hi.y, z: zm }, col, 1);
+      line3(ctx, cam, { x, y: (lo.y + hi.y) / 2, z: lo.z }, { x, y: (lo.y + hi.y) / 2, z: hi.z }, col, 1);
+    } else {
+      // two sashes swung outward on their hinges
+      const w = (hi.z - lo.z) / 2, a = 1.0;
+      for (const [hz, sgn] of [[lo.z, 1], [hi.z, -1]] as [number, number][]) {
+        const ez = hz + sgn * Math.cos(a) * w, ex = x + Math.sin(a) * w;
+        ctx.beginPath();
+        quadPath([{ x, y: lo.y, z: hz }, { x, y: hi.y, z: hz }, { x: ex, y: hi.y, z: ez }, { x: ex, y: lo.y, z: ez }]);
+        ctx.fillStyle = light ? 'rgba(96,165,250,0.12)' : 'rgba(96,165,250,0.08)';
+        ctx.fill();
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.stroke();
       }
     }
-    const t = u; u = v; v = t;
-    applyFixed(u);
   }
 
-  function thermal(t: number) {
-    t = Math.max(0, Math.min(1, t));
-    const stops = [
-      [28, 56, 150],
-      [38, 160, 205],
-      [70, 200, 120],
-      [242, 200, 70],
-      [240, 78, 58],
-    ];
-    const seg = t * (stops.length - 1);
-    const i = Math.min(stops.length - 2, Math.floor(seg));
-    const f = seg - i;
-    const a = stops[i], b = stops[i + 1];
-    return [
-      (a[0] + (b[0] - a[0]) * f) | 0,
-      (a[1] + (b[1] - a[1]) * f) | 0,
-      (a[2] + (b[2] - a[2]) * f) | 0,
-    ];
+  function drawSofa(light: boolean) {
+    if (!state.sofa) return;
+    for (const b of SOFA)
+      cuboid(boxLo(b), boxHi(b), light ? 'rgba(100,116,139,0.30)' : 'rgba(148,163,184,0.20)', `rgba(${ink()},${light ? 0.5 : 0.42})`);
   }
 
-  function render() {
-    for (let i = 0; i < G * G; i++) {
-      const c = thermal(u[i]);
-      const j = i * 4;
-      img.data[j] = c[0];
-      img.data[j + 1] = c[1];
-      img.data[j + 2] = c[2];
-      img.data[j + 3] = 255;
-    }
-    octx.putImageData(img, 0, 0);
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(off, 0, 0, W, H);
-
-    // radiator + window markers
-    const cell = W / G;
-    ctx.fillStyle = 'rgba(255,180,120,0.9)';
-    ctx.fillRect(3 * cell, G * 0.4 * cell, 4 * cell, G * 0.2 * cell);
-    ctx.fillStyle = 'rgba(150,200,255,0.9)';
-    ctx.fillRect((G - 2) * cell, G * 0.28 * cell, 2 * cell, G * 0.44 * cell);
-
-    // thermometer probe marker
-    const pcell = W / G;
-    const pcx = (state.probe.x + 0.5) * pcell;
-    const pcy = (state.probe.y + 0.5) * pcell;
+  function drawPlaneFrame(light: boolean) {
+    const p = state.plane, off = offset();
+    const hu = p === 'yz' ? HY : HXZ, hv = p === 'xz' ? HXZ : p === 'xy' ? HY : HXZ;
+    const edge = `rgba(${ink()},${light ? 0.38 : 0.3})`;
     ctx.beginPath();
-    ctx.arc(pcx, pcy, 8, 0, 6.2832);
-    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    quadPath([planePoint(p, off, -hu, -hv), planePoint(p, off, hu, -hv), planePoint(p, off, hu, hv), planePoint(p, off, -hu, hv)]);
+    ctx.fillStyle = `rgba(${ink()},${light ? 0.035 : 0.025})`;
+    ctx.fill();
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const lab = cam.project(planePoint(p, off, hu, -hv));
+    ctx.fillStyle = `rgba(${ink()},0.55)`;
+    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${p.toUpperCase()} · ${planeAxisName(p)} = ${off.toFixed(2)} m`, lab.sx + 8, lab.sy);
+  }
+
+  /** Isotherms on the plane every 5 °C, by marching squares on the slice. */
+  const segU = new Float32Array(8), segV = new Float32Array(8);
+  function drawIsotherms(light: boolean) {
+    const p = state.plane, off = offset();
+    const coord = (g: number) => -HXZ + (g + 0.5) * CELL;
+    ctx.lineWidth = 1.1;
+    for (let lv = -5; lv <= 65; lv += 5) {
+      if (lv === TREF) continue;
+      ctx.beginPath();
+      let any = false;
+      for (let j = 0; j < PG - 1; j++)
+        for (let i = 0; i < PG - 1; i++) {
+          const q = j * PG + i;
+          const a = sliceT[q], b = sliceT[q + 1], c = sliceT[q + PG + 1], d = sliceT[q + PG];
+          if (a !== a || b !== b || c !== c || d !== d) continue;
+          const sa = a < lv, sb = b < lv, sc = c < lv, sd = d < lv;
+          if (sa === sb && sb === sc && sc === sd) continue;
+          let n = 0;
+          if (sa !== sb) { segU[n] = i + (lv - a) / (b - a); segV[n++] = j; }
+          if (sb !== sc) { segU[n] = i + 1; segV[n++] = j + (lv - b) / (c - b); }
+          if (sc !== sd) { segU[n] = i + 1 - (lv - c) / (d - c); segV[n++] = j + 1; }
+          if (sd !== sa) { segU[n] = i; segV[n++] = j + 1 - (lv - d) / (a - d); }
+          for (let k = 0; k + 1 < n; k += 2) {
+            const A = cam.project(planePoint(p, off, coord(segU[k]), coord(segV[k])));
+            const B = cam.project(planePoint(p, off, coord(segU[k + 1]), coord(segV[k + 1])));
+            ctx.moveTo(A.sx, A.sy);
+            ctx.lineTo(B.sx, B.sy);
+            any = true;
+          }
+        }
+      if (!any) continue;
+      const strong = lv % 10 === 0;
+      ctx.strokeStyle = light
+        ? `rgba(${ink()},${strong ? 0.42 : 0.22})`
+        : `rgba(255,255,255,${strong ? 0.4 : 0.2})`;
+      ctx.stroke();
+    }
+  }
+
+  function drawProbe(light: boolean, tp: number) {
+    const p = state.probe;
+    const pr = cam.project(p), fl = cam.project({ x: p.x, y: -HY, z: p.z });
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = light ? 'rgba(13,148,136,0.6)' : 'rgba(45,212,191,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pr.sx, pr.sy);
+    ctx.lineTo(fl.sx, fl.sy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.ellipse(fl.sx, fl.sy, 6, 2.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    const col = light ? '#0d9488' : PROBE;
+    ctx.beginPath();
+    ctx.arc(pr.sx, pr.sy, 8, 0, Math.PI * 2);
+    ctx.strokeStyle = col;
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(pcx, pcy, 2.4, 0, 6.2832);
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.arc(pr.sx, pr.sy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = col;
     ctx.fill();
-
-    const pc = toCelsius(u[idx(state.probe.x, state.probe.y)]);
-    (document.getElementById('ptemp') as HTMLElement).textContent = `${pc.toFixed(1)}°C`;
-    history.push(pc);
-    if (history.length > 300) history.shift();
-    drawThermo();
-
-    // cursor temp
-    const tEl = document.getElementById('temp') as HTMLElement;
-    if (state.cursor >= 0) {
-      tEl.textContent = `${toCelsius(u[state.cursor]).toFixed(1)}°C`;
-    } else tEl.textContent = '—';
-    setResult({
-      value: `${pc.toFixed(1)}°C`,
-      status: `${state.cursor >= 0 ? `under the cursor ${toCelsius(u[state.cursor]).toFixed(1)}°C · ` : ''}diffusivity ${state.diff.toFixed(2)}`,
-      note: 'Heat flows from hot to cold at a rate set by the curvature of the temperature: sharp hot spots smooth out fastest.',
-    });
-    setEq([
-      [
-        ['\\dfrac{\\partial u}{\\partial t}', '#5eead4'],
-        '= \\alpha\\,\\nabla^2 u',
-        '\\quad\\text{heat flows from hot to cold}',
-      ],
-      [
-        `\\alpha = ${state.diff.toFixed(2)}`,
-        [`\\quad u_{\\text{probe}} = ${pc.toFixed(1)}\\,^{\\circ}\\text{C}`, '#5eead4'],
-        `\\quad\\text{${state.playing ? 'running' : 'paused'}}`,
-      ],
-      [
-        'no flow, no wind: heat only ever creeps down the curvature of its own field',
-      ],
-    ]);
+    const txt = `${tp.toFixed(1)} °C`;
+    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(txt).width;
+    ctx.fillStyle = light ? 'rgba(255,255,255,0.82)' : 'rgba(13,14,18,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(pr.sx + 12, pr.sy - 10, w + 10, 20, 5);
+    ctx.fill();
+    ctx.fillStyle = col;
+    ctx.fillText(txt, pr.sx + 17, pr.sy + 0.5);
   }
+
+  let barFor: boolean | null = null;
+  let barGrad: CanvasGradient | null = null;
+  /** The colour bar: the plane's colours against °C, with the thermometer marked. */
+  function drawColourBar(light: boolean, tp: number) {
+    const x = W - 46, y0 = 104, y1 = H - 120, w = 10;
+    const ty = (t: number) => y1 - ((t - TMIN) / (TMAX - TMIN)) * (y1 - y0);
+    ctx.fillStyle = `rgba(${ink()},${light ? 0.06 : 0.05})`;
+    ctx.beginPath();
+    ctx.roundRect(x - 2, y0 - 2, w + 4, y1 - y0 + 4, 4);
+    ctx.fill();
+    if (barFor !== light) {
+      barFor = light;
+      const g = ctx.createLinearGradient(0, y0, 0, y1);
+      for (let k = 0; k <= 32; k++) g.addColorStop(k / 32, tempColour(TMAX - (k / 32) * (TMAX - TMIN)));
+      barGrad = g;
+    }
+    ctx.fillStyle = barGrad!;
+    ctx.fillRect(x, y0, w, y1 - y0);
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 0.5, y0 - 0.5, w + 1, y1 - y0 + 1);
+    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (const t of [70, 60, 50, 40, 30, 18, 10, 0, -10]) {
+      const y = ty(t);
+      ctx.fillStyle = `rgba(${ink()},${t === TREF ? 0.75 : 0.5})`;
+      ctx.fillText(`${t}°`, x - 6, y);
+      ctx.fillRect(x - 3, y - 0.5, 3, 1);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(${ink()},0.55)`;
+    ctx.fillText('°C', x + w / 2, y0 - 14);
+    // the thermometer's reading as a small arrow beside the bar
+    const yp = ty(Math.max(TMIN, Math.min(TMAX, tp)));
+    ctx.fillStyle = light ? '#0d9488' : PROBE;
+    ctx.beginPath();
+    ctx.moveTo(x + w + 3, yp);
+    ctx.lineTo(x + w + 10, yp - 5);
+    ctx.lineTo(x + w + 10, yp + 5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  let bgLight: boolean | null = null;
+  let fogColoursFor: boolean | null = null;
+  let probeT = TREF;
+
+  function draw() {
+    const light = isLight();
+    buildLuts();
+    ctx.clearRect(0, 0, W, H);
+    if (!fog) drawBackdrop(ctx, W, H, light);
+    else if (bgLight !== light) {
+      bgLight = light;
+      fog.canvas.style.background = light
+        ? 'radial-gradient(circle at 50% 45%, rgba(251,146,60,0.06), rgba(96,165,250,0.03) 45%, rgba(255,255,255,0) 72%), var(--stage-bg)'
+        : 'radial-gradient(circle at 50% 45%, rgba(99,102,241,0.12), rgba(13,14,18,0) 70%), var(--stage-bg)';
+    }
+    const showPlane = !fog || state.view !== 'fog';
+    const showFog = !!fog && state.view !== 'plane';
+
+    if (dirty) {
+      fillSlice();
+      if (fog) {
+        fillVolume();
+        fog.setVolume(fogBuf, [NX, NY, NZ], [-HXZ, -HY, -HXZ], [HXZ, HY, HXZ]);
+        fog.setPlane(planeBuf, PG, state.plane, offset(), HXZ);
+      }
+      dirty = false;
+    }
+    probeT = sampleT(state.probe);
+
+    drawRoom(light);
+    if (fog) {
+      if (fogColoursFor !== light) {
+        fogColoursFor = light;
+        fog.setColours(lutHot, lutCold);
+      }
+      fog.render(cam, {
+        cloud: showFog,
+        plane: showPlane,
+        gain: 1,
+        planeGain: 1,
+        opacity: state.opacity * 0.9,
+        len: 0.9,
+        light,
+        planeAlpha: 0.7,
+      });
+    } else if (shade) {
+      const hl = lutHot, cl = lutCold;
+      shade.render(ctx, cam, state.plane, offset(), (a) => {
+        const k = Math.min(255, (Math.abs(a) * 255) | 0);
+        return a >= 0 ? hl[k] : cl[k];
+      });
+    }
+    drawSofa(light);
+    drawRadiator(light);
+    drawWindow(light);
+    if (showPlane) {
+      drawPlaneFrame(light);
+      drawIsotherms(light);
+    }
+    drawProbe(light, probeT);
+    drawColourBar(light, probeT);
+    drawGizmo(ctx, cam, H);
+    sync();
+  }
+
+  // ---- words and numbers ---------------------------------------------------------------
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const watts = (p: number) => (Math.abs(p) >= 1000 ? `${(p / 1000).toFixed(2)} kW` : `${Math.round(p)} W`);
+  let lastSync = 0;
+  let prevMean = TREF, prevT = 0, rate = 0;
+
+  function sync(force = false) {
+    const now = performance.now();
+    if (!force && state.playing && now - lastSync < 150) return;
+    lastSync = now;
+    const f = flows();
+    if (tSim > prevT + 5) {
+      rate = ((f.mean - prevMean) / (tSim - prevT)) * 60; // °C per minute
+      prevMean = f.mean;
+      prevT = tSim;
+    } else if (tSim < prevT) {
+      prevMean = f.mean;
+      prevT = tSim;
+      rate = 0;
+    }
+    const out = f.pwin + f.pwall;
+    const steady = tSim > 120 && Math.abs(rate) < 0.01;
+    setRows({
+      tOut: clock(tSim),
+      meanOut: `${f.mean.toFixed(1)} °C`,
+      probeOut: `${probeT.toFixed(1)} °C at (${state.probe.x.toFixed(1)}, ${state.probe.y.toFixed(1)}, ${state.probe.z.toFixed(1)}) m`,
+      inOut: state.radOn ? watts(f.pin) : 'off',
+      winOutW: watts(f.pwin),
+      wallOutW: state.leaky ? watts(f.pwall) : 'sealed',
+    });
+    let status: string, note: string;
+    if (steady) {
+      status = `steady · ${watts(f.pin)} in, ${watts(out)} out`;
+      note = 'Steady state: ∇²T = 0, so nothing changes any more, yet heat still flows from the radiator through the room and out.';
+    } else if (Math.abs(rate) < 0.01) {
+      status = state.playing ? `${watts(f.pin)} in, ${watts(out)} out` : 'paused';
+      note = 'Heat flows down the temperature gradient, from hot to cold, at a rate set by α.';
+    } else {
+      status = `${rate > 0 ? 'warming' : 'cooling'} ${Math.abs(rate).toFixed(2)} °C/min · ${watts(f.pin)} in, ${watts(out)} out`;
+      note = rate > 0
+        ? 'More heat comes in than leaves, so the room warms; the gap closes as it does.'
+        : 'More heat leaves than comes in, so the room cools; sharp features smooth out fastest.';
+    }
+    setResult({ value: `${f.mean.toFixed(1)} °C`, status, note });
+    setEq({
+      rule: [['\\dfrac{\\partial T}{\\partial t}', PROBE], '= \\alpha\\,\\nabla^2 T'],
+      live: [
+        `\\alpha = ${(state.alpha * 1000).toFixed(1)}\\times10^{-3}\\,\\mathrm{m^2/s}`,
+        [`\\quad \\bar T = ${f.mean.toFixed(1)}\\,^{\\circ}\\mathrm{C}`, MEAN],
+        [`\\quad T_{\\text{probe}} = ${probeT.toFixed(1)}\\,^{\\circ}\\mathrm{C}`, PROBE],
+      ],
+    });
+    drawThermo();
+  }
+
+  // ---- interaction -------------------------------------------------------------------
+  let dragging: 'none' | 'probe' | 'paint' = 'none';
+  let brushAt: Vec | null = null;
+  const inRoom = (p: Vec, e = 0) => Math.abs(p.x) <= HXZ + e && Math.abs(p.y) <= HY + e && Math.abs(p.z) <= HXZ + e;
+  const clampRoom = (p: Vec): Vec => ({
+    x: Math.max(-HXZ + 0.05, Math.min(HXZ - 0.05, p.x)),
+    y: Math.max(-HY + 0.05, Math.min(HY - 0.05, p.y)),
+    z: Math.max(-HXZ + 0.05, Math.min(HXZ - 0.05, p.z)),
+  });
+  const hitSlice = (x: number, y: number) =>
+    cam.hitPlane(x, y, planePoint(state.plane, offset(), 0, 0), planeNormal(state.plane));
+
+  orbitControls(canvas, cam, W, H, {
+    changed: () => { if (!state.playing) draw(); },
+    grab: (x, y) => {
+      const pr = cam.project(state.probe);
+      if (Math.hypot(pr.sx - x, pr.sy - y) < 16) {
+        dragging = 'probe';
+        canvas.style.cursor = 'grabbing';
+        return true;
+      }
+      if (fog && state.view === 'fog') return false;
+      const h = hitSlice(x, y);
+      if (!h || !inRoom(h, 0.02)) return false;
+      dragging = 'paint';
+      brushAt = h;
+      paint(h, 0.5);
+      if (!state.playing) draw();
+      return true;
+    },
+    drag: (x, y) => {
+      if (dragging === 'probe') {
+        const h = cam.hitPlane(x, y, state.probe, planeNormal(state.plane));
+        if (h) state.probe = clampRoom(h);
+        if (!state.playing) draw();
+      } else if (dragging === 'paint') {
+        const h = hitSlice(x, y);
+        brushAt = h && inRoom(h, 0.02) ? h : null;
+        if (brushAt) paint(brushAt, 0.35);
+        if (!state.playing) draw();
+      }
+    },
+    release: () => {
+      dragging = 'none';
+      brushAt = null;
+      canvas.style.cursor = '';
+    },
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (dragging !== 'none') return;
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    const pr = cam.project(state.probe);
+    let cur = '';
+    if (Math.hypot(pr.sx - x, pr.sy - y) < 16) cur = 'grab';
+    else if (!(fog && state.view === 'fog')) {
+      const h = hitSlice(x, y);
+      if (h && inRoom(h, 0.02)) cur = 'crosshair';
+    }
+    canvas.style.cursor = cur;
+  });
+
+  // ---- controls ----------------------------------------------------------------------
+  const tp = transport({
+    onRun: (on) => { state.playing = on; if (!on) sync(true); },
+    onStep: () => { advance(); draw(); },
+    onReset: () => { reset(); draw(); },
+  });
+  const alphaFmt = (v: number) => `${v.toFixed(1)} × 10⁻³ m²/s`;
+  const setAlpha = slider('alpha', (v) => { state.alpha = v / 1000; dirty = true; draw(); }, alphaFmt);
+  const setTrad = slider('trad', (v) => { state.tRad = v; applyFixed(); draw(); }, (v) => `${v} °C`);
+  const setTout = slider('tout', (v) => { state.tOut = v; applyFixed(); draw(); }, (v) => `${v} °C`);
+  const setRadOn = check('radOn', (on) => { state.radOn = on; build(); draw(); });
+  const setWinOpen = check('winOpen', (on) => { state.winOpen = on; build(); draw(); });
+  const setLeaky = check('leaky', (on) => { state.leaky = on; build(); draw(); });
+  const setSofa = check('sofa', (on) => { state.sofa = on; build(); draw(); });
+  segmented('brush', (v) => { state.brush = v as 'heat' | 'cold'; });
+  const offFmt = (v: number) => `${planeAxisName(state.plane)} = ${(v * planeExtent(state.plane)).toFixed(2)} m`;
+  const setOffset = slider('offset', (v) => { state.frac = v; dirty = true; draw(); }, offFmt);
+  const planes = segmented('plane', (v) => {
+    state.plane = v as PlaneAxis;
+    setOffset(state.frac);
+    dirty = true;
+    draw();
+  });
+  const opacWrap = el('opac-wrap'), planeWrap = el('plane-wrap');
+  function panelFor() {
+    opacWrap.hidden = !fog || state.view === 'plane';
+    planeWrap.hidden = !!fog && state.view === 'fog';
+  }
+  const views = segmented('view', (v) => { state.view = v as typeof state.view; panelFor(); draw(); });
+  const setOpac = slider('opac', (v) => { state.opacity = v; draw(); }, (v) => v.toFixed(2));
+  if (!fog) {
+    // without WebGL2 there is no fog: the plane alone, drawn in 2D
+    (el('view').closest('.control') as HTMLElement).hidden = true;
+  }
+
+  function advance() {
+    for (let k = 0; k < STEPS; k++) step();
+    record(sampleT(state.probe), meanT());
+  }
+
+  /** Put the room in a known state and run. */
+  function setup(o: {
+    alpha?: number; radOn?: boolean; winOpen?: boolean; leaky?: boolean; sofa?: boolean;
+    start?: number; probe?: Vec; plane?: PlaneAxis; frac?: number; view?: typeof state.view;
+  }) {
+    state.alpha = (o.alpha ?? 5) / 1000; setAlpha(o.alpha ?? 5);
+    state.radOn = o.radOn ?? true; setRadOn(state.radOn);
+    state.winOpen = o.winOpen ?? false; setWinOpen(state.winOpen);
+    state.leaky = o.leaky ?? true; setLeaky(state.leaky);
+    state.sofa = o.sofa ?? false; setSofa(state.sofa);
+    state.tRad = 55; setTrad(55);
+    state.tOut = 0; setTout(0);
+    state.plane = o.plane ?? 'xy'; planes.select(state.plane);
+    state.frac = o.frac ?? 0; setOffset(state.frac);
+    state.view = o.view ?? 'both'; views.select(state.view); panelFor();
+    state.probe = o.probe ?? { x: 0.4, y: -0.3, z: 0 };
+    build();
+    reset(o.start ?? TREF);
+    state.playing = true;
+    tp.setRunning(true);
+    dirty = true;
+    draw();
+  }
+
+  tries({
+    steady: () => setup({ alpha: 8, winOpen: true, leaky: false, probe: { x: 0, y: -0.4, z: 0 } }),
+    spot: () => {
+      setup({ alpha: 0.5, radOn: false, leaky: false, probe: { x: 0, y: 0, z: 0 }, plane: 'xz', frac: 0 });
+      hotBall({ x: 0, y: 0, z: 0 }, 1, 70);
+      record(sampleT(state.probe), meanT());
+      draw();
+    },
+    window: () => setup({ winOpen: true, start: 23, probe: { x: 1.2, y: 0.1, z: 0 } }),
+    slow: () => setup({ alpha: 1.5, winOpen: true, leaky: false, probe: { x: 0, y: -0.4, z: 0 } }),
+  });
 
   function loop() {
     if (state.playing) {
-      for (let k = 0; k < 4; k++) step();
+      advance();
+      if (brushAt) paint(brushAt, 0.3);
+      draw();
+    } else if (brushAt) {
+      paint(brushAt, 0.3);
+      draw();
     }
-    render();
     requestAnimationFrame(loop);
   }
 
-  // ---- interaction: paint heat ----
-  let painting = false;
-  function paint(e: PointerEvent) {
-    const rect = canvas.getBoundingClientRect();
-    const gx = Math.round(((e.clientX - rect.left) / rect.width) * G);
-    const gy = Math.round(((e.clientY - rect.top) / rect.height) * G);
-    const inside = gy >= 0 && gy < G && gx >= 0 && gx < G;
-    state.cursor = inside ? idx(gx, gy) : -1;
-    if (!painting) return;
-    if (state.tool === 'probe') {
-      if (inside)
-        state.probe = {
-          x: Math.max(1, Math.min(G - 2, gx)),
-          y: Math.max(1, Math.min(G - 2, gy)),
-        };
-      return;
-    }
-    const R = 5;
-    for (let dy = -R; dy <= R; dy++)
-      for (let dx = -R; dx <= R; dx++) {
-        const x = gx + dx, y = gy + dy;
-        if (x < 1 || y < 1 || x >= G - 1 || y >= G - 1) continue;
-        if (dx * dx + dy * dy > R * R) continue;
-        u[idx(x, y)] = Math.min(1, u[idx(x, y)] + 0.5);
-      }
-  }
-  canvas.addEventListener('pointerdown', (e) => {
-    painting = true;
-    canvas.setPointerCapture(e.pointerId);
-    paint(e);
-  });
-  canvas.addEventListener('pointermove', paint);
-  canvas.addEventListener('pointerup', () => (painting = false));
-  canvas.addEventListener('pointerleave', () => (state.cursor = -1));
-
-  // ---- controls ----
-  const playBtn = document.getElementById('run') as HTMLButtonElement;
-  playBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    playBtn.textContent = state.playing ? 'Pause' : 'Play';
-  });
-  document.getElementById('reset')!.addEventListener('click', reset);
-
-  const diffEl = document.getElementById('diff') as HTMLInputElement;
-  diffEl.addEventListener('input', () => {
-    state.diff = +diffEl.value / 100;
-    (document.getElementById('diffval') as HTMLElement).textContent = state.diff.toFixed(2);
-  });
-
-  document.getElementById('tool')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#tool button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.tool = btn.dataset.tool as 'paint' | 'probe';
-    canvas.style.cursor = state.tool === 'probe' ? 'grab' : 'crosshair';
-  });
-
+  panelFor();
+  build();
   reset();
-  loop();
+  draw();
+  requestAnimationFrame(loop);
 </script>
 
 <style>
   .heat-canvas {
-    cursor: crosshair;
+    cursor: grab;
     touch-action: none;
-    width: 100%;
-    border-radius: var(--radius-sm);
-  }
-  .legend {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.78rem;
-    color: var(--text-faint);
-  }
-  .legend .bar {
-    flex: 1;
-    height: 8px;
-    border-radius: 4px;
-    background: linear-gradient(
-      to right,
-      rgb(28, 56, 150),
-      rgb(38, 160, 205),
-      rgb(70, 200, 120),
-      rgb(242, 200, 70),
-      rgb(240, 78, 58)
-    );
   }
 </style>

@@ -6,12 +6,14 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Fourier Series"
   description="How much of a given frequency is inside a signal? Multiply the two together and add up the area. If the wave fits, the product sits mostly above the axis and the area is large; if it does not, the positives and negatives cancel and the answer is exactly zero. Every coefficient of a Fourier series is that one measurement."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -54,7 +56,6 @@ import Readout from '../../../components/sim/Readout.astro';
       <Transport step />
       <Readout
         rows={[
-          { id: 'r-k', label: 'frequency being tested' },
           { id: 'r-b', label: 'b_k, how much sin kx fits' },
           { id: 'r-a', label: 'a_k, how much cos kx fits' },
           { id: 'r-e', label: 'of the signal accounted for' },
@@ -65,45 +66,23 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      One frequency at a time. The middle-left panel is the wave being tested,
-      the middle-right panel is that wave multiplied by the signal, and the
-      shaded area is the whole answer. Teal counts positive, red counts
-      negative, and what survives is how much of that frequency the signal
-      contains.
+      Test the <b>square</b> wave at frequency 2: the product has as much area
+      below the axis as above, so b₂ is exactly zero. A square wave has no even
+      harmonics. <Try id="even" />
     </li>
     <li>
-      Take the <b>square</b> wave and test frequency 2. The product has exactly
-      as much area above the axis as below, the two cancel, and the coefficient
-      is zero. Not small: zero. A square wave contains no even harmonics at all,
-      and you can see the cancellation happen rather than take it on faith.
+      Switch to <b>cos kx</b> on the square wave and every coefficient is zero.
+      The signal is odd and cosines are even, so their product always cancels.
+      <Try id="odd" />
     </li>
     <li>
-      Now test 1, 3, 5. Every one of them lands almost entirely above the axis,
-      because the wave rises exactly where the signal is positive. Fitting and
-      not fitting look completely different, and nothing in between is required.
+      Press <b>Run</b>: each frequency is tested in turn, its bar joins the
+      spectrum, and the teal curve gains that term. The reconstruction is the
+      running total of the measurements. <Try id="run" label="Animate" />
     </li>
     <li>
-      Switch to <b>cos kx</b> on the same square wave. Everything collapses to
-      zero. The signal is odd, cosines are even, and an odd function multiplied
-      by an even one always has cancelling halves. Symmetry alone decides half
-      the coefficients before any arithmetic.
-    </li>
-    <li>
-      Press <b>run</b>. Each frequency is tested in turn, its bar appears in the
-      spectrum, and the teal curve on top gains that term. The reconstruction is
-      not a separate idea: it is the running total of everything measured so far.
-    </li>
-    <li>
-      Pick <b>two tones</b>. Two bars appear and every other one is zero, so the
-      spectrum is a far shorter description of the signal than the signal is.
-      That is the entire reason for doing this to sound, to images, and to
-      anything else that repeats.
-    </li>
-    <li>
-      Draw your own signal by dragging on the top panel. Something smooth needs
-      only a few low bars; a sharp corner needs a long tail of high ones, which
-      is why compression throws away the tail and why a corner is where a
-      compressed picture goes wrong.
+      On <b>two tones</b> only bars 2 and 5 stand up. The spectrum is a much
+      shorter description of the signal than the signal itself. <Try id="tones" />
     </li>
   </Fragment>
 </SimLayout>
@@ -112,7 +91,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   const SIG = '#e5e7eb';
   const POS = '#5eead4';
@@ -133,7 +112,9 @@ import Readout from '../../../components/sim/Readout.astro';
 
   // --- the signal ------------------------------------------------------------
   let f = new Float64Array(M);
-  const xs = (i: number) => (i * 2 * Math.PI) / M;
+  // sample at the middle of each cell, so the symmetric signals stay exactly
+  // odd or even and the coefficients that should vanish come out as zero
+  const xs = (i: number) => ((i + 0.5) * 2 * Math.PI) / M;
 
   function build(name: string) {
     for (let i = 0; i < M; i++) {
@@ -321,7 +302,6 @@ import Readout from '../../../components/sim/Readout.astro';
       ],
     });
     setRows({
-      'r-k': String(k),
       'r-b': short(B[k]),
       'r-a': short(A[k]),
       'r-e': `${(cap * 100).toFixed(1)}%`,
@@ -392,7 +372,7 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   }
   const sigSeg = segmented('sig', (s) => { state.sig = s; build(s); analyse(); setK(1); });
-  segmented('basis', (b) => { state.basis = b; draw(); });
+  const basisSeg = segmented('basis', (b) => { state.basis = b; draw(); });
   const controls = transport({
     onRun: (running) => (state.running = running),
     onStep: () => setK(state.k >= KMAX ? 1 : state.k + 1),
@@ -418,6 +398,27 @@ import Readout from '../../../components/sim/Readout.astro';
     }
     requestAnimationFrame(loop);
   }
+
+  function show(sig: string, basis: string, k: number) {
+    state.running = false;
+    controls.setRunning(false);
+    state.sig = sig;
+    sigSeg.select(sig);
+    build(sig);
+    analyse();
+    state.basis = basis;
+    basisSeg.select(basis);
+    setK(k);
+  }
+  tries({
+    even: () => show('square', 'sin', 2),
+    odd: () => show('square', 'cos', 3),
+    run: () => {
+      show('square', 'sin', 1);
+      el('run').click();
+    },
+    tones: () => show('two', 'sin', 6),
+  });
 
   build(state.sig);
   analyse();

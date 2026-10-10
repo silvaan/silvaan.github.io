@@ -5,12 +5,13 @@ import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Maximum Likelihood"
-  description="Which bell curve most likely produced this data? Slide its mean and spread and watch the likelihood rise and fall. The best fit lands on the sample's own mean and spread."
+  description="Which bell curve most likely produced this data? Slide its mean and spread and watch the likelihood rise and fall. The best fit lands on the sample mean and the spread that divides by n."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -41,25 +42,31 @@ import Readout from '../../../components/sim/Readout.astro';
         <button type="button" class="btn" id="snap">Snap to best fit</button>
         <button type="button" class="btn ghost" id="regen">New sample</button>
       </Actions>
-      <Readout rows={[{ id: 'r-mean', label: 'sample mean x̄' }, { id: 'r-std', label: 'sample std s' }]} />
+      <Readout
+        rows={[
+          { id: 'r-mean', label: 'sample mean x̄' },
+          { id: 'r-std', label: 'MLE σ̂, divides by n' },
+          { id: 'r-s', label: 'sample std s, divides by n − 1' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Each vertical stick is one data point's <b>likelihood</b>: how tall the bell
-      sits above it. The total (log-)likelihood adds them up. Drag μ and σ to make
-      the curve sit as high as possible over the data.
+      Each stick is one point's <b>likelihood</b>, the height of the bell above
+      it, and log L adds up their logs. Slide μ off to one side and the far
+      points' sticks collapse. <Try id="off" />
     </li>
     <li>
-      Hit <b>Snap to best fit</b>. The maximum-likelihood μ is exactly the
-      <b>sample mean</b>, and the best σ is the <b>sample standard deviation</b>.
-      Maximizing likelihood re-derives the formulas you already know.
+      <b>Snap to best fit</b> lands on μ̂ = x̄ and σ̂ = √(Σ(xᵢ − x̄)²/n). That σ̂
+      divides by n, not n − 1, so it comes out a little smaller than the sample
+      standard deviation s. <Try id="snap" />
     </li>
     <li>
-      The strip under the curve is the log-likelihood as you slide μ. It is a
-      smooth hill with a single peak, which is why gradient ascent (and every
-      trained model) can climb straight to it.
+      The strip is log L as μ slides: for a Gaussian it is an exact
+      <b>parabola</b> with one peak, so gradient ascent finds it from anywhere.
+      Shrink σ and it gets steeper. <Try id="steep" />
     </li>
   </Fragment>
 </SimLayout>
@@ -68,7 +75,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
-  import { el, slider, result, readout } from '../../../lib/panel';
+  import { el, slider, result, readout, tries } from '../../../lib/panel';
 
   const state = { mu: 0, sg: 1 };
   let data: number[] = [];
@@ -97,10 +104,12 @@ import Readout from '../../../components/sim/Readout.astro';
   const pdf = (x: number, mu: number, sg: number) =>
     Math.exp(-((x - mu) ** 2) / (2 * sg * sg)) / (sg * Math.sqrt(2 * Math.PI));
   const logLik = (mu: number, sg: number) => data.reduce((s, x) => s + Math.log(pdf(x, mu, sg) + 1e-12), 0);
+  /** The sample mean, the MLE spread σ̂ (divides by n) and the sample std s (divides by n − 1). */
   const stats = () => {
     const n = data.length;
     const m = data.reduce((a, b) => a + b, 0) / n;
-    return { m, sd: Math.sqrt(data.reduce((a, b) => a + (b - m) ** 2, 0) / n) };
+    const ss = data.reduce((a, b) => a + (b - m) ** 2, 0);
+    return { m, sd: Math.sqrt(ss / n), s: Math.sqrt(ss / (n - 1)) };
   };
 
   const sx = (x: number) => TOP.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - TOP.l - TOP.r);
@@ -206,7 +215,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.clearRect(0, 0, W, H);
     drawFit();
     drawStrip();
-    const { m, sd } = stats();
+    const { m, sd, s } = stats();
     const ll = logLik(state.mu, state.sg);
     const atBest = Math.abs(state.mu - m) < 0.03 && Math.abs(state.sg - sd) < 0.03;
     setEq({
@@ -216,21 +225,29 @@ import Readout from '../../../components/sim/Readout.astro';
     setResult({
       value: fixed(ll, 3),
       colour: TEAL,
-      status: atBest ? 'At the maximum: μ = x̄ and σ = s' : `μ = ${fixed(state.mu, 2)} · σ = ${state.sg.toFixed(2)} · best would be μ = ${fixed(m, 2)}, σ = ${sd.toFixed(2)}`,
+      status: atBest ? 'At the maximum: μ = x̄ and σ = σ̂' : `μ = ${fixed(state.mu, 2)} · σ = ${state.sg.toFixed(2)} · best would be μ = ${fixed(m, 2)}, σ̂ = ${sd.toFixed(2)}`,
       note: 'Each amber dot votes with its own height under the curve; the log turns their product into a sum.',
     });
-    setRows({ 'r-mean': fixed(m, 3), 'r-std': sd.toFixed(3) });
+    setRows({ 'r-mean': fixed(m, 3), 'r-std': sd.toFixed(3), 'r-s': s.toFixed(3) });
   }
 
   const setMu = slider('mu', (v) => { state.mu = v; draw(); }, (v) => v.toFixed(2));
   const setSg = slider('sg', (v) => { state.sg = v; draw(); }, (v) => v.toFixed(2));
-  el('snap').addEventListener('click', () => {
-    const { m, sd } = stats();
-    state.mu = +Math.max(-3, Math.min(3, m)).toFixed(2);
-    state.sg = +Math.max(0.4, Math.min(2.5, sd)).toFixed(2);
+  function set(mu: number, sg: number) {
+    // onto the sliders' 0.02 grid, so the knobs show exactly the values in use
+    const grid = (v: number, lo: number, hi: number) => +(Math.round(Math.max(lo, Math.min(hi, v)) / 0.02) * 0.02).toFixed(2);
+    state.mu = grid(mu, -3, 3);
+    state.sg = grid(sg, 0.4, 2.5);
     setMu(state.mu);
     setSg(state.sg);
     draw();
+  }
+  const snap = () => { const { m, sd } = stats(); set(m, sd); };
+  el('snap').addEventListener('click', snap);
+  tries({
+    off: () => set(-2.4, 1),
+    snap,
+    steep: () => set(stats().m, 0.5),
   });
   el('regen').addEventListener('click', () => { regen(); draw(); });
 

@@ -7,6 +7,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -58,6 +59,7 @@ import Readout from '../../../components/sim/Readout.astro';
       />
       <Transport step />
       <Readout
+        title="Values"
         rows={[
           { id: 'r-d2', label: "f′′ from the formula" },
           { id: 'r-fd', label: "f′′ from the three heights" },
@@ -71,39 +73,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      The three dots on the right are the curve's height here and at its two
-      neighbours. Join the outer two and the middle one does not sit on that
-      line. The gap is the whole of the second derivative: divide it by half of
-      h squared and you have f′′ itself. The two numbers in the panel are that
-      estimate and the exact value, and they close on each other as h shrinks.
+      Halve <b>how far the neighbours sit</b> and the gap under the chord falls to
+      a quarter, not a half. A second derivative is a difference of differences,
+      so it divides by h twice. <Try id="halve" label="Halve h" />
     </li>
     <li>
-      Halve <b>how far the neighbours sit</b> and watch the gap fall to a
-      quarter, not a half. That is why the formula divides by h squared. A first
-      derivative is a difference over h; a second derivative is a difference of
-      differences, and it needs h twice.
+      On the <b>cubic</b> at x = 0 the bending stops: f′′ is zero, the chord
+      runs through the curve and the fitting circle becomes a straight line of
+      infinite radius. Either side of it the gap changes sign. <Try id="flat" />
     </li>
     <li>
-      Move to a place where the curve bends the other way. The gap changes side,
-      the number changes sign, and the fitting circle jumps from one side of the
-      curve to the other. On the <b>cubic</b>, go to the middle: the bending
-      stops, f'' passes through zero, and the circle grows without bound. A
-      straight line is a circle of infinite radius.
+      Where the curve is steep, <b>κ</b> falls well below f′′: f′′ measures sag
+      against a horizontal ruler, κ how sharply the curve actually turns. On the
+      cubic at x = 2, f′′ is 3 but κ is about 0.24. <Try id="steep" />
     </li>
     <li>
-      Now watch the two curves in the bottom right. Where the curve is level
-      they agree exactly. Where it is steep the curvature κ falls well below
-      f'', because f'' measures sag against a horizontal ruler while κ measures
-      the actual turning of the curve, and a steep piece of curve covers more
-      length for the same run of x.
-    </li>
-    <li>
-      Tick <b>the parabola that matches to second order</b>. It is the same
-      arithmetic seen forwards: the curve's height, its slope, and its bending
-      are the only three things that parabola is told, and near the point it is
-      indistinguishable from the curve. That is the second-order
-      <a href="/simulations/calculus/taylor-series">Taylor series</a>, and the
-      circle is the same statement in geometry.
+      Tick <b>the parabola that matches to second order</b>: told only the
+      height, slope and bending, it hugs the curve near the point. That is the
+      second-order <a href="/simulations/calculus/taylor-series">Taylor series</a>. <Try id="taylor" />
     </li>
   </Fragment>
 </SimLayout>
@@ -112,7 +99,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const SAG = '#f59e0b';
   const CIRC = '#a78bfa';
@@ -459,14 +446,37 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   const setXSlider = slider('x', (v) => { state.x = v / 100; draw(); }, (v) => (v / 100).toFixed(2).replace('-', '−'));
-  slider('h', (v) => { state.h = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
-  segmented('fn', (f) => { state.fn = f; draw(); });
-  check('circ', (on) => { state.circ = on; draw(); });
-  check('tay', (on) => { state.tay = on; draw(); });
-  transport({
+  const setHSlider = slider('h', (v) => { state.h = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  const fns = segmented('fn', (f) => { state.fn = f; draw(); });
+  const setCirc = check('circ', (on) => { state.circ = on; draw(); });
+  const setTay = check('tay', (on) => { state.tay = on; draw(); });
+  const tp = transport({
     onRun: (running) => (state.running = running),
     onStep: () => setX(state.x + 0.1),
     onReset: () => { state.dir = 1; setX(-0.9); },
+  });
+
+  let halveTimer = 0;
+  function show(fn: string, x: number, h: number, extra?: { circ?: boolean; tay?: boolean }) {
+    clearTimeout(halveTimer);
+    state.running = false;
+    tp.setRunning(false);
+    state.fn = fn;
+    fns.select(fn);
+    state.h = h;
+    setHSlider(Math.round(h * 100));
+    if (extra?.circ !== undefined) { state.circ = extra.circ; setCirc(extra.circ); }
+    if (extra?.tay !== undefined) { state.tay = extra.tay; setTay(extra.tay); }
+    setX(x);
+  }
+  tries({
+    halve: () => {
+      show('parabola', -0.9, 0.8);
+      halveTimer = window.setTimeout(() => show('parabola', -0.9, 0.4), 1200);
+    },
+    flat: () => show('cubic', 0, 0.7, { circ: true }),
+    steep: () => show('cubic', 2, 0.25, { circ: true }),
+    taylor: () => show('wave', 0.6, 0.7, { tay: true }),
   });
 
   draw();

@@ -7,12 +7,14 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Differential Equations"
   description="An equation that gives you the slope instead of the value. Draw that slope everywhere and the plane fills with little segments; drop a point anywhere and the solution threads itself through them. Then take steps too big and watch Euler's method drift off the truth."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -38,50 +40,23 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      The equation never mentions a curve. It only says, at this point, go this
-      steep. The <b>slope field</b> is that instruction drawn everywhere at once,
-      and a solution is any curve that stays <b>tangent to it the whole way</b>.
-      Drag the dot and the bright curve slides through the segments without ever
-      cutting across one.
+      Drag the dot: the bright curve stays <b>tangent to every segment</b> it
+      passes. Turn on the family and each curve is the same rule from a
+      different start, which is the <b>+ C</b>. <Try id="family" />
     </li>
     <li>
-      Turn on <b>the whole family</b>. Nothing was solved differently for any of
-      them: they all obey the same field, they just started somewhere else. That
-      is what the <b>+ C</b> in an antiderivative really is, a whole sheaf of
-      curves stacked over the plane, and picking an initial condition is picking
-      one of them.
+      On <b>x − y</b> every curve, from above or below, is squeezed onto the line
+      y = x − 1. The solutions <b>forget where they started</b>. <Try id="forget" />
     </li>
     <li>
-      Try <b>x − y</b> and drag the start up and down. Every curve, from far
-      above and far below, is squeezed onto the same line. Solutions can
-      <b>forget where they came from</b>, which is why a stable system settles
-      to the same behaviour whatever state you switch it on in.
+      On <b>y(1 − y)</b> both y = 0 and y = 1 are solutions that never move, but
+      curves run away from the first and into the second: an <b>unstable and a
+      stable equilibrium</b>. <Try id="equilibria" />
     </li>
     <li>
-      Try <b>y(1 − y)</b> and look at the two horizontal lines. Both are
-      solutions that never move, but they behave in opposite ways: start a hair
-      above y = 0 and you run away from it, start a hair below y = 1 and you run
-      towards it. <b>Stable and unstable equilibria</b>, read straight off the
-      arrows without solving anything.
-    </li>
-    <li>
-      Turn on <b>Euler's method</b> and push h up. Each straight hop uses the
-      slope at the point it starts from and then commits to it for the whole
-      step, so it lands slightly off the true curve, then reads its next slope
-      from the <b>wrong place</b>. The error compounds. Halve h and the error
-      roughly halves, which is exactly what first-order means.
-    </li>
-    <li>
-      Pick <b>−x / y</b>. The solutions are circles, and the field goes vertical
-      as they cross the x axis. The integration stops dead there: the equation
-      is fine, but <b>y as a function of x</b> is not, since one x would need
-      two values. Solutions are local objects and can simply run out.
-    </li>
-    <li>
-      Turn on <b>isoclines</b>. Each dashed curve is where the slope takes one
-      fixed value, so the segments along it are all parallel. Sketching two or
-      three isoclines by hand is how the whole field was drawn before there were
-      computers, and the zero one alone tells you where solutions turn around.
+      Turn on <b>Euler's method</b> with a big h: each hop commits to the slope
+      where it starts, so the red path drifts off the true curve. Shrink h and
+      the gap closes. <Try id="euler" />
     </li>
   </Fragment>
 </SimLayout>
@@ -89,7 +64,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // A first-order ODE y' = f(x,y) does not hand over a curve, it hands over a
@@ -569,7 +544,7 @@ import Readout from '../../../components/sim/Readout.astro';
   const two = (v: number) => v.toFixed(2).replace('-', '−');
   const setX0 = slider('x0', (v) => (state.x0 = v), two);
   const setY0 = slider('y0', (v) => (state.y0 = v), two);
-  slider('h', (v) => (state.h = v / 100), (v) => (v / 100).toFixed(2));
+  const setH = slider('h', (v) => (state.h = v / 100), (v) => (v / 100).toFixed(2));
 
   function setStart(x: number, y: number) {
     state.x0 = Math.max(XMIN + 0.1, Math.min(XMAX - 0.1, x));
@@ -582,11 +557,12 @@ import Readout from '../../../components/sim/Readout.astro';
   for (const key of ['field', 'family', 'iso', 'euler', 'flow'] as const)
     setters[key] = check(key, (on) => ((state as Record<string, unknown>)[key] = on));
 
-  segmented('eq', (k) => {
+  function pick(k: string) {
     state.preset = PRESETS.find((p) => p.key === k) ?? PRESETS[0];
     setStart(state.preset.start.x, state.preset.start.y);
     seedDots();
-  });
+  }
+  const eqSeg = segmented('eq', pick);
   // Run is what sends the particles down the field, so pressing it turns them
   // on rather than leaving the button doing nothing at all.
   transport({
@@ -632,6 +608,29 @@ import Readout from '../../../components/sim/Readout.astro';
   const stopDrag = () => (dragging = false);
   canvas.addEventListener('pointerup', stopDrag);
   canvas.addEventListener('pointercancel', stopDrag);
+
+  /** Put the sim in a preset with only the listed layers on top of the field. */
+  function show(k: string, layers: string[]) {
+    eqSeg.select(k);
+    pick(k);
+    for (const key of ['family', 'iso', 'euler', 'flow']) {
+      const on = layers.includes(key);
+      (state as Record<string, unknown>)[key] = on;
+      setters[key](on);
+    }
+    state.field = true;
+    setters.field(true);
+  }
+  tries({
+    family: () => show('wave', ['family']),
+    forget: () => show('linear', ['family']),
+    equilibria: () => show('logistic', ['family']),
+    euler: () => {
+      show('wave', ['euler']);
+      state.h = 1;
+      setH(100);
+    },
+  });
 
   seedDots();
   setStart(state.x0, state.y0);

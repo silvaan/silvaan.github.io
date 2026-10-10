@@ -6,12 +6,13 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Central Limit Theorem"
-  description="Average n draws from any distribution and record the mean, over and over. The means pile into a bell curve whatever the source looked like."
+  description="Add up n draws from any distribution, over and over. The sums and the means pile into a bell whatever the source looked like, and with ±1 coin steps each sum is a random walk."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -22,13 +23,13 @@ import Readout from '../../../components/sim/Readout.astro';
           width="1000"
           height="600"
           role="img"
-          aria-label="A faint histogram of the source distribution above a growing histogram of sample means, with the predicted Gaussian drawn over it."
+          aria-label="A histogram of sample means or sums with the predicted Gaussian drawn over it, above it either the source distribution or the paths of the running sums."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'source distribution', color: 'rgba(154,160,172,0.6)' },
-          { label: 'sample means', color: '#7c8cff' },
+          { label: 'source distribution', color: 'rgba(154,160,172,0.6)', id: 'lg-top' },
+          { label: 'sample means', color: '#7c8cff', id: 'lg-hist' },
           { label: 'predicted bell', color: '#5eead4' },
         ]}
       />
@@ -46,14 +47,25 @@ import Readout from '../../../components/sim/Readout.astro';
           { value: 'exponential', label: 'Exponential' },
           { value: 'bimodal', label: 'Bimodal' },
           { value: 'dice', label: 'Dice' },
+          { value: 'coin', label: '±1 steps' },
         ]}
       />
-      <Slider id="n" label="Sample size n" min={1} max={50} value={5} />
+      <Seg
+        id="stat"
+        label="Show"
+        attr="k"
+        options={[
+          { value: 'mean', label: 'Mean X̄' },
+          { value: 'sum', label: 'Sum, as a walk' },
+        ]}
+      />
+      <Slider id="n" label="Sample size n" min={1} max={100} value={5} />
       <Readout
         rows={[
-          { id: 'r-count', label: 'means collected' },
+          { id: 'r-count', label: 'trials collected' },
           { id: 'r-sigma', label: 'σ of the source' },
-          { id: 'r-sd', label: 'σ/√n' },
+          { id: 'r-pred', label: 'predicted spread' },
+          { id: 'r-meas', label: 'measured spread' },
         ]}
       />
     </div>
@@ -61,16 +73,17 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Set <b>n = 1</b>: the big histogram is just the raw source, so Exponential
-      and Bimodal look nothing like a bell.
+      At <b>n = 1</b> the big histogram is just the raw source, and Exponential
+      looks nothing like a bell. <Try id="raw" />
     </li>
     <li>
-      Raise n to 5, then 30. However skewed the source, the means pile into the
-      <b>same Gaussian shape</b>. That universality is the theorem.
+      Raise n to 30. However skewed the source, the means pile into the
+      <b>same Gaussian</b>, narrower by a factor of √n. <Try id="bell" />
     </li>
     <li>
-      Watch the spread of the mean as n grows: it shrinks like <b>1/√n</b>, so the
-      bell gets narrower but four times the samples only halves the width.
+      With <b>±1 steps</b> and the Sum view, each trial is a <b>random walk</b>
+      and the sum is where it ends. The paths fan out inside ±√k, so going twice as
+      far takes four times the steps. <Try id="walk" />
     </li>
   </Fragment>
 </SimLayout>
@@ -79,27 +92,49 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
-  const MEANS = '#7c8cff', BELL = '#5eead4';
-  type Src = { sample: () => number; mean: number; var: number; range: [number, number] };
+  const MEANS = '#7c8cff', BELL = '#5eead4', WALK = '#f59e0b';
+  type Lattice = { o: number; d: number };
+  type Src = {
+    sample: () => number;
+    mean: number;
+    var: number;
+    range: [number, number];
+    support: [number, number];
+    lat?: Lattice;
+  };
   const SOURCES: Record<string, Src> = {
-    uniform: { sample: () => Math.random(), mean: 0.5, var: 1 / 12, range: [0, 1] },
-    exponential: { sample: () => -Math.log(1 - Math.random()), mean: 1, var: 1, range: [0, 4] },
+    uniform: { sample: () => Math.random(), mean: 0.5, var: 1 / 12, range: [0, 1], support: [0, 1] },
+    exponential: { sample: () => -Math.log(1 - Math.random()), mean: 1, var: 1, range: [0, 4], support: [0, Infinity] },
     bimodal: {
       sample: () => (Math.random() < 0.5 ? Math.random() * 0.2 : 0.8 + Math.random() * 0.2),
       mean: 0.5,
       var: 0.16 + (1 / 12) * 0.04,
       range: [0, 1],
+      support: [0, 1],
     },
-    dice: { sample: () => 1 + Math.floor(Math.random() * 6), mean: 3.5, var: 35 / 12, range: [0.5, 6.5] },
+    dice: {
+      sample: () => 1 + Math.floor(Math.random() * 6),
+      mean: 3.5, var: 35 / 12, range: [0.5, 6.5], support: [1, 6], lat: { o: 1, d: 1 },
+    },
+    coin: {
+      sample: () => (Math.random() < 0.5 ? -1 : 1),
+      mean: 0, var: 1, range: [-1.25, 1.25], support: [-1, 1], lat: { o: -1, d: 2 },
+    },
   };
 
-  const BINS = 64;
-  const state = { src: 'uniform', n: 5, running: false };
-  let bins = new Float64Array(BINS);
-  let count = 0;
-  let srcBins = new Float64Array(BINS);
+  type Stat = 'mean' | 'sum';
+  type Bins = { lo: number; w: number; nb: number };
+  const BINS = 64, PATHS = 60;
+  const state = { src: 'uniform', stat: 'mean' as Stat, n: 5, running: false };
+  let hist = new Float64Array(BINS);
+  let srcHist = new Float64Array(BINS);
+  let count = 0, sum1 = 0, sum2 = 0;
+  let paths: Float32Array[] = [];
+  let axis: [number, number] = [0, 1];
+  let hb: Bins = { lo: 0, w: 1, nb: BINS };
+  let sb: Bins = { lo: 0, w: 1, nb: BINS };
 
   const canvas = el('clt') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -108,119 +143,289 @@ import Readout from '../../../components/sim/Readout.astro';
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const PAD = { l: 50, r: 30, t: 110, b: 40 };
+  const PAD = { l: 50, r: 30, b: 40 };
+  const topOf = () => (state.stat === 'sum' ? 300 : 110);
+  const WALKBOX = { y0: 34, y1: 250 };
+
+  /**
+   * Histogram bins over [lo, hi]. A discrete source puts every value on a
+   * lattice, so its bins are whole multiples of the lattice spacing, centred
+   * on lattice points: otherwise some bins catch two values and some none.
+   */
+  function binsFor(lo: number, hi: number, lat?: Lattice): Bins {
+    if (!lat) return { lo, w: (hi - lo) / BINS, nb: BINS };
+    const k = Math.max(1, Math.ceil((hi - lo) / BINS / lat.d));
+    const w = k * lat.d;
+    const start = lat.o + lat.d * Math.floor((lo - lat.o) / lat.d) - lat.d / 2;
+    return { lo: start, w, nb: Math.ceil((hi - start) / w) };
+  }
+  const binOf = (b: Bins, v: number) => Math.floor((v - b.lo) / b.w);
+
+  /** The statistic's spread: σ/√n for the mean, σ√n for the sum. */
+  const spread = () => {
+    const s = SOURCES[state.src];
+    return state.stat === 'mean' ? Math.sqrt(s.var / state.n) : Math.sqrt(s.var * state.n);
+  };
+  /** Where the bell is centred: μ for the mean, 0 for the centred sum Sₙ − nμ. */
+  const centre = () => (state.stat === 'mean' ? SOURCES[state.src].mean : 0);
 
   function reset() {
-    bins = new Float64Array(BINS);
-    count = 0;
-    // a preview of the source, drawn once per reset instead of every frame
-    const s = SOURCES[state.src], [a, b] = s.range;
-    srcBins = new Float64Array(BINS);
+    const s = SOURCES[state.src], n = state.n;
+    count = sum1 = sum2 = 0;
+    paths = [];
+    if (state.stat === 'mean') {
+      axis = s.range;
+      hb = binsFor(axis[0], axis[1], s.lat && { o: s.lat.o, d: s.lat.d / n });
+    } else {
+      // the centred sum, cut to the values it can actually reach
+      const half = 4 * Math.sqrt(s.var * n), pad = s.lat ? s.lat.d / 2 : 0;
+      const lo = Math.max(-half, n * (s.support[0] - s.mean)) - pad;
+      const hi = Math.min(half, n * (s.support[1] - s.mean)) + pad;
+      axis = [lo, hi];
+      hb = binsFor(lo, hi, s.lat && { o: n * (s.lat.o - s.mean), d: s.lat.d });
+    }
+    hist = new Float64Array(hb.nb);
+    // a preview of the source, binned once per reset instead of every frame
+    sb = binsFor(s.range[0], s.range[1], s.lat);
+    srcHist = new Float64Array(sb.nb);
     for (let i = 0; i < 6000; i++) {
-      const bi = Math.max(0, Math.min(BINS - 1, Math.floor(((s.sample() - a) / (b - a)) * BINS)));
-      srcBins[bi]++;
+      const bi = binOf(sb, s.sample());
+      if (bi >= 0 && bi < sb.nb) srcHist[bi]++;
     }
   }
 
-  function trial() {
-    const s = SOURCES[state.src];
+  /** One sample of size n. `record` keeps its path for the walk picture. */
+  function trial(record: boolean) {
+    const s = SOURCES[state.src], n = state.n;
+    const walk = record && state.stat === 'sum' ? new Float32Array(n + 1) : null;
     let sum = 0;
-    for (let i = 0; i < state.n; i++) sum += s.sample();
-    const [a, b] = s.range;
-    const bi = Math.max(0, Math.min(BINS - 1, Math.floor(((sum / state.n - a) / (b - a)) * BINS)));
-    bins[bi]++;
+    for (let i = 0; i < n; i++) {
+      sum += s.sample();
+      if (walk) walk[i + 1] = sum - (i + 1) * s.mean;
+    }
+    const v = state.stat === 'mean' ? sum / n : sum - n * s.mean;
+    const bi = binOf(hb, v);
+    if (bi >= 0 && bi < hb.nb) hist[bi]++;
     count++;
+    sum1 += v;
+    sum2 += v * v;
+    if (walk) {
+      paths.push(walk);
+      if (paths.length > PATHS) paths.shift();
+    }
+  }
+
+  function measured() {
+    if (count < 2) return NaN;
+    const m = sum1 / count;
+    return Math.sqrt(Math.max(0, sum2 / count - m * m));
+  }
+
+  const plotW = W - PAD.l - PAD.r;
+  const xOf = (v: number) => PAD.l + ((v - axis[0]) / (axis[1] - axis[0])) * plotW;
+
+  /** One bar per bin, at most 18 px wide so a lattice histogram reads as sticks. */
+  function bars(b: Bins, counts: Float64Array, yOf: (d: number) => number, yBase: number, norm: number) {
+    const binPx = (b.w / (axis[1] - axis[0])) * plotW;
+    const bw = Math.min(binPx - 0.6, 18);
+    for (let i = 0; i < b.nb; i++) {
+      if (!counts[i]) continue;
+      const cx = xOf(b.lo + (i + 0.5) * b.w);
+      const y = yOf(counts[i] / norm);
+      ctx.fillRect(cx - bw / 2, y, bw, yBase - y);
+    }
+  }
+
+  function drawSource(yTop: number) {
+    let mx = 1;
+    for (const v of srcHist) if (v > mx) mx = v;
+    ctx.fillStyle = 'rgba(154,160,172,0.28)';
+    const base = yTop - 22;
+    bars(sb, srcHist, (d) => base - (d / mx) * 54, base, 1);
+    label('one draw from the source', PAD.l, yTop - 84, 0.45, 'left', 11.5);
+  }
+
+  function drawWalks() {
+    const n = state.n, s = SOURCES[state.src];
+    const yOfK = (k: number) => WALKBOX.y0 + (k / n) * (WALKBOX.y1 - WALKBOX.y0);
+    label(
+      state.src === 'coin' ? 'each trial is a walk: step k runs downward' : 'each trial as a walk of its running sum Sₖ − kμ',
+      PAD.l, WALKBOX.y0 - 14, 0.45, 'left', 11.5
+    );
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xOf(0), WALKBOX.y0);
+    ctx.lineTo(xOf(0), H - PAD.b);
+    ctx.stroke();
+
+    // the ±σ√k and ±2σ√k envelope: it curves, so twice as far takes four times the steps
+    const sg = Math.sqrt(s.var);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD.l, 0, plotW, H);
+    ctx.clip();
+    for (const [m, alpha] of [[1, 0.5], [2, 0.22]] as [number, number][]) {
+      for (const sgn of [-1, 1]) {
+        ctx.strokeStyle = ink(alpha);
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        for (let i = 0; i <= 120; i++) {
+          const k = (n * i) / 120;
+          const X = xOf(sgn * m * sg * Math.sqrt(k)), Y = yOfK(k);
+          i === 0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y);
+        }
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+
+    paths.forEach((p, idx) => {
+      const last = idx === paths.length - 1;
+      ctx.strokeStyle = last ? WALK : 'rgba(124,140,255,0.18)';
+      ctx.lineWidth = last ? 1.8 : 1;
+      ctx.beginPath();
+      for (let k = 0; k <= n; k++) k === 0 ? ctx.moveTo(xOf(p[k]), yOfK(k)) : ctx.lineTo(xOf(p[k]), yOfK(k));
+      ctx.stroke();
+    });
+    if (paths.length) {
+      const p = paths[paths.length - 1];
+      ctx.fillStyle = WALK;
+      ctx.beginPath();
+      ctx.arc(xOf(p[n]), WALKBOX.y1, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    const edge = xOf(sg * Math.sqrt(n));
+    if (edge < W - PAD.r - 30) label('+σ√k', edge + 4, WALKBOX.y1 - 4, 0.5, 'left', 11.5);
+    label('k = 0', xOf(0) + 6, WALKBOX.y0 + 12, 0.5, 'left', 11.5);
+    label(`k = n = ${n}`, xOf(0) + 6, WALKBOX.y1 + 14, 0.5, 'left', 11.5);
   }
 
   function draw() {
     const s = SOURCES[state.src];
-    const [a, b] = s.range;
+    const isSum = state.stat === 'sum';
     ctx.clearRect(0, 0, W, H);
 
-    const plotW = W - PAD.l - PAD.r, plotH = H - PAD.t - PAD.b;
-    const x0 = PAD.l, yBase = H - PAD.b;
-    const xOf = (val: number) => x0 + ((val - a) / (b - a)) * plotW;
-    const bw = plotW / BINS;
+    const top = topOf();
+    const plotH = H - top - PAD.b, yBase = H - PAD.b;
 
     ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x0, yBase);
-    ctx.lineTo(x0 + plotW, yBase);
+    ctx.moveTo(PAD.l, yBase);
+    ctx.lineTo(PAD.l + plotW, yBase);
     ctx.stroke();
-    for (let t = 0; t <= 5; t++) {
-      const val = a + ((b - a) * t) / 5;
-      label(val.toFixed(1), xOf(val), yBase + 18, 0.3, 'center', 11.5);
-    }
+    // ticks on round numbers: 1, 2 or 5 times a power of ten
+    const raw = (axis[1] - axis[0]) / 6, mag = 10 ** Math.floor(Math.log10(raw));
+    const step = mag * (raw / mag < 1.5 ? 1 : raw / mag < 3.5 ? 2 : 5);
+    const dec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+    for (let val = Math.ceil(axis[0] / step) * step; val <= axis[1] + 1e-9; val += step)
+      label((Math.abs(val) < step / 2 ? 0 : val).toFixed(dec).replace('-', '−'), xOf(val), yBase + 18, 0.3, 'center', 11.5);
 
-    // the source, faint, across the top
-    let srcMax = 1;
-    for (const v of srcBins) if (v > srcMax) srcMax = v;
-    ctx.fillStyle = 'rgba(154,160,172,0.28)';
-    for (let i = 0; i < BINS; i++) {
-      const h = (srcBins[i] / srcMax) * 64;
-      ctx.fillRect(x0 + i * bw, PAD.t - 76 + (64 - h), bw - 0.5, h);
-    }
-    label('one draw from the source', x0, PAD.t - 84, 0.45, 'left', 11.5);
-    label(`the mean of ${state.n} draws`, x0, PAD.t - 4, 0.45, 'left', 11.5);
+    if (isSum) drawWalks();
+    else drawSource(top);
+    label(isSum ? `where the walk ends: Sₙ − nμ after ${state.n} draws` : (state.n === 1 ? 'the mean of a single draw' : `the mean of ${state.n} draws`), PAD.l, top - 4, 0.45, 'left', 11.5);
 
-    // the means, as a density, and the bell the theorem predicts
-    const sdMean = Math.sqrt(s.var / state.n);
-    const gPeak = 1 / (sdMean * Math.sqrt(2 * Math.PI));
-    const binWidth = (b - a) / BINS;
+    // the statistic, as a density, and the bell the theorem predicts
+    const sd = spread(), mu = centre();
+    const gPeak = 1 / (sd * Math.sqrt(2 * Math.PI));
     let histMax = 1e-9;
-    for (let i = 0; i < BINS; i++) histMax = Math.max(histMax, count > 0 ? bins[i] / (count * binWidth) : 0);
+    if (count) for (let i = 0; i < hb.nb; i++) histMax = Math.max(histMax, hist[i] / (count * hb.w));
     const yMax = Math.max(histMax, gPeak) * 1.1;
     const yOf = (d: number) => yBase - (d / yMax) * plotH;
 
     ctx.fillStyle = 'rgba(124,140,255,0.55)';
-    for (let i = 0; i < BINS; i++) {
-      if (!bins[i]) continue;
-      const y = yOf(bins[i] / (count * binWidth));
-      ctx.fillRect(x0 + i * bw, y, bw - 0.6, yBase - y);
-    }
+    if (count) bars(hb, hist, yOf, yBase, count * hb.w);
     ctx.strokeStyle = BELL;
     ctx.lineWidth = 2.4;
     ctx.beginPath();
     for (let px = 0; px <= plotW; px += 2) {
-      const val = a + (px / plotW) * (b - a);
-      const d = gPeak * Math.exp(-((val - s.mean) ** 2) / (2 * sdMean * sdMean));
-      px === 0 ? ctx.moveTo(x0 + px, yOf(d)) : ctx.lineTo(x0 + px, yOf(d));
+      const val = axis[0] + (px / plotW) * (axis[1] - axis[0]);
+      const d = gPeak * Math.exp(-((val - mu) ** 2) / (2 * sd * sd));
+      px === 0 ? ctx.moveTo(PAD.l + px, yOf(d)) : ctx.lineTo(PAD.l + px, yOf(d));
     }
     ctx.stroke();
 
     ctx.strokeStyle = ink(0.4);
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.moveTo(xOf(s.mean), PAD.t);
-    ctx.lineTo(xOf(s.mean), yBase);
+    ctx.moveTo(xOf(mu), top);
+    ctx.lineTo(xOf(mu), yBase);
     ctx.stroke();
     ctx.setLineDash([]);
-    label(`μ = ${s.mean}`, xOf(s.mean) + 6, PAD.t + 12, 0.5, 'left', 11.5);
+    if (!isSum) label(`μ = ${s.mean}`, xOf(mu) + 6, top + 12, 0.5, 'left', 11.5);
 
-    setEq({
-      rule: [['\\bar X = \\frac{1}{n}\\sum_i X_i', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\Big(\\mu,\\;\\frac{\\sigma^2}{n}\\Big)', BELL]],
-      live: [`n = ${state.n}`, `\\quad\\sigma = ${Math.sqrt(s.var).toFixed(3)}`, [`\\quad\\sigma/\\sqrt n = ${sdMean.toFixed(4)}`, BELL]],
-    });
+    const sigma = Math.sqrt(s.var), meas = measured();
+    const measTxt = isNaN(meas) ? '—' : meas.toFixed(isSum ? 2 : 4);
+    if (isSum) {
+      setEq({
+        rule: [['S_n - n\\mu = \\sum_i (X_i - \\mu)', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\big(0,\\;n\\sigma^2\\big)', BELL]],
+        live: [`n = ${state.n}`, `\\quad\\sigma = ${sigma.toFixed(3)}`, [`\\quad\\sigma\\sqrt n = ${sd.toFixed(3)}`, BELL]],
+      });
+    } else {
+      setEq({
+        rule: [['\\bar X = \\frac{1}{n}\\sum_i X_i', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\Big(\\mu,\\;\\frac{\\sigma^2}{n}\\Big)', BELL]],
+        live: [`n = ${state.n}`, `\\quad\\sigma = ${sigma.toFixed(3)}`, [`\\quad\\sigma/\\sqrt n = ${sd.toFixed(4)}`, BELL]],
+      });
+    }
+    el('result-label').textContent = isSum ? 'Spread of the sum σ√n' : 'Spread of the mean σ/√n';
     setResult({
-      value: sdMean.toFixed(4),
+      value: sd.toFixed(isSum ? 3 : 4),
       colour: BELL,
-      status: `${count} means of n = ${state.n} draws so far`,
-      note: 'Whatever the source looks like, the means pile into the bell the theorem predicts, and it narrows like 1/√n.',
+      status: `${count} trials of n = ${state.n} draws · measured spread ${measTxt}`,
+      note: isSum
+        ? state.src === 'coin'
+          ? 'Each trial is n coin-flip steps and the sum is where the walker ends up. Its spread grows like √n, not n.'
+          : 'The sum spreads like σ√n while the mean, the same sum divided by n, narrows like σ/√n.'
+        : 'Whatever the source looks like, the means pile into the bell the theorem predicts, and it narrows like 1/√n.',
     });
-    setRows({ 'r-count': String(count), 'r-sigma': Math.sqrt(s.var).toFixed(3), 'r-sd': sdMean.toFixed(4) });
+    setRows({
+      'r-count': String(count),
+      'r-sigma': sigma.toFixed(3),
+      'r-pred': sd.toFixed(isSum ? 3 : 4),
+      'r-meas': measTxt,
+    });
+  }
+
+  function legend() {
+    const top = el('lg-top'), hl = el('lg-hist');
+    const isSum = state.stat === 'sum';
+    top.textContent = isSum ? 'paths of the running sum' : 'source distribution';
+    top.style.setProperty('--dot', isSum ? 'rgba(124,140,255,0.5)' : 'rgba(154,160,172,0.6)');
+    hl.textContent = isSum ? 'where the walks end' : 'sample means';
   }
 
   function loop() {
-    if (state.running) for (let k = 0; k < 24; k++) trial();
+    if (state.running) for (let k = 0; k < 24; k++) trial(k === 0);
     draw();
     requestAnimationFrame(loop);
   }
 
-  segmented('src', (src) => { state.src = src; reset(); });
-  slider('n', (v) => { state.n = v; reset(); });
-  transport({ onRun: (running) => (state.running = running), onReset: reset });
+  const srcs = segmented('src', (src) => { state.src = src; reset(); });
+  const stats = segmented('stat', (k) => { state.stat = k as Stat; legend(); reset(); });
+  const setN = slider('n', (v) => { state.n = v; reset(); });
+  const tr = transport({ onRun: (running) => (state.running = running), onReset: reset });
 
+  function show(src: string, stat: Stat, n: number) {
+    state.src = src;
+    state.stat = stat;
+    state.n = n;
+    srcs.select(src);
+    stats.select(stat);
+    setN(n);
+    legend();
+    reset();
+    state.running = true;
+    tr.setRunning(true);
+  }
+  tries({
+    raw: () => show('exponential', 'mean', 1),
+    bell: () => show('exponential', 'mean', 30),
+    walk: () => show('coin', 'sum', 100),
+  });
+
+  legend();
   reset();
   loop();
 </script>

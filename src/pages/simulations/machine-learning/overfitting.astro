@@ -5,6 +5,7 @@ import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -37,7 +38,7 @@ import Readout from '../../../components/sim/Readout.astro';
     </div>
 
     <div class="sim-panel">
-      <Slider id="d" label="Polynomial degree" min={0} max={12} value={3} />
+      <Slider id="d" label="Polynomial degree" min={0} max={11} value={3} />
       <Slider id="l" label="Regularization λ" min={0} max={100} value={0} display="0.000" />
       <Actions>
         <button type="button" class="btn ghost" id="regen">New data</button>
@@ -48,19 +49,19 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Slide the degree up. <b>Train error</b> keeps falling, all the way to zero
-      when the curve threads every point. But watch <b>test error</b>: it bottoms
-      out, then climbs as the curve starts chasing noise.
+      Slide the degree up. <b>Train error</b> keeps falling and reaches zero at
+      degree 11, where the curve threads all 12 training points.
+      <Try id="thread" />
     </li>
     <li>
-      That U-shape in the strip below the plot is the <b>bias–variance
-      tradeoff</b>. Too simple underfits (high bias); too flexible overfits (high
-      variance). The sweet spot is in the middle.
+      <b>Test error</b> in the strip falls, bottoms out, then climbs as the
+      curve chases noise: the <b>bias–variance tradeoff</b>. The best degree
+      sits in the middle. <Try id="best" />
     </li>
     <li>
-      Take a wiggly high-degree fit, then raise <b>λ</b>. Regularization penalizes
-      large weights and <b>smooths</b> the curve back down, recovering
-      generalization without lowering the degree.
+      At degree 11, raise <b>λ</b>. Penalising the weights (all but the
+      intercept w₀) <b>smooths</b> the curve and brings test error back down
+      without lowering the degree. <Try id="ridge" />
     </li>
   </Fragment>
 </SimLayout>
@@ -69,9 +70,10 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
-  import { el, slider, result, readout } from '../../../lib/panel';
+  import { el, slider, result, readout, tries } from '../../../lib/panel';
 
   const TRAIN = '#7c8cff', FIT = '#f59e0b', TRAINERR = '#5eead4';
+  const N_TRAIN = 12, MAX_D = N_TRAIN - 1; // degree n − 1 can pass through every point
   const state = { degree: 3, lambda: 0 };
   let train: { x: number; y: number }[] = [];
   let test: { x: number; y: number }[] = [];
@@ -92,8 +94,8 @@ import Readout from '../../../components/sim/Readout.astro';
   function gen() {
     const noise = () => (Math.random() * 2 - 1) * 0.28;
     train = [];
-    for (let i = 0; i < 15; i++) {
-      const x = -1 + (2 * i) / 14 + (Math.random() * 2 - 1) * 0.03;
+    for (let i = 0; i < N_TRAIN; i++) {
+      const x = Math.max(-1, Math.min(1, -1 + (2 * i) / (N_TRAIN - 1) + (Math.random() * 2 - 1) * 0.03));
       train.push({ x, y: trueF(x) + noise() });
     }
     test = [];
@@ -103,40 +105,64 @@ import Readout from '../../../components/sim/Readout.astro';
     }
   }
 
-  // ridge polynomial fit via the normal equations and Gaussian elimination
+  /** Legendre polynomials P₀…P_{m−1} at x: a basis on [−1, 1] that stays well conditioned at high degree. */
+  function basis(x: number, m: number) {
+    const P = [1, x];
+    for (let k = 1; k < m - 1; k++) P.push(((2 * k + 1) * x * P[k] - k * P[k - 1]) / (k + 1));
+    return P.slice(0, m);
+  }
+
+  /**
+   * Ridge fit by least squares on the design matrix stacked over √λ·I, solved
+   * with Householder QR rather than the normal equations. The intercept w₀ is
+   * left out of the penalty, so λ shrinks the shape of the curve, not its level.
+   */
   function fit(degree: number, lambda: number): number[] {
     const m = degree + 1;
-    const A = Array.from({ length: m }, () => new Array(m).fill(0));
-    const b = new Array(m).fill(0);
-    for (const p of train) {
-      const pw = [1];
-      for (let k = 1; k < 2 * m; k++) pw.push(pw[k - 1] * p.x);
-      for (let i = 0; i < m; i++) {
-        for (let j = 0; j < m; j++) A[i][j] += pw[i + j];
-        b[i] += pw[i] * p.y;
-      }
+    const A: number[][] = [], b: number[] = [];
+    for (const p of train) { A.push(basis(p.x, m)); b.push(p.y); }
+    const s = Math.sqrt(lambda);
+    for (let k = 1; k < m; k++) {
+      const row = new Array(m).fill(0);
+      row[k] = s;
+      A.push(row);
+      b.push(0);
     }
-    for (let i = 0; i < m; i++) A[i][i] += lambda + 1e-8;
+    const R = A.length;
     for (let c = 0; c < m; c++) {
-      let piv = c;
-      for (let r = c + 1; r < m; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
-      [A[c], A[piv]] = [A[piv], A[c]];
-      [b[c], b[piv]] = [b[piv], b[c]];
-      const d = A[c][c] || 1e-9;
-      for (let j = c; j < m; j++) A[c][j] /= d;
-      b[c] /= d;
-      for (let r = 0; r < m; r++) {
-        if (r === c) continue;
-        const f = A[r][c];
-        for (let j = c; j < m; j++) A[r][j] -= f * A[c][j];
-        b[r] -= f * b[c];
+      let nrm = 0;
+      for (let r = c; r < R; r++) nrm += A[r][c] ** 2;
+      nrm = Math.sqrt(nrm);
+      if (nrm < 1e-14) continue;
+      const v: number[] = [];
+      for (let r = c; r < R; r++) v.push(A[r][c]);
+      v[0] -= A[c][c] > 0 ? -nrm : nrm;
+      let vv = 0;
+      for (const t of v) vv += t * t;
+      if (vv < 1e-30) continue;
+      for (let j = c; j < m; j++) {
+        let d = 0;
+        for (let r = c; r < R; r++) d += v[r - c] * A[r][j];
+        d = (2 * d) / vv;
+        for (let r = c; r < R; r++) A[r][j] -= d * v[r - c];
       }
+      let d = 0;
+      for (let r = c; r < R; r++) d += v[r - c] * b[r];
+      d = (2 * d) / vv;
+      for (let r = c; r < R; r++) b[r] -= d * v[r - c];
     }
-    return b;
+    const w = new Array(m).fill(0);
+    for (let i = m - 1; i >= 0; i--) {
+      let t = b[i];
+      for (let j = i + 1; j < m; j++) t -= A[i][j] * w[j];
+      w[i] = Math.abs(A[i][i]) > 1e-12 ? t / A[i][i] : 0;
+    }
+    return w;
   }
   const evalPoly = (w: number[], x: number) => {
-    let s = 0, p = 1;
-    for (const c of w) { s += c * p; p *= x; }
+    const P = basis(x, w.length);
+    let s = 0;
+    for (let k = 0; k < w.length; k++) s += w[k] * P[k];
     return s;
   };
   const mse = (w: number[], set: { x: number; y: number }[]) =>
@@ -202,15 +228,21 @@ import Readout from '../../../components/sim/Readout.astro';
     }
   }
 
-  function drawStrip() {
-    label('error against degree, at this λ', STRIP.x, STRIP.y - 10, 0.45, 'left', 11.5);
-    const maxD = 12;
+  /** Train and test error at every degree, for the current λ. */
+  function curves() {
     const tr: number[] = [], te: number[] = [];
-    for (let d = 0; d <= maxD; d++) {
+    for (let d = 0; d <= MAX_D; d++) {
       const w = fit(d, state.lambda);
       tr.push(mse(w, train));
       te.push(Math.min(2, mse(w, test)));
     }
+    return { tr, te };
+  }
+
+  function drawStrip() {
+    label('error against degree, at this λ', STRIP.x, STRIP.y - 10, 0.45, 'left', 11.5);
+    const maxD = MAX_D;
+    const { tr, te } = curves();
     const hi = Math.max(0.3, ...te, ...tr) * 1.1;
     const gx = (d: number) => STRIP.x + (d / maxD) * STRIP.w;
     const gy = (v: number) => STRIP.y + (1 - v / hi) * STRIP.h;
@@ -220,7 +252,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.moveTo(STRIP.x, STRIP.y + STRIP.h);
     ctx.lineTo(STRIP.x + STRIP.w, STRIP.y + STRIP.h);
     ctx.stroke();
-    for (let d = 0; d <= maxD; d += 2) label(String(d), gx(d), STRIP.y + STRIP.h + 16, 0.3, 'center', 11);
+    for (let d = 0; d <= maxD; d++) label(String(d), gx(d), STRIP.y + STRIP.h + 16, 0.3, 'center', 11);
     label('degree', STRIP.x + STRIP.w, STRIP.y + STRIP.h + 32, 0.3, 'right', 11);
     const plot = (arr: number[], color: string) => {
       ctx.strokeStyle = color;
@@ -251,10 +283,10 @@ import Readout from '../../../components/sim/Readout.astro';
     const trainErr = mse(w, train), testErr = mse(w, test);
     const verdict =
       state.degree <= 1 && trainErr > 0.15 ? ['underfitting', 'The curve is too stiff to follow the trend, so both errors stay high: high bias.']
-      : testErr > 2 * trainErr && state.degree >= 5 ? ['overfitting', 'The curve chases the noise in the training points and pays for it on the test points: high variance.']
+      : testErr > 2 * trainErr && testErr > 0.06 && state.degree >= 5 ? ['overfitting', 'The curve chases the noise in the training points and pays for it on the test points: high variance.']
       : ['fitting well', 'Train and test errors are close: the curve follows the trend without memorising the noise.'];
     setEq({
-      rule: [['\\hat y = \\sum_{k=0}^{d} w_k x^k', FIT], '\\quad\\text{minimising}\\quad', ['\\sum_i (y_i - \\hat y_i)^2', TRAINERR], `+ \\lambda\\sum_k w_k^2`],
+      rule: [['\\hat y = \\sum_{k=0}^{d} w_k P_k(x)', FIT], '\\quad\\text{minimising}\\quad', ['\\sum_i (y_i - \\hat y_i)^2', TRAINERR], `+ \\lambda\\sum_{k\\ge 1} w_k^2`],
       live: [`d = ${state.degree}`, `\\quad\\lambda = ${state.lambda.toFixed(3)}`, [`\\quad\\text{train} = ${fixed(trainErr, 4)}`, TRAINERR], [`\\quad\\text{test} = ${fixed(testErr, 4)}`, FIT]],
     });
     setResult({
@@ -266,9 +298,27 @@ import Readout from '../../../components/sim/Readout.astro';
     setRows({ 'r-train': fixed(trainErr, 4), 'r-test': fixed(testErr, 4) });
   }
 
-  slider('d', (v) => { state.degree = v; draw(); });
-  slider('l', (v) => { state.lambda = (v / 100) ** 2 * 2; draw(); }, (v) => ((v / 100) ** 2 * 2).toFixed(3));
+  const lam = (v: number) => (v / 100) ** 2 * 2;
+  const setD = slider('d', (v) => { state.degree = v; draw(); });
+  const setL = slider('l', (v) => { state.lambda = lam(v); draw(); }, (v) => lam(v).toFixed(3));
   el('regen').addEventListener('click', () => { gen(); draw(); });
+
+  function show(degree: number, l: number) {
+    state.degree = degree;
+    setD(degree);
+    state.lambda = lam(l);
+    setL(l);
+    draw();
+  }
+  tries({
+    thread: () => show(MAX_D, 0),
+    best: () => {
+      show(state.degree, 0);
+      const { te } = curves();
+      show(te.indexOf(Math.min(...te)), 0);
+    },
+    ridge: () => show(MAX_D, 30),
+  });
 
   gen();
   draw();

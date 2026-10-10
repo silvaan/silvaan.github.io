@@ -7,6 +7,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -33,7 +34,7 @@ import Readout from '../../../components/sim/Readout.astro';
         ]}
         hint="Hover a point to see how the clusters divide it · run to fit, step for one round of EM"
       />
-      <Result label="Log-likelihood a point" />
+      <Result label="Log-likelihood per point" />
     </div>
 
     <div class="sim-panel">
@@ -49,12 +50,27 @@ import Readout from '../../../components/sim/Readout.astro';
         ]}
       />
       <Slider id="k" label="Components" min={1} max={6} value={3} />
-      <Seg id="cov" label="Shape allowed" attr="c" options={[{ value: 'full', label: 'Any' }, { value: 'diag', label: 'Axis-aligned' }, { value: 'round', label: 'Round' }]} />
-      <Checks items={[{ id: 'hard', label: 'Hand each point to one cluster, as k-means does' }]} />
+      <Seg
+        id="cov"
+        label="Shape allowed"
+        attr="c"
+        options={[
+          { value: 'full', label: 'Any' },
+          { value: 'diag', label: 'Axis-aligned' },
+          { value: 'round', label: 'Round' },
+          { value: 'tied', label: 'Same circle' },
+        ]}
+      />
+      <Checks
+        items={[
+          { id: 'equal', label: 'Equal weights for every component' },
+          { id: 'hard', label: 'Hand each point to one cluster' },
+        ]}
+      />
       <Transport step />
       <Readout
         rows={[
-          { id: 'r-ll', label: 'log-likelihood a point' },
+          { id: 'r-ll', label: 'log-likelihood per point' },
           { id: 'r-it', label: 'rounds of EM' },
           { id: 'r-mix', label: 'mixing weights' },
           { id: 'r-split', label: 'points genuinely shared' },
@@ -65,46 +81,26 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Every point is painted with the colours of the clusters that claim it, in
-      the proportions they claim it. Deep in a cluster a point takes one colour
-      outright. Between two of them it comes out mixed, and that mixture is the
-      whole difference from
-      <a href="/simulations/machine-learning/kmeans">k-means</a>, which has to
-      pick one and lose the doubt.
+      Each <b>Step</b> is one round of EM: move and reshape the ellipses given
+      the shares, then divide every point between them again. A point between
+      two clusters comes out a mixed colour, the doubt
+      <a href="/simulations/machine-learning/kmeans">k-means</a> throws away.
+      <Try id="step" label="Step" />
     </li>
     <li>
-      One round of EM is two things. The <b>E step</b> asks, given where the
-      ellipses are, how much of each point belongs to each of them. The
-      <b>M step</b> asks, given those shares, where the ellipses should now sit
-      and what shape they should be. Press <b>step</b> and watch them alternate.
+      On <b>Stretched</b> with shape <b>Any</b> each ellipse lies along its
+      stripe. Set the shape to <b>Round</b> and the circles cannot follow, so
+      the likelihood per point settles lower. <Try id="round" />
     </li>
     <li>
-      Choose <b>Stretched</b> and leave the shape on <b>Any</b>. Both components
-      lie straight down along their stripe, because a full covariance is allowed
-      to be stretched and tilted. Now set the shape to <b>Round</b>. Neither
-      circle can follow a stripe, so each has to swell until it covers a great
-      deal of empty space, and the likelihood falls by more than a whole point
-      for the same two clusters. That restriction is exactly the one k-means
-      lives under.
+      <b>Same circle</b> plus <b>equal weights</b> plus one cluster each is
+      k-means exactly: every point goes to its nearest centre, and each centre
+      moves to the mean of its points. <Try id="kmeans" />
     </li>
     <li>
-      Tick <b>hand each point to one cluster</b>. The colours go flat, every
-      point commits, and the likelihood settles lower than it did before. Round
-      shapes plus hard assignment plus equal weights <em>is</em> k-means, so the
-      two are the same algorithm with three restrictions removed.
-    </li>
-    <li>
-      Watch the likelihood curve. It never falls, which is the one guarantee EM
-      offers, and it says nothing at all about whether the answer is right.
-      Press <b>reset</b> a few times on <b>Uneven</b> and you will find fits that
-      climbed happily into an obviously wrong arrangement.
-    </li>
-    <li>
-      Ask for more components than the data has. A spare component will wander
-      off and wrap itself tightly around a handful of points, because a narrow
-      ellipse over a few points scores enormously well. Nothing in the
-      likelihood objects, which is why the number of components is a decision
-      and not something the fit can tell you.
+      Ask for more components than the data has. The likelihood still rises,
+      so it cannot tell you how many clusters there really are.
+      <Try id="spare" />
     </li>
   </Fragment>
 </SimLayout>
@@ -113,7 +109,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const HUES = ['#5eead4', '#f59e0b', '#a78bfa', '#f87171', '#60a5fa', '#a3e635'];
   const RGB = HUES.map((h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
@@ -122,7 +118,7 @@ import Readout from '../../../components/sim/Readout.astro';
   const N = 260;
   const FLOOR = 4e-3; // keeps a component from shrinking onto a single point
 
-  const state = { data: 'blobs', k: 3, cov: 'full', hard: false, running: false, hover: -1, it: 0 };
+  const state = { data: 'blobs', k: 3, cov: 'full', hard: false, equal: false, running: false, hover: -1, it: 0 };
   const NATURAL: Record<string, number> = { blobs: 3, long: 2, overlap: 2, sizes: 2 };
 
   const canvas = el('gm') as HTMLCanvasElement;
@@ -252,6 +248,8 @@ import Readout from '../../../components/sim/Readout.astro';
 
   /** The M step: given those shares, where the ellipses go and what shape they take. */
   function mstep() {
+    const fit: ({ nk: number; mu: number[]; S: number[] } | null)[] = [];
+    let pooled = 0, mass = 0; // for 'Same circle': one variance shared by every component
     for (let k = 0; k < C.length; k++) {
       let nk = 0, mx = 0, my = 0;
       for (let i = 0; i < P.length; i++) {
@@ -259,7 +257,7 @@ import Readout from '../../../components/sim/Readout.astro';
         mx += R[i][k] * P[i][0];
         my += R[i][k] * P[i][1];
       }
-      if (nk < 1e-6) continue;
+      if (nk < 1e-6) { fit.push(null); continue; }
       const mu = [mx / nk, my / nk];
       let a = 0, b = 0, d = 0;
       for (let i = 0; i < P.length; i++) {
@@ -268,16 +266,27 @@ import Readout from '../../../components/sim/Readout.astro';
         b += R[i][k] * q0 * q1;
         d += R[i][k] * q1 * q1;
       }
-      a /= nk;
-      b /= nk;
-      d /= nk;
-      if (state.cov === 'round') {
+      pooled += (a + d) / 2;
+      mass += nk;
+      fit.push({ nk, mu, S: [a / nk, b / nk, d / nk] });
+    }
+    const shared = pooled / Math.max(1e-9, mass);
+    for (let k = 0; k < C.length; k++) {
+      const f = fit[k];
+      if (!f) continue;
+      let [a, b, d] = f.S;
+      if (state.cov === 'tied') {
+        a = shared;
+        d = shared;
+        b = 0;
+      } else if (state.cov === 'round') {
         const v = (a + d) / 2;
         a = v;
         d = v;
         b = 0;
       } else if (state.cov === 'diag') b = 0;
-      C[k] = { pi: nk / P.length, mu, S: [a + FLOOR, b, d + FLOOR] };
+      const pi = state.equal ? 1 / C.length : f.nk / P.length;
+      C[k] = { pi, mu: f.mu, S: [a + FLOOR, b, d + FLOOR] };
     }
   }
 
@@ -430,6 +439,8 @@ import Readout from '../../../components/sim/Readout.astro';
     likelihood();
 
     const ll = trace.length ? trace[trace.length - 1] : 0;
+    const SHAPE: Record<string, string> = { full: 'any shape', diag: 'axis-aligned', round: 'round only', tied: 'one shared circle' };
+    const isKMeans = state.hard && state.equal && state.cov === 'tied';
     let shared = 0;
     for (const r of R) {
       let mx = 0;
@@ -458,12 +469,14 @@ import Readout from '../../../components/sim/Readout.astro';
     setResult({
       value: ll.toFixed(3),
       colour: LIKE,
-      status: `${state.k} components · ${state.cov === 'full' ? 'any shape' : state.cov === 'diag' ? 'axis-aligned' : 'round only'} · ${state.hard ? 'one cluster each' : 'shared between clusters'} · ${state.it} rounds`,
-      note: state.hard
-        ? 'Every point has been handed to a single cluster, so the shares are all one or nothing. Round shapes and equal weights on top of this is k-means exactly, and the likelihood it reaches is the worse for each restriction.'
-        : state.cov === 'round'
-          ? 'Every component is forced to be a circle, so a stretched cluster cannot be followed and has to be cut into pieces instead. This is the restriction that makes k-means fail on elongated data.'
-          : 'Each component is free to stretch and tilt, and each point is divided between them in proportion to how well each explains it. The likelihood rises every round and never says whether the answer is the right one.',
+      status: `${state.k} components · ${SHAPE[state.cov]} · ${state.equal ? 'equal weights · ' : ''}${state.hard ? 'one cluster each' : 'shared between clusters'} · ${state.it} rounds`,
+      note: isKMeans
+        ? 'One shared circle, equal weights and hard assignment: every point goes to its nearest centre and each centre moves to the mean of its points. This is k-means exactly.'
+        : state.hard
+          ? 'Every point has been handed to a single cluster, so the shares are all one or nothing. Add one shared circle and equal weights and this becomes k-means.'
+          : state.cov === 'round' || state.cov === 'tied'
+            ? 'Every component is forced to be a circle, so a stretched cluster cannot be followed and has to be cut into pieces instead. This is the restriction that makes k-means fail on elongated data.'
+            : 'Each component is free to stretch and tilt, and each point is divided between them in proportion to how well each explains it. The likelihood rises every round and never says whether the answer is the right one.',
     });
   }
 
@@ -517,15 +530,46 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   };
   const setK = slider('k', (v) => { state.k = v; restart(); });
-  segmented('data', (d) => {
+  const dataSeg = segmented('data', (d) => {
     state.data = d;
     state.k = NATURAL[d] ?? state.k;
     setK(state.k);
     build(d);
     restart();
   });
-  segmented('cov', (c) => { state.cov = c; restart(); });
-  check('hard', (on) => { state.hard = on; restart(); });
+  const covSeg = segmented('cov', (c) => { state.cov = c; restart(); });
+  const setHard = check('hard', (on) => { state.hard = on; restart(); });
+  const setEqual = check('equal', (on) => { state.equal = on; restart(); });
+
+  /** Put the controls in a given state, seed a fresh fit and optionally run it. */
+  function show(o: { data: string; k?: number; cov: string; hard: boolean; equal: boolean; run: boolean }) {
+    state.data = o.data;
+    dataSeg.select(o.data);
+    state.k = o.k ?? NATURAL[o.data] ?? state.k;
+    setK(state.k);
+    state.cov = o.cov;
+    covSeg.select(o.cov);
+    state.hard = o.hard;
+    setHard(o.hard);
+    state.equal = o.equal;
+    setEqual(o.equal);
+    build(o.data);
+    restart();
+    if (o.run) {
+      state.running = true;
+      controls.setRunning(true);
+    }
+  }
+  tries({
+    step: () => {
+      show({ data: 'overlap', cov: 'full', hard: false, equal: false, run: false });
+      step();
+      draw();
+    },
+    round: () => show({ data: 'long', cov: 'round', hard: false, equal: false, run: true }),
+    kmeans: () => show({ data: 'blobs', cov: 'tied', hard: true, equal: true, run: true }),
+    spare: () => show({ data: 'blobs', k: 6, cov: 'full', hard: false, equal: false, run: true }),
+  });
 
   build(state.data);
   restart();

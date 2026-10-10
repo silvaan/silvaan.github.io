@@ -3,6 +3,9 @@ import SimLayout from '../../../layouts/SimLayout.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -22,86 +25,55 @@ import Caption from '../../../components/sim/Caption.astro';
     <div class="sim-panel">
       <Transport step />
 
-      <div class="control">
-        <label>Pluck shape</label>
-        <div class="seg" id="shape">
-          <button data-s="center" class="active">Center</button>
-          <button data-s="pulse">Pulse</button>
-          <button data-s="two">Two pulses</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Beads on the string <b id="nval">48</b></label>
-        <input type="range" id="n" min="24" max="240" step="4" value="48" />
-        <div class="scale-hint"><span>coarse, dx large</span><span>fine</span></div>
-      </div>
-
-      <div class="control">
-        <label>Bead you are watching <b id="pval">24</b></label>
-        <input type="range" id="pick" min="1" max="46" value="24" />
-      </div>
-
-      <div class="control">
-        <label>Boundaries</label>
-        <div class="seg" id="bc">
-          <button data-b="fixed" class="active">Fixed ends</button>
-          <button data-b="free">Free ends</button>
-        </div>
-      </div>
-
-      <div class="control">
-        <label>Courant number c <b id="cval">0.50</b></label>
-        <input type="range" id="c" min="10" max="98" value="50" />
-      </div>
-
-      <div class="control">
-        <label>Damping <b id="dval">0.000</b></label>
-        <input type="range" id="damp" min="0" max="60" value="0" />
-      </div>
-
+      <Seg
+        id="shape"
+        label="Pluck shape"
+        attr="s"
+        options={[
+          { value: 'center', label: 'Center' },
+          { value: 'pulse', label: 'Pulse' },
+          { value: 'two', label: 'Two pulses' },
+        ]}
+      />
+      <Slider id="n" label="Beads on the string" min={24} max={240} step={4} value={48} hint={['coarse, dx large', 'fine']} />
+      <Slider id="pick" label="Bead you are watching" min={1} max={46} value={24} />
+      <Seg
+        id="bc"
+        label="Boundaries"
+        attr="b"
+        options={[{ value: 'fixed', label: 'Fixed ends' }, { value: 'free', label: 'Free ends' }]}
+      />
+      <Slider id="c" label="Courant number c" min={10} max={110} value={50} display="0.50" hint={['stable', 'past 1: unstable']} />
+      <Slider id="damp" label="Damping" min={0} max={60} value={0} display="0.000" />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Look at the card on the right. The only thing the middle bead can feel is
-      <b>how far it sits below the straight line joining its neighbours</b>. That
-      sag is what the two tensions fail to cancel, and it is the whole force.
+      The card shows all a bead can feel: <b>how far it sags</b> below the line
+      joining its neighbours. Twice the sag is u(i−1) − 2u(i) + u(i+1); divide by
+      dx² and it is the curvature. <Try id="sag" />
     </li>
     <li>
-      Sag is exactly half the second difference, so the pull is
-      <b>u(i−1) − 2u(i) + u(i+1)</b>. Divide by dx² and it is the curvature; the
-      wave equation is that sentence written for every bead at once.
+      Press <b>Step</b> a few times. The pull sets the bead's change in
+      <b>velocity</b>, not its position, and that extra derivative is why a wave
+      travels instead of slumping flat like heat. <Try id="step" />
     </li>
     <li>
-      The strip under the string is that pull, bead by bead. It is the
-      <b>acceleration field</b>: teal where the string is being dragged up,
-      orange where it is being dragged down. Notice it is largest exactly at the
-      sharp bends and zero on the straight runs.
+      With only 24 beads the pulse wobbles and trails ripples: a <b>coarse grid</b>
+      carries short wavelengths at the wrong speed. <Try id="coarse" />
     </li>
     <li>
-      Press <b>One step</b> a few times with a bead selected. Its position does
-      not follow the force, its <b>velocity</b> does, and that one extra
-      derivative is why a wave travels instead of just slumping flat like heat.
-    </li>
-    <li>
-      Drag <b>beads on the string</b> down to 24 and watch dx grow. The pulse
-      starts to wobble and trail ripples behind it: a coarse grid cannot carry
-      the short wavelengths, so they travel at the wrong speed.
-    </li>
-    <li>
-      Push the <b>Courant number</b> past 1 and the whole thing detonates. With
-      an explicit step, information may not be allowed to cross more than one dx
-      per tick.
+      Push the <b>Courant number</b> past 1 and the string detonates. An explicit
+      step may not let information cross more than one dx per tick. <Try id="courant" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
-  import { result } from '../../../lib/panel';
+  import { equation } from '../../../lib/equation';
+  import { el, result, slider, segmented, transport, tries } from '../../../lib/panel';
   import { arrow, roundRect } from '../../../lib/theorem';
 
   const state = {
@@ -119,7 +91,7 @@ import Caption from '../../../components/sim/Caption.astro';
 
   const UP = '#34d399'; // pulled up
   const DOWN = '#ff7a5c'; // pulled down
-  const setEq = equationBar();
+  const setEq = equation();
   const setResult = result();
   const canvas = document.getElementById('wave') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -172,10 +144,9 @@ import Caption from '../../../components/sim/Caption.astro';
   function resize(n: number) {
     N = n;
     state.N = n;
-    const p = document.getElementById('pick') as HTMLInputElement;
-    p.max = String(N - 2);
+    (el('pick') as HTMLInputElement).max = String(N - 2);
     state.pick = Math.min(state.pick, N - 2);
-    p.value = String(state.pick);
+    blown = false;
     setShape(state.shape);
   }
 
@@ -189,13 +160,25 @@ import Caption from '../../../components/sim/Caption.astro';
     }
   }
 
+  /** Set once the explicit scheme has run away (Courant number above 1). */
+  let blown = false;
+
   function step() {
+    if (blown) return;
     const uNext = new Float32Array(N);
     for (let i = 1; i < N - 1; i++)
       uNext[i] = u[i] + (1 - state.damp) * (u[i] - uPrev[i]) + accel(i);
     applyBC(uNext);
     uPrev = u;
     u = uNext;
+    let peak = 0;
+    for (let i = 0; i < N; i++) peak = Math.max(peak, Math.abs(u[i]));
+    if (!(peak < 40)) {
+      // freeze the last finite frame instead of drawing NaNs
+      blown = true;
+      state.playing = false;
+      tp.setRunning(false);
+    }
   }
 
   // --- the string ----------------------------------------------------------
@@ -541,28 +524,25 @@ import Caption from '../../../components/sim/Caption.astro';
   function syncEq() {
     const i0 = state.pick;
     setResult({
-      value: fmt(curvature(i0), 2),
+      value: blown ? 'blew up' : fmt(curvature(i0), 2),
+      colour: blown ? DOWN : undefined,
       status: `bead ${i0} of ${state.N} · Courant number ${state.C.toFixed(2)}${state.damp > 0 ? ` · damping ${state.damp.toFixed(3)}` : ''}`,
-      note: 'The bead accelerates towards the line joining its neighbours, by c² times how far it sags below it: curvature is the whole story.',
+      note: blown
+        ? 'With c above 1 one step moves information further than one dx, and the shortest wiggle grows every tick. Lower c and press Reset.'
+        : 'One bead, its two neighbours and one subtraction: the wave equation is that, written for all of them at once. The strip below is that pull for every bead.',
     });
-    setEq([
-      [
+    setEq({
+      rule: [
         ['\\dfrac{\\partial^2 u}{\\partial t^2}', UP],
         '= c^2\\,\\dfrac{\\partial^2 u}{\\partial x^2}',
         '\\quad\\longleftarrow\\quad',
-        [
-          'a_i = c^2\\,\\dfrac{u_{i-1}-2u_i+u_{i+1}}{dx^2}',
-          sgn(accel(i0)),
-        ],
+        ['a_i = c^2\\,\\dfrac{u_{i-1}-2u_i+u_{i+1}}{dx^2}', sgn(accel(i0))],
       ],
-      [
+      live: [
         `\\text{bead }${i0}:\\quad a_i = ${state.C.toFixed(2)}^2\\times\\dfrac{${fmt(u[i0 - 1], 3)}${signed(-2 * u[i0], 3)}${signed(u[i0 + 1], 3)}}{${fmt(dx(), 4)}^2}`,
         [`= ${fmt(accel(i0), 5)}`, sgn(accel(i0))],
       ],
-      [
-        'one bead, its two neighbours and one subtraction: the equation is that, written for all of them at once',
-      ],
-    ]);
+    });
   }
 
   // --- loop ----------------------------------------------------------------
@@ -589,12 +569,11 @@ import Caption from '../../../components/sim/Caption.astro';
       y: ((e.clientY - r.top) / r.height) * H,
     };
   };
-  const pickEl = () => document.getElementById('pick') as HTMLInputElement;
-  const setPick = (i: number) => {
+  const setPickSlider = slider('pick', (v) => setPick(v));
+  function setPick(i: number) {
     state.pick = Math.max(1, Math.min(N - 2, i));
-    pickEl().value = String(state.pick);
-    (document.getElementById('pval') as HTMLElement).textContent = String(state.pick);
-  };
+    setPickSlider(state.pick);
+  }
 
   let mode: 'none' | 'pull' | 'pick' = 'none';
   function pull(p: { x: number; y: number }) {
@@ -634,53 +613,54 @@ import Caption from '../../../components/sim/Caption.astro';
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
-  const seg = (id: string, fn: (v: string) => void) =>
-    document.getElementById(id)!.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest('button');
-      if (!btn) return;
-      document
-        .querySelectorAll(`#${id} button`)
-        .forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      fn(Object.values(btn.dataset)[0] as string);
-    });
-  seg('shape', (s) => {
-    state.shape = s;
-    setShape(s);
+  const shapeSeg = segmented('shape', (v) => {
+    state.shape = v;
+    blown = false;
+    setShape(v);
   });
-  seg('bc', (b) => (state.bc = b));
-
-  const nEl = document.getElementById('n') as HTMLInputElement;
-  nEl.addEventListener('input', () => {
-    resize(+nEl.value);
-    (document.getElementById('nval') as HTMLElement).textContent = String(N);
+  const bcSeg = segmented('bc', (v) => (state.bc = v));
+  const setN = slider('n', (v) => {
+    resize(v);
     setPick(state.pick);
   });
-  pickEl().addEventListener('input', () => setPick(+pickEl().value));
+  const setC = slider('c', (v) => (state.C = v / 100), (v) => (v / 100).toFixed(2));
+  const setDamp = slider('damp', (v) => (state.damp = v / 10000), (v) => (v / 10000).toFixed(3));
 
-  const cEl = document.getElementById('c') as HTMLInputElement;
-  cEl.addEventListener('input', () => {
-    state.C = +cEl.value / 100;
-    (document.getElementById('cval') as HTMLElement).textContent = state.C.toFixed(2);
-  });
-  const dEl = document.getElementById('damp') as HTMLInputElement;
-  dEl.addEventListener('input', () => {
-    state.damp = +dEl.value / 10000;
-    (document.getElementById('dval') as HTMLElement).textContent =
-      state.damp.toFixed(3);
+  const tp = transport({
+    onRun: (on) => (state.playing = on),
+    onStep: () => {
+      state.playing = false;
+      tp.setRunning(false);
+      step();
+    },
+    onReset: () => {
+      blown = false;
+      setShape(state.shape);
+    },
   });
 
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    runBtn.textContent = state.playing ? 'Pause' : 'Run';
+  /** Put the string in a known state for an observe item. */
+  function show(o: { shape: string; n: number; c: number; pick: number; run: boolean }) {
+    state.shape = o.shape;
+    shapeSeg.select(o.shape);
+    state.bc = 'fixed';
+    bcSeg.select('fixed');
+    state.damp = 0;
+    setDamp(0);
+    state.C = o.c;
+    setC(Math.round(o.c * 100));
+    setN(o.n);
+    resize(o.n);
+    setPick(o.pick);
+    state.playing = o.run;
+    tp.setRunning(o.run);
+  }
+  tries({
+    sag: () => show({ shape: 'center', n: 48, c: 0.5, pick: 20, run: false }),
+    step: () => show({ shape: 'center', n: 48, c: 0.5, pick: 23, run: false }),
+    coarse: () => show({ shape: 'pulse', n: 24, c: 0.5, pick: 6, run: true }),
+    courant: () => show({ shape: 'pulse', n: 48, c: 1.05, pick: 12, run: true }),
   });
-  document.getElementById('step')!.addEventListener('click', () => {
-    state.playing = false;
-    runBtn.textContent = 'Run';
-    step();
-  });
-  document.getElementById('reset')!.addEventListener('click', () => setShape(state.shape));
 
   void textWidth;
   resize(state.N);

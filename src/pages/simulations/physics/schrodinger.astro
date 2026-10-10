@@ -1,91 +1,110 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
 import Transport from '../../../components/sim/Transport.astro';
+import Readout from '../../../components/sim/Readout.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const PSI = '#5eead4', BAR = '#f87171', EN = '#f59e0b';
 ---
 
 <SimLayout
   areaSlug="physics"
-  title="Schrödinger Equation"
-  description="A quantum particle is a wave of probability. Launch a wave packet at a barrier taller than its energy and, instead of simply bouncing back, part of it leaks through. That is tunnelling, and it is why the sun shines and flash memory works."
+  title="Quantum Tunnelling"
+  description="Fire a wave packet at a wall taller than its energy. Classically it bounces straight back; as a wave, part of it leaks through the wall and out the far side."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="sch" width="900" height="460" role="img" aria-label="A wave packet travelling towards a potential barrier, part of it reflecting and part tunnelling through to the other side."></canvas>
+        <canvas
+          id="sch"
+          width="900"
+          height="460"
+          role="img"
+          aria-label="A wave packet travelling towards a potential barrier drawn to the height of its potential, with the particle's energy as a dashed line. Part of the packet reflects and part tunnels through."
+        ></canvas>
       </div>
-      <Caption hint="The curve is |ψ|², where the particle might be; the red block is the barrier" />
+      <Caption
+        legend={[
+          { label: '|ψ|², where the particle might be', color: PSI },
+          { label: 'barrier V₀', color: BAR },
+          { label: 'energy E', color: EN },
+        ]}
+      />
       <Result label="Transmitted" />
     </div>
 
     <div class="sim-panel">
       <Transport />
-
-      <div class="control">
-        <label>Particle energy <b id="eval">0.13</b></label>
-        <input type="range" id="k" min="20" max="90" value="50" />
-      </div>
-
-      <div class="control">
-        <label>Barrier height <b id="vval">0.18</b></label>
-        <input type="range" id="v" min="0" max="60" value="18" />
-      </div>
-
-      <div class="control">
-        <label>Barrier width <b id="wval">8</b></label>
-        <input type="range" id="w" min="2" max="30" value="8" />
-      </div>
-
-      <div class="readout">
-        <div class="row"><span>Energy E</span><b id="energy">—</b></div>
-        <div class="row"><span>Barrier V₀</span><b id="bar">—</b></div>
-        <div class="row"><span>Transmitted</span><b id="trans">—</b></div>
-      </div>
+      <Slider id="k" label="Particle energy E" min={20} max={90} value={50} display="0.122" />
+      <Slider id="v" label="Barrier height V<sub>0</sub>" min={0} max={60} value={18} display="0.18" />
+      <Slider id="w" label="Barrier width" min={2} max={30} value={6} />
+      <Readout
+        rows={[
+          { id: 'r-e', label: 'Energy E' },
+          { id: 'r-v', label: 'Barrier V<sub>0</sub>' },
+          { id: 'r-t', label: 'Transmitted' },
+          { id: 'r-r', label: 'Reflected' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Set the barrier <b>higher</b> than the particle's energy (V₀ &gt; E).
-      Classically nothing should get through, yet a sliver of the packet
-      <b>tunnels</b> out the far side. The taller or wider the wall, the less
-      leaks.
+      With the red wall above the amber energy line (V₀ &gt; E) nothing should get
+      through, yet a slice of the packet <b>tunnels</b> out the far side.
+      <Try id="tunnel" label="Run" />
     </li>
     <li>
-      The packet also <b>spreads</b> as it travels: a well-localized particle has
-      a spread of momenta, so it smears out over time. Position and momentum
-      cannot both be sharp, that's uncertainty.
+      Widen the wall from 4 to 12 and the transmitted share drops about a
+      hundredfold: inside the wall the wave <b>decays exponentially</b>.
+      <Try id="wide" label="Run" />
     </li>
     <li>
-      Lower the barrier below E and most of the wave sails over, but a bit still
-      <b>reflects</b>, another purely wave-like effect with no classical
-      counterpart.
+      Drop the wall below E and most of the packet sails over, but some still
+      <b>reflects</b>, which no classical particle would do.
+      <Try id="over" label="Run" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
-  import { result } from '../../../lib/panel';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, slider, transport, result, readout, tries } from '../../../lib/panel';
 
+  const PSI = '#5eead4', BAR = '#f87171', EN = '#f59e0b';
   const N = 640;
   const R = new Float64Array(N);
   const I = new Float64Array(N);
   const V = new Float64Array(N);
   const mask = new Float64Array(N);
-  const state = { k0: 0.5, V0: 0.18, bw: 8, playing: false };
+  const state = { k0: 0.5, V0: 0.18, bw: 6 };
   const x0 = 150;
   const sigma = 20;
   const barrierCenter = Math.round(N * 0.6);
+  const VMAX = 0.62; // top of the energy axis
+  const DT = 0.2;
+  const STEPS = 8;
   let dispScale = 1;
+  // probability soaked up by the absorbing edges, on each side of the barrier
+  let goneLeft = 0, goneRight = 0;
 
-  const setEq = equationBar();
+  // The lattice Hamiltonian -½ψ'' with spacing 1 gives a plane wave e^{ikx}
+  // the energy 1 − cos k, not the continuum k²/2.
+  const energyOf = (k: number) => 1 - Math.cos(k);
+
+  const setEq = equation();
   const setResult = result();
-  const canvas = document.getElementById('sch') as HTMLCanvasElement;
+  const setRows = readout();
+  const canvas = el('sch') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const { ink } = stageInk(canvas);
   const PAD = { l: 12, r: 12, t: 16, b: 26 };
 
   function buildV() {
@@ -96,12 +115,13 @@ import Caption from '../../../components/sim/Caption.astro';
     const edge = 60;
     for (let i = 0; i < N; i++) {
       let m = 1;
-      if (i < edge) m = 0.5 + 0.5 * (i / edge);
-      else if (i > N - edge) m = 0.5 + 0.5 * ((N - 1 - i) / edge);
-      mask[i] = 0.94 + 0.06 * m; // gentle absorption near the walls
+      if (i < edge) m = i / edge;
+      else if (i > N - edge) m = (N - 1 - i) / edge;
+      mask[i] = 1 - 0.06 * (1 - m) ** 2; // smooth absorbing layer at the walls
     }
   }
 
+  /** A normalised Gaussian packet: the total probability starts at exactly 1. */
   function launch() {
     let norm = 0;
     for (let i = 0; i < N; i++) {
@@ -117,152 +137,175 @@ import Caption from '../../../components/sim/Caption.astro';
       I[i] *= s;
       peak = Math.max(peak, R[i] * R[i] + I[i] * I[i]);
     }
-    dispScale = 1 / (peak * 1.25);
+    dispScale = 1 / peak;
+    goneLeft = goneRight = 0;
     buildV();
     buildMask();
   }
 
-  const DT = 0.2;
   function step() {
     for (let i = 1; i < N - 1; i++) R[i] += DT * (-0.5 * (I[i - 1] - 2 * I[i] + I[i + 1]) + V[i] * I[i]);
     for (let i = 1; i < N - 1; i++) I[i] += DT * (0.5 * (R[i - 1] - 2 * R[i] + R[i + 1]) - V[i] * R[i]);
-    for (let i = 0; i < N; i++) { R[i] *= mask[i]; I[i] *= mask[i]; }
+    for (let i = 0; i < N; i++) {
+      if (mask[i] === 1) continue;
+      const p = R[i] * R[i] + I[i] * I[i];
+      R[i] *= mask[i];
+      I[i] *= mask[i];
+      const lost = p - (R[i] * R[i] + I[i] * I[i]);
+      if (i < barrierCenter) goneLeft += lost;
+      else goneRight += lost;
+    }
   }
 
   const sx = (i: number) => PAD.l + (i / (N - 1)) * (W - PAD.l - PAD.r);
   const baseY = H - PAD.b;
+  const plotH = baseY - PAD.t;
+  const ey = (e: number) => baseY - (e / VMAX) * plotH;
 
-  function draw() {
-    const teal = css('--accent-2') || '#5eead4';
-    const accent = css('--accent') || '#7c8cff';
-    const ink = css('--stage-ink') || '232,233,236';
-    const faint = css('--text-faint') || '#6b7280';
-    ctx.clearRect(0, 0, W, H);
-
-    // barrier
+  /** Shares of the initial probability (which is 1) past and before the wall. */
+  function shares() {
     const half = state.bw / 2;
-    const bx0 = sx(barrierCenter - half);
-    const bx1 = sx(barrierCenter + half);
-    ctx.fillStyle = 'rgba(248,113,113,0.16)';
-    ctx.fillRect(bx0, PAD.t, bx1 - bx0, baseY - PAD.t);
-    ctx.strokeStyle = 'rgba(248,113,113,0.55)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(bx0, PAD.t, bx1 - bx0, baseY - PAD.t);
-
-    // baseline
-    ctx.strokeStyle = `rgba(${ink},0.4)`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(PAD.l, baseY);
-    ctx.lineTo(W - PAD.r, baseY);
-    ctx.stroke();
-
-    const amp = (baseY - PAD.t) * 0.9;
-    // Re(psi) faint
-    ctx.strokeStyle = `rgba(${ink},0.25)`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < N; i++) {
-      const y = baseY - R[i] * Math.sqrt(dispScale) * amp * 0.5 - 0;
-      i === 0 ? ctx.moveTo(sx(i), y) : ctx.lineTo(sx(i), y);
-    }
-    ctx.stroke();
-
-    // |psi|^2 filled
-    ctx.beginPath();
-    ctx.moveTo(sx(0), baseY);
-    for (let i = 0; i < N; i++) {
-      const p = (R[i] * R[i] + I[i] * I[i]) * dispScale;
-      ctx.lineTo(sx(i), baseY - p * amp);
-    }
-    ctx.lineTo(sx(N - 1), baseY);
-    ctx.closePath();
-    ctx.fillStyle = teal + '55';
-    ctx.fill();
-    ctx.strokeStyle = teal;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let i = 0; i < N; i++) {
-      const p = (R[i] * R[i] + I[i] * I[i]) * dispScale;
-      i === 0 ? ctx.moveTo(sx(i), baseY - p * amp) : ctx.lineTo(sx(i), baseY - p * amp);
-    }
-    ctx.stroke();
-
-    // labels
-    ctx.fillStyle = faint;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    ctx.fillText('|ψ|²', PAD.l + 4, PAD.t + 12);
-    ctx.fillStyle = 'rgba(248,113,113,0.8)';
-    ctx.fillText('barrier', bx1 + 6, PAD.t + 12);
-    void accent;
-
-    // transmission (prob right of barrier)
     let left = 0, right = 0;
     for (let i = 0; i < N; i++) {
       const p = R[i] * R[i] + I[i] * I[i];
       if (i > barrierCenter + half) right += p;
       else if (i < barrierCenter - half) left += p;
     }
-    const tot = left + right || 1;
-    const E = 0.5 * state.k0 * state.k0;
-    (document.getElementById('energy') as HTMLElement).textContent = E.toFixed(3);
-    (document.getElementById('bar') as HTMLElement).textContent = state.V0.toFixed(3);
-    (document.getElementById('trans') as HTMLElement).textContent = ((right / tot) * 100).toFixed(1) + '%';
-    setResult({
-      value: `${((right / tot) * 100).toFixed(1)}%`,
-      status: `energy E = ${E.toFixed(3)} against a barrier of V₀ = ${state.V0.toFixed(3)}${E < state.V0 ? ', taller than the particle can classically climb' : ''}`,
-      note: E < state.V0 ? 'Classically nothing gets through. The wave decays inside the barrier instead of oscillating, and whatever is left at the far side keeps going.' : 'Above the barrier most of the wave passes, but some still reflects: a sudden change in potential scatters waves even when it does not block them.',
-    });
-    setEq([
-      [
-        'i\\,\\dfrac{\\partial\\psi}{\\partial t} = -\\dfrac{1}{2}\\dfrac{\\partial^2\\psi}{\\partial x^2} + V\\psi',
-        '\\quad\\text{and }|\\psi|^2\\text{ is where it might be}',
-      ],
-      [
-        `E = \\tfrac12 k_0^2 = ${E.toFixed(3)}`,
-        `\\quad V_0 = ${state.V0.toFixed(3)}`,
-        [
-          `\\quad\\text{through} = ${((right / tot) * 100).toFixed(1)}\\%`,
-          E < state.V0 ? '#f59e0b' : '#5eead4',
-        ],
-      ],
-      [
-        'some of it gets through even when E < V₀: the wave leaks into the wall and out the far side',
-      ],
-    ]);
+    return { T: right + goneRight, Rf: left + goneLeft };
   }
 
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const E = energyOf(state.k0);
+    const half = state.bw / 2;
+
+    // barrier, as tall as V₀ on the energy axis
+    const bx0 = sx(barrierCenter - half);
+    const bx1 = sx(barrierCenter + half + 1);
+    const by = ey(state.V0);
+    ctx.fillStyle = 'rgba(248,113,113,0.2)';
+    ctx.fillRect(bx0, by, bx1 - bx0, baseY - by);
+    ctx.strokeStyle = 'rgba(248,113,113,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx0, by, bx1 - bx0, baseY - by);
+
+    // baseline
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, baseY);
+    ctx.lineTo(W - PAD.r, baseY);
+    ctx.stroke();
+
+    const amp = plotH * 0.6;
+    // Re ψ, faint
+    ctx.strokeStyle = ink(0.22);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const y = baseY - R[i] * Math.sqrt(dispScale) * amp * 0.5;
+      i === 0 ? ctx.moveTo(sx(i), y) : ctx.lineTo(sx(i), y);
+    }
+    ctx.stroke();
+
+    // |ψ|², filled
+    ctx.beginPath();
+    ctx.moveTo(sx(0), baseY);
+    for (let i = 0; i < N; i++) ctx.lineTo(sx(i), baseY - (R[i] * R[i] + I[i] * I[i]) * dispScale * amp);
+    ctx.lineTo(sx(N - 1), baseY);
+    ctx.closePath();
+    ctx.fillStyle = PSI + '55';
+    ctx.fill();
+    ctx.strokeStyle = PSI;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const y = baseY - (R[i] * R[i] + I[i] * I[i]) * dispScale * amp;
+      i === 0 ? ctx.moveTo(sx(i), y) : ctx.lineTo(sx(i), y);
+    }
+    ctx.stroke();
+
+    // the particle's energy, on the same axis as the barrier
+    ctx.strokeStyle = EN;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, ey(E));
+    ctx.lineTo(W - PAD.r, ey(E));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'left';
+    ctx.fillStyle = ink(0.5);
+    ctx.fillText('|ψ|²', PAD.l + 4, PAD.t + 12);
+    ctx.fillStyle = EN;
+    ctx.fillText(`E = ${E.toFixed(3)}`, PAD.l + 4, ey(E) - 6);
+    ctx.fillStyle = BAR;
+    ctx.fillText(`V₀ = ${state.V0.toFixed(2)}`, bx1 + 6, Math.max(PAD.t + 12, by + 12));
+
+    sync(E);
+  }
+
+  function sync(E: number) {
+    const { T, Rf } = shares();
+    const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+    const under = E < state.V0;
+    setEq({
+      rule: [
+        'i\\,\\frac{\\partial', ['\\psi', PSI], '}{\\partial t} = -\\frac12\\frac{\\partial^2', ['\\psi', PSI],
+        '}{\\partial x^2} +', ['V', BAR], ['\\psi', PSI],
+      ],
+      live: [
+        [`E = 1-\\cos k_0 = ${E.toFixed(3)}`, EN],
+        under ? '\\;<\\;' : '\\;\\ge\\;',
+        [`V_0 = ${state.V0.toFixed(2)}`, BAR],
+        `\\quad T = ${(T * 100).toFixed(1)}\\%`,
+      ],
+    });
+    setResult({
+      value: pct(T),
+      colour: PSI,
+      status: under
+        ? 'E < V₀: classically every bit of it bounces back'
+        : 'E ≥ V₀: classically all of it gets over',
+      note: under
+        ? 'Inside the wall the wave decays instead of oscillating; whatever is left at the far side keeps going. Shares are of the probability the packet started with.'
+        : 'A sudden step in potential scatters a wave even when it cannot block it. Shares are of the probability the packet started with.',
+    });
+    setRows({ 'r-e': E.toFixed(3), 'r-v': state.V0.toFixed(2), 'r-t': pct(T), 'r-r': pct(Rf) });
+  }
+
+  const tp = transport({ onReset: () => { launch(); draw(); } });
+
   function loop() {
-    if (state.playing) for (let s = 0; s < 6; s++) step();
-    draw();
+    if (tp.running()) {
+      for (let s = 0; s < STEPS; s++) step();
+      draw();
+    }
     requestAnimationFrame(loop);
   }
 
-  const kEl = document.getElementById('k') as HTMLInputElement;
-  kEl.addEventListener('input', () => {
-    state.k0 = +kEl.value / 100;
-    (document.getElementById('eval') as HTMLElement).textContent = (0.5 * state.k0 * state.k0).toFixed(2);
+  // any change to the setup sends a fresh packet, so the shares stay honest
+  const setK = slider('k', (v) => { state.k0 = v / 100; launch(); draw(); }, (v) => energyOf(v / 100).toFixed(3));
+  const setV = slider('v', (v) => { state.V0 = v / 100; launch(); draw(); }, (v) => (v / 100).toFixed(2));
+  const setW = slider('w', (v) => { state.bw = v; launch(); draw(); });
+
+  function show(k: number, v: number, w: number) {
+    state.k0 = k / 100; setK(k);
+    state.V0 = v / 100; setV(v);
+    state.bw = w; setW(w);
     launch();
+    tp.setRunning(true);
+    draw();
+  }
+  tries({
+    tunnel: () => show(50, 18, 4),
+    wide: () => show(50, 18, 12),
+    over: () => show(50, 8, 8),
   });
-  const vEl = document.getElementById('v') as HTMLInputElement;
-  vEl.addEventListener('input', () => {
-    state.V0 = +vEl.value / 100;
-    (document.getElementById('vval') as HTMLElement).textContent = state.V0.toFixed(2);
-    buildV();
-  });
-  const wEl = document.getElementById('w') as HTMLInputElement;
-  wEl.addEventListener('input', () => {
-    state.bw = +wEl.value;
-    (document.getElementById('wval') as HTMLElement).textContent = wEl.value;
-    buildV();
-  });
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-  runBtn.addEventListener('click', () => {
-    state.playing = !state.playing;
-    runBtn.textContent = state.playing ? 'Pause' : 'Play';
-  });
-  document.getElementById('reset')!.addEventListener('click', launch);
 
   launch();
+  draw();
   requestAnimationFrame(loop);
 </script>

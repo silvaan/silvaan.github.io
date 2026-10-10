@@ -5,6 +5,7 @@ import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -71,43 +72,21 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Every filter here is the same operation. Nine or twenty-five numbers sit on
-      top of a pixel and its neighbours, each pixel is multiplied by the number
-      above it, and the total becomes one pixel of the new picture. Only the
-      numbers change.
+      Weights that <b>add to one</b> keep the average brightness, so a sharpened
+      photograph still looks like the photograph. <Try id="one" />
     </li>
     <li>
-      Weights that <b>add to one</b> leave the average brightness alone, which is
-      why the blurs look like the photograph and the sharpen still looks like a
-      face. Press <b>normalise</b> after dragging and the picture stops drifting
-      light or dark.
+      Weights that <b>add to zero</b> keep only what changes: flat areas return
+      nothing and outline leaves the edges on black. <Try id="zero" />
     </li>
     <li>
-      Weights that <b>add to zero</b> throw the picture away and keep only what
-      changes. Flat sky returns nothing, so <b>outline</b> and the two
-      <b>Sobels</b> leave a black field with the edges drawn on it.
+      <b>Sobel X</b> is left minus right and lights up vertical edges; Sobel Y is
+      the same weights turned on their side. <Try id="sobel" />
     </li>
     <li>
-      <b>Sobel X</b> is left minus right and answers to vertical edges;
-      <b>Sobel Y</b> is the same numbers turned on their side. Neither knows what
-      an edge is. Subtracting one side from the other is the whole idea.
-    </li>
-    <li>
-      Go to <b>5 × 5</b>. A wider window reaches further, so the blurs are
-      smoother and the edges thicker, and every output pixel now costs
-      twenty-five multiplications instead of nine.
-    </li>
-    <li>
-      Press <b>random</b> a few times. Almost every random filter is noise, and
-      the useful ones are a vanishingly small corner of the space. A
-      convolutional network searches that corner by
-      <a href="/simulations/deep-learning/gradient-descent">gradient descent</a>
-      rather than by hand.
-    </li>
-    <li>
-      This page never asks where the window is allowed to sit. That question,
-      and the size of what comes out, is
-      <a href="/simulations/deep-learning/convolution-arithmetic">Convolution Arithmetic</a>.
+      A <b>random</b> filter is almost always noise. A convolutional network finds
+      the useful ones by <a href="/simulations/deep-learning/optimizers">gradient descent</a>;
+      where the window may sit is <a href="/simulations/deep-learning/convolution">Convolution</a>. <Try id="rand" />
     </li>
   </Fragment>
 </SimLayout>
@@ -116,7 +95,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, result, readout } from '../../../lib/panel';
+  import { el, segmented, result, readout, tries } from '../../../lib/panel';
 
   const POS = '#f87171';
   const NEG = '#60a5fa';
@@ -423,8 +402,8 @@ import Readout from '../../../components/sim/Readout.astro';
     apply();
   }
   segmented('pic', (p) => { state.pic = p; loadPhoto(p); });
-  segmented('mode', (m) => { state.mode = m; paintSource(); apply(); });
-  segmented('size', (n) => {
+  const modes = segmented('mode', (m) => { state.mode = m; paintSource(); apply(); });
+  const sizes = segmented('size', (n) => {
     state.size = Number(n);
     setKernel(state.kernel === 'custom' ? 'gaussian' : state.kernel);
     if (state.kernel !== 'custom') presets.select(state.kernel);
@@ -450,6 +429,22 @@ import Readout from '../../../components/sim/Readout.astro';
     state.kernel = 'custom';
     presets.clear();
     apply();
+  });
+
+  function pick(name: string) {
+    state.mode = 'grey';
+    modes.select('grey');
+    state.size = 3;
+    sizes.select('3');
+    paintSource();
+    setKernel(name);
+    presets.select(name);
+  }
+  tries({
+    one: () => pick('sharpen'),
+    zero: () => pick('outline'),
+    sobel: () => pick('sobelx'),
+    rand: () => el('rand').click(),
   });
 
   setKernel('gaussian');

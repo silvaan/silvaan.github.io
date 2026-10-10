@@ -202,21 +202,25 @@ const SLIDERS: [string, Which, Axis][] = [
   ['bx', 'b', 'x'], ['by', 'b', 'y'], ['bz', 'b', 'z'],
 ];
 
-/** The six component sliders, in tenths. Returns a sync from state to inputs. */
+/**
+ * The six component sliders (the Matrix component's inputs ax … bz, in steps
+ * of a tenth). Returns a sync from state to inputs.
+ */
 export function vectorSliders(state: { a: Vec; b: Vec }, onInput: (which: Which, axis: Axis) => void) {
   for (const [id, v, c] of SLIDERS) {
     const inp = el(id) as HTMLInputElement;
-    inp.min = String(-LIMIT * 10);
-    inp.max = String(LIMIT * 10);
+    inp.min = String(-LIMIT);
+    inp.max = String(LIMIT);
+    inp.step = '0.1';
     inp.addEventListener('input', () => {
-      state[v][c] = +inp.value / 10;
+      state[v][c] = Math.round(+inp.value * 10) / 10;
       el(id + 'val').textContent = state[v][c].toFixed(1);
       onInput(v, c);
     });
   }
   const sync = () => {
     for (const [id, v, c] of SLIDERS) {
-      (el(id) as HTMLInputElement).value = String(Math.round(state[v][c] * 10));
+      (el(id) as HTMLInputElement).value = String(state[v][c]);
       el(id + 'val').textContent = state[v][c].toFixed(1);
     }
   };

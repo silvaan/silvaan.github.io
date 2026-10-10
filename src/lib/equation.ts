@@ -13,20 +13,54 @@ export type Part = string | [tex: string, colour: string];
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+/** Brace depth a piece of TeX leaves open (escaped braces don't count). */
+function openBraces(tex: string) {
+  let d = 0;
+  for (let i = 0; i < tex.length; i++) {
+    if (tex[i] === '\\') { i++; continue; }
+    if (tex[i] === '{') d++;
+    else if (tex[i] === '}') d--;
+  }
+  return d;
+}
+
+/** A colour KaTeX's \textcolor accepts: #rrggbb from rgb(...) when needed. */
+function texColour(c: string) {
+  const m = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (!m) return c;
+  return '#' + [m[1], m[2], m[3]].map((v) => (+v).toString(16).padStart(2, '0')).join('');
+}
+
+const TEX = { throwOnError: false, displayMode: false, output: 'html' } as const;
+
 /** Render lines into a bar; the first two are TeX, anything after is prose. */
 function render(bar: HTMLElement, lines: Part[][]) {
   bar.textContent = '';
   lines.forEach((parts, i) => {
     const line = document.createElement('div');
     line.className = `eq-line eq-${i}`;
-    for (const p of parts) {
+    const shown = parts.filter((p) => (typeof p === 'string' ? p : p[0])); // a part a sim decided not to show this frame
+
+    // A part that opens a brace another part closes (a colour inside a
+    // fraction, say) cannot be typeset on its own: set the whole line as one
+    // formula, with the colours as \textcolor.
+    if (i < 2 && shown.some((p) => openBraces(typeof p === 'string' ? p : p[0]) !== 0)) {
+      const tex = shown
+        .map((p) => (typeof p === 'string' ? p : `\\textcolor{${texColour(p[1])}}{${p[0]}}`))
+        .join(' ');
+      const span = document.createElement('span');
+      katex.render(tex, span, TEX);
+      line.appendChild(span);
+      bar.appendChild(line);
+      return;
+    }
+
+    for (const p of shown) {
       const tex = typeof p === 'string' ? p : p[0];
-      if (!tex) continue; // a part a sim decided not to show this frame
       const colour = typeof p === 'string' ? '' : p[1];
       const span = document.createElement('span');
       if (colour) span.style.color = colour;
-      if (i < 2)
-        katex.render(tex, span, { throwOnError: false, displayMode: false, output: 'html' });
+      if (i < 2) katex.render(tex, span, TEX);
       else span.innerHTML = esc(tex);
       line.appendChild(span);
     }

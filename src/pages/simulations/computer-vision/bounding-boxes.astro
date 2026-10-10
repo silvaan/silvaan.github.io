@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -32,7 +33,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { label: 'deleted for overlapping a better one', color: '#f87171' },
           { label: 'still waiting its turn', color: 'rgba(229,231,235,0.55)' },
         ]}
-        hint="Step through the decisions one at a time · click any box to compare it yourself"
+        hint="Stage 2 of 2: thin the heap · step through the decisions, or click any box to compare it yourself"
       />
       <Result label="After the overlap rule" />
     </div>
@@ -64,56 +65,23 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      This is what a detector actually returns: not three boxes for three robots
-      but a <b>heap</b> of overlapping guesses, each with a score. Every object
-      answers at several nearby windows, and a few places answer that had no
-      object in them at all.
+      This is <b>stage 2</b> of the pipeline that
+      <a href="/simulations/computer-vision/object-detection">Finding an Object</a>
+      starts: a heap of scored, overlapping guesses (drawn here on a robot scene
+      of its own). Step through <b>non-maximum suppression</b>: keep the best box
+      left, delete what overlaps it by more than the threshold. <Try id="nms" label="Run" />
     </li>
     <li>
-      <b>Intersection over union</b> is the one number that says how much two
-      boxes are the same box. The right-hand panel draws it: the shaded part over
-      the whole outlined part. It is 1 when they coincide, 0 when they miss each
-      other entirely, and it does not care how big the boxes are, which is the
-      reason this ratio is used rather than the overlap on its own.
+      Raise <b>the overlap that counts as the same box</b> to 0.8 and only
+      near-identical boxes delete each other, so each robot keeps a stack. <Try id="high" />
     </li>
     <li>
-      Press <b>Step</b>. The rule is three lines: take the highest-scoring box
-      left, keep it, and delete everything overlapping it by more than the
-      threshold. Repeat until nothing is left. That is non-maximum suppression,
-      and every decision you step through is one comparison against one kept box.
+      Drop it to 0.2 and the small robot in front of the first disappears: their
+      real boxes already have an IoU of 0.37. No single threshold handles crowds. <Try id="low" />
     </li>
     <li>
-      Drag <b>the overlap that counts as the same box</b> up to 0.8 and every
-      robot keeps a stack of three or four, because only near-identical boxes
-      still count as the same box. Drag it down to 0.3 and the count barely
-      moves, but <b>how well they sit</b> in the panel falls from 0.93 to 0.87:
-      a well-placed box beside the winner is now deleted for merely touching it,
-      and something worse survives in its place.
-    </li>
-    <li>
-      One robot is standing in front of another, and their two real boxes already
-      share a third of their area. That is the reason the overlap cannot simply
-      be set low: the same number has to mean "another guess at this robot" and
-      "a different robot standing behind it", and no value does both. Crowds are
-      where this rule fails, and it fails silently.
-    </li>
-    <li>
-      The order is by <b>score</b>, not by how well the box fits. Watch a
-      well-placed box get deleted by a worse-fitting one that happened to score
-      higher: the rule has no idea which box is the better outline, it only knows
-      which number is larger.
-    </li>
-    <li>
-      Lower <b>the score needed to enter</b> and the heap grows with rubbish that
-      the rule then has to clean up. The two knobs pull against each other: a low
-      bar finds every object and invents some, a high bar invents nothing and
-      misses the faint ones.
-    </li>
-    <li>
-      The same ratio grades the result. A kept box counts as correct when it
-      overlaps a real object by <b>0.5 or more</b>, and there is nothing physical
-      about 0.5: it is a convention, and every detection score you have ever read
-      was computed against a number somebody chose.
+      The two false alarms overlap nothing, so no overlap rule removes them. Raise
+      <b>the score needed to enter</b> to 0.6 and they are gone. <Try id="conf" />
     </li>
   </Fragment>
 </SimLayout>
@@ -122,7 +90,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const TRUTH = '#f59e0b', KEEP = '#34d399', DEAD = '#f87171', WAIT = '#e5e7eb';
   const IMG = 180;
@@ -525,8 +493,8 @@ import Readout from '../../../components/sim/Readout.astro';
     inspect = queue.find((c) => c.state === 2) ?? null;
     draw();
   }
-  slider('conf', (v) => { state.conf = v / 100; redo(); }, (v) => (v / 100).toFixed(2));
-  slider('iou', (v) => { state.iou = v / 100; redo(); }, (v) => (v / 100).toFixed(2));
+  const setConf = slider('conf', (v) => { state.conf = v / 100; redo(); }, (v) => (v / 100).toFixed(2));
+  const setIou = slider('iou', (v) => { state.iou = v / 100; redo(); }, (v) => (v / 100).toFixed(2));
   check('dead', (on) => { state.dead = on; draw(); });
   check('marks', (on) => { state.marks = on; draw(); });
 
@@ -547,6 +515,26 @@ import Readout from '../../../components/sim/Readout.astro';
       reset();
       draw();
     },
+  });
+
+  function rules(conf: number, overlap: number) {
+    state.conf = conf;
+    setConf(Math.round(conf * 100));
+    state.iou = overlap;
+    setIou(Math.round(overlap * 100));
+    redo();
+  }
+  tries({
+    nms: () => {
+      rules(0.45, 0.45);
+      reset();
+      state.running = true;
+      controls.setRunning(true);
+      draw();
+    },
+    high: () => rules(0.45, 0.8),
+    low: () => rules(0.45, 0.2),
+    conf: () => rules(0.6, 0.45),
   });
 
   let last = 0;

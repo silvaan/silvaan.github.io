@@ -7,6 +7,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -33,7 +34,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { label: 'a box that survived', color: '#34d399' },
           { label: 'the score, once that window has been asked', color: '#7c8cff' },
         ]}
-        hint="Drag the window anywhere on the scene · Run sweeps it over everything"
+        hint="Stage 1 of 2: score every window · drag the window anywhere, Run sweeps it over everything"
       />
       <Result label="Found" />
     </div>
@@ -83,56 +84,22 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Drag the white window around the scene. It is the whole detector: it reads
-      whatever is under it as <b>16 × 16 numbers</b>, compares them against the
-      same reading of the template, and returns one number. The map on the right
-      fills in wherever you have been, because that is all a score map is: the
-      answer at every place you bothered to ask.
+      This is <b>stage 1</b> of a detector: score every window. Press Run and the
+      same 16 × 16 comparison is asked at every position, filling in the map. <Try id="sweep" label="Run" />
     </li>
     <li>
-      Press <b>Run</b> and it asks everywhere, row by row. Nothing clever is
-      happening: the same comparison, at every position, over and over. That is
-      why the multiplication count in the panel climbs the way it does.
+      One size and one handedness finds <b>4</b> of the 10 eyes. Nine
+      <b>sizes</b> plus the <b>mirror image</b> find all 10, for 18 times the
+      multiplications. <Try id="sizes" />
     </li>
     <li>
-      A box is not something the detector finds, it is something you make out of
-      a <b>threshold</b>. Drag it down and the scene fills with boxes, drag it up
-      and the detector goes silent, and the scores never changed. Each object
-      answers at a little pile of nearby windows, and thinning that pile down to
-      one box is <a href="/simulations/computer-vision/bounding-boxes">Boxes and
-      Overlap</a>.
+      <b>Brightness</b> divides by the spread of the window, so the faint robot's
+      eyes still score high. The <b>bare sum</b> confuses faint with unlike. <Try id="raw" />
     </li>
     <li>
-      There are ten eyes in the robot scene, two on each of five robots, and one
-      size at one handedness finds <b>four</b>: the two robots that happen to be
-      the template's size and facing its way. Raise <b>sizes tried</b> to nine
-      and the pair on the small robot appears, making six. Switch that off and
-      turn on <b>the mirror image</b> instead and it is the reversed robot that
-      turns up, again six. Turn on both and all <b>ten</b> are found. A template
-      knows one size and one handedness, and every other invariance has to be
-      paid for with another sweep.
-    </li>
-    <li>
-      Look for <b>a chip</b> on the board. The chip lying on its side is never
-      found, at any size, in either handedness, because there is no slider here
-      that turns a template around. That missing slider is the honest summary of
-      the whole approach.
-    </li>
-    <li>
-      One of the five robots is drawn faintly, at a third of the contrast of the
-      others, and <b>brightness</b> finds its eyes anyway, at 0.98. Dividing by
-      the spread of the window throws the contrast away and leaves only the
-      pattern, so a faded copy is the same object. Switch to <b>bare sum</b> and
-      those two boxes disappear: an unnormalised total is just smaller when the
-      numbers are smaller, and it confuses faint with unlike.
-    </li>
-    <li>
-      Hunt an eye in the <b>town</b> and nothing clears a sensible threshold,
-      which is what a detector should do when the thing is absent. Watch the
-      multiplication count while you do it: every size is another sweep of the
-      whole scene, nearly all of it spent on places that were never going to
-      answer, and that bill is what made people compute features once and share
-      them instead.
+      Lower the <b>threshold</b>: far more windows clear it than boxes are drawn,
+      because each object answers at a pile of nearby windows. Thinning the pile
+      is stage 2, <a href="/simulations/computer-vision/bounding-boxes">Boxes and Overlap</a>. <Try id="pile" />
     </li>
   </Fragment>
 </SimLayout>
@@ -141,7 +108,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const OBJ = '#f59e0b', KEEP = '#34d399', HEAT = '#7c8cff', NOW = '#e5e7eb';
   const IMG = 180; // the scenes are drawn this big
@@ -727,8 +694,8 @@ import Readout from '../../../components/sim/Readout.astro';
     setEq({
       rule: [
         state.score === 'raw'
-          ? ['\\text{score} = \\sum_i t_i\\,(w_i - \\bar w)', HEAT]
-          : ['\\text{score} = \\dfrac{\\sum_i (t_i - \\bar t)(w_i - \\bar w)}{\\lVert t - \\bar t\\rVert\; \\lVert w - \\bar w\\rVert}', HEAT],
+          ? ['\\text{score} = \\dfrac{\\sum_i (t_i - \\bar t)(w_i - \\bar w)}{\\lVert t - \\bar t\\rVert^2}', HEAT]
+          : ['\\text{score} = \\dfrac{\\sum_i (t_i - \\bar t)(w_i - \\bar w)}{\\lVert t - \\bar t\\rVert\\; \\lVert w - \\bar w\\rVert}', HEAT],
       ],
       live: [
         [`\\text{here} = ${cur.v === UNASKED ? '?' : cur.v.toFixed(2)}`, NOW],
@@ -799,17 +766,17 @@ import Readout from '../../../components/sim/Readout.astro';
     scoreAll();
     draw();
   }
-  segmented('obj', (o) => {
+  const objs = segmented('obj', (o) => {
     state.obj = o;
     state.pic = OBJECTS[o].pic;
     pics.select(state.pic);
     restart();
   });
   const pics = segmented('pic', (p) => { state.pic = p; restart(); });
-  segmented('score', (s) => { state.score = s; restart(); });
-  slider('scales', (v) => { state.scales = v; restart(); });
-  check('mirror', (on) => { state.mirror = on; restart(); });
-  slider('thresh', (v) => { state.thresh = v / 100; collect(); draw(); }, (v) => (v / 100).toFixed(2));
+  const scores = segmented('score', (s) => { state.score = s; restart(); });
+  const setScales = slider('scales', (v) => { state.scales = v; restart(); });
+  const setMirror = check('mirror', (on) => { state.mirror = on; restart(); });
+  const setThresh = slider('thresh', (v) => { state.thresh = v / 100; collect(); draw(); }, (v) => (v / 100).toFixed(2));
 
   const controls = transport({
     onRun: (running) => {
@@ -834,6 +801,35 @@ import Readout from '../../../components/sim/Readout.astro';
     controls.setRunning(false);
     scoreAll();
     draw();
+  });
+
+  /** Put the panel in one configuration, scored in full. */
+  function show(o: { scales?: number; mirror?: boolean; score?: string; thresh?: number }) {
+    state.obj = 'eye';
+    objs.select('eye');
+    state.pic = 'robots';
+    pics.select('robots');
+    state.scales = o.scales ?? 1;
+    setScales(state.scales);
+    state.mirror = o.mirror ?? false;
+    setMirror(state.mirror);
+    state.score = o.score ?? 'ncc';
+    scores.select(state.score);
+    state.thresh = o.thresh ?? 0.6;
+    setThresh(Math.round(state.thresh * 100));
+    restart();
+  }
+  tries({
+    sweep: () => {
+      show({});
+      rewind();
+      state.running = true;
+      controls.setRunning(true);
+      draw();
+    },
+    sizes: () => show({ scales: 9, mirror: true }),
+    raw: () => show({ score: 'raw' }),
+    pile: () => show({ scales: 9, mirror: true, thresh: 0.3 }),
   });
 
   function frame() {

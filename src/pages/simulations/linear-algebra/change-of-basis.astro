@@ -1,17 +1,21 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
 import Matrix from '../../../components/sim/Matrix.astro';
 import Checks from '../../../components/sim/Checks.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const C = Math.SQRT1_2;
 ---
 
 <SimLayout
   areaSlug="linear-algebra"
   title="Change of Basis"
-  description="The same arrow, described in two different grids, gets two different pairs of numbers. The matrix of basis vectors is the dictionary between them."
+  description="The same arrow, described in two different grids, gets two different pairs of numbers. The matrix of basis vectors is the dictionary between them, and the pairs it can produce are exactly the span of the basis."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -22,7 +26,7 @@ import Readout from '../../../components/sim/Readout.astro';
           width="1000"
           height="600"
           role="img"
-          aria-label="The same vector drawn on our square grid and on the other basis's grid, with the commutative square relating a map written in each basis."
+          aria-label="The same vector drawn on our square grid and on the other basis's grid, with the commutative square relating a map written in each basis; or, in span mode, everything the two basis vectors can reach."
         ></canvas>
       </div>
       <Caption
@@ -31,6 +35,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { label: 'b₂', color: '#5eead4' },
           { label: 'v', color: '#f59e0b' },
           { label: 'Av', color: '#f9736a' },
+          { label: 'a·b₁ + b·b₂', color: '#e879f9' },
         ]}
         hint="Drag b₁, b₂ or v in either panel"
       />
@@ -38,6 +43,15 @@ import Readout from '../../../components/sim/Readout.astro';
     </div>
 
     <div class="sim-panel">
+      <Seg
+        id="mode"
+        label="View"
+        attr="md"
+        options={[
+          { value: 'coords', label: 'Coordinates' },
+          { value: 'span', label: 'Span / reachable' },
+        ]}
+      />
       <Matrix label="Their first basis vector b<sub>1</sub>" entries={[{ id: 'b1x', label: 'x', value: 2 }, { id: 'b1y', label: 'y', value: 1 }]} />
       <Matrix label="Their second basis vector b<sub>2</sub>" entries={[{ id: 'b2x', label: 'x', value: -1 }, { id: 'b2y', label: 'y', value: 1 }]} />
       <Matrix label="The vector v, in our coordinates" min={-5} max={5} entries={[{ id: 'vx', label: 'x', value: 3 }, { id: 'vy', label: 'y', value: 1 }]} />
@@ -48,24 +62,31 @@ import Readout from '../../../components/sim/Readout.astro';
         options={[
           { value: '2,1,-1,1', label: 'Skewed' },
           { value: '1,0,0,1', label: 'Ours' },
-          { value: '0.71,0.71,-0.71,0.71', label: 'Rotated' },
+          { value: `${C},${C},${-C},${C}`, label: 'Rotated' },
           { value: '2,0,0,0.5', label: 'Stretched' },
           { value: '1,1,2,2', label: 'Degenerate' },
         ]}
       />
-      <Checks items={[{ id: 'foreign', label: 'Show the other grid in each panel' }]} />
-      <Seg
-        id="map"
-        label="A transformation, described in their grid"
-        attr="t"
-        options={[
-          { value: 'none', label: 'None' },
-          { value: 'stretch', label: 'Stretch b₁ ×2' },
-          { value: 'flip', label: 'Flip b₂' },
-          { value: 'rot', label: 'Quarter turn' },
-          { value: 'shear', label: 'Shear' },
-        ]}
-      />
+      <div class="mode-group" id="coord-only">
+        <Checks items={[{ id: 'foreign', label: 'Show the other grid in each panel' }]} />
+        <Seg
+          id="map"
+          label="A transformation, described in their grid"
+          attr="t"
+          options={[
+            { value: 'none', label: 'None' },
+            { value: 'stretch', label: 'Stretch b₁ ×2' },
+            { value: 'flip', label: 'Flip b₂' },
+            { value: 'rot', label: 'Quarter turn' },
+            { value: 'shear', label: 'Shear' },
+          ]}
+        />
+      </div>
+      <div class="mode-group" id="span-only" hidden>
+        <Slider id="ca" label="a, along b<sub>1</sub>" min={-5} max={5} step={0.05} value={1} display="1.00" />
+        <Slider id="cb" label="b, along b<sub>2</sub>" min={-5} max={5} step={0.05} value={1} display="1.00" />
+        <Checks items={[{ id: 'solve', label: 'Solve a, b so the combination hits v' }]} />
+      </div>
       <Readout
         title="Values"
         rows={[
@@ -73,6 +94,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { id: 'r-ae', label: 'A in our grid' },
           { id: 'r-ab', label: 'A′ in their grid' },
           { id: 'r-av', label: 'Av, our coordinates' },
+          { id: 'r-comb', label: 'a·b<sub>1</sub> + b·b<sub>2</sub>' },
         ]}
       />
     </div>
@@ -80,48 +102,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Both panels show <b>the same arrow</b>. On the left it is measured against
-      our square grid, on the right against theirs, which we have redrawn as if
-      it were the square one, because that is how it looks from inside. The
-      arrow never moved. Only the numbers written under it did.
+      Drag <b>b₁</b>: v stays exactly where it is on the left, yet its numbers on
+      the right change. Coordinates describe the pair (vector, basis), never the
+      vector alone. <Try id="pair" />
     </li>
     <li>
-      Drag <b>v</b> and watch the two coordinate readouts disagree. Then drag
-      <b>b₁</b> instead: v stays exactly where it is on the left, yet its
-      coordinates on the right change completely. Coordinates are a statement
-      about the <b>pair</b> (vector, basis), never about the vector alone.
+      In <b>Span</b> view, two independent vectors reach the whole plane. Line
+      them up and the <b>span</b> collapses to a line: det P = 0, v is out of
+      reach, and P⁻¹ does not exist. <Try id="dependent" />
     </li>
     <li>
-      The columns of <b>P</b> are just b₁ and b₂ written in our coordinates, so
-      P takes their numbers and returns ours: <b>v = P[v]<sub>B</sub></b>. It
-      reads in their language, and it is easy to remember which way round it
-      goes because the columns are literally where their basis vectors are.
-      Going the other way needs <b>P⁻¹</b>.
+      Turn on <b>Solve</b>: the a, b that land on v are exactly
+      <b>[v]<sub>B</sub> = P⁻¹v</b>, the same numbers the Coordinates view
+      prints. Finding coordinates and solving a·b₁ + b·b₂ = v are one problem. <Try id="solve" />
     </li>
     <li>
-      Pick the <b>Degenerate</b> preset. b₁ and b₂ line up, det P is zero, and
-      the right-hand grid collapses. Two vectors that do not span the plane
-      cannot describe every point of it, so there is no dictionary to invert:
-      <b>a basis has to be independent</b> or nothing works.
-    </li>
-    <li>
-      Switch on <b>Stretch b₁ ×2</b>. In their grid the map is as simple as a
-      map gets: multiply the first coordinate by two and leave the second alone,
-      a <b>diagonal</b> matrix. Look at what the very same map has to be written
-      as in our grid and it is a mess of four unrelated numbers.
-    </li>
-    <li>
-      That mess is <b>A = P A′ P⁻¹</b>, and reading it right to left tells you
-      exactly what it does: translate our numbers into theirs, do the easy thing
-      there, translate back. <b>Diagonalising</b> a matrix is nothing more than
-      hunting for the basis in which it was easy all along, and the eigenvectors
-      are that basis.
-    </li>
-    <li>
-      Rotate the basis with the <b>Rotated</b> preset and check det P. When the
-      new basis is orthonormal, det P is 1, lengths and angles survive the
-      translation, and P⁻¹ is simply Pᵀ. That is the case worth remembering, and
-      the reason orthonormal bases are worth the trouble of building.
+      <b>Stretch b₁ ×2</b> is diagonal in their grid and a mess of four numbers
+      in ours. Read <b>A = P A′ P⁻¹</b> right to left: translate, do the easy
+      thing, translate back. <Try id="sandwich" />
     </li>
   </Fragment>
 </SimLayout>
@@ -130,7 +128,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, matrix, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, matrix, check, result, readout, tries } from '../../../lib/panel';
 
   // Left panel: the plane on our paper. Right panel: the same plane on theirs,
   // which is what you get by pushing everything through P⁻¹ first, since
@@ -143,7 +141,7 @@ import Readout from '../../../components/sim/Readout.astro';
   const b1 = (): Vec => ({ x: B1.b1x, y: B1.b1y });
   const b2 = (): Vec => ({ x: B2.b2x, y: B2.b2y });
   const v = (): Vec => ({ x: V.vx, y: V.vy });
-  const state = { map: 'none', foreign: false };
+  const state = { mode: 'coords' as 'coords' | 'span', map: 'none', foreign: false, ca: 1, cb: 1, solve: false };
 
   const MAPS: Record<string, { m: Mat; name: string }> = {
     none: { m: I, name: 'nothing' },
@@ -169,22 +167,23 @@ import Readout from '../../../components/sim/Readout.astro';
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const ACC = '#7c8cff', TEAL = '#5eead4', WARM = '#f59e0b', HOT = '#f9736a';
+  const ACC = '#7c8cff', TEAL = '#5eead4', WARM = '#f59e0b', HOT = '#f9736a', COMB = '#e879f9';
 
-  interface Panel { x: number; y: number; w: number; h: number; T: Mat; title: string; native: 'ours' | 'theirs' }
-  const UNIT = 40;
+  interface Panel { x: number; y: number; w: number; h: number; T: Mat; title: string; native: 'ours' | 'theirs'; unit: number }
   const PANELS = (): Panel[] => {
+    if (state.mode === 'span')
+      return [{ x: 30, y: 36, w: 940, h: 540, T: I, title: 'our grid, with everything a·b₁ + b·b₂ can reach', native: 'ours', unit: 52 }];
     const Pi = inv(P());
     return [
-      { x: 30, y: 36, w: 380, h: 380, T: I, title: 'our grid: the standard basis, drawn square', native: 'ours' },
-      { x: 590, y: 36, w: 380, h: 380, T: Pi ?? I, title: Pi ? 'their grid: b₁ and b₂ drawn square, as they see it' : 'their grid: b₁ and b₂ do not span the plane', native: 'theirs' },
+      { x: 30, y: 36, w: 380, h: 380, T: I, title: 'our grid: the standard basis, drawn square', native: 'ours', unit: 40 },
+      { x: 590, y: 36, w: 380, h: 380, T: Pi ?? I, title: Pi ? 'their grid: b₁ and b₂ drawn square, as they see it' : 'their grid: b₁ and b₂ do not span the plane', native: 'theirs', unit: 40 },
     ];
   };
   const centre = (p: Panel) => ({ x: p.x + p.w / 2, y: p.y + p.h / 2 });
   function screen(p: Panel, w: Vec) {
     const t = app(p.T, w);
     const c = centre(p);
-    return { px: c.x + t.x * UNIT, py: c.y - t.y * UNIT };
+    return { px: c.x + t.x * p.unit, py: c.y - t.y * p.unit };
   }
 
   function lattices(p: Panel) {
@@ -297,8 +296,97 @@ import Readout from '../../../components/sim/Readout.astro';
     matrixBox(mx + 130, rowBot + 6, Ae, HOT, 'A = P A′ P⁻¹');
   }
 
+  /** Span view: the set a·b₁ + b·b₂ sweeps out, and the one combination the sliders pick. */
+  function drawSpan() {
+    const [p] = PANELS();
+    const Pm = P(), Pi = inv(Pm), D = det(Pm);
+    const zero = Math.hypot(b1().x, b1().y) < 1e-6 && Math.hypot(b2().x, b2().y) < 1e-6;
+    const dir = Math.hypot(b1().x, b1().y) > 1e-6 ? b1() : b2();
+    if (state.solve && Pi) {
+      const vb = app(Pi, v());
+      state.ca = vb.x;
+      state.cb = vb.y;
+      setCa(Math.max(-5, Math.min(5, vb.x)));
+      setCb(Math.max(-5, Math.min(5, vb.y)));
+      el('caval').textContent = vb.x.toFixed(2);
+      el('cbval').textContent = vb.y.toFixed(2);
+    }
+    const leg = { x: state.ca * b1().x, y: state.ca * b1().y };
+    const comb = { x: leg.x + state.cb * b2().x, y: leg.y + state.cb * b2().y };
+
+    label(p.title, p.x, p.y - 12, 0.45, 'left', 11.5);
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(p.x, p.y, p.w, p.h);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(p.x + 1, p.y + 1, p.w - 2, p.h - 2);
+    ctx.clip();
+    // the span: the whole plane, tinted, or a single line through the origin
+    if (Pi) {
+      ctx.fillStyle = 'rgba(94,234,212,0.06)';
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+    }
+    // our grid, plus the lattice of whole-number combinations (their grid drawn on ours)
+    const save = state.foreign;
+    state.foreign = !!Pi;
+    lattices(p);
+    state.foreign = save;
+    if (!Pi && !zero) {
+      const e1 = screen(p, { x: dir.x * 30, y: dir.y * 30 }), e2 = screen(p, { x: -dir.x * 30, y: -dir.y * 30 });
+      ctx.strokeStyle = 'rgba(94,234,212,0.45)';
+      ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.moveTo(e1.px, e1.py); ctx.lineTo(e2.px, e2.py); ctx.stroke();
+    }
+    // the two legs you walk: a along b₁, then b along b₂
+    const c = centre(p), pl = screen(p, leg), pc = screen(p, comb);
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = ACC;
+    ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(pl.px, pl.py); ctx.stroke();
+    ctx.strokeStyle = TEAL;
+    ctx.beginPath(); ctx.moveTo(pl.px, pl.py); ctx.lineTo(pc.px, pc.py); ctx.stroke();
+    ctx.setLineDash([]);
+    arrow(p, b1(), ACC, 'b_1');
+    arrow(p, b2(), TEAL, 'b_2');
+    arrow(p, v(), WARM, 'v');
+    ctx.fillStyle = COMB;
+    ctx.beginPath(); ctx.arc(pc.px, pc.py, 6.5, 0, Math.PI * 2); ctx.fill();
+    label('a b₁ + b b₂', pc.px + 10, pc.py + 16, 1, 'left', 11.5, COMB);
+    ctx.restore();
+
+    // is v reachable at all?
+    const off = zero ? Math.hypot(v().x, v().y) : Math.abs(dir.x * v().y - dir.y * v().x) / Math.hypot(dir.x, dir.y);
+    const hit = Math.hypot(comb.x - v().x, comb.y - v().y) < 0.05;
+    const spanName = Pi ? 'the whole plane' : zero ? 'a single point' : 'a line';
+    const reach = Pi
+      ? hit ? 'the combination lands on v' : 'v is reachable, with exactly one a, b'
+      : off < 0.05 ? 'v sits on the line, so many a, b reach it' : 'v is off the line: out of reach';
+    const f = (q: Vec) => `(${q.x.toFixed(2)}, ${q.y.toFixed(2)})`;
+    el('result-label').innerHTML = 'The span of b<sub>1</sub>, b<sub>2</sub>';
+    setEq({
+      rule: [['\\mathbf v', WARM], '\\overset{?}{=}', ['a\\,\\mathbf b_1', ACC], '+', ['b\\,\\mathbf b_2', TEAL], '\\qquad', ['(a,b) = [\\mathbf v]_B = P^{-1}\\mathbf v', COMB]],
+      live: [
+        [`${state.ca.toFixed(2)}\\,\\mathbf b_1 ${state.cb < 0 ? '-' : '+'} ${Math.abs(state.cb).toFixed(2)}\\,\\mathbf b_2 = (${comb.x.toFixed(2)},\\,${comb.y.toFixed(2)})`, COMB],
+        [`\\quad \\det P = ${D.toFixed(3)}`, ACC],
+      ],
+    });
+    setResult({
+      value: spanName,
+      colour: Pi ? TEAL : HOT,
+      status: `det P = ${D.toFixed(3)} · ${reach}`,
+      note: Pi
+        ? state.solve
+          ? `Solving a·b₁ + b·b₂ = v gives (a, b) = ${f({ x: state.ca, y: state.cb })}, which is [v]_B: coordinates are the answer to this equation.`
+          : 'Two independent vectors reach everywhere, and every point has exactly one pair (a, b). Turn on Solve to find the pair for v.'
+        : 'The two vectors lie on one line, so every combination stays on it. Points off the line have no coordinates in this "basis".',
+    });
+    setRows({ 'r-det': D.toFixed(3), 'r-ae': '—', 'r-ab': '—', 'r-av': '—', 'r-comb': f(comb) });
+  }
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    if (state.mode === 'span') return drawSpan();
     const Pm = P(), Pi = inv(Pm);
     const Ab = MAPS[state.map].m;
     const Ae = Pi ? mul(mul(Pm, Ab), Pi) : I;
@@ -339,6 +427,7 @@ import Readout from '../../../components/sim/Readout.astro';
     diagram(Pm, Pi, Ab, Ae, vb, av, avb);
 
     const f = (p: Vec) => `(${p.x.toFixed(2)}, ${p.y.toFixed(2)})`;
+    el('result-label').innerHTML = 'v in their coordinates, [v]<sub>B</sub>';
     const fm = (m: Mat) => `[${m.a.toFixed(2)} ${m.b.toFixed(2)}; ${m.c.toFixed(2)} ${m.d.toFixed(2)}]`;
     setEq({
       rule: [['\\mathbf v = P\\,[\\mathbf v]_B', WARM], '\\qquad', ['[\\mathbf v]_B = P^{-1}\\mathbf v', TEAL], '\\qquad', ["A = P A' P^{-1}", HOT]],
@@ -346,21 +435,26 @@ import Readout from '../../../components/sim/Readout.astro';
         ? [[`[\\mathbf v]_B = (${vb.x.toFixed(2)},\\,${vb.y.toFixed(2)})`, TEAL], [`\\quad \\mathbf v = (${v().x.toFixed(2)},\\,${v().y.toFixed(2)})`, WARM], [`\\quad \\det P = ${det(Pm).toFixed(3)}`, ACC]]
         : [['\\det P = 0:\\ \\text{no change of basis exists}', HOT]],
     });
+    // orthonormal columns: PᵀP = I, so P⁻¹ = Pᵀ and det P = ±1
+    const ortho = Math.abs(Pm.a * Pm.a + Pm.c * Pm.c - 1) < 1e-3 && Math.abs(Pm.b * Pm.b + Pm.d * Pm.d - 1) < 1e-3 && Math.abs(Pm.a * Pm.b + Pm.c * Pm.d) < 1e-3;
     setResult({
       value: Pi ? f(vb) : 'undefined',
       colour: Pi ? TEAL : HOT,
       status: Pi ? `the same arrow reads ${f(v())} in ours · det P = ${det(Pm).toFixed(3)}` : 'b₁ and b₂ are parallel: no dictionary to invert',
       note: !Pi
         ? 'Two vectors that do not span the plane cannot describe every point of it, so a basis has to be independent or nothing works.'
-        : state.map === 'none'
-          ? 'The arrow is one object; the numbers under it belong to whoever is holding the ruler.'
-          : `Read the sandwich right to left: translate into their numbers, ${MAPS[state.map].name}, translate back.`,
+        : state.map !== 'none'
+          ? `Read the sandwich right to left: translate into their numbers, ${MAPS[state.map].name}, translate back.`
+          : ortho
+            ? `An orthonormal basis: P⁻¹ is just Pᵀ, lengths and angles survive, and det P = ${det(Pm) > 0 ? '+1 (a rotation)' : '−1 (a mirrored basis)'}.`
+            : 'The arrow is one object; the numbers under it belong to whoever is holding the ruler.',
     });
     setRows({
       'r-det': det(Pm).toFixed(3),
       'r-ae': state.map === 'none' ? '—' : fm(Ae),
       'r-ab': state.map === 'none' ? '—' : fm(Ab),
       'r-av': state.map === 'none' ? '—' : f(av),
+      'r-comb': '—',
     });
   }
 
@@ -368,16 +462,52 @@ import Readout from '../../../components/sim/Readout.astro';
   const syncB1 = matrix(B1, ['b1x', 'b1y'], () => draw());
   const syncB2 = matrix(B2, ['b2x', 'b2y'], () => draw());
   const syncV = matrix(V, ['vx', 'vy'], () => draw());
-  const syncAll = () => { syncB1(); syncB2(); syncV(); };
-  segmented('presets', (b) => {
+  // the sliders snap to their step, so print the exact entries (the Rotated preset is 1/√2)
+  const syncAll = () => {
+    syncB1(); syncB2(); syncV();
+    for (const [k, val] of Object.entries({ ...B1, ...B2, ...V })) el(k + 'val').textContent = val.toFixed(2);
+  };
+  function setBasis(b: string) {
     const [x1, y1, x2, y2] = b.split(',').map(Number);
     Object.assign(B1, { b1x: x1, b1y: y1 });
     Object.assign(B2, { b2x: x2, b2y: y2 });
     syncAll();
-    draw();
-  });
+  }
+  const presets = segmented('presets', (b) => { setBasis(b); draw(); });
   check('foreign', (on) => { state.foreign = on; draw(); });
-  segmented('map', (t) => { state.map = t; draw(); });
+  const maps = segmented('map', (t) => { state.map = t; draw(); });
+
+  function setMode(m: 'coords' | 'span') {
+    state.mode = m;
+    modes.select(m);
+    el('coord-only').hidden = m !== 'coords';
+    el('span-only').hidden = m !== 'span';
+  }
+  const modes = segmented('mode', (m) => { setMode(m as 'coords' | 'span'); draw(); });
+  const setSolve = check('solve', (on) => { state.solve = on; draw(); });
+  const unsolve = () => { if (state.solve) { state.solve = false; setSolve(false); } };
+  const setCa = slider('ca', (x) => { unsolve(); state.ca = x; draw(); }, (x) => x.toFixed(2));
+  const setCb = slider('cb', (x) => { unsolve(); state.cb = x; draw(); }, (x) => x.toFixed(2));
+
+  function show(mode: 'coords' | 'span', basis: string, o: { map?: string; solve?: boolean } = {}) {
+    setMode(mode);
+    presets.select(basis);
+    setBasis(basis);
+    Object.assign(V, { vx: 3, vy: 1 });
+    syncAll();
+    state.map = o.map ?? 'none';
+    maps.select(state.map);
+    state.solve = !!o.solve;
+    setSolve(state.solve);
+    if (!state.solve) { state.ca = 1; state.cb = 1; setCa(1); setCb(1); }
+    draw();
+  }
+  tries({
+    pair: () => show('coords', '2,1,-1,1'),
+    dependent: () => show('span', '1,1,2,2'),
+    solve: () => show('span', '2,1,-1,1', { solve: true }),
+    sandwich: () => show('coords', '2,1,-1,1', { map: 'stretch' }),
+  });
 
   // --- dragging, in whichever panel the pointer is over ---------------------------
   type Handle = 'b1' | 'b2' | 'v';
@@ -409,13 +539,14 @@ import Readout from '../../../components/sim/Readout.astro';
     const c = centre(drag.p);
     const back = inv(drag.p.T);
     if (!back) return;
-    const w = app(back, { x: (l.x - c.x) / UNIT, y: (c.y - l.y) / UNIT });
+    const w = app(back, { x: (l.x - c.x) / drag.p.unit, y: (c.y - l.y) / drag.p.unit });
     const snap = (n: number) => (Math.abs(n - Math.round(n)) < 0.08 ? Math.round(n) : +n.toFixed(2));
     const lim = drag.h === 'v' ? 5 : 3;
     const x = Math.max(-lim, Math.min(lim, snap(w.x))), y = Math.max(-lim, Math.min(lim, snap(w.y)));
     if (drag.h === 'b1') Object.assign(B1, { b1x: x, b1y: y });
     else if (drag.h === 'b2') Object.assign(B2, { b2x: x, b2y: y });
     else Object.assign(V, { vx: x, vy: y });
+    presets.clear();
     syncAll();
     draw();
   });
@@ -429,5 +560,11 @@ import Readout from '../../../components/sim/Readout.astro';
 <style>
   #cob {
     touch-action: none;
+  }
+  .mode-group {
+    display: contents;
+  }
+  .mode-group[hidden] {
+    display: none;
   }
 </style>

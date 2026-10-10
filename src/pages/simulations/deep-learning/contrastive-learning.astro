@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -53,6 +54,7 @@ import Readout from '../../../components/sim/Readout.astro';
       <Slider id="tau" label="Temperature τ" min={3} max={60} value={15} display="0.15" hint={['sharp', 'soft']} />
       <Transport step />
       <Readout
+        title="Numbers"
         rows={[
           { id: 'r-loss', label: 'loss' },
           { id: 'r-in', label: 'distance within a class' },
@@ -66,55 +68,27 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Every point starts in a heap in the middle and no point is told where to
-      go. The only thing any of these losses knows is which points share a class,
-      and the arrangement is entirely a consequence of that.
+      <b>Pairs</b> pulls every match towards zero and pushes every other pair
+      past the margin. Red arrows vanish as pairs cross the margin; teal ones
+      never do, since a match has no threshold. <Try id="pairs" label="Run" />
     </li>
     <li>
-      Two items are never allowed to occupy the same place, which is why a class
-      settles into a small packed cluster instead of a single dot. Take that rule
-      away and every loss on this page would crush each class to nothing, and
-      crushing a class to nothing is exactly what collapse means.
+      <b>Triplet</b> asks only that a match be nearer than a non-match by the
+      margin. Once that ordering holds the point gets no push at all, wherever
+      the clusters sit. <Try id="triplet" label="Run" />
     </li>
     <li>
-      Hover a point. The ruler on the right lays every other point out by its
-      distance from that one, same class above the line and everything else
-      below, and the arrow under each one is the direction that loss is pushing
-      it. That arrow is the loss; the picture on the left is only its
-      consequence.
+      <b>InfoNCE</b> uses a softmax instead of a margin. At a low
+      <b>temperature</b> nearly all the push comes from the nearest wrong point:
+      hard negative mining for free. Hover a point to read its ruler.
+      <Try id="nce" label="Run" />
     </li>
     <li>
-      <b>Pairs</b> is the blunt version: pull every pair of the same class to
-      zero, push every other pair past the margin, and stop caring once it is
-      past. Watch the red arrows vanish one at a time as points cross the margin
-      line. The teal ones never vanish, because a positive pair is given no
-      threshold to reach and is pulled for as long as any distance remains.
-    </li>
-    <li>
-      <b>Triplet</b> never asks for an absolute distance. It asks only that the
-      same class be <em>nearer than</em> the other one by the margin, so the
-      clusters are free to sit wherever they like as long as the ordering holds.
-      That is why it survives classes of wildly different spread, where pairs
-      does not.
-    </li>
-    <li>
-      <b>Hardest triplet</b> keeps only the worst positive and the nearest
-      negative for each point, which is most of the signal in a tiny fraction of
-      the terms. It converges faster and it is far more likely to fold two
-      classes together and never recover, because one bad pair now speaks for
-      everything.
-    </li>
-    <li>
-      <b>InfoNCE</b> replaces the margin with a softmax, so nothing is ever fully
-      satisfied and every negative keeps contributing something. Lower the
-      <b>temperature</b> and almost all the push comes from the single nearest
-      wrong point, which is hard negative mining arriving for free out of the
-      arithmetic. Raise it and every negative pushes about equally.
-    </li>
-    <li>
-      The space is bounded, so pushing one thing away always costs room
-      somewhere. That competition is the whole reason the classes end up spread
-      round the edge rather than piled anywhere convenient.
+      A class shrinks to a packed cluster, not a dot, only because this page
+      keeps any two points at least a small distance apart: a simplification.
+      In self-supervised learning <b>collapse</b> means every input, of every
+      class, mapping to the same point, which the push between non-matches
+      prevents.
     </li>
   </Fragment>
 </SimLayout>
@@ -123,15 +97,16 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect, arrow } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   const PULL = '#5eead4';
   const PUSH = '#f87171';
   const MARK = '#f59e0b';
   const HUES = ['#5eead4', '#f59e0b', '#a78bfa', '#f87171', '#60a5fa', '#a3e635'];
-  // Two different items never land on exactly the same point. Without that rule
-  // every loss here would happily crush a class to nothing, which is what
-  // collapse means; with it, a class settles into a small packed cluster.
+  // Two different items never land on exactly the same point: a simplification
+  // of this page, standing in for whatever keeps a real encoder from mapping two
+  // inputs to one vector. Without it every loss here would crush each class to
+  // a dot; with it, a class settles into a small packed cluster.
   const SEP = 0.09;
 
   const state = { loss: 'pairs', k: 4, m: 6, margin: 0.8, tau: 0.15, running: false, anchor: 0 };
@@ -557,7 +532,7 @@ import Readout from '../../../components/sim/Readout.astro';
         state.loss === 'nce'
           ? 'A softmax never reaches zero, so every negative goes on pushing however far away it already is. The temperature decides whether that push is shared out or spent almost entirely on the nearest wrong point.'
           : state.loss === 'hard'
-            ? 'Only the furthest matching point and the nearest wrong one are used, which is where nearly all the signal lives. It learns faster and it can also drag two classes together and never let go.'
+            ? 'Only the furthest matching point and the nearest wrong one are used, which is where nearly all the signal lives. One bad pair now steers a point on its own.'
             : state.loss === 'triplet'
               ? 'Only the ordering is asked for, never a distance, so each class can sit at whatever spread suits it as long as it stays nearer to itself than to anything else.'
               : 'Every pair is given an absolute target: zero for a match, at least the margin for anything else. Once a pair is past the margin it stops contributing entirely.',
@@ -598,15 +573,28 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   const restart = () => { scatter(); draw(); };
-  segmented('loss', (l) => { state.loss = l; trace = []; draw(); });
+  const losses = segmented('loss', (l) => { state.loss = l; trace = []; draw(); });
   slider('k', (v) => { state.k = v; restart(); });
   slider('m', (v) => { state.m = v; restart(); });
   slider('mar', (v) => { state.margin = v / 100; trace = []; draw(); }, (v) => (v / 100).toFixed(2));
-  slider('tau', (v) => { state.tau = v / 100; trace = []; draw(); }, (v) => (v / 100).toFixed(2));
-  transport({
+  const setTau = slider('tau', (v) => { state.tau = v / 100; trace = []; draw(); }, (v) => (v / 100).toFixed(2));
+  const run = transport({
     onRun: (running) => (state.running = running),
     onStep: () => { stepOnce(); draw(); },
     onReset: () => restart(),
+  });
+
+  function show(loss: string) {
+    state.loss = loss;
+    losses.select(loss);
+    trace = [];
+    restart();
+    if (!run.running()) el('run').click();
+  }
+  tries({
+    pairs: () => show('pairs'),
+    triplet: () => show('triplet'),
+    nce: () => { state.tau = 0.05; setTau(5); show('nce'); },
   });
 
   restart();

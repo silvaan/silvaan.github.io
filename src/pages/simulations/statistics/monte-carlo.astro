@@ -1,16 +1,18 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="statistics"
   title="Monte Carlo"
-  description="Throw darts at random into a square with a circle inside it. The fraction that land in the circle estimates π, with no calculus at all."
+  description="Throw random darts at a box and count the ones that land in a shape: the fraction times the box is its area. Estimate π, the area under a curve or the volume of a ball in ten dimensions, and watch the error fall like 1/√n."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -21,14 +23,15 @@ import Readout from '../../../components/sim/Readout.astro';
           width="1000"
           height="600"
           role="img"
-          aria-label="Random darts on a square with an inscribed circle, and a plot of the running estimate of pi."
+          aria-label="Random darts in a box, coloured by whether they hit the shape, and a log-log plot of the error against the number of darts with a 1/√n reference line."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'inside the circle', color: '#2dd4bf' },
-          { label: 'outside', color: '#f87171' },
-          { label: 'estimate over time', color: '#5eead4' },
+          { label: 'hit', color: '#2dd4bf' },
+          { label: 'miss', color: '#f87171' },
+          { label: 'error |estimate − true|', color: '#7c8cff' },
+          { label: 'expected error ∝ 1/√n', color: '#f59e0b' },
         ]}
       />
       <Result label="Estimate of π" />
@@ -36,12 +39,28 @@ import Readout from '../../../components/sim/Readout.astro';
 
     <div class="sim-panel">
       <Transport />
-      <Slider id="rate" label="Darts per frame" min={1} max={500} value={50} />
+      <Seg
+        id="task"
+        label="Estimate"
+        attr="t"
+        options={[
+          { value: 'pi', label: 'π from a circle' },
+          { value: 'curve', label: 'Area under sin x' },
+          { value: 'ball', label: 'Ball volume' },
+        ]}
+      />
+      <div id="dwrap" hidden>
+        <Slider id="d" label="Dimensions d" min={2} max={12} value={5} />
+      </div>
+      <Slider id="rate" label="Darts per frame" min={1} max={5000} value={100} />
       <Readout
+        title="Numbers"
         rows={[
-          { id: 'r-total', label: 'darts thrown' },
-          { id: 'r-inside', label: 'inside the circle' },
-          { id: 'r-err', label: 'error' },
+          { id: 'r-total', label: 'darts thrown n' },
+          { id: 'r-inside', label: 'hits' },
+          { id: 'r-true', label: 'true value' },
+          { id: 'r-err', label: 'error now' },
+          { id: 'r-exp', label: 'expected error A√(p(1−p)/n)' },
         ]}
       />
     </div>
@@ -49,19 +68,18 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      The square has area 4 and the circle area π, so a random dart lands inside
-      with probability <b>π/4</b>. Multiply the hit fraction by 4 and you have an
-      estimate of <b>π</b>, no formula for the circle needed.
+      Run the <b>π</b> estimate. The error jitters but hugs the dashed
+      <b>1/√n</b> line: a hundred times more darts buys only one more digit.
+      <Try id="pi" />
     </li>
     <li>
-      Watch the convergence plot settle toward the dashed π line. It wobbles a
-      lot early on, then tightens. The error shrinks like <b>1/√n</b>: a hundred
-      times more darts buys only <b>one</b> more digit.
+      <b>Area under sin x</b> is the same recipe: box area times hit fraction.
+      Any shape you can test a point against has an area this way. <Try id="curve" />
     </li>
     <li>
-      That slow square-root rate is the price of pure randomness, and exactly why
-      Monte Carlo shines only when the problem is too high-dimensional for
-      anything else.
+      Push the <b>ball</b> to d = 10. It fills a quarter of a percent of the cube,
+      so hits are rare and the error is large next to the answer, yet it still falls
+      like 1/√n in any dimension. <Try id="ball" />
     </li>
   </Fragment>
 </SimLayout>
@@ -70,14 +88,30 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
-  const IN = '#2dd4bf', OUT = '#f87171', EST = '#5eead4';
-  const state = { rate: 50, playing: false };
+  const IN = '#2dd4bf', ERR = '#7c8cff', REF = '#f59e0b';
+  type Task = 'pi' | 'curve' | 'ball';
+  const state = { task: 'pi' as Task, d: 5, rate: 100, playing: false };
+  const NMAX = 1e6;
+
+  /** Volume of the unit ball in d dimensions, V_d = V_{d−2} · 2π/d. */
+  const ballVol = (d: number): number => (d === 0 ? 1 : d === 1 ? 2 : (ballVol(d - 2) * 2 * Math.PI) / d);
+
+  /** What is being estimated: the box area A and the exact answer A·p. */
+  const spec = () => {
+    if (state.task === 'pi') return { A: 4, truth: Math.PI, name: 'π' };
+    if (state.task === 'curve') return { A: Math.PI, truth: 2, name: 'the area under sin x' };
+    return { A: 2 ** state.d, truth: ballVol(state.d), name: `the volume of the ${state.d}-ball` };
+  };
+
   let total = 0, inside = 0;
-  const dots: { x: number; y: number; hit: boolean }[] = [];
-  const DOT_CAP = 5000;
-  const history: number[] = [];
+  // the most recent darts, as a ring buffer of their first two coordinates
+  const CAP = 5000;
+  const dx = new Float32Array(CAP), dy = new Float32Array(CAP), dh = new Uint8Array(CAP);
+  let head = 0, stored = 0;
+  let history: { n: number; e: number }[] = [];
+  let nextMark = 10;
 
   const canvas = el('mc') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -87,109 +121,197 @@ import Readout from '../../../components/sim/Readout.astro';
   const setResult = result();
   const setRows = readout();
 
-  // the board on the left, the running estimate on the right
-  const BOARD = { x: 20, y: 20, s: 560 };
-  const PLOT = { x: 660, y: 60, w: 300, h: 480 };
-  const mapX = (x: number) => BOARD.x + ((x + 1) / 2) * BOARD.s;
-  const mapY = (y: number) => BOARD.y + ((1 - y) / 2) * BOARD.s;
+  const BOARD = { x: 30, y: 40, s: 520 };
+  const PLOT = { x: 660, y: 40, w: 300, h: 500 };
 
   function reset() {
-    total = 0;
-    inside = 0;
-    dots.length = 0;
-    history.length = 0;
+    total = inside = 0;
+    head = stored = 0;
+    history = [];
+    nextMark = 10;
+  }
+
+  /** One dart: a point in the box, and whether it lands in the shape. */
+  function dart(): [number, number, boolean] {
+    if (state.task === 'curve') {
+      const x = Math.random() * Math.PI, y = Math.random();
+      return [x, y, y <= Math.sin(x)];
+    }
+    const x = Math.random() * 2 - 1, y = Math.random() * 2 - 1;
+    let r2 = x * x + y * y;
+    if (state.task === 'ball') for (let k = 2; k < state.d; k++) { const u = Math.random() * 2 - 1; r2 += u * u; }
+    return [x, y, r2 <= 1];
   }
 
   function throwDarts(n: number) {
-    for (let i = 0; i < n; i++) {
-      const x = Math.random() * 2 - 1, y = Math.random() * 2 - 1;
-      const hit = x * x + y * y <= 1;
+    const { A, truth } = spec();
+    for (let i = 0; i < n && total < NMAX; i++) {
+      const [x, y, hit] = dart();
       if (hit) inside++;
       total++;
-      dots.push({ x, y, hit });
-      if (dots.length > DOT_CAP) dots.shift();
-    }
-    if (total > 0) {
-      const est = (4 * inside) / total;
-      const last = history[history.length - 1];
-      if (last === undefined || Math.abs(est - last) > 1e-4 || history.length < 300) history.push(est);
-      if (history.length > 400) history.shift();
+      dx[head] = x; dy[head] = y; dh[head] = hit ? 1 : 0;
+      head = (head + 1) % CAP;
+      stored = Math.min(CAP, stored + 1);
+      if (total >= nextMark) {
+        history.push({ n: total, e: Math.abs((A * inside) / total - truth) });
+        nextMark *= 1.04;
+      }
     }
   }
+
+  // --- the board -----------------------------------------------------------------
 
   function drawBoard() {
+    const curve = state.task === 'curve';
+    const bx = (x: number) => BOARD.x + (curve ? x / Math.PI : (x + 1) / 2) * BOARD.s;
+    const by = (y: number) => BOARD.y + (curve ? 1 - y : (1 - y) / 2) * BOARD.s;
+    label(
+      state.task === 'ball' ? `the first two of ${state.d} coordinates of each dart` : curve ? 'the box [0, π] × [0, 1]' : 'the square [−1, 1]²',
+      BOARD.x, BOARD.y - 12, 0.45, 'left', 11.5
+    );
     ctx.strokeStyle = ink(0.25);
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(mapX(-1), mapY(1), BOARD.s, BOARD.s);
-    ctx.strokeStyle = ink(0.55);
-    ctx.beginPath();
-    ctx.arc(mapX(0), mapY(0), BOARD.s / 2, 0, Math.PI * 2);
-    ctx.stroke();
-    for (const d of dots) {
-      ctx.fillStyle = d.hit ? 'rgba(45,212,191,0.8)' : 'rgba(248,113,113,0.8)';
-      ctx.beginPath();
-      ctx.arc(mapX(d.x), mapY(d.y), 1.7, 0, Math.PI * 2);
-      ctx.fill();
+    ctx.strokeRect(BOARD.x, BOARD.y, BOARD.s, BOARD.s);
+    for (let i = 0; i < stored; i++) {
+      ctx.fillStyle = dh[i] ? 'rgba(45,212,191,0.8)' : 'rgba(248,113,113,0.7)';
+      ctx.fillRect(bx(dx[i]) - 1.4, by(dy[i]) - 1.4, 2.8, 2.8);
     }
+    ctx.strokeStyle = ink(0.6);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (curve) {
+      for (let i = 0; i <= 200; i++) {
+        const x = (Math.PI * i) / 200;
+        i ? ctx.lineTo(bx(x), by(Math.sin(x))) : ctx.moveTo(bx(x), by(Math.sin(x)));
+      }
+    } else ctx.arc(bx(0), by(0), BOARD.s / 2, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
-  function drawPlot() {
-    const lo = Math.PI - 0.9, hi = Math.PI + 0.9;
-    const sy = (v: number) => PLOT.y + (1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * PLOT.h;
-    label('estimate, dart by dart', PLOT.x, PLOT.y - 14, 0.45, 'left', 11.5);
-    ctx.strokeStyle = ink(0.35);
-    ctx.setLineDash([4, 4]);
+  // --- the error on log axes ---------------------------------------------------
+
+  function drawError() {
+    const { A, truth } = spec();
+    const p = truth / A;
+    const c = A * Math.sqrt(p * (1 - p)); // the expected error is c/√n
+    const xLo = 1, xHi = 6;
+    const yHi = Math.ceil(Math.log10((c / Math.sqrt(10)) * 3));
+    const yLo = Math.floor(Math.log10(c / 1000 / 10));
+    const gx = (n: number) => PLOT.x + ((Math.log10(n) - xLo) / (xHi - xLo)) * PLOT.w;
+    const gy = (e: number) => {
+      const l = Math.max(yLo, Math.min(yHi, Math.log10(Math.max(e, 1e-12))));
+      return PLOT.y + ((yHi - l) / (yHi - yLo)) * PLOT.h;
+    };
+
+    label('error against darts, log-log', PLOT.x, PLOT.y - 12, 0.45, 'left', 11.5);
     ctx.lineWidth = 1;
+    for (let k = xLo; k <= xHi; k++) {
+      ctx.strokeStyle = ink(0.07);
+      ctx.beginPath();
+      ctx.moveTo(gx(10 ** k), PLOT.y);
+      ctx.lineTo(gx(10 ** k), PLOT.y + PLOT.h);
+      ctx.stroke();
+      label(`10${'⁰¹²³⁴⁵⁶'[k]}`, gx(10 ** k), PLOT.y + PLOT.h + 16, 0.35, 'center', 11);
+    }
+    for (let k = yLo; k <= yHi; k++) {
+      ctx.strokeStyle = ink(0.07);
+      ctx.beginPath();
+      ctx.moveTo(PLOT.x, gy(10 ** k));
+      ctx.lineTo(PLOT.x + PLOT.w, gy(10 ** k));
+      ctx.stroke();
+      label(k === 0 ? '1' : `1e${k}`, PLOT.x - 6, gy(10 ** k) + 4, 0.35, 'right', 11);
+    }
+    label('n', PLOT.x + PLOT.w, PLOT.y + PLOT.h + 32, 0.35, 'right', 11);
+
+    // the reference line: slope −½ on these axes
+    ctx.strokeStyle = REF;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]);
     ctx.beginPath();
-    ctx.moveTo(PLOT.x, sy(Math.PI));
-    ctx.lineTo(PLOT.x + PLOT.w, sy(Math.PI));
+    ctx.moveTo(gx(10), gy(c / Math.sqrt(10)));
+    ctx.lineTo(gx(NMAX), gy(c / Math.sqrt(NMAX)));
     ctx.stroke();
     ctx.setLineDash([]);
-    label('π', PLOT.x - 10, sy(Math.PI) + 4, 0.6, 'right', 11);
-    label((Math.PI + 0.9).toFixed(1), PLOT.x - 10, PLOT.y + 4, 0.3, 'right', 11);
-    label((Math.PI - 0.9).toFixed(1), PLOT.x - 10, PLOT.y + PLOT.h + 4, 0.3, 'right', 11);
+    label('slope −½', gx(3e4) + 8, gy(c / Math.sqrt(3e4)) + 22, 1, 'left', 11, REF);
+
     if (history.length > 1) {
-      ctx.strokeStyle = EST;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = ERR;
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      const n = history.length;
-      for (let i = 0; i < n; i++) {
-        const x = PLOT.x + (i / (n - 1)) * PLOT.w;
-        i === 0 ? ctx.moveTo(x, sy(history[i])) : ctx.lineTo(x, sy(history[i]));
-      }
+      history.forEach((h, i) => (i ? ctx.lineTo(gx(h.n), gy(h.e)) : ctx.moveTo(gx(h.n), gy(h.e))));
       ctx.stroke();
     }
+    return c;
   }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
     drawBoard();
-    drawPlot();
+    const c = drawError();
+    const { A, truth, name } = spec();
+    const est = total ? (A * inside) / total : NaN;
+    const err = Math.abs(est - truth);
+    const expected = total ? c / Math.sqrt(total) : NaN;
+    const Atex = state.task === 'pi' ? '4' : state.task === 'curve' ? '\\pi' : `2^{${state.d}}`;
+    const lhs = state.task === 'pi' ? '\\pi' : state.task === 'curve' ? '\\int_0^\\pi \\sin x\\,dx' : `V_{${state.d}}`;
 
-    const est = total > 0 ? (4 * inside) / total : 0;
-    const err = Math.abs(est - Math.PI);
     setEq({
-      rule: ['\\pi \\approx 4\\times', ['\\dfrac{\\text{darts inside}}{\\text{darts thrown}}', IN]],
-      live: [[`\\pi \\approx 4\\times\\dfrac{${inside}}{${total}} = ${total ? est.toFixed(5) : '\\text{--}'}`, IN]],
+      rule: [lhs, '\\approx', Atex, '\\times', ['\\dfrac{\\text{hits}}{n}', IN], '\\qquad', ['|\\text{error}| \\propto \\dfrac{1}{\\sqrt n}', REF]],
+      live: [[`${lhs} \\approx ${Atex}\\times\\dfrac{${inside}}{${total}} = ${total ? est.toFixed(5) : '\\text{--}'}`, IN], `\\quad\\text{true } ${truth.toFixed(5)}`],
     });
+    el('result-label').textContent = `Estimate of ${name}`;
     setResult({
       value: total ? est.toFixed(5) : '—',
-      colour: EST,
-      status: total ? `off by ${err.toFixed(5)} after ${total} darts` : 'no darts yet',
-      note: 'The quarter disc fills π/4 of the square. The error falls like 1/√n, so every extra digit costs a hundred times more darts.',
+      colour: IN,
+      status: total ? `off by ${err.toFixed(5)} after ${total.toLocaleString('en')} darts` : 'no darts yet',
+      note: total >= NMAX
+        ? 'A million darts: the plot ends here. Reset to throw again.'
+        : 'The hit fraction estimates the share of the box the shape fills. Its error falls like 1/√n, whatever the shape.',
     });
-    setRows({ 'r-total': String(total), 'r-inside': String(inside), 'r-err': total ? err.toFixed(5) : '—' });
+    setRows({
+      'r-total': total.toLocaleString('en'),
+      'r-inside': inside.toLocaleString('en'),
+      'r-true': truth.toFixed(5),
+      'r-err': total ? err.toFixed(5) : '—',
+      'r-exp': total ? expected.toFixed(5) : '—',
+    });
   }
 
   function loop() {
-    if (state.playing) throwDarts(state.rate);
+    if (state.playing) {
+      throwDarts(state.rate);
+      if (total >= NMAX) { state.playing = false; tr.setRunning(false); }
+    }
     draw();
     requestAnimationFrame(loop);
   }
 
-  slider('rate', (v) => (state.rate = v));
-  transport({ onRun: (running) => (state.playing = running), onReset: reset });
-  void OUT;
+  const tasks = segmented('task', (t) => {
+    state.task = t as Task;
+    el('dwrap').hidden = state.task !== 'ball';
+    reset();
+  });
+  const setD = slider('d', (v) => { state.d = v; reset(); });
+  const setRate = slider('rate', (v) => (state.rate = v));
+  const tr = transport({ onRun: (running) => { if (running && total >= NMAX) reset(); state.playing = running; }, onReset: reset });
+
+  function show(task: Task, d = state.d) {
+    state.task = task;
+    state.d = d;
+    tasks.select(task);
+    setD(d);
+    el('dwrap').hidden = task !== 'ball';
+    state.rate = 2000;
+    setRate(2000);
+    reset();
+    state.playing = true;
+    tr.setRunning(true);
+  }
+  tries({
+    pi: () => show('pi'),
+    curve: () => show('curve'),
+    ball: () => show('ball', 10),
+  });
 
   reset();
   requestAnimationFrame(loop);

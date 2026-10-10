@@ -2,12 +2,10 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Checks from '../../../components/sim/Checks.astro';
-import Transport from '../../../components/sim/Transport.astro';
-import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -47,19 +45,17 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Drag the slider up. Every method converges, but watch the <b>Error</b>
-      readout: doubling the rectangles roughly <b>halves</b> the error for Left,
-      yet <b>quarters</b> it for Midpoint and Trapezoid.
+      With <b>Left</b> at 16 pieces, slide to 32: the error only <b>halves</b>.
+      <Try id="left" />
     </li>
     <li>
-      That is exactly the log–log plot: Left and Right fall with slope
-      <b>−1</b> (error ∝ 1/n), Midpoint and Trapezoid with slope <b>−2</b>
-      (error ∝ 1/n²). Order of accuracy, made visible.
+      With <b>Midpoint</b> the same doubling <b>quarters</b> it. In the log–log
+      plot Left and Right fall with slope −1, Midpoint and Trapezoid with slope −2.
+      <Try id="mid" />
     </li>
     <li>
-      Switch to <b>x³ − x</b>. Rectangles below the axis count as negative area,
-      and over the symmetric interval the positive and negative parts cancel to
-      a <b>signed integral of 0</b>.
+      On <b>x³ − x</b> the pieces below the axis count as negative area, so the
+      sum is a <b>signed</b> area. <Try id="signed" />
     </li>
   </Fragment>
 </SimLayout>
@@ -67,13 +63,15 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
   type Fn = { f: (x: number) => number; a: number; b: number };
   const FNS: Record<string, Fn> = {
     quad: { f: (x) => x * x, a: 0, b: 3 },
-    sine: { f: (x) => Math.sin(x) + 1.5, a: 0, b: 2 * Math.PI },
-    gauss: { f: (x) => Math.exp(-x * x), a: -2.2, b: 2.2 },
-    cubic: { f: (x) => x * x * x - x, a: -1.5, b: 1.5 },
+    // No preset is a whole period or symmetric about a point where f is odd:
+    // those make some rules exact and flatten the error plot.
+    sine: { f: (x) => Math.sin(x) + 1.5, a: 0, b: 1.5 * Math.PI },
+    gauss: { f: (x) => Math.exp(-x * x), a: -1, b: 2 },
+    cubic: { f: (x) => x * x * x - x, a: -1.2, b: 1.5 },
   };
 
   const state = { fn: 'quad', method: 'mid', n: 12 };
@@ -91,12 +89,13 @@ import Readout from '../../../components/sim/Readout.astro';
   const css = (v: string) =>
     getComputedStyle(canvas).getPropertyValue(v).trim();
 
+  /** Composite Simpson with many panels: exact to ~1e-13 for these curves. */
   function exactIntegral(fn: Fn) {
-    const N = 40000;
+    const N = 4000;
     const h = (fn.b - fn.a) / N;
-    let s = 0;
-    for (let i = 0; i < N; i++) s += fn.f(fn.a + (i + 0.5) * h);
-    return s * h;
+    let s = fn.f(fn.a) + fn.f(fn.b);
+    for (let i = 1; i < N; i++) s += (i % 2 ? 4 : 2) * fn.f(fn.a + i * h);
+    return (s * h) / 3;
   }
 
   function approxIntegral(fn: Fn, n: number, method: string) {
@@ -231,7 +230,7 @@ import Readout from '../../../components/sim/Readout.astro';
     const pad = { l: 40, r: 8, t: 10, b: 20 };
     const nMax = 128;
     const xMin = 0, xMax = Math.log10(nMax);
-    const yMin = -9, yMax = 1;
+    const yMin = -6, yMax = 1;
     const sx = (lx: number) => pad.l + ((lx - xMin) / (xMax - xMin)) * (Ws - pad.l - pad.r);
     const sy = (ly: number) => pad.t + (1 - (ly - yMin) / (yMax - yMin)) * (Hs - pad.t - pad.b);
 
@@ -241,7 +240,7 @@ import Readout from '../../../components/sim/Readout.astro';
     c.fillStyle = css('--text-faint') || '#8b93a5';
     c.lineWidth = 1;
     c.font = "10px 'JetBrains Mono', monospace";
-    for (let e = -8; e <= 0; e += 2) {
+    for (let e = -6; e <= 0; e += 2) {
       const y = sy(e);
       c.beginPath();
       c.moveTo(pad.l, y);
@@ -267,9 +266,22 @@ import Readout from '../../../components/sim/Readout.astro';
     }
   }
 
-  segmented('fn', (v) => { state.fn = v; draw(); drawSweep(); });
-  segmented('method', (v) => { state.method = v; draw(); });
-  slider('n', (v) => { state.n = v; draw(); });
+  const fns = segmented('fn', (v) => { state.fn = v; draw(); drawSweep(); });
+  const methods = segmented('method', (v) => { state.method = v; draw(); });
+  const setN = slider('n', (v) => { state.n = v; draw(); });
+
+  function show(fn: string, method: string, n: number) {
+    state.fn = fn; fns.select(fn);
+    state.method = method; methods.select(method);
+    state.n = n; setN(n);
+    draw();
+    drawSweep();
+  }
+  tries({
+    left: () => show('quad', 'left', 16),
+    mid: () => show('quad', 'mid', 16),
+    signed: () => show('cubic', 'mid', 12),
+  });
 
   draw();
   drawSweep();

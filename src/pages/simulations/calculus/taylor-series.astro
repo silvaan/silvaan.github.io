@@ -2,12 +2,11 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Checks from '../../../components/sim/Checks.astro';
 import Transport from '../../../components/sim/Transport.astro';
-import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -23,34 +22,34 @@ import Readout from '../../../components/sim/Readout.astro';
       </div>
       <Caption
         legend={[{ label: 'the true function', color: '#5eead4' }, { label: 'the polynomial', color: '#7c8cff' }]}
-        hint="The shaded band, when there is one, is the radius of convergence around x = 0"
+        hint="Drag across the graph to read the gap at another x. The shaded band, when there is one, is the radius of convergence."
       />
-      <Result label="Gap at x = 1.5" />
+      <Result label="Gap at x = 1.50" />
     </div>
     <div class="sim-panel">
       <Seg id="fn" label="Function" attr="fn" options={[{ value: 'sin', label: 'sin x' }, { value: 'cos', label: 'cos x' }, { value: 'exp', label: 'eˣ' }, { value: 'ln', label: 'ln(1+x)' }, { value: 'geom', label: '1/(1−x)' }]} />
       <Transport animate="Animate" reset={false}>
         <button type="button" class="btn ghost" id="step">Add a term</button>
       </Transport>
-      <Slider id="n" label="Terms" min={1} max={16} value={3} />
-      <Readout rows={[{ id: 'terms', label: 'terms' }, { id: 'err', label: 'gap at x = 1.5' }]} />
+      <Slider id="n" label="Non-zero terms" min={1} max={16} value={3} />
+      <Slider id="xe" label="Read the gap at x" min={-7} max={7} step={0.05} value={1.5} display="1.50" />
+      <Readout rows={[{ id: 'r-deg', label: 'degree of P' }, { id: 'r-f', label: 'f(x)' }, { id: 'r-p', label: 'P(x)' }]} />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Add terms and watch the polynomial <b>match the curve near x = 0</b> first,
-      spreading outward as the degree grows. Each term fixes one more derivative
-      at the centre.
+      Add terms and the polynomial <b>hugs the curve near x = 0</b> first, then
+      further out. For sin x every other derivative at 0 is zero, so each new term
+      raises the degree by two. <Try id="grow" label="Animate" />
     </li>
     <li>
-      For <b>sin, cos, eˣ</b> the series converges everywhere: the error at
-      x = 1.5 keeps shrinking toward zero.
+      For <b>sin, cos, eˣ</b> the series converges everywhere: even at x = 5 the
+      gap falls to zero once there are enough terms. <Try id="far" label="Animate" />
     </li>
     <li>
-      For <b>ln(1+x)</b> and <b>1/(1−x)</b> the radius of convergence is 1.
-      Outside the shaded band the polynomial <b>diverges</b> no matter how many
-      terms you add, the error at x = 1.5 blows up.
+      For <b>ln(1+x)</b> the radius of convergence is 1. At x = 1.5, outside the
+      band, adding terms makes the gap <b>grow</b> without bound. <Try id="diverge" label="Animate" />
     </li>
   </Fragment>
 </SimLayout>
@@ -58,7 +57,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   const fact: number[] = [1];
   for (let k = 1; k <= 40; k++) fact[k] = fact[k - 1] * k;
@@ -106,7 +105,16 @@ import Readout from '../../../components/sim/Readout.astro';
     },
   };
 
-  const state = { fn: 'sin', n: 3 };
+  /** Degree of the polynomial built from n non-zero terms. */
+  const DEGREE: Record<string, (n: number) => number> = {
+    sin: (n) => 2 * n - 1,
+    cos: (n) => 2 * n - 2,
+    exp: (n) => n - 1,
+    ln: (n) => n,
+    geom: (n) => n - 1,
+  };
+
+  const state = { fn: 'sin', n: 3, x: 1.5 };
   let raf = 0;
 
   const setEq = equation();
@@ -123,6 +131,9 @@ import Readout from '../../../components/sim/Readout.astro';
     return s;
   }
 
+  const toX = (fn: TF, px: number) =>
+    fn.xr[0] + ((px - PAD.l) / (W - PAD.l - PAD.r)) * (fn.xr[1] - fn.xr[0]);
+
   function draw() {
     const fn = FNS[state.fn];
     const [xmin, xmax] = fn.xr;
@@ -131,9 +142,11 @@ import Readout from '../../../components/sim/Readout.astro';
     const accent = css('--accent') || '#7c8cff';
     const grid = css('--border') || '#262a32';
     const faint = css('--text-faint') || '#6b7280';
+    const ink = css('--stage-ink') || '232,233,236';
 
     const sx = (x: number) => PAD.l + ((x - xmin) / (xmax - xmin)) * (W - PAD.l - PAD.r);
     const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
+    const cy = (y: number) => Math.max(PAD.t, Math.min(H - PAD.b, sy(y)));
 
     ctx.clearRect(0, 0, W, H);
 
@@ -198,25 +211,77 @@ import Readout from '../../../components/sim/Readout.astro';
     plot((x) => partial(fn, x, state.n), accent, 2.2);
 
     // centre marker
-    ctx.fillStyle = `rgba(${css('--stage-ink') || '232,233,236'},0.9)`;
+    ctx.fillStyle = `rgba(${ink},0.9)`;
     ctx.beginPath();
     ctx.arc(sx(0), sy(fn.f(0)), 4, 0, Math.PI * 2);
     ctx.fill();
 
-    const errAt = Math.abs(fn.f(1.5) - partial(fn, 1.5, state.n));
+    // the reading point: a guide line and the gap between the two curves
+    const x = state.x;
+    const fx = fn.f(x), px = partial(fn, x, state.n);
+    ctx.strokeStyle = `rgba(${ink},0.22)`;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(sx(x), PAD.t);
+    ctx.lineTo(sx(x), H - PAD.b);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (isFinite(fx)) {
+      ctx.strokeStyle = `rgba(${ink},0.85)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), cy(fx));
+      ctx.lineTo(sx(x), cy(px));
+      ctx.stroke();
+      for (const [y, c] of [[fx, teal], [px, accent]] as [number, string][]) {
+        if (sy(y) < PAD.t || sy(y) > H - PAD.b) continue;
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.arc(sx(x), sy(y), 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.fillStyle = `rgba(${ink},0.75)`;
+    ctx.fillText('x', sx(x) - 3, H - PAD.b + 34);
+
+    sync(fn, teal, accent);
+  }
+
+  function sync(fn: TF, teal: string, accent: string) {
+    const x = state.x, xs = x.toFixed(2);
+    const fx = fn.f(x), px = partial(fn, x, state.n);
+    const gap = Math.abs(fx - px);
+    const D = DEGREE[state.fn](state.n);
+    const defined = isFinite(fx);
+    const huge = gap > 1e6;
+    const gapText = !defined ? 'undefined' : huge ? '≫ diverging' : gap.toFixed(4);
+    const outside = fn.radius !== undefined && Math.abs(x) > fn.radius;
+
     setEq({
-      rule: [['f(x)', teal], '\\approx', [`P_{${state.n}}(x)=\\sum_{k=0}^{${state.n}}\\frac{f^{(k)}(0)}{k!}\\,x^k`, accent]],
-      live: ['\\text{at }x=1.5:', [`f=${fn.f(1.5).toFixed(4)}`, teal], [`\\quad P_{${state.n}}=${partial(fn, 1.5, state.n).toFixed(4)}`, accent], errAt > 1e6 ? '\\quad\\text{diverging}' : `\\quad\\text{gap }${errAt.toFixed(4)}`],
+      rule: [['f(x)', teal], '\\approx', [`P_{${D}}(x)=\\sum_{k=0}^{${D}}\\frac{f^{(k)}(0)}{k!}\\,x^k`, accent]],
+      live: defined
+        ? [`\\text{at }x=${xs}:\\ `, [`f=${fx.toFixed(4)}`, teal], [`\\quad P_{${D}}=${huge ? '\\text{huge}' : px.toFixed(4)}`, accent]]
+        : [`\\text{at }x=${xs}:\\ f\\text{ is not defined}`],
     });
-    const gapText = errAt > 1e6 ? '≫ diverging' : errAt.toFixed(4);
-    setRows({ terms: String(state.n), err: gapText });
+    el('result-label').textContent = `Gap at x = ${xs}`;
+    setRows({
+      'r-deg': `${D} (${state.n} non-zero term${state.n > 1 ? 's' : ''})`,
+      'r-f': defined ? fx.toFixed(4) : 'undefined',
+      'r-p': huge ? 'far off' : px.toFixed(4),
+    });
     setResult({
       value: gapText,
       colour: accent,
-      status: `${state.n} term${state.n > 1 ? 's' : ''} · f(1.5) = ${fn.f(1.5).toFixed(4)}, P(1.5) = ${errAt > 1e6 ? 'far off' : partial(fn, 1.5, state.n).toFixed(4)}`,
-      note: errAt > 1e6 || (state.fn === 'geom' || state.fn === 'ln')
-        ? 'This function has a finite radius of convergence: inside the band more terms help, outside it they make things worse, however many you add.'
-        : 'The polynomial is built to match every derivative at 0, and drifts off as you walk away; more terms push the drift further out.',
+      status: !defined
+        ? 'f has no value here'
+        : outside
+          ? `Outside the radius of convergence (|x| > ${fn.radius})`
+          : fn.radius
+            ? `Inside the radius of convergence (|x| < ${fn.radius})`
+            : 'This series converges for every x',
+      note: outside
+        ? 'Out here each extra term is larger than the last, so adding terms makes the gap worse, however many you add.'
+        : 'The polynomial matches every derivative of f at 0 up to its degree, and drifts off as you walk away; more terms push the drift further out.',
     });
   }
 
@@ -230,8 +295,24 @@ import Readout from '../../../components/sim/Readout.astro';
     setNSlider(n);
   }
 
-  segmented('fn', (v) => {
+  const xeEl = el('xe') as HTMLInputElement;
+  const setXSlider = slider('xe', (v) => { state.x = v; draw(); }, (v) => v.toFixed(2));
+  function setX(x: number) {
+    const fn = FNS[state.fn];
+    state.x = Math.max(fn.xr[0], Math.min(fn.xr[1], Math.round(x * 20) / 20));
+    setXSlider(state.x);
+  }
+  /** The x slider spans the function's own window. */
+  function fitX() {
+    const fn = FNS[state.fn];
+    xeEl.min = String(fn.xr[0]);
+    xeEl.max = String(fn.xr[1]);
+    setX(state.x);
+  }
+
+  const fns = segmented('fn', (v) => {
     state.fn = v;
+    fitX();
     draw();
   });
 
@@ -240,7 +321,7 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   });
 
-  el('run').addEventListener('click', () => {
+  function animate() {
     cancelAnimationFrame(raf);
     setN(1);
     draw();
@@ -254,7 +335,46 @@ import Readout from '../../../components/sim/Readout.astro';
       raf = requestAnimationFrame(() => setTimeout(grow, 420));
     };
     raf = requestAnimationFrame(() => setTimeout(grow, 420));
+  }
+  el('run').addEventListener('click', animate);
+
+  // drag across the graph to move the reading point
+  let dragging = false;
+  const readAt = (e: PointerEvent) => {
+    const b = canvas.getBoundingClientRect();
+    setX(toX(FNS[state.fn], ((e.clientX - b.left) / b.width) * W));
+    draw();
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    readAt(e);
+  });
+  canvas.addEventListener('pointermove', (e) => { if (dragging) readAt(e); });
+  const drop = () => { dragging = false; };
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  function show(fn: string, x: number) {
+    state.fn = fn;
+    fns.select(fn);
+    fitX();
+    setX(x);
+    animate();
+  }
+  tries({
+    grow: () => show('sin', 1.5),
+    far: () => show('sin', 5),
+    diverge: () => show('ln', 1.5),
   });
 
+  fitX();
   draw();
 </script>
+
+<style>
+  #taylor {
+    cursor: ew-resize;
+    touch-action: none;
+  }
+</style>

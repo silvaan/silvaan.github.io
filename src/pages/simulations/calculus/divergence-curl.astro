@@ -1,0 +1,568 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const POS = '#5eead4', NEG = '#f59e0b';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="Divergence & Curl"
+  description="Two numbers at every point of a flow. Drop in a material patch and its area grows or shrinks with the divergence; drop in a paddle wheel and it spins with the curl."
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="dc" width="900" height="520" role="img" aria-label="A vector field tinted by the sign of its divergence or curl, with a draggable probe: either a small material patch carried by the flow, or a paddle wheel turned by it."></canvas>
+      </div>
+      <Caption
+        legend={[{ label: 'the patch swells', color: POS, id: 'lg-pos' }, { label: 'the patch is squeezed', color: NEG, id: 'lg-neg' }]}
+        hint="Drag the probe anywhere in the field"
+      />
+      <Result label="Divergence at the probe" />
+    </div>
+    <div class="sim-panel">
+      <Seg id="probe" label="Probe" attr="p" options={[{ value: 'patch', label: 'Material patch' }, { value: 'wheel', label: 'Paddle wheel' }]} />
+      <Seg id="field" label="Vector field" attr="f" options={[{ value: 'source', label: 'Source' }, { value: 'rigid', label: 'Rotation' }, { value: 'saddle', label: 'Saddle' }, { value: 'shear', label: 'Shear' }, { value: 'vortices', label: 'Vortex pair' }, { value: 'wave', label: 'Variable' }]} />
+      <Transport />
+      <Slider id="strength" label="Strength" min={-150} max={150} value={100} display="1.00" />
+      <Slider id="speed" label="Flow speed" min={0} max={200} value={100} display="1.0×" />
+      <Slider id="radius" label="Probe radius ε" min={8} max={36} value={18} display="0.18" />
+      <Checks items={[{ id: 'streaks', label: 'Show tracer streaks', checked: true }, { id: 'ref', label: 'Reference wheel at the centre', checked: true }]} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-div', label: 'divergence ∇ · F' },
+          { id: 'r-flux', label: 'flux ÷ area' },
+          { id: 'r-area', label: 'patch area now' },
+          { id: 'r-curl', label: 'curl (∇ × F)<sub>z</sub>' },
+          { id: 'r-circ', label: 'circulation ÷ area' },
+          { id: 'r-om', label: 'wheel ω = ½ curl' },
+          { id: 'r-ratio', label: 'wheel ÷ reference' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Put the <b>material patch</b> on <b>Source</b>: more flow leaves it than
+      enters, so it swells and ∇ · F &gt; 0. Drag the strength negative and the
+      same field becomes a sink that squeezes it. <Try id="source" label="Run" />
+    </li>
+    <li>
+      On <b>Saddle</b> the patch stretches one way and squeezes the other, yet its
+      area stays at 1.00×. Heavy deformation, <b>zero divergence</b>.
+      <Try id="saddle" label="Run" />
+    </li>
+    <li>
+      Switch to the <b>paddle wheel</b> on <b>Rotation</b>: it turns at ω = ½ curl
+      and <b>wheel ÷ reference</b> reads 1.00× wherever you drag it. On Source it
+      never turns: spreading is not spinning. <Try id="rotation" label="Run" />
+    </li>
+    <li>
+      On <b>Shear</b> every arrow is horizontal, yet the wheel spins one way above
+      the centreline and the other way below. <b>Curl</b> is local twist, not
+      curved paths. <Try id="shear" label="Run" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+
+  type Probe = 'patch' | 'wheel';
+  type Field = 'source' | 'rigid' | 'saddle' | 'shear' | 'vortices' | 'wave';
+
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const canvas = el('dc') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const ink = () => css('--stage-ink') || '232,233,236';
+  const AMBER = '#f59e0b';
+
+  const HOME = { x: 0.62, y: 0.36 };
+  const state = {
+    probe: 'patch' as Probe,
+    field: 'source' as Field,
+    strength: 1,
+    speed: 1,
+    radius: 0.18,
+    running: false,
+    streaks: true,
+    ref: true,
+    px: HOME.x,
+    py: HOME.y,
+    time: 0, // how long the patch has been carried, looping
+    angle: 0,
+    refAngle: 0,
+  };
+  let last = 0, drag = false;
+  const UNIT = 190;
+  const XR = W / 2 / UNIT;
+  const YR = H / 2 / UNIT;
+  const sx = (x: number) => W / 2 + x * UNIT;
+  const sy = (y: number) => H / 2 - y * UNIT;
+
+  function vec(x: number, y: number) {
+    const s = state.strength;
+    switch (state.field) {
+      case 'source':
+        return { x: s * x, y: s * y };
+      case 'rigid':
+        return { x: -s * y, y: s * x };
+      case 'saddle':
+        return { x: s * x, y: -s * y };
+      // Parabolic channel flow: straight arrows, fastest on the centreline.
+      // Curl ∝ y, so it changes sign across the middle of the channel.
+      case 'shear': {
+        const a = y / 1.4;
+        return { x: s * 1.25 * (1 - a * a), y: 0 };
+      }
+      case 'vortices': {
+        const eps = 0.09;
+        const vortex = (cx: number, cy: number, k: number) => {
+          const dx = x - cx, dy = y - cy, r = dx * dx + dy * dy + eps;
+          return { x: (-k * dy) / r, y: (k * dx) / r };
+        };
+        const p = vortex(-0.72, 0, s), q = vortex(0.72, 0, -s);
+        return { x: (p.x + q.x) * 0.38, y: (p.y + q.y) * 0.38 };
+      }
+      case 'wave':
+        return { x: s * Math.sin(x * 1.5), y: s * Math.sin(y * 1.5) };
+    }
+  }
+
+  // Both numbers are differenced from vec() itself, so the picture can never
+  // drift from the number underneath it.
+  const DH = 1e-3;
+  const snap = (v: number) => (Math.abs(v) < 1e-6 ? 0 : v);
+  const divergence = (x: number, y: number) =>
+    snap((vec(x + DH, y).x - vec(x - DH, y).x) / (2 * DH) + (vec(x, y + DH).y - vec(x, y - DH).y) / (2 * DH));
+  const curl = (x: number, y: number) =>
+    snap((vec(x + DH, y).y - vec(x - DH, y).y) / (2 * DH) - (vec(x, y + DH).x - vec(x, y - DH).x) / (2 * DH));
+  const local = (x: number, y: number) => (state.probe === 'patch' ? divergence(x, y) : curl(x, y));
+
+  /** Flux out of, and circulation round, the probe circle, each per unit area. */
+  function rimIntegrals() {
+    let flux = 0, circ = 0;
+    const N = 120, r = state.radius, ds = (2 * Math.PI * r) / N;
+    for (let i = 0; i < N; i++) {
+      const a = ((i + 0.5) / N) * Math.PI * 2, nx = Math.cos(a), ny = Math.sin(a);
+      const v = vec(state.px + nx * r, state.py + ny * r);
+      flux += (v.x * nx + v.y * ny) * ds;
+      circ += (-v.x * ny + v.y * nx) * ds;
+    }
+    const A = Math.PI * r * r;
+    return { flux: flux / A, circ: circ / A };
+  }
+
+  // --- the material patch ------------------------------------------------------
+  // Each point of the patch is carried by the flow with RK4, accurate enough
+  // that an area-preserving flow really does keep the area at 1.00×.
+  function advect(x0: number, y0: number) {
+    let x = x0, y = y0;
+    const steps = 40, h = (state.time / steps) * 0.34;
+    for (let i = 0; i < steps; i++) {
+      const k1 = vec(x, y);
+      const k2 = vec(x + (h / 2) * k1.x, y + (h / 2) * k1.y);
+      const k3 = vec(x + (h / 2) * k2.x, y + (h / 2) * k2.y);
+      const k4 = vec(x + h * k3.x, y + h * k3.y);
+      x += (h / 6) * (k1.x + 2 * k2.x + 2 * k3.x + k4.x);
+      y += (h / 6) * (k1.y + 2 * k2.y + 2 * k3.y + k4.y);
+    }
+    return { x, y };
+  }
+  const NP = 72;
+  const ring = (r: number) =>
+    Array.from({ length: NP }, (_, i) => {
+      const a = (i / NP) * Math.PI * 2;
+      return { x: state.px + Math.cos(a) * r, y: state.py + Math.sin(a) * r };
+    });
+  const polyArea = (pts: { x: number; y: number }[]) => {
+    let s = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      s += p.x * q.y - q.x * p.y;
+    }
+    return Math.abs(s / 2);
+  };
+
+  // --- drifting tracers ------------------------------------------------------
+  // Short streaks carried by the field, so "goes round in a circle" and
+  // "spins about its own centre" look visibly different.
+  const TRAIL = 7;
+  type Streak = { pts: number[]; life: number; max: number };
+  const streaks: Streak[] = [];
+  function respawn(s: Streak, fresh = true) {
+    const x = (Math.random() * 2 - 1) * XR;
+    const y = (Math.random() * 2 - 1) * YR;
+    s.pts = [];
+    for (let i = 0; i < TRAIL; i++) s.pts.push(x, y);
+    s.max = 1.8 + Math.random() * 2.8;
+    s.life = fresh ? 0 : Math.random() * s.max;
+  }
+  for (let i = 0; i < 200; i++) {
+    const s: Streak = { pts: [], life: 0, max: 1 };
+    respawn(s, false);
+    streaks.push(s);
+  }
+  function moveStreaks(dt: number) {
+    const step = dt * state.speed * 0.55;
+    for (const s of streaks) {
+      const n = s.pts.length;
+      let x = s.pts[n - 2], y = s.pts[n - 1];
+      const v = vec(x, y);
+      x += v.x * step;
+      y += v.y * step;
+      s.pts.push(x, y);
+      if (s.pts.length > TRAIL * 2) s.pts.splice(0, 2);
+      s.life += dt * state.speed;
+      if (s.life > s.max || Math.abs(x) > XR * 1.08 || Math.abs(y) > YR * 1.08) respawn(s);
+    }
+  }
+  function drawStreaks() {
+    if (!state.streaks) return;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const s of streaks) {
+      const t = s.life / s.max;
+      const a = Math.min(1, Math.min(t, 1 - t) * 6) * 0.5;
+      if (a < 0.02) continue;
+      ctx.strokeStyle = `rgba(${ink()},${a.toFixed(3)})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (let i = 0; i < s.pts.length; i += 2) {
+        const X = sx(s.pts[i]), Y = sy(s.pts[i + 1]);
+        if (i) ctx.lineTo(X, Y);
+        else ctx.moveTo(X, Y);
+      }
+      ctx.stroke();
+      const n = s.pts.length;
+      ctx.fillStyle = `rgba(${ink()},${(a * 1.3).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(sx(s.pts[n - 2]), sy(s.pts[n - 1]), 1.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // --- the plane -----------------------------------------------------------------
+  // Tint by the sign of whichever number the probe measures, teal for positive
+  // and amber for negative, so its structure reads at a glance.
+  function drawHeatmap() {
+    const cell = 30;
+    let vmax = 1e-6;
+    const g: number[] = [];
+    for (let py = 0; py < H; py += cell)
+      for (let px = 0; px < W; px += cell) {
+        const v = local((px + cell / 2 - W / 2) / UNIT, -(py + cell / 2 - H / 2) / UNIT);
+        g.push(v);
+        vmax = Math.max(vmax, Math.abs(v));
+      }
+    let k = 0;
+    for (let py = 0; py < H; py += cell)
+      for (let px = 0; px < W; px += cell) {
+        const t = Math.max(-1, Math.min(1, g[k++] / vmax));
+        if (Math.abs(t) < 0.04) continue;
+        ctx.fillStyle = t > 0 ? `rgba(94,234,212,${(0.13 * t).toFixed(3)})` : `rgba(245,158,11,${(0.13 * -t).toFixed(3)})`;
+        ctx.fillRect(px, py, cell, cell);
+      }
+  }
+
+  function drawArrow(x: number, y: number) {
+    const v = vec(x, y);
+    const m = Math.hypot(v.x, v.y);
+    if (m < 1e-4) return;
+    const scale = Math.min(26, m * 13) / m;
+    const ax = sx(x), ay = sy(y), bx = ax + v.x * scale, by = ay - v.y * scale;
+    const t = Math.min(1, m / 2.2);
+    const accent = css('--accent') || '#7c8cff';
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 0.24 + 0.36 * t;
+    ctx.lineWidth = 1.3 + 1.2 * t;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    const a = Math.atan2(by - ay, bx - ax);
+    const hs = 5 + 2 * t;
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - hs * Math.cos(a - 0.5), by - hs * Math.sin(a - 0.5));
+    ctx.lineTo(bx - hs * Math.cos(a + 0.5), by - hs * Math.sin(a + 0.5));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  /** The paddle wheel itself. The ghost is the fixed reference at the origin. */
+  function drawWheel(cx: number, cy: number, r: number, angle: number, ghost: boolean) {
+    const teal = css('--accent-2') || '#5eead4';
+    const accent = css('--accent') || '#7c8cff';
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-angle);
+    const w = ghost ? 3.5 : 5;
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.fillStyle = ghost ? `rgba(${ink()},0.34)` : i % 2 ? teal : accent;
+      ctx.fillRect(-w, -r + w, 2 * w, r - 2 * w);
+    }
+    ctx.fillStyle = ghost ? `rgba(${ink()},0.45)` : `rgba(${ink()},1)`;
+    ctx.beginPath();
+    ctx.arc(0, 0, ghost ? 4.5 : 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Twelve marks on the probe circle: the flow across it (patch) or along it (wheel). */
+  function drawRimMarks() {
+    const r = state.radius;
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2, nx = Math.cos(a), ny = Math.sin(a);
+      const x = state.px + nx * r, y = state.py + ny * r;
+      const v = vec(x, y);
+      const [dx, dy] = state.probe === 'patch' ? [nx, ny] : [-ny, nx];
+      const comp = v.x * dx + v.y * dy;
+      const len = Math.max(-15, Math.min(15, comp * 9));
+      ctx.strokeStyle = comp >= 0 ? 'rgba(94,234,212,0.88)' : 'rgba(245,158,11,0.88)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), sy(y));
+      ctx.lineTo(sx(x) + dx * len, sy(y) - dy * len);
+      ctx.stroke();
+    }
+  }
+
+  function draw() {
+    const teal = css('--accent-2') || '#5eead4';
+    const faint = css('--text-faint') || '#6b7280';
+    const patch = state.probe === 'patch';
+    ctx.clearRect(0, 0, W, H);
+
+    drawHeatmap();
+
+    ctx.strokeStyle = `rgba(${ink()},0.06)`;
+    ctx.lineWidth = 1;
+    for (let gx = W / 2; gx < W; gx += 48) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gx = W / 2 - 48; gx > 0; gx -= 48) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+    for (let gy = H / 2; gy < H; gy += 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+    for (let gy = H / 2 - 48; gy > 0; gy -= 48) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+
+    const dxy = 0.2;
+    for (let y = -Math.ceil(YR / dxy) * dxy; y <= YR; y += dxy)
+      for (let x = -Math.ceil(XR / dxy) * dxy; x <= XR; x += dxy) drawArrow(x, y);
+
+    drawStreaks();
+
+    const cx = sx(state.px), cy = sy(state.py), r = state.radius * UNIT;
+    const start = ring(state.radius);
+    const pts = start.map((p) => advect(p.x, p.y));
+    // against the starting polygon, so the 72-gon's own shortfall cancels out
+    const factor = polyArea(pts) / polyArea(start);
+
+    if (patch) {
+      ctx.fillStyle = 'rgba(94,234,212,0.14)';
+      ctx.strokeStyle = teal;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      pts.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))));
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      drawRimMarks();
+      ctx.strokeStyle = `rgba(${ink()},0.9)`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      if (state.ref) {
+        const rr = 0.13 * UNIT, gx = sx(0), gy = sy(0);
+        ctx.strokeStyle = `rgba(${ink()},0.2)`;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.arc(gx, gy, rr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        drawWheel(gx, gy, rr, state.refAngle, true);
+        ctx.font = "11px 'JetBrains Mono', monospace";
+        ctx.fillStyle = faint;
+        ctx.textAlign = 'center';
+        ctx.fillText('reference', gx, gy + rr + 16);
+        ctx.textAlign = 'left';
+      }
+      ctx.fillStyle = 'rgba(94,234,212,0.1)';
+      ctx.strokeStyle = teal;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      drawRimMarks();
+      drawWheel(cx, cy, r, state.angle, false);
+    }
+
+    // --- numbers ---------------------------------------------------------------
+    const d = divergence(state.px, state.py);
+    const c = curl(state.px, state.py);
+    const c0 = curl(0, 0);
+    const { flux, circ } = rimIntegrals();
+    const om = c / 2;
+    const sign = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(2);
+    const val = patch ? d : c;
+    const zero = Math.abs(val) < 0.02;
+    const SIGN = zero ? faint : val > 0 ? teal : AMBER;
+
+    if (!patch) {
+      ctx.font = "12px 'JetBrains Mono', monospace";
+      ctx.fillStyle = SIGN;
+      ctx.textAlign = 'center';
+      ctx.fillText(`ω ${Math.abs(om).toFixed(2)}`, cx, cy - r - 10);
+      ctx.textAlign = 'left';
+    }
+
+    setRows({
+      'r-div': sign(d),
+      'r-flux': sign(flux),
+      'r-area': `${factor.toFixed(2)}×`,
+      'r-curl': sign(c),
+      'r-circ': sign(circ),
+      'r-om': `${Math.abs(om).toFixed(2)} rad/s`,
+      'r-ratio': Math.abs(c0) > 1e-6 ? `${(c / c0).toFixed(2)}×` : '—',
+    });
+    const at = `at (${state.px.toFixed(2)}, ${state.py.toFixed(2)})`;
+    if (patch) {
+      setEq({
+        rule: [['\\nabla\\cdot\\mathbf{F}', SIGN], '=\\frac{\\partial P}{\\partial x}+\\frac{\\partial Q}{\\partial y}=', ['\\lim\\limits_{A\\to 0}\\frac{\\text{flux out}}{A}', SIGN]],
+        live: [[`\\nabla\\cdot\\mathbf{F} = ${sign(d)}`, SIGN], `\\quad\\text{flux}/A = ${sign(flux)}`, `\\quad\\text{area now }${factor.toFixed(2)}\\times`],
+      });
+      setResult({
+        value: sign(d),
+        colour: zero ? undefined : SIGN,
+        status: zero
+          ? `area preserving: the patch keeps its size (${factor.toFixed(2)}×) · ${at}`
+          : `the patch is ${d > 0 ? 'expanding' : 'contracting'}, now ${factor.toFixed(2)}× · ${at}`,
+        note: 'The blob is a small material patch carried along by the flow. Its rate of change of area is the divergence.',
+      });
+    } else {
+      setEq({
+        rule: [['(\\nabla\\times\\mathbf{F})_z', SIGN], '=\\frac{\\partial Q}{\\partial x}-\\frac{\\partial P}{\\partial y}=', ['\\lim\\limits_{A\\to 0}\\frac{\\text{circulation}}{A}', SIGN]],
+        live: [[`(\\nabla\\times\\mathbf{F})_z = ${sign(c)}`, SIGN], `\\quad\\text{circulation}/A = ${sign(circ)}`, `\\quad\\omega = ${Math.abs(om).toFixed(2)}\\text{ rad/s}`],
+      });
+      setResult({
+        value: sign(c),
+        colour: zero ? undefined : SIGN,
+        status: zero
+          ? `the wheel does not turn here · ${at}`
+          : `the wheel spins ${c > 0 ? 'anticlockwise' : 'clockwise'} at ${Math.abs(om).toFixed(2)} rad/s · ${at}`,
+        note: 'Curl is local rotation, one number at each point: not whether the arrows travel on curved paths.',
+      });
+    }
+  }
+
+  function loop(t: number) {
+    if (!last) last = t;
+    const dt = Math.min(0.04, (t - last) / 1000);
+    last = t;
+    if (state.running) {
+      state.time += dt * state.speed;
+      if (state.time > 1.35) state.time = 0;
+      state.angle += (curl(state.px, state.py) / 2) * dt * state.speed;
+      state.refAngle += (curl(0, 0) / 2) * dt * state.speed;
+      moveStreaks(dt);
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function pointer(e: PointerEvent) {
+    const r = canvas.getBoundingClientRect();
+    state.px = Math.max(-1.95, Math.min(1.95, (((e.clientX - r.left) / r.width) * W - W / 2) / UNIT));
+    state.py = Math.max(-1.1, Math.min(1.1, -(((e.clientY - r.top) / r.height) * H - H / 2) / UNIT));
+    state.time = 0;
+  }
+  canvas.addEventListener('pointerdown', (e) => { drag = true; canvas.setPointerCapture(e.pointerId); pointer(e); });
+  canvas.addEventListener('pointermove', (e) => drag && pointer(e));
+  canvas.addEventListener('pointerup', () => (drag = false));
+  canvas.addEventListener('pointercancel', () => (drag = false));
+
+  const LEGEND = {
+    patch: ['the patch swells', 'the patch is squeezed', 'Divergence at the probe'],
+    wheel: ['spins anticlockwise', 'spins clockwise', 'Curl at the wheel'],
+  };
+  function setProbe(p: Probe) {
+    state.probe = p;
+    const [pos, neg, head] = LEGEND[p];
+    el('lg-pos').textContent = pos;
+    el('lg-neg').textContent = neg;
+    el('result-label').textContent = head;
+  }
+
+  const probes = segmented('probe', (p) => setProbe(p as Probe));
+  const fields = segmented('field', (f) => {
+    state.field = f as Field;
+    state.time = 0;
+    for (const s of streaks) respawn(s, false);
+  });
+  const setStrength = slider('strength', (v) => { state.strength = v / 100; state.time = 0; }, (v) => (v / 100).toFixed(2));
+  slider('speed', (v) => (state.speed = v / 100), (v) => `${(v / 100).toFixed(1)}×`);
+  slider('radius', (v) => { state.radius = v / 100; state.time = 0; }, (v) => (v / 100).toFixed(2));
+  check('streaks', (on) => (state.streaks = on));
+  check('ref', (on) => (state.ref = on));
+  const tp = transport({
+    onRun: (running) => (state.running = running),
+    onReset: () => {
+      state.time = 0;
+      state.angle = 0;
+      state.refAngle = 0;
+      state.px = HOME.x;
+      state.py = HOME.y;
+    },
+  });
+
+  function show(p: Probe, f: Field, x: number, y: number) {
+    setProbe(p);
+    probes.select(p);
+    state.field = f;
+    fields.select(f);
+    for (const s of streaks) respawn(s, false);
+    state.strength = 1;
+    setStrength(100);
+    state.px = x;
+    state.py = y;
+    state.time = 0;
+    state.angle = 0;
+    state.refAngle = 0;
+    if (!tp.running()) el('run').click();
+  }
+  tries({
+    source: () => show('patch', 'source', HOME.x, HOME.y),
+    saddle: () => show('patch', 'saddle', 0.25, 0.15),
+    rotation: () => show('wheel', 'rigid', HOME.x, HOME.y),
+    shear: () => show('wheel', 'shear', 0.2, 0.6),
+  });
+
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #dc {
+    cursor: crosshair;
+    touch-action: none;
+  }
+</style>

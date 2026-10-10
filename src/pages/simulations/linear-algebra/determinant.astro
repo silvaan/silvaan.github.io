@@ -8,6 +8,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -111,46 +112,22 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      The two arrows are the <b>columns of A</b>: where î and ĵ land. The unit
-      square between the old ones is carried to the parallelogram between the
-      new ones, and the determinant is nothing more exotic than
-      <b>its area</b>. Drag a tip and watch the number track the shading.
+      With <b>base times height</b> on, slide the second arrow along the first:
+      the height never changes, so neither does the area. That is why adding a
+      multiple of one row leaves det alone. <Try id="height" />
     </li>
     <li>
-      Turn on <b>base times height</b>. The area is the length of one arrow
-      times how far the other stands off its line, and the dashed leg is that
-      height. Slide the second arrow <b>along</b> the direction of the first:
-      the height never changes, so neither does the area. That single fact is
-      why adding a multiple of one row to another leaves a determinant alone.
+      Line the two arrows up and the parallelogram thins to nothing:
+      <b>det = 0</b>, the plane is pressed onto a line, and A is
+      <b>not invertible</b>. <Try id="collapse" />
     </li>
     <li>
-      Push the arrows towards each other until they line up. The parallelogram
-      thins to nothing, <b>det hits 0</b>, and the whole plane has been pressed
-      onto a line. Everything on that line now has infinitely many preimages and
-      everything off it has none, which is precisely what
-      <b>non-invertible</b> means. The determinant answers that question with a
-      single number.
+      Animate <b>Reflect</b> with the F shown. The F turns into its mirror image
+      and det goes negative, and on the way it has to <b>pass through zero</b>. <Try id="mirror" label="Animate" />
     </li>
     <li>
-      Keep pushing past the collapse. The shading changes colour and the
-      determinant comes out negative. Turn on <b>A shape inside the square</b>:
-      the little <b>F flips into its mirror image</b>. The sign is not an
-      accident of the formula, it is the record of whether the plane was turned
-      over, and to get from a right-handed frame to a left-handed one you have
-      to <b>pass through zero</b>, which is what Animate shows on the Reflect
-      preset.
-    </li>
-    <li>
-      The square is a convenient object, not a special one. With the shape on,
-      watch the row for its area: whatever it started as, it comes out
-      multiplied by the <b>same</b> |det A|. The determinant is a property of
-      the map, not of the thing being mapped.
-    </li>
-    <li>
-      Now switch <b>B</b> on. Doing A and then B scales area twice over, so
-      <b>det(BA) = det B · det A</b> falls out with no algebra at all. Set B to
-      Reflect while A is already a reflection: two flips undo each other, two
-      minus signs multiply to a plus, and the F comes back the right way round.
+      Apply <b>B</b> as well: area is scaled twice, so <b>det(BA) = det B · det A</b>.
+      Two reflections multiply to +1 and the F comes back the right way round. <Try id="product" />
     </li>
   </Fragment>
 </SimLayout>
@@ -159,7 +136,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, matrix, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, matrix, check, result, readout, tries } from '../../../lib/panel';
 
   // ad − bc is the area of the parallelogram spanned by the columns, signed by
   // whether the plane got turned over on the way. Every property people
@@ -359,20 +336,22 @@ import Readout from '../../../components/sim/Readout.astro';
 
   // --- controls -----------------------------------------------------------------
   const sync = matrix(A, ['a', 'b', 'c', 'd'], () => draw());
-  const setT = slider('t', (v) => { view.t = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
-  segmented('presets', (m) => {
+  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
+  let raf = 0;
+  function preset(m: string) {
+    cancelAnimationFrame(raf);
     const [a, b, c, d] = m.split(',').map(Number);
     Object.assign(A, { a, b, c, d });
     view.t = 1;
     setT(100);
     sync();
     draw();
-  });
-  segmented('bmat', (b) => { view.bkey = b; draw(); });
-  check('shape', (on) => { view.shape = on; draw(); });
-  check('hgt', (on) => { view.hgt = on; draw(); });
+  }
+  const presets = segmented('presets', preset);
+  const bmats = segmented('bmat', (b) => { view.bkey = b; draw(); });
+  const setShape = check('shape', (on) => { view.shape = on; draw(); });
+  const setHgt = check('hgt', (on) => { view.hgt = on; draw(); });
   check('ghost', (on) => { view.ghost = on; draw(); });
-  let raf = 0;
   el('run').addEventListener('click', () => {
     cancelAnimationFrame(raf);
     const start = performance.now();
@@ -395,6 +374,24 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   });
 
+  function show(m: string, o: { b?: string; shape?: boolean; hgt?: boolean } = {}) {
+    presets.select(m);
+    preset(m);
+    view.bkey = o.b ?? 'none';
+    bmats.select(view.bkey);
+    view.shape = !!o.shape;
+    setShape(view.shape);
+    view.hgt = !!o.hgt;
+    setHgt(view.hgt);
+    draw();
+  }
+  tries({
+    height: () => show('1,0.9,0,1', { hgt: true }),
+    collapse: () => show('1,2,0.5,1'),
+    mirror: () => { show('-1,0,0,1', { shape: true }); el('run').click(); },
+    product: () => show('-1,0,0,1', { b: 'flip', shape: true }),
+  });
+
   // --- dragging the two columns -------------------------------------------------
   let drag: 'i' | 'j' | null = null;
   const local = (e: PointerEvent) => {
@@ -408,7 +405,7 @@ import Readout from '../../../components/sim/Readout.astro';
   canvas.addEventListener('pointerdown', (e) => {
     const l = local(e);
     drag = nearTip(l, 'i') ? 'i' : nearTip(l, 'j') ? 'j' : null;
-    if (drag) { view.t = 1; setT(100); canvas.setPointerCapture(e.pointerId); }
+    if (drag) { cancelAnimationFrame(raf); view.t = 1; setT(100); presets.clear(); canvas.setPointerCapture(e.pointerId); }
   });
   canvas.addEventListener('pointermove', (e) => {
     const l = local(e);

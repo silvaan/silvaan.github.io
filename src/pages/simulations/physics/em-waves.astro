@@ -1,231 +1,223 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
 import Transport from '../../../components/sim/Transport.astro';
+import Readout from '../../../components/sim/Readout.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
 ---
 
 <SimLayout
   areaSlug="physics"
   title="Electromagnetic Waves"
-  description="Move charged particles and watch a retarded electromagnetic field propagate through a medium you can change. Show E and B on a plane or through the volume, build a dipole antenna, and see how permittivity and permeability set the wave speed, impedance and wavelength."
+  description="Shake a charge and watch its field ripple outward as a glowing shell, at the speed the medium allows. Build a dipole antenna to see its radiation glow as a doughnut round the wire, with E and B turning transverse in 3D, or switch to statics for the Coulomb field lines of fixed charges and the magnetic circles round a wire."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="em3d" class="em-canvas" width="820" height="720" role="img" aria-label="Charges in three dimensions with the electric and magnetic field vectors they radiate, sampled on a plane or throughout the volume."></canvas>
+        <canvas id="em3d" class="em-canvas" width="820" height="720" role="img" aria-label="Charges in three dimensions with the electric and magnetic fields they make: arrows on a plane or through a volume for radiating charges, field lines for static charges and a current-carrying wire."></canvas>
       </div>
-      <Caption hint="Drag a charge to shake it; the ripple that leaves it travels at the speed the medium allows" />
+      <Caption
+        legend={[
+          { label: 'electric field E', color: E_COLOR },
+          { label: 'magnetic field B', color: B_COLOR },
+          { label: 'field strength √(εE² + B²/μ)', color: '#a78bfa', id: 'lg-heat' },
+        ]}
+        hint="Drag a charge to move it · drag empty space to orbit · scroll to zoom"
+      />
       <Result label="Wave speed in this medium" />
     </div>
 
     <div class="sim-panel">
-      <Transport step>
-        <button type="button" class="btn ghost" id="add">Add charge</button>
-        <button type="button" class="btn ghost" id="dipole">Dipole antenna</button>
+      <Seg
+        id="scene"
+        label="Scene"
+        attr="s"
+        options={[
+          { value: 'charge', label: 'Free charge' },
+          { value: 'dipole', label: 'Dipole antenna' },
+          { value: 'statics', label: 'Statics' },
+        ]}
+      />
+      <Transport step running>
+        <button type="button" class="btn ghost" id="shake">Shake</button>
+        <button type="button" class="btn ghost" id="newq" hidden>New charges</button>
+        <button type="button" class="btn ghost" id="flip" hidden>Flip current</button>
       </Transport>
-
-      <div class="control">
-        <label>Animation speed <b id="speedVal">1.00×</b></label>
-        <input type="range" id="speed" min="20" max="220" value="100" />
-      </div>
-
-      <div class="control">
-        <label>Field vectors</label>
-        <div class="seg" id="fieldMode">
-          <button data-v="e" class="active">E</button>
-          <button data-v="b">B</button>
-          <button data-v="both">E + B</button>
-          <button data-v="off">Off</button>
+      <Seg
+        id="field"
+        label="Show"
+        options={[
+          { value: 'e', label: 'E' },
+          { value: 'b', label: 'B' },
+          { value: 'both', label: 'E + B' },
+          { value: 'off', label: 'Off' },
+        ]}
+      />
+      <div id="view-wrap">
+        <Seg
+          id="view"
+          label="Field strength"
+          options={[
+            { value: 'both', label: 'Fog + plane' },
+            { value: 'plane', label: 'Plane' },
+            { value: 'fog', label: 'Fog' },
+            { value: 'off', label: 'Off' },
+          ]}
+        />
+        <div id="fogop-wrap">
+          <Slider id="fogop" label="Fog opacity" min={0.2} max={3} step={0.05} value={1} display="1.00" hint={['thin', 'dense']} />
         </div>
       </div>
-
-      <div class="control">
-        <label>Sampling</label>
-        <div class="seg" id="sampleMode">
-          <button data-v="plane" class="active">Plane</button>
-          <button data-v="space">Space</button>
-        </div>
+      <div id="layout-wrap">
+        <Seg
+          id="layout"
+          label="Arrows"
+          options={[
+            { value: 'plane', label: 'On a plane' },
+            { value: 'volume', label: 'Volume (3D)' },
+          ]}
+        />
       </div>
-
-      <details class="group" open>
-        <summary>Vectors &amp; plane</summary>
-        <div class="group-body">
-          <div class="control">
-            <label>Plane</label>
-            <div class="seg" id="planeMode">
-              <button data-v="xy" class="active">XY</button>
-              <button data-v="xz">XZ</button>
-              <button data-v="yz">YZ</button>
-            </div>
-          </div>
-
-          <div class="control">
-            <label>Plane position <b id="planeVal">0.00</b></label>
-            <input type="range" id="planePos" min="-450" max="450" value="0" />
-          </div>
-
-          <div class="control">
-            <label>Vector density <b id="densityVal">15</b></label>
-            <input type="range" id="density" min="5" max="31" step="2" value="15" />
-          </div>
-
-          <div class="control">
-            <label>Vector scale <b id="fieldScaleVal">2.10</b></label>
-            <input type="range" id="fieldScale" min="50" max="520" value="210" />
-          </div>
-        </div>
-      </details>
-
-      <details class="group">
-        <summary>Medium &amp; source</summary>
-        <div class="group-body">
-          <div class="control">
-            <label>Preset</label>
-            <select id="preset" class="select">
-              <option value="vacuum">Vacuum</option>
-              <option value="air">Air</option>
-              <option value="glass">Glass-like dielectric</option>
-              <option value="water">Water-like dielectric</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-
-          <div class="control">
-            <label>Relative permittivity εᵣ <b id="epsVal">1.00</b></label>
-            <input type="range" id="eps" min="100" max="8000" value="100" />
-          </div>
-
-          <div class="control">
-            <label>Relative permeability μᵣ <b id="muVal">1.00</b></label>
-            <input type="range" id="mu" min="100" max="1000" value="100" />
-          </div>
-
-          <div class="control">
-            <label>Loss / attenuation σ <b id="sigmaVal">0.00</b></label>
-            <input type="range" id="sigma" min="0" max="200" value="0" />
-          </div>
-
-          <div class="control">
-            <label>Frequency <b id="freqVal">100 MHz</b></label>
-            <input type="range" id="freq" min="20" max="1000" value="100" />
-          </div>
-
-          <div class="control">
-            <label>Source oscillation amplitude <b id="ampVal">0.38</b></label>
-            <input type="range" id="amp" min="0" max="90" value="38" />
-          </div>
-        </div>
-      </details>
-
-      <details class="group" open>
-        <summary>Charges</summary>
-        <div class="group-body">
-          <div id="charges"></div>
-        </div>
-      </details>
-
-      <div class="readout">
-        <div class="row"><span>n = √(εᵣ μᵣ)</span><b id="nOut">1.000</b></div>
-        <div class="row"><span>v = c / n</span><b id="vOut">3.00e8 m/s</b></div>
-        <div class="row"><span>η = η₀√(μᵣ/εᵣ)</span><b id="etaOut">376.7 Ω</b></div>
-        <div class="row"><span>λ = v / f</span><b id="lambdaOut">3.00 m</b></div>
-        <div class="row"><span>Simulation time</span><b id="timeOut">0.00</b></div>
+      <div id="plane-wrap">
+        <Seg
+          id="plane"
+          label="Plane"
+          options={[
+            { value: 'xy', label: 'XY' },
+            { value: 'xz', label: 'XZ' },
+            { value: 'yz', label: 'YZ' },
+          ]}
+        />
+        <Slider id="offset" label="Plane offset" min={-6} max={6} step={0.1} value={0} display="0.0" />
       </div>
-
+      <Slider id="density" label="Density" min={1} max={8} step={1} value={4} display="15 × 15" />
+      <div id="look-wrap">
+        <Checks items={[{ id: 'fronts', label: 'Wavefronts', checked: true }]} />
+      </div>
+      <Slider id="eps" label="Permittivity ε<sub>r</sub>" min={1} max={80} step={0.1} value={1} display="1.0" />
+      <Slider id="mu" label="Permeability μ<sub>r</sub>" min={1} max={10} step={0.1} value={1} display="1.0" />
+      <Slider id="sigma" label="Loss σ" min={0} max={2} step={0.02} value={0} display="0.00" />
+      <div id="freq-wrap">
+        <Slider id="freq" label="Antenna frequency f" min={0.1} max={1.5} step={0.05} value={0.55} display="0.55" />
+      </div>
+      <Readout
+        rows={[
+          { id: 'nOut', label: 'n = √(ε<sub>r</sub> μ<sub>r</sub>)' },
+          { id: 'vOut', label: 'v = c / n' },
+          { id: 'etaOut', label: 'η = η<sub>0</sub> √(μ<sub>r</sub> / ε<sub>r</sub>)' },
+          { id: 'lambdaOut', label: 'λ = v / f' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Grab the charge and <b>jiggle it</b> back and forth. A sharp kink races
-      outward at the wave speed: you are watching a charge <b>radiate</b>. Let it
-      sit still and the field just stands there, only <b>acceleration</b> makes
-      waves.
+      <b>Shake</b> the charge and a glowing shell races outward at the wave speed: the
+      charge <b>radiates</b>. Held still, its field just stands there, because
+      only acceleration makes waves. <Try id="jiggle" label="Shake it" />
     </li>
     <li>
-      Hit <b>Dipole antenna</b> and switch to <b>E + B</b>. Out in the far field
-      the red and blue arrows turn <b>transverse</b>: E and B end up perpendicular
-      to each other and to the outward direction, the fingerprint of a real
-      electromagnetic wave.
+      The dipole antenna's radiation glows as a <b>doughnut</b>, dark along the
+      antenna's own axis, with shells half a wavelength apart streaming outward.
+      Far out, E, B and the direction of travel are all at right angles: the
+      wave is <b>transverse</b>. <Try id="dipole" />
     </li>
     <li>
-      Raise the permittivity <b>εᵣ</b> or permeability <b>μᵣ</b>. The speed
-      <b>v = c/n</b> drops, the wavelength shrinks to keep up, and the impedance η
-      shifts, exactly what a denser optical medium does to light.
+      Raise <b>ε<sub>r</sub></b> and the wave slows to c/n. The rings, one
+      wavelength apart, crowd together and the impedance η drops. <Try id="medium" />
     </li>
     <li>
-      Turn up the loss <b>σ</b> and the ripples fade with distance, like a signal
-      dying in a lossy material. Keep sampling on <b>Plane</b>: filling all of
-      space with arrows quickly turns into unreadable spaghetti.
+      In <b>Statics</b> the number of lines on a charge is proportional to |q|,
+      so a −2 next to a +1 draws extra lines in from infinity. The B circles
+      spread out with distance because B falls as 1/r. <Try id="statics" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
   import { setupCanvas } from '../../../lib/sim';
-  import { equationBar } from '../../../lib/equation';
-  import { result } from '../../../lib/panel';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, readout, result, tries } from '../../../lib/panel';
+  import { Camera3D, fieldRamp } from '../../../lib/scene3d';
+  import { VolumeView } from '../../../lib/volume3d';
 
-  const canvas = document.getElementById('em3d') as HTMLCanvasElement;
+  const canvas = el('em3d') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const isLight = () => css('--stage-light') === '1';
   const ink = () => css('--stage-ink') || '232,233,236';
 
-  const CX = W / 2;
-  const CY = H / 2;
+  const CAM = 17;
+  const cam = new Camera3D(W, H, { dist: CAM, yaw: 0.72, pitch: -0.42, zoom: 0.9 });
 
-  const CAM = 10.5;
-  const FOCAL = 2.8;
-  const SCALE = 300;
+  // the scene has its own units: lengths in box units u (the box is 15 u
+  // across), times in one time unit t. Light in vacuum covers C_VIS u per t.
+  const BOX = 7.5;
+  const FIELD_MIN = -7.1;
+  const FIELD_MAX = 7.1;
+  const SPAN = FIELD_MAX - FIELD_MIN;
+  const C_VIS = 1.08;
+  const AMP = 0.38;
 
-  const BOX = 4.5;
-  const FIELD_MIN = -4.2;
-  const FIELD_MAX = 4.2;
-  const GRID_STEP = 0.6;
+  // The motion is integrated in fixed steps and every charge keeps one sample
+  // per step, so the retarded lookups never see the frame-to-frame jitter of
+  // the browser's clock. That jitter, differentiated twice, is what used to
+  // make the radiation arrows tremble.
+  const DT = 1 / 120;
+  const HN = 36000; // 300 time units of history: enough for the slowest medium
 
-  const C0 = 299792458;
   const ETA0 = 376.730313668;
   const TAU = Math.PI * 2;
-  const EPS = 1e-8;
 
   const E_COLOR = '#60a5fa';
   const B_COLOR = '#f87171';
+  const E_RGB: RGB = [96, 165, 250];
+  const B_RGB: RGB = [248, 113, 113];
 
+  // a dragged charge chases the pointer on a critically damped spring, and the
+  // pointer itself is low-passed first, so its acceleration is continuous
+  const SPRING = 16;
+  const AIM_TAU = 0.05;
+  const AMAX = 9;
+
+  const WIRE_X = 2.6;
+  const WIRE_B = 0.08; // the wire's |B| at unit distance, for the statics fog
+
+  type RGB = [number, number, number];
   type Vec = { x: number; y: number; z: number };
-  type Hist = { t: number; p: Vec; v: Vec; a: Vec };
+  type Kin = { p: Vec; v: Vec; a: Vec };
+  type Scene = 'charge' | 'dipole' | 'statics';
   type Charge = {
     id: number;
-    on: boolean;
     q: number;
-    color: string;
     p: Vec;
-    origin: Vec;
-    target: Vec;
     v: Vec;
     a: Vec;
-    prevP: Vec;
-    prevV: Vec;
+    origin: Vec;
+    target: Vec;
+    aim: Vec;
     phase: number;
-    mode: 'manual' | 'osc-x' | 'osc-y' | 'osc-z';
-    hist: Hist[];
-  };
-
-  type DrawItem = {
-    z: number;
-    kind: 'arrow' | 'charge';
-    p?: Vec;
-    dir?: Vec;
-    mag?: number;
-    color?: string;
-    charge?: Charge;
+    mode: 'manual' | 'osc';
+    buf: Float64Array;
+    /** Steps before this one are all equal to it: the charge sat still. */
+    since: number;
+    shakeFrom: number;
+    /** The last step it moved on. */
+    activeStep: number;
   };
 
   const V = {
     add: (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }),
     sub: (a: Vec, b: Vec): Vec => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }),
     mul: (a: Vec, s: number): Vec => ({ x: a.x * s, y: a.y * s, z: a.z * s }),
+    dot: (a: Vec, b: Vec) => a.x * b.x + a.y * b.y + a.z * b.z,
     cross: (a: Vec, b: Vec): Vec => ({
       x: a.y * b.z - a.z * b.y,
       y: a.z * b.x - a.x * b.z,
@@ -245,1019 +237,1301 @@ import Caption from '../../../components/sim/Caption.astro';
   };
 
   const state = {
-    yaw: 0.72,
-    pitch: -0.42,
-    zoom: 0.9,
-    running: false,
-    time: 0,
-    speed: 1,
     epsR: 1,
     muR: 1,
     sigma: 0,
-    freqMHz: 100,
-    amp: 0.38,
-    fieldScale: 2.1,
-    density: 15,
-    sampleMode: 'plane' as 'plane' | 'space',
+    freq: 0.55,
     plane: 'xy' as 'xy' | 'xz' | 'yz',
     planePos: 0,
+    layout: 'plane' as 'plane' | 'volume',
+    density: 4,
+    view: 'both' as 'both' | 'plane' | 'fog' | 'off',
+    fogOpacity: 1,
+    fronts: true,
     fieldMode: 'e' as 'e' | 'b' | 'both' | 'off',
+    scene: 'charge' as Scene,
+    current: 1,
     selectedId: 1,
   };
+
+  let step = 0; // the newest integrated step; time = step · DT
+  let acc = 0;
+  let moved = 0; // bumped whenever a charge jumps without time passing
+  const now = () => step * DT;
 
   let nextId = 1;
   let charges: Charge[] = [];
 
-  function visualC() {
-    return 1.08 / Math.sqrt(Math.max(0.05, state.epsR * state.muR));
+  const n = () => Math.sqrt(state.epsR * state.muR);
+  const visualC = () => C_VIS / Math.sqrt(Math.max(0.05, state.epsR * state.muR));
+  const eta = () => ETA0 * Math.sqrt(state.muR / state.epsR);
+  /** Wavelength in box units: the distance the wave covers in one period. */
+  const lambda = () => visualC() / state.freq;
+
+  // --- charges and their history ---------------------------------------------------
+
+  function oscKin(c: Charge, t: number): Kin {
+    const w = TAU * state.freq;
+    const ph = w * t + c.phase;
+    return {
+      p: { x: c.origin.x, y: c.origin.y + AMP * Math.sin(ph), z: c.origin.z },
+      v: { x: 0, y: AMP * w * Math.cos(ph), z: 0 },
+      a: { x: 0, y: -AMP * w * w * Math.sin(ph), z: 0 },
+    };
   }
 
-  function visualFreq() {
-    return Math.max(0.08, state.freqMHz / 180);
+  function writeHist(c: Charge, k: number) {
+    const o = (((k % HN) + HN) % HN) * 9, b = c.buf;
+    b[o] = c.p.x; b[o + 1] = c.p.y; b[o + 2] = c.p.z;
+    b[o + 3] = c.v.x; b[o + 4] = c.v.y; b[o + 5] = c.v.z;
+    b[o + 6] = c.a.x; b[o + 7] = c.a.y; b[o + 8] = c.a.z;
   }
 
-  function physicalN() {
-    return Math.sqrt(state.epsR * state.muR);
+  function readHist(c: Charge, k: number): Kin {
+    const o = (((k % HN) + HN) % HN) * 9, b = c.buf;
+    return {
+      p: { x: b[o], y: b[o + 1], z: b[o + 2] },
+      v: { x: b[o + 3], y: b[o + 4], z: b[o + 5] },
+      a: { x: b[o + 6], y: b[o + 7], z: b[o + 8] },
+    };
   }
 
-  function physicalV() {
-    return C0 / physicalN();
+  /** Where the charge was, how fast and how hard it was accelerating at time t. */
+  function kin(c: Charge, t: number): Kin {
+    if (c.mode === 'osc') return oscKin(c, t);
+    const lo = Math.max(c.since, step - HN + 1);
+    const f = t / DT;
+    if (f <= lo) return readHist(c, lo);
+    if (f >= step) return readHist(c, step);
+    const k0 = Math.floor(f), u = f - k0;
+    const A = readHist(c, k0), B = readHist(c, k0 + 1);
+    return { p: V.mix(A.p, B.p, u), v: V.mix(A.v, B.v, u), a: V.mix(A.a, B.a, u) };
   }
 
-  function physicalEta() {
-    return ETA0 * Math.sqrt(state.muR / state.epsR);
+  /** Forget the past: the charge has always sat where it is now. */
+  function settle(c: Charge) {
+    c.v = V.zero();
+    c.a = V.zero();
+    c.aim = { ...c.p };
+    c.target = { ...c.p };
+    c.since = step;
+    writeHist(c, step);
   }
 
-  function physicalLambda() {
-    return physicalV() / (state.freqMHz * 1e6);
-  }
-
-  function fmtSci(x: number) {
-    if (x === 0) return '0';
-    if (Math.abs(x) < 0.01 || Math.abs(x) >= 1e5) return x.toExponential(2);
-    return x.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  }
-
-  function makeCharge(q = 1, p: Vec = { x: 0, y: 0, z: 0 }, mode: Charge['mode'] = 'manual', phase = 0): Charge {
+  function makeCharge(q = 1, p: Vec = V.zero(), mode: Charge['mode'] = 'manual', phase = 0): Charge {
     const c: Charge = {
       id: nextId++,
-      on: true,
       q,
-      color: q >= 0 ? '#f87171' : '#60a5fa',
       p: { ...p },
-      origin: { ...p },
-      target: { ...p },
       v: V.zero(),
       a: V.zero(),
-      prevP: { ...p },
-      prevV: V.zero(),
+      origin: { ...p },
+      target: { ...p },
+      aim: { ...p },
       phase,
       mode,
-      hist: [],
+      buf: new Float64Array(HN * 9),
+      since: step,
+      shakeFrom: -1,
+      activeStep: -1e9,
     };
-    pushHist(c);
+    if (mode === 'osc') Object.assign(c, oscKin(c, now()));
+    settle(c);
     return c;
   }
 
-  function pushHist(c: Charge) {
-    c.hist.push({ t: state.time, p: { ...c.p }, v: { ...c.v }, a: { ...c.a } });
-    if (c.hist.length > 2400) c.hist.shift();
+  /** An oscillating charge grabbed by the pointer: keep its past as it was. */
+  function toManual(c: Charge) {
+    if (c.mode === 'manual') return;
+    for (let k = step - HN + 1; k <= step; k++) {
+      Object.assign(c, oscKin(c, k * DT));
+      writeHist(c, k);
+    }
+    c.since = step - HN + 1;
+    Object.assign(c, oscKin(c, now()));
+    c.mode = 'manual';
+    c.activeStep = step;
+    c.aim = { ...c.p };
+    c.target = { ...c.p };
   }
 
-  function resetDefaultCharges() {
-    state.time = 0;
+  // --- scenes ---------------------------------------------------------------------
+
+  function setScene(s: Scene) {
+    state.scene = s;
+    step = 0;
+    acc = 0;
     nextId = 1;
-    charges = [
-      makeCharge(1, { x: 0, y: 0, z: 0 }, 'manual', 0),
-    ];
+    if (s === 'charge') charges = [makeCharge(1)];
+    else if (s === 'dipole') {
+      const d = 0.55;
+      charges = [
+        makeCharge(1, { x: 0, y: d, z: 0 }, 'osc', 0),
+        makeCharge(-1, { x: 0, y: -d, z: 0 }, 'osc', Math.PI),
+      ];
+    } else {
+      charges = [makeCharge(1, { x: -2.2, y: 0, z: 0 }), makeCharge(-1, { x: -0.2, y: 0, z: 0 })];
+    }
     state.selectedId = charges[0].id;
-    renderCharges();
+    linesDirty = true;
+    exposure = 0;
+    volExpo = 0;
+    volKey = '';
+    genHalf = 0;
+    panelFor();
   }
 
-  function setDipole() {
-    state.time = 0;
+  /** Two to four charges of either sign; same-sign sets are allowed. */
+  function randomCharges() {
+    const k = 2 + Math.floor(Math.random() * 3);
     nextId = 1;
-
-    const d = 0.55;
-
-    charges = [
-      makeCharge(1, { x: 0, y: 0, z: d }, 'osc-z', 0),
-      makeCharge(-1, { x: 0, y: 0, z: -d }, 'osc-z', Math.PI),
-    ];
-
+    charges = [];
+    for (let i = 0; i < k; i++) {
+      const q = (Math.random() < 0.5 ? 1 : -1) * (0.6 + Math.random() * 0.8);
+      charges.push(makeCharge(+q.toFixed(1), {
+        x: -2.6 + Math.random() * 3.2,
+        y: -1.4 + Math.random() * 2.8,
+        z: -1.4 + Math.random() * 2.8,
+      }));
+    }
     state.selectedId = charges[0].id;
-    renderCharges();
+    linesDirty = true;
   }
 
-  function axisFor(mode: Charge['mode']) {
-    if (mode === 'osc-x') return { x: 1, y: 0, z: 0 };
-    if (mode === 'osc-y') return { x: 0, y: 1, z: 0 };
-    return { x: 0, y: 0, z: 1 };
+  const SHAKE_F = 0.75, SHAKE_N = 2;
+  function shake() {
+    const c = charges.find((q) => q.mode === 'manual');
+    if (!c) return;
+    c.origin = { ...c.target };
+    c.shakeFrom = now();
+    tr.setRunning(true);
+  }
+
+  function integrate() {
+    step++;
+    const t = now();
+    const k = 1 - Math.exp(-DT / AIM_TAU);
+    for (const c of charges) {
+      if (c.mode === 'osc') {
+        Object.assign(c, oscKin(c, t));
+        continue;
+      }
+      if (c.shakeFrom >= 0) {
+        const s = (t - c.shakeFrom) * SHAKE_F;
+        if (s >= SHAKE_N) { c.shakeFrom = -1; c.target = { ...c.origin }; }
+        else c.target = V.add(c.origin, { x: 0.6 * Math.sin(TAU * s), y: 0, z: 0 });
+      }
+      c.aim = V.mix(c.aim, c.target, k);
+      const a = V.sub(V.mul(V.sub(c.aim, c.p), SPRING * SPRING), V.mul(c.v, 2 * SPRING));
+      c.v = V.add(c.v, V.mul(a, DT));
+      c.p = V.add(c.p, V.mul(c.v, DT));
+      c.a = a;
+      if (a.x * a.x + a.y * a.y + a.z * a.z > 1e-10 || c.v.x * c.v.x + c.v.y * c.v.y + c.v.z * c.v.z > 1e-10) c.activeStep = step;
+      writeHist(c, step);
+    }
   }
 
   function advance(dt: number) {
-    state.time += dt;
-    const idt = 1 / Math.max(dt, 1e-4);
-
-    for (const c of charges) {
-      if (c.mode !== 'manual') {
-        const axis = axisFor(c.mode);
-        const w = TAU * visualFreq();
-        const s = state.amp * Math.sin(w * state.time + c.phase);
-        c.p = V.add(c.origin, V.mul(axis, s));
-      } else {
-        // ease toward the mouse target so a fast, jumpy drag becomes a smooth
-        // trajectory instead of a jagged one
-        c.p = V.mix(c.p, c.target, 0.45);
-      }
-
-      // velocity/acceleration from the change since the previous frame, so a
-      // dragged charge radiates too
-      const rawV = V.mul(V.sub(c.p, c.prevP), idt);
-      const rawA = V.mul(V.sub(rawV, c.prevV), idt);
-      c.prevP = { ...c.p };
-      c.prevV = { ...rawV };
-
-      if (c.mode === 'manual') {
-        // low-pass filter and clamp the derivatives: a fast jerky drag otherwise
-        // spikes the acceleration and the radiation vectors tremble
-        c.v = V.mix(c.v, rawV, 0.5);
-        let sa = V.mix(c.a, rawA, 0.2);
-        const am = V.norm(sa);
-        const AMAX = 7;
-        if (am > AMAX) sa = V.mul(sa, AMAX / am);
-        c.a = sa;
-      } else {
-        c.v = rawV;
-        c.a = rawA;
-      }
-
-      // one history sample per frame keeps timestamps clean and the buffer
-      // covering many seconds, so retarded lookups stay correct while dragging
-      pushHist(c);
+    acc += dt;
+    let guard = 0;
+    while (acc >= DT && guard++ < 12) {
+      integrate();
+      acc -= DT;
     }
+    if (guard >= 12) acc = 0;
   }
 
-  function sampleHist(c: Charge, t: number): Hist {
-    const h = c.hist;
+  // --- the field ------------------------------------------------------------------
 
-    if (h.length === 0) return { t: state.time, p: c.p, v: c.v, a: c.a };
-    if (t <= h[0].t) return h[0];
+  // The field is summed in plain numbers rather than vector objects: the
+  // shading asks for it at thousands of points every frame.
+  const K9 = new Float64Array(9);
+  const F6 = new Float64Array(6);
 
-    const last = h[h.length - 1];
-    if (t >= last.t) return last;
-
-    // history is sorted ascending in time: binary-search the bracketing pair
-    let lo = 0, hi = h.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (h[mid].t <= t) lo = mid;
-      else hi = mid;
+  /** kin(), written into K9 as p, v, a without allocating. */
+  function kinInto(c: Charge, t: number) {
+    if (c.mode === 'osc') {
+      const w = TAU * state.freq, ph = w * t + c.phase, sn = Math.sin(ph);
+      K9[0] = c.origin.x; K9[1] = c.origin.y + AMP * sn; K9[2] = c.origin.z;
+      K9[3] = 0; K9[4] = AMP * w * Math.cos(ph); K9[5] = 0;
+      K9[6] = 0; K9[7] = -AMP * w * w * sn; K9[8] = 0;
+      return;
     }
-    const a = h[lo], b = h[hi];
-    const f = (t - a.t) / Math.max(EPS, b.t - a.t);
-    return {
-      t,
-      p: V.mix(a.p, b.p, f),
-      v: V.mix(a.v, b.v, f),
-      a: V.mix(a.a, b.a, f),
-    };
+    const b = c.buf;
+    const lo = Math.max(c.since, step - HN + 1);
+    let f = t / DT;
+    if (f < lo) f = lo;
+    if (f > step) f = step;
+    const k0 = Math.min(step - 1, Math.floor(f));
+    if (k0 < lo) {
+      const o = (((lo % HN) + HN) % HN) * 9;
+      for (let i = 0; i < 9; i++) K9[i] = b[o + i];
+      return;
+    }
+    const u = f - k0;
+    const o0 = (((k0 % HN) + HN) % HN) * 9, o1 = ((((k0 + 1) % HN) + HN) % HN) * 9;
+    for (let i = 0; i < 9; i++) K9[i] = b[o0 + i] + (b[o1 + i] - b[o0 + i]) * u;
+  }
+
+  /** E and B at (x, y, z), written into F6 as Ex Ey Ez Bx By Bz. */
+  function fieldInto(x: number, y: number, z: number) {
+    let ex = 0, ey = 0, ez = 0, bx = 0, by = 0, bz = 0;
+    const cVis = visualC(), t = now();
+    const c2 = Math.max(0.05, cVis * cVis), c1 = Math.max(0.05, cVis);
+    const sig = state.sigma, eps = state.epsR;
+    for (const src of charges) {
+      // solve the retarded time t_ret = t − |p − x(t_ret)|/v by iteration, so
+      // the field genuinely trails the source
+      // (plain square roots: Math.hypot is several times slower, and this runs
+      // for every cell of the fog)
+      let dx = x - src.p.x, dy = y - src.p.y, dz = z - src.p.z;
+      let tRet = t - Math.max(0.04, Math.sqrt(dx * dx + dy * dy + dz * dz)) / cVis;
+      for (let it = 0; it < 2; it++) {
+        kinInto(src, tRet);
+        dx = x - K9[0]; dy = y - K9[1]; dz = z - K9[2];
+        tRet = t - Math.max(0.04, Math.sqrt(dx * dx + dy * dy + dz * dz)) / cVis;
+      }
+      kinInto(src, tRet);
+      const Rx = x - K9[0], Ry = y - K9[1], Rz = z - K9[2];
+      const r = Math.max(0.045, Math.sqrt(Rx * Rx + Ry * Ry + Rz * Rz));
+      const nx = Rx / r, ny = Ry / r, nz = Rz / r;
+      const att = sig ? Math.exp(-sig * r) : 1;
+      let ax = K9[6], ay = K9[7], az = K9[8];
+      const am = Math.sqrt(ax * ax + ay * ay + az * az);
+      if (am > AMAX) { const s = AMAX / am; ax *= s; ay *= s; az *= s; }
+
+      const kn = (0.16 * src.q * att) / (eps * (r * r + 0.025));
+      const nex = nx * kn, ney = ny * kn, nez = nz * kn;
+      // n × (n × a) = n (n·a) − a
+      const kr = (0.075 * src.q * att) / (c2 * r), na = nx * ax + ny * ay + nz * az;
+      const rex = (nx * na - ax) * kr, rey = (ny * na - ay) * kr, rez = (nz * na - az) * kr;
+      ex += nex + rex; ey += ney + rey; ez += nez + rez;
+
+      const vx = K9[3], vy = K9[4], vz = K9[5], kv = 0.65 / c2;
+      bx += (vy * nez - vz * ney) * kv + (ny * rez - nz * rey) / c1;
+      by += (vz * nex - vx * nez) * kv + (nz * rex - nx * rez) / c1;
+      bz += (vx * ney - vy * nex) * kv + (nx * rey - ny * rex) / c1;
+    }
+    F6[0] = ex; F6[1] = ey; F6[2] = ez; F6[3] = bx; F6[4] = by; F6[5] = bz;
   }
 
   function fieldAt(p: Vec) {
-    let E = V.zero();
-    let B = V.zero();
+    fieldInto(p.x, p.y, p.z);
+    return { E: { x: F6[0], y: F6[1], z: F6[2] }, B: { x: F6[3], y: F6[4], z: F6[5] } };
+  }
 
-    const cVis = visualC();
+  // --- camera ---------------------------------------------------------------------
 
-    for (const src of charges) {
-      if (!src.on) continue;
+  // the shared orbit camera (scene3d), so the volume renderer sees the same view
+  const worldToCamera = (p: Vec) => cam.toCam(p);
+  const cameraToWorld = (p: Vec): Vec => cam.toWorld(p);
+  const camForward = () => cam.forward();
+  const camRight = () => cam.right();
+  const project = (p: Vec) => cam.project(p);
 
-      // solve the retarded time self-consistently (t_ret = t - |p - x(t_ret)|/c)
-      // with a couple of iterations, so the field genuinely trails the source
-      let tRet = state.time - Math.max(0.04, V.norm(V.sub(p, src.p))) / cVis;
-      for (let it = 0; it < 2; it++) {
-        const guess = sampleHist(src, tRet).p;
-        tRet = state.time - Math.max(0.04, V.norm(V.sub(p, guess))) / cVis;
+  /** Where the pointer ray meets the plane through `q` with normal `nrm`. */
+  function hitPlane(sx: number, sy: number, q: Vec, nrm: Vec): Vec | null {
+    const p = cam.hitPlane(sx, sy, q, nrm);
+    if (!p) return null;
+    const cl = (v: number) => Math.max(-BOX, Math.min(BOX, v));
+    return { x: cl(p.x), y: cl(p.y), z: cl(p.z) };
+  }
+
+  /** Depth cue: near things full strength, the far side of the box dimmer. */
+  const cue = (zc: number) => cam.fog(zc, BOX);
+
+  // --- the plane ------------------------------------------------------------------
+
+  const AXIS = { xy: 'z', xz: 'y', yz: 'x' } as const;
+
+  function planePoint(u: number, v: number): Vec {
+    const d = state.planePos;
+    if (state.plane === 'xy') return { x: u, y: v, z: d };
+    if (state.plane === 'xz') return { x: u, y: d, z: v };
+    return { x: d, y: u, z: v };
+  }
+
+  function planeNormal(): Vec {
+    return state.plane === 'xy' ? { x: 0, y: 0, z: 1 } : state.plane === 'xz' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+  }
+
+  // The shading: the field strength √(εE² + B²/μ) is sampled on a coarse grid over the
+  // plane, then every screen pixel casts its ray onto the plane and reads the
+  // grid there, so the shading sits in true perspective under the arrows. The
+  // exposure follows the scene slowly, so the pattern stays readable whether
+  // the field is a faint ripple or a strong near field.
+  const HG = 112;
+  const vals = new Float32Array(HG * HG);
+  const tmp = new Float32Array(HG * HG);
+  let heatKey = '';
+  let exposure = 0;
+
+  const HS = 1.5;
+  const hsW = Math.ceil(W / HS), hsH = Math.ceil(H / HS);
+  const heatScr = document.createElement('canvas');
+  heatScr.width = hsW;
+  heatScr.height = hsH;
+  const hsctx = heatScr.getContext('2d')!;
+  const hsimg = hsctx.createImageData(hsW, hsH);
+  const hsPix = new Uint32Array(hsimg.data.buffer);
+
+  let lut = new Uint8ClampedArray(0);
+  let lut32 = new Uint32Array(0);
+  let lutLight: boolean | null = null;
+  function buildLut() {
+    const light = isLight();
+    if (light === lutLight) return;
+    lutLight = light;
+    const stops: number[][] = light
+      ? [[0, 199, 210, 254, 0], [0.3, 165, 180, 252, 0.35], [0.65, 99, 102, 241, 0.5], [1, 49, 46, 129, 0.68]]
+      : [[0, 49, 46, 129, 0], [0.3, 79, 70, 229, 0.32], [0.65, 139, 92, 246, 0.5], [1, 233, 213, 255, 0.72]];
+    lut = new Uint8ClampedArray(256 * 4);
+    for (let k = 0; k < 256; k++) {
+      const t = k / 255;
+      let i = 1;
+      while (i < stops.length - 1 && t > stops[i][0]) i++;
+      const a = stops[i - 1], b = stops[i];
+      const u = Math.max(0, Math.min(1, (t - a[0]) / (b[0] - a[0])));
+      for (let c = 0; c < 3; c++) lut[k * 4 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * u;
+      lut[k * 4 + 3] = 255 * (a[4] + (b[4] - a[4]) * u);
+    }
+    lut32 = new Uint32Array(lut.buffer);
+    vol?.setColours(fieldRamp(light));
+  }
+
+  function updateHeat() {
+    const key = [step, moved, state.epsR, state.muR, state.sigma, state.freq, state.plane, state.planePos, state.scene].join('|');
+    if (key === heatKey) return false;
+    heatKey = key;
+    for (let j = 0; j < HG; j++) {
+      const v = FIELD_MIN + ((j + 0.5) / HG) * SPAN;
+      for (let i = 0; i < HG; i++) {
+        const u = FIELD_MIN + ((i + 0.5) / HG) * SPAN;
+        const P = planePoint(u, v);
+        fieldInto(P.x, P.y, P.z);
+        vals[j * HG + i] = Math.sqrt(
+          state.epsR * (F6[0] * F6[0] + F6[1] * F6[1] + F6[2] * F6[2]) +
+          (F6[3] * F6[3] + F6[4] * F6[4] + F6[5] * F6[5]) / state.muR
+        );
       }
-      const ret = sampleHist(src, tRet);
-
-      const R = V.sub(p, ret.p);
-      const r = Math.max(0.045, V.norm(R));
-      const n = V.mul(R, 1 / r);
-
-      const softR2 = r * r + 0.025;
-
-      const near = V.mul(n, (0.16 * src.q) / (state.epsR * softR2));
-
-      const transverseA = V.cross(n, V.cross(n, ret.a));
-      const rad = V.mul(
-        transverseA,
-        (0.075 * src.q) / (Math.max(0.05, cVis * cVis) * r)
-      );
-
-      const att = Math.exp(-state.sigma * r);
-
-      const eNear = V.mul(near, att);
-      const eRad = V.mul(rad, att);
-      const ePart = V.add(eNear, eRad);
-
-      const bVel = V.mul(
-        V.cross(ret.v, eNear),
-        0.65 / Math.max(0.05, cVis * cVis)
-      );
-
-      const bRad = V.mul(
-        V.cross(n, eRad),
-        1 / Math.max(0.05, cVis)
-      );
-
-      const bPart = V.add(bVel, bRad);
-
-      E = V.add(E, ePart);
-      B = V.add(B, bPart);
     }
-
-    return { E, B };
-  }
-
-  function worldToCamera(p: Vec) {
-    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
-    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-
-    const x1 = p.x * cy + p.z * sy;
-    const z1 = -p.x * sy + p.z * cy;
-
-    const y2 = p.y * cp - z1 * sp;
-    const z2 = p.y * sp + z1 * cp;
-
-    const zc = z2 + CAM;
-
-    return { x: x1, y: y2, z: z2, zc };
-  }
-
-  function cameraToWorld(p: Vec) {
-    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
-    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-
-    const y = p.y * cp + p.z * sp;
-    const z1 = -p.y * sp + p.z * cp;
-
-    const x = p.x * cy - z1 * sy;
-    const z = p.x * sy + z1 * cy;
-
-    return { x, y, z };
-  }
-
-  function project(x: number, y: number, z: number) {
-    const cam = worldToCamera({ x, y, z });
-
-    const s = FOCAL / Math.max(0.05, cam.zc);
-    const k = s * SCALE * state.zoom;
-
-    return {
-      sx: CX + cam.x * k,
-      sy: CY - cam.y * k,
-      s: s * state.zoom,
-      zc: cam.zc,
-      z: cam.z,
-    };
-  }
-
-  function rayFromScreen(sx: number, sy: number) {
-    const k = FOCAL * SCALE * state.zoom;
-
-    const dirCam = V.unit({
-      x: (sx - CX) / k,
-      y: -(sy - CY) / k,
-      z: 1,
-    });
-
-    const originCam = { x: 0, y: 0, z: -CAM };
-
-    return {
-      o: cameraToWorld(originCam),
-      d: cameraToWorld(dirCam),
-    };
-  }
-
-  function intersectActivePlane(sx: number, sy: number, coord = state.planePos): Vec | null {
-    const ray = rayFromScreen(sx, sy);
-
-    let t = 0;
-
-    if (state.plane === 'xy') {
-      if (Math.abs(ray.d.z) < 1e-4) return null;
-      t = (coord - ray.o.z) / ray.d.z;
-    } else if (state.plane === 'xz') {
-      if (Math.abs(ray.d.y) < 1e-4) return null;
-      t = (coord - ray.o.y) / ray.d.y;
-    } else {
-      if (Math.abs(ray.d.x) < 1e-4) return null;
-      t = (coord - ray.o.x) / ray.d.x;
-    }
-
-    if (t < 0) return null;
-
-    return {
-      x: Math.max(-BOX, Math.min(BOX, ray.o.x + ray.d.x * t)),
-      y: Math.max(-BOX, Math.min(BOX, ray.o.y + ray.d.y * t)),
-      z: Math.max(-BOX, Math.min(BOX, ray.o.z + ray.d.z * t)),
-    };
-  }
-
-  function samplePoints() {
-    const pts: Vec[] = [];
-    const n = state.density;
-    const a = FIELD_MIN;
-    const b = FIELD_MAX;
-
-    if (state.sampleMode === 'plane') {
-      for (let i = 0; i < n; i++) {
-        const u = a + (b - a) * i / (n - 1);
-
-        for (let j = 0; j < n; j++) {
-          const v = a + (b - a) * j / (n - 1);
-
-          if (state.plane === 'xy') pts.push({ x: u, y: v, z: state.planePos });
-          else if (state.plane === 'xz') pts.push({ x: u, y: state.planePos, z: v });
-          else pts.push({ x: state.planePos, y: u, z: v });
+    // a light [1 2 1] blur each way: a kink thinner than one cell then reads as
+    // a smooth band instead of a row of blocks
+    for (const [di, dj] of [[1, 0], [0, 1]]) {
+      tmp.set(vals);
+      for (let j = 0; j < HG; j++)
+        for (let i = 0; i < HG; i++) {
+          const i0 = Math.max(0, i - di), i1 = Math.min(HG - 1, i + di);
+          const j0 = Math.max(0, j - dj), j1 = Math.min(HG - 1, j + dj);
+          vals[j * HG + i] = 0.25 * tmp[j0 * HG + i0] + 0.5 * tmp[j * HG + i] + 0.25 * tmp[j1 * HG + i1];
         }
-      }
-
-      return pts;
     }
-
-    const m = Math.max(3, Math.min(11, Math.floor(n / 2)));
-
-    for (let i = 0; i < m; i++) {
-      const x = a + (b - a) * i / (m - 1);
-
-      for (let j = 0; j < m; j++) {
-        const y = a + (b - a) * j / (m - 1);
-
-        for (let k = 0; k < m; k++) {
-          const z = a + (b - a) * k / (m - 1);
-          pts.push({ x, y, z });
-        }
-      }
-    }
-
-    return pts;
+    const sorted = Float32Array.from(vals).sort();
+    const q = Math.max(1e-4, sorted[Math.floor(sorted.length * 0.9)]);
+    exposure = exposure ? exposure * 0.94 + q * 0.06 : q;
+    return true;
   }
 
-  // parse "#rrggbb" once into [r,g,b]
-  function hexRGB(hex: string): [number, number, number] {
-    return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-  }
-  const E_RGB = hexRGB(E_COLOR);
-  const B_RGB = hexRGB(B_COLOR);
+  function drawHeat() {
+    updateHeat();
+    buildLut();
+    const k = cam.k, CX = cam.cx, CY = cam.cy;
+    const o = cam.eye();
+    const fw = camForward(), rt = camRight(), up = cameraToWorld({ x: 0, y: 1, z: 0 });
+    // pick the plane's own axes: n is the normal, (u, v) the in-plane pair, in
+    // the same order planePoint() uses
+    const pick = (q: Vec): [number, number, number] =>
+      state.plane === 'xy' ? [q.x, q.y, q.z] : state.plane === 'xz' ? [q.x, q.z, q.y] : [q.y, q.z, q.x];
+    const [ou, ov, on] = pick(o), [fu, fv, fn] = pick(fw), [ru, rv, rn] = pick(rt), [uu, uv, un] = pick(up);
 
-  function drawArrow3D(p: Vec, dir: Vec, mag: number, color: string, modeAlpha = 1) {
-    const m = Math.hypot(dir.x, dir.y, dir.z);
-    if (m < 1e-6 || mag < 1e-5) return;
+    // only the rectangle the plane covers on screen needs work
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [a, b] of [[FIELD_MIN, FIELD_MIN], [FIELD_MAX, FIELD_MIN], [FIELD_MIN, FIELD_MAX], [FIELD_MAX, FIELD_MAX]]) {
+      const pr = project(planePoint(a, b));
+      if (pr.zc < 0.3) { x0 = 0; y0 = 0; x1 = W; y1 = H; break; }
+      x0 = Math.min(x0, pr.sx); x1 = Math.max(x1, pr.sx); y0 = Math.min(y0, pr.sy); y1 = Math.max(y1, pr.sy);
+    }
+    const px0 = Math.max(0, Math.floor(x0 / HS)), px1 = Math.min(hsW, Math.ceil(x1 / HS) + 1);
+    const py0 = Math.max(0, Math.floor(y0 / HS)), py1 = Math.min(hsH, Math.ceil(y1 / HS) + 1);
+    if (px1 <= px0 || py1 <= py0) return;
 
-    const u = V.mul(dir, 1 / m);
-
-    const strength = 1 - Math.exp(-mag * state.fieldScale * 1.35); // 0..1
-    const len = 0.12 + 0.52 * strength;
-
-    const a = project(p.x, p.y, p.z);
-    const end = V.add(p, V.mul(u, len));
-    const b = project(end.x, end.y, end.z);
-
-    if (a.zc <= 0.08 || b.zc <= 0.08) return;
-
-    const dx = b.sx - a.sx;
-    const dy = b.sy - a.sy;
-    const screenLen = Math.hypot(dx, dy);
-    if (screenLen < 3) return;
-
-    const ux = dx / screenLen;
-    const uy = dy / screenLen;
-    const nx = -uy;
-    const ny = ux;
-
-    // strong fields read brighter and more opaque; weak ones fade all the way
-    // out, which also hides the rapid direction flips near field nodes (jitter)
-    const alpha = modeAlpha * Math.pow(strength, 0.9);
-    if (alpha < 0.035) return;
-    const rgb = color === E_COLOR ? E_RGB : color === B_COLOR ? B_RGB : hexRGB(color);
-    const lift = 0.35 * strength; // mix toward white on strong vectors
-    const cr = Math.round(rgb[0] + (255 - rgb[0]) * lift);
-    const cg = Math.round(rgb[1] + (255 - rgb[1]) * lift);
-    const cb = Math.round(rgb[2] + (255 - rgb[2]) * lift);
-    const fill = `rgba(${cr},${cg},${cb},${alpha})`;
-
-    const headLen = Math.min(16, Math.max(7, screenLen * 0.32));
-    const headWidth = headLen * 0.82;
-    const shaftW = Math.min(4.6, Math.max(1.6, 1.4 + 3.2 * strength));
-    const tipW = shaftW * 0.55;
-
-    const baseX = b.sx - headLen * ux;
-    const baseY = b.sy - headLen * uy;
-
+    const inv = 3 / exposure, norm = 255 / Math.log(1 + 24);
+    const gs = HG / SPAN, pos = state.planePos;
+    const pix = hsPix;
+    pix.fill(0);
+    for (let py = py0; py < py1; py++) {
+      const b = -((py + 0.5) * HS - CY) / k;
+      const row = py * hsW;
+      for (let px = px0; px < px1; px++) {
+        const a = ((px + 0.5) * HS - CX) / k;
+        const dn = fn + rn * a + un * b;
+        if (dn > -1e-6 && dn < 1e-6) continue;
+        const t = (pos - on) / dn;
+        if (t <= 0) continue;
+        const gu = (ou + (fu + ru * a + uu * b) * t - FIELD_MIN) * gs - 0.5;
+        const gv = (ov + (fv + rv * a + uv * b) * t - FIELD_MIN) * gs - 0.5;
+        if (gu < -0.5 || gv < -0.5 || gu > HG - 0.5 || gv > HG - 0.5) continue;
+        let i0 = gu | 0, j0 = gv | 0;
+        if (i0 > HG - 2) i0 = HG - 2;
+        if (j0 > HG - 2) j0 = HG - 2;
+        if (gu < 0) i0 = 0;
+        if (gv < 0) j0 = 0;
+        let fu2 = gu - i0, fv2 = gv - j0;
+        fu2 = fu2 < 0 ? 0 : fu2 > 1 ? 1 : fu2;
+        fv2 = fv2 < 0 ? 0 : fv2 > 1 ? 1 : fv2;
+        const r0 = j0 * HG + i0;
+        const val =
+          (vals[r0] + (vals[r0 + 1] - vals[r0]) * fu2) * (1 - fv2) +
+          (vals[r0 + HG] + (vals[r0 + HG + 1] - vals[r0 + HG]) * fu2) * fv2;
+        let li = (Math.log(1 + val * inv) * norm) | 0;
+        if (li > 255) li = 255;
+        pix[row + px] = lut32[li];
+      }
+    }
+    hsctx.putImageData(hsimg, 0, 0, px0, py0, px1 - px0, py1 - py0);
     ctx.save();
-    ctx.lineJoin = 'round';
-
-    // soft halo underneath strong vectors
-    if (strength > 0.25) {
-      ctx.globalAlpha = alpha * 0.18;
-      ctx.strokeStyle = fill;
-      ctx.lineCap = 'round';
-      ctx.lineWidth = shaftW + 4;
-      ctx.beginPath();
-      ctx.moveTo(a.sx, a.sy);
-      ctx.lineTo(b.sx, b.sy);
-      ctx.stroke();
-    }
-
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = fill;
-
-    // tapered shaft (wider at tail, narrower where the head begins)
-    ctx.beginPath();
-    ctx.moveTo(a.sx + nx * shaftW * 0.5, a.sy + ny * shaftW * 0.5);
-    ctx.lineTo(baseX + nx * tipW * 0.5, baseY + ny * tipW * 0.5);
-    ctx.lineTo(baseX - nx * tipW * 0.5, baseY - ny * tipW * 0.5);
-    ctx.lineTo(a.sx - nx * shaftW * 0.5, a.sy - ny * shaftW * 0.5);
-    ctx.closePath();
-    ctx.fill();
-
-    // arrowhead
-    ctx.beginPath();
-    ctx.moveTo(b.sx, b.sy);
-    ctx.lineTo(baseX + nx * headWidth * 0.5, baseY + ny * headWidth * 0.5);
-    ctx.lineTo(baseX - nx * headWidth * 0.5, baseY - ny * headWidth * 0.5);
-    ctx.closePath();
-    ctx.fill();
-
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(heatScr, px0, py0, px1 - px0, py1 - py0, px0 * HS, py0 * HS, (px1 - px0) * HS, (py1 - py0) * HS);
     ctx.restore();
   }
 
-  function drawLine(a: Vec, b: Vec, color: string, alpha = 1, width = 1.2) {
-    const pa = project(a.x, a.y, a.z);
-    const pb = project(b.x, b.y, b.z);
+  // --- the fog ----------------------------------------------------------------------
 
-    if (pa.zc <= 0.05 || pb.zc <= 0.05) return;
+  // The same field strength √(εE² + B²/μ), sampled on a 3D grid over the box and
+  // raymarched in WebGL2 as glowing fog; the plane's shading goes into the same
+  // pass, so fog in front of the plane covers it and fog behind it stays behind.
+  // Without WebGL2 the plane falls back to the 2D shading above and there is no fog.
+  const vol = VolumeView.create(canvas, W, H, 'scalar');
+  if (!vol) state.view = 'plane';
 
-    const dx = pb.sx - pa.sx;
-    const dy = pb.sy - pa.sy;
-    const len = Math.hypot(dx, dy);
+  // The dipole is symmetric about its axis (y), so its field strength depends on
+  // (ρ, y) alone: one row of RN radii per grid layer in y, then the full DG³ grid
+  // is read off that table. Other scenes are sampled cell by cell, more coarsely.
+  const DG = 64, GG = 44, SG = 48;
+  const RN = 160, RMAX = BOX * Math.SQRT2 + 0.1;
+  const volData = new Float32Array(DG * DG * DG);
+  const rtab = new Float32Array(RN * DG);
+  const colK = new Int32Array(DG * DG), colF = new Float32Array(DG * DG);
+  for (let l = 0; l < DG; l++)
+    for (let i = 0; i < DG; i++) {
+      const x = -BOX + ((i + 0.5) * 2 * BOX) / DG, z = -BOX + ((l + 0.5) * 2 * BOX) / DG;
+      const f = (Math.hypot(x, z) / RMAX) * (RN - 1);
+      const k = Math.min(RN - 2, Math.floor(f));
+      colK[l * DG + i] = k;
+      colF[l * DG + i] = f - k;
+    }
+  const pick = new Float32Array(4096);
+  // how the strength becomes fog density: density = s^pw / (1 + s^pw / cap) − floor,
+  // with s the strength over the exposure (the pct quantile for the antenna, a
+  // fixed ref for free and static charges); gain and len set how thick it looks
+  const TUNE = { pw: 1.8, pct: 0.96, cap: 2, floor: 0.18, refC: 0.24, refS: 0.16, gain: 1.3, lgain: 1.4, len: 1.4 };
+  let volKey = '';
+  let volExpo = 0;
 
-    if (len < 0.5) return;
+  /** √(εE² + B²/μ) of the field in F6. */
+  const strength = () => Math.sqrt(
+    state.epsR * (F6[0] * F6[0] + F6[1] * F6[1] + F6[2] * F6[2]) +
+    (F6[3] * F6[3] + F6[4] * F6[4] + F6[5] * F6[5]) / state.muR
+  );
 
-    ctx.save();
+  const symmetric = () =>
+    state.scene === 'dipole' && charges.every((c) => c.mode === 'osc' && c.origin.x === 0 && c.origin.z === 0);
 
-    ctx.globalAlpha = alpha;
+  /** The (ρ, y) table of the dipole's strength. */
+  function sampleDipole() {
+    const h = (2 * BOX) / DG;
+    for (let j = 0; j < DG; j++) {
+      const y = -BOX + (j + 0.5) * h;
+      for (let k = 0; k < RN; k++) {
+        fieldInto((k * RMAX) / (RN - 1), y, 0);
+        rtab[j * RN + k] = strength();
+      }
+    }
+  }
+
+  /** The table read off at grid cell n, before the full grid exists. */
+  function dipoleCell(n: number) {
+    const i = n % DG, j = Math.floor(n / DG) % DG, l = Math.floor(n / (DG * DG));
+    const c = l * DG + i, k = j * RN + colK[c];
+    return rtab[k] + (rtab[k + 1] - rtab[k]) * colF[c];
+  }
+
+  function fillDipole() {
+    let n = 0;
+    for (let l = 0; l < DG; l++)
+      for (let j = 0; j < DG; j++) {
+        const row = j * RN;
+        for (let i = 0; i < DG; i++) {
+          const c = l * DG + i, k = row + colK[c];
+          volData[n++] = rtab[k] + (rtab[k + 1] - rtab[k]) * colF[c];
+        }
+      }
+  }
+
+  /** Sample z-slices [l0, l1) of a G³ grid cell by cell. */
+  function sampleGrid(G: number, l0 = 0, l1 = G) {
+    const h = (2 * BOX) / G;
+    const statics = state.scene === 'statics';
+    const showE = !statics || state.fieldMode !== 'b', showB = statics && state.fieldMode !== 'e';
+    let n = l0 * G * G;
+    for (let l = l0; l < l1; l++) {
+      const z = -BOX + (l + 0.5) * h;
+      for (let j = 0; j < G; j++) {
+        const y = -BOX + (j + 0.5) * h;
+        for (let i = 0; i < G; i++) {
+          const x = -BOX + (i + 0.5) * h;
+          if (!statics) {
+            fieldInto(x, y, z);
+            volData[n++] = strength();
+            continue;
+          }
+          // statics: |E| of the charges and |B| = μ₀I/2πr of the wire, each if shown
+          let e2 = 0, b2 = 0;
+          if (showE) {
+            fieldInto(x, y, z);
+            e2 = state.epsR * (F6[0] * F6[0] + F6[1] * F6[1] + F6[2] * F6[2]);
+          }
+          if (showB) {
+            const r2 = (x - WIRE_X) * (x - WIRE_X) + z * z;
+            const b = WIRE_B / Math.sqrt(r2 + 0.02);
+            b2 = (b * b) / state.muR;
+          }
+          volData[n++] = Math.sqrt(e2 + b2);
+        }
+      }
+    }
+  }
+
+  /**
+   * True when every charge has sat still for longer than light takes to cross
+   * the box: then the field is static and the fog needn't be resampled.
+   */
+  const quiet = () =>
+    charges.every((c) => c.mode === 'manual' && (step - c.activeStep) * DT * visualC() > 4 * BOX);
+
+  // a free charge's grid is sampled in two halves on consecutive frames, so the
+  // cost is spread evenly instead of landing on one frame
+  let genHalf = 0;
+
+  /** Resample the fog if anything it depends on changed. */
+  function updateVolume() {
+    const statics = state.scene === 'statics';
+    const sym = symmetric();
+    if (genHalf) {
+      sampleGrid(GG, GG >> 1, GG);
+      genHalf = 0;
+    } else {
+      const key = [
+        statics || quiet() ? 'still' : step, moved, state.epsR, state.muR, state.sigma, state.freq, state.scene,
+        statics ? state.fieldMode + state.current + charges.map((c) => `${c.q},${c.p.x},${c.p.y},${c.p.z}`).join(';') : '',
+      ].join('|');
+      if (key === volKey) return;
+      const first = !volKey;
+      volKey = key;
+      if (sym) sampleDipole();
+      else if (statics) sampleGrid(SG);
+      else if (first) sampleGrid(GG);
+      else {
+        sampleGrid(GG, 0, GG >> 1);
+        genHalf = 1;
+        return;
+      }
+    }
+    const G = sym ? DG : statics ? SG : GG;
+    const N = G * G * G;
+
+    // exposure: the antenna's steady pattern is scaled to a high percentile of a
+    // spread-out subsample, followed slowly. A free or static charge gets a fixed
+    // scale instead, so its Coulomb glow keeps one size and a pulse it sends out
+    // fades as it spreads, as it should.
+    if (state.scene === 'dipole') {
+      const stride = Math.max(1, Math.floor(N / pick.length));
+      let m = 0;
+      for (let i = stride >> 1; i < N && m < pick.length; i += stride) pick[m++] = sym ? dipoleCell(i) : volData[i];
+      const sorted = pick.subarray(0, m).sort();
+      const q = Math.max(1e-4, sorted[Math.floor(m * TUNE.pct)]);
+      volExpo = volExpo ? volExpo * 0.92 + q * 0.08 : q;
+    } else volExpo = statics ? TUNE.refS : TUNE.refC;
+
+    // the stored density rises a little faster than the strength and saturates
+    // softly, so the radiation's shells stand apart from the gaps between them
+    // and the strong near field doesn't swallow the rest
+    const inv = 1 / volExpo, pw = TUNE.pw, cap = TUNE.cap, floor = TUNE.floor;
+    const map = (a: Float32Array, len: number) => {
+      for (let i = 0; i < len; i++) {
+        let v = Math.pow(a[i] * inv, pw);
+        v = v / (1 + v / cap) - floor;
+        a[i] = v > 0 ? v : 0;
+      }
+    };
+    if (sym) {
+      map(rtab, rtab.length);
+      fillDipole();
+    } else map(volData, N);
+    vol!.setVolume(volData.subarray(0, N), [G, G, G], [-BOX, -BOX, -BOX], [BOX, BOX, BOX]);
+  }
+
+  /** Draw the GL layer: the fog and/or the shaded plane. */
+  function renderGL(fogOn: boolean, shadeOn: boolean) {
+    if (!vol) return;
+    buildLut();
+    if (fogOn) updateVolume();
+    if (shadeOn) {
+      updateHeat();
+      vol.setPlane(vals, HG, state.plane, state.planePos, FIELD_MAX);
+    }
+    const light = isLight();
+    vol.render(cam, {
+      cloud: fogOn,
+      plane: shadeOn,
+      gain: light ? TUNE.lgain : TUNE.gain,
+      planeGain: 1 / (8 * Math.max(1e-4, exposure)),
+      opacity: state.fogOpacity * (light ? 0.8 : 1),
+      len: TUNE.len,
+      light,
+      planeAlpha: 0.55,
+    });
+  }
+
+  function drawPlaneFrame() {
+    const col = `rgba(${ink()},${isLight() ? 0.12 : 0.09})`;
+    const edge = `rgba(${ink()},${isLight() ? 0.34 : 0.3})`;
+    const k = 12;
+    for (let i = 0; i <= k; i++) {
+      const u = FIELD_MIN + (SPAN * i) / k;
+      const c = i === 0 || i === k ? edge : col;
+      line3(planePoint(u, FIELD_MIN), planePoint(u, FIELD_MAX), c, 1);
+      line3(planePoint(FIELD_MIN, u), planePoint(FIELD_MAX, u), c, 1);
+    }
+    const lab = project(planePoint(FIELD_MAX, FIELD_MIN));
+    ctx.fillStyle = `rgba(${ink()},0.5)`;
+    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${state.plane.toUpperCase()} · ${AXIS[state.plane]} = ${state.planePos.toFixed(1)}`, lab.sx + 8, lab.sy);
+  }
+
+  function line3(a: Vec, b: Vec, color: string, width = 1.2) {
+    const pa = project(a), pb = project(b);
+    if (pa.zc <= 0.1 || pb.zc <= 0.1) return;
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
     ctx.beginPath();
     ctx.moveTo(pa.sx, pa.sy);
     ctx.lineTo(pb.sx, pb.sy);
     ctx.stroke();
-
-    ctx.restore();
   }
 
   function drawBox() {
-    const col = `rgba(${ink()},${isLight() ? 0.22 : 0.18})`;
     const s = BOX;
-
-    const corners = [
-      { x: -s, y: -s, z: -s },
-      { x: s, y: -s, z: -s },
-      { x: s, y: s, z: -s },
-      { x: -s, y: s, z: -s },
-      { x: -s, y: -s, z: s },
-      { x: s, y: -s, z: s },
-      { x: s, y: s, z: s },
-      { x: -s, y: s, z: s },
+    const c = [
+      { x: -s, y: -s, z: -s }, { x: s, y: -s, z: -s }, { x: s, y: s, z: -s }, { x: -s, y: s, z: -s },
+      { x: -s, y: -s, z: s }, { x: s, y: -s, z: s }, { x: s, y: s, z: s }, { x: -s, y: s, z: s },
     ];
-
-    const edges = [
-      [0, 1], [1, 2], [2, 3], [3, 0],
-      [4, 5], [5, 6], [6, 7], [7, 4],
-      [0, 4], [1, 5], [2, 6], [3, 7],
-    ];
-
+    const edges = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
     for (const [i, j] of edges) {
-      drawLine(corners[i], corners[j], col, 1, 1);
+      const z = (worldToCamera(c[i]).zc + worldToCamera(c[j]).zc) / 2;
+      line3(c[i], c[j], `rgba(${ink()},${(isLight() ? 0.26 : 0.2) * cue(z)})`, 1);
     }
   }
 
-  function gridValues() {
-    const values: number[] = [];
-
-    for (let x = FIELD_MIN; x <= FIELD_MAX + EPS; x += GRID_STEP) {
-      values.push(+x.toFixed(2));
+  function drawBackdrop() {
+    const g = ctx.createRadialGradient(W / 2, H * 0.45, 20, W / 2, H / 2, Math.max(W, H) * 0.7);
+    if (isLight()) {
+      g.addColorStop(0, 'rgba(99,102,241,0.06)');
+      g.addColorStop(1, 'rgba(99,102,241,0)');
+    } else {
+      g.addColorStop(0, 'rgba(99,102,241,0.12)');
+      g.addColorStop(1, 'rgba(13,14,18,0)');
     }
-
-    return values;
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
   }
 
-  function drawPlane() {
-    if (state.sampleMode !== 'plane') return;
+  // --- arrows ---------------------------------------------------------------------
 
-    const pos = state.planePos;
-    const col = `rgba(${ink()},${isLight() ? 0.13 : 0.11})`;
-    const strong = `rgba(${ink()},${isLight() ? 0.24 : 0.20})`;
-
-    for (const u of gridValues()) {
-      const lineColor = Math.abs(u) < 1e-5 ? strong : col;
-
-      if (state.plane === 'xy') {
-        drawLine({ x: FIELD_MIN, y: u, z: pos }, { x: FIELD_MAX, y: u, z: pos }, lineColor, 1, 1);
-        drawLine({ x: u, y: FIELD_MIN, z: pos }, { x: u, y: FIELD_MAX, z: pos }, lineColor, 1, 1);
-      } else if (state.plane === 'xz') {
-        drawLine({ x: FIELD_MIN, y: pos, z: u }, { x: FIELD_MAX, y: pos, z: u }, lineColor, 1, 1);
-        drawLine({ x: u, y: pos, z: FIELD_MIN }, { x: u, y: pos, z: FIELD_MAX }, lineColor, 1, 1);
-      } else {
-        drawLine({ x: pos, y: FIELD_MIN, z: u }, { x: pos, y: FIELD_MAX, z: u }, lineColor, 1, 1);
-        drawLine({ x: pos, y: u, z: FIELD_MIN }, { x: pos, y: u, z: FIELD_MAX }, lineColor, 1, 1);
-      }
+  /** Sample points: a k × k grid on the plane, or a k × k × k lattice. */
+  function samples() {
+    const pts: Vec[] = [];
+    if (state.layout === 'plane') {
+      const k = 7 + 2 * state.density;
+      for (let i = 0; i < k; i++)
+        for (let j = 0; j < k; j++)
+          pts.push(planePoint(FIELD_MIN + (SPAN * i) / (k - 1), FIELD_MIN + (SPAN * j) / (k - 1)));
+      return { pts, spacing: SPAN / (k - 1) };
     }
+    const k = 3 + state.density;
+    const lo = FIELD_MIN + 0.3, span = SPAN - 0.6;
+    for (let i = 0; i < k; i++)
+      for (let j = 0; j < k; j++)
+        for (let l = 0; l < k; l++)
+          pts.push({ x: lo + (span * i) / (k - 1), y: lo + (span * j) / (k - 1), z: lo + (span * l) / (k - 1) });
+    return { pts, spacing: span / (k - 1) };
   }
 
-  function drawWavefronts() {
+  const ARROW_GAIN = 2.9;
+
+  /**
+   * A 3D arrow centred on its sample point. Its length grows smoothly with the
+   * field and shrinks smoothly to nothing at a node, so an arrow passing
+   * through zero fades out and back instead of flipping in a blink. The head
+   * is a flat cone turned to face the camera, so an arrow pointing at you
+   * foreshortens like a real one.
+   */
+  function drawArrow(p: Vec, f: Vec, mag: number, rgb: RGB, spacing: number) {
+    const strength = 1 - Math.exp(-mag * ARROW_GAIN * (state.layout === 'volume' ? 1.8 : 1));
+    if (strength < 0.015) return;
+    const u = V.mul(f, 1 / mag);
+    const len = spacing * (state.layout === 'volume' ? 0.85 : 0.9) * strength;
+    const tail = V.sub(p, V.mul(u, len / 2));
+    const tip = V.add(p, V.mul(u, len / 2));
+    const h = Math.min(len * 0.4, spacing * 0.24);
+    let w = V.cross(u, camForward());
+    if (V.norm(w) < 1e-3) w = camRight();
+    w = V.mul(V.unit(w), h * 0.32);
+    const base = V.sub(tip, V.mul(u, h));
+
+    const a = project(tail), b = project(tip), m = project(base);
+    const l = project(V.add(base, w)), r = project(V.sub(base, w));
+    if (a.zc < 0.3 || b.zc < 0.3) return;
+
+    const depth = cue((a.zc + b.zc) / 2);
+    const fade = strength < 0.12 ? strength / 0.12 : 1;
+    const alpha = (0.3 + 0.7 * strength) * depth * fade * (fogShown ? 0.82 : 1);
+    const lift = isLight() ? 0 : 0.3 * strength;
+    const cr = Math.round(rgb[0] + (255 - rgb[0]) * lift);
+    const cg = Math.round(rgb[1] + (255 - rgb[1]) * lift);
+    const cb = Math.round(rgb[2] + (255 - rgb[2]) * lift);
+    const col = `rgba(${cr},${cg},${cb},${alpha})`;
+
+    const px = Math.max(0.6, Math.min(2, a.s / 0.25));
+    ctx.strokeStyle = col;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = (1 + 1.8 * strength) * px * (fogShown ? 0.72 : 1);
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(m.sx, m.sy);
+    ctx.stroke();
+
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(b.sx, b.sy);
+    ctx.lineTo(l.sx, l.sy);
+    ctx.lineTo(r.sx, r.sy);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // --- wavefronts -----------------------------------------------------------------
+
+  /**
+   * One spherical front per period. On a plane each front is drawn where it
+   * cuts the plane, a true circle in 3D; in the volume view it is the sphere's
+   * outline. A free charge only marks a front when it was accelerating as it
+   * emitted it, so a still charge sends nothing out.
+   */
+  function drawFronts() {
     const cVis = visualC();
-    const maxR = FIELD_MAX;
-    const maxAge = maxR / cVis;
-    const alphaBase = isLight() ? 0.18 : 0.24;
-    // one ring emitted every `interval` of sim-time; they expand as they age
-    const interval = Math.max(0.12, (1 / visualFreq()) * 0.5);
-    const nRings = Math.min(26, Math.ceil(maxAge / interval) + 1);
+    const maxR = FIELD_MAX * 1.2;
+    const dipole = state.scene === 'dipole';
+    const interval = dipole ? 1 / state.freq : 0.45;
+    const nRings = Math.min(70, Math.ceil(maxR / cVis / interval) + 1);
+    const base = isLight() ? 0.4 : 0.32;
+    const srcs = dipole ? [null] : charges;
+    const t = now();
+    const t0 = Math.floor(t / interval) * interval;
 
-    for (const q of charges) {
-      if (!q.on) continue;
-
-      const t0 = Math.floor(state.time / interval) * interval;
-
+    for (const src of srcs) {
       for (let i = 0; i < nRings; i++) {
         const tEmit = t0 - i * interval;
-        const age = state.time - tEmit;
-        if (age <= 1e-3) continue;
-
-        const r = age * cVis;
+        const r = (t - tEmit) * cVis;
         if (r <= 0.05 || r > maxR) continue;
+        let weight = 1, e: Vec = V.zero();
+        if (src) {
+          let am = 0;
+          for (let s = 0; s < 6; s++) am = Math.max(am, V.norm(kin(src, tEmit - (s * interval) / 6).a));
+          weight = Math.min(1, am / 3);
+          if (weight < 0.03) continue;
+          e = kin(src, tEmit).p;
+        }
+        const alpha = base * weight * (1 - r / maxR) * Math.exp(-state.sigma * r);
+        ctx.strokeStyle = `rgba(${ink()},${alpha})`;
+        ctx.lineWidth = 1.1;
 
-        // centre each ring where the charge actually was when it emitted, so the
-        // wave stays put after the charge moves on (retarded emission point)
-        const emit = sampleHist(q, tEmit).p;
-        const p = project(emit.x, emit.y, emit.z);
-        const pr = project(emit.x + r, emit.y, emit.z);
+        if (state.layout === 'volume') {
+          const c = project(e), edge = project(V.add(e, V.mul(camRight(), r)));
+          if (c.zc < 0.3) continue;
+          ctx.beginPath();
+          ctx.arc(c.sx, c.sy, Math.abs(edge.sx - c.sx), 0, TAU);
+          ctx.stroke();
+          continue;
+        }
 
-        if (p.zc <= 0.05 || pr.zc <= 0.05) continue;
-
-        const rr = Math.abs(pr.sx - p.sx);
-        const alpha = alphaBase * (1 - r / maxR);
-
-        ctx.strokeStyle = q.q >= 0
-          ? `rgba(248,113,113,${alpha})`
-          : `rgba(96,165,250,${alpha})`;
-
-        ctx.lineWidth = 1;
+        const ax = AXIS[state.plane];
+        const dz = state.planePos - e[ax];
+        if (r * r <= dz * dz) continue;
+        const rc = Math.sqrt(r * r - dz * dz);
+        const [ua, va] = state.plane === 'xy' ? ['x', 'y'] : state.plane === 'xz' ? ['x', 'z'] : ['y', 'z'];
         ctx.beginPath();
-        ctx.arc(p.sx, p.sy, rr, 0, TAU);
+        let pen = false;
+        for (let s = 0; s <= 96; s++) {
+          const th = (s / 96) * TAU;
+          const cu = e[ua as 'x'] + rc * Math.cos(th), cv = e[va as 'x'] + rc * Math.sin(th);
+          if (Math.abs(cu) > FIELD_MAX || Math.abs(cv) > FIELD_MAX) { pen = false; continue; }
+          const pr = project(planePoint(cu, cv));
+          if (!pen) { ctx.moveTo(pr.sx, pr.sy); pen = true; } else ctx.lineTo(pr.sx, pr.sy);
+        }
         ctx.stroke();
       }
     }
   }
 
+  // --- charges --------------------------------------------------------------------
+
   function drawCharge(c: Charge) {
-    const p = project(c.p.x, c.p.y, c.p.z);
-    if (p.zc <= 0.05) return;
+    const p = project(c.p);
+    if (p.zc <= 0.3) return;
+    const r = Math.max(6, 12 * p.s * (0.7 + 0.3 * Math.min(2, Math.abs(c.q))));
+    const pos = c.q >= 0;
+    const [cr, cg, cb] = pos ? [248, 113, 113] : [96, 165, 250];
 
-    const r = Math.max(6, 7.5 * p.s);
+    const glow = ctx.createRadialGradient(p.sx, p.sy, r * 0.5, p.sx, p.sy, r * 2.8);
+    glow.addColorStop(0, `rgba(${cr},${cg},${cb},0.35)`);
+    glow.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(p.sx, p.sy, r * 2.8, 0, TAU);
+    ctx.fill();
 
-    ctx.fillStyle = c.q >= 0 ? '#f87171' : '#60a5fa';
+    const ball = ctx.createRadialGradient(p.sx - r * 0.35, p.sy - r * 0.4, r * 0.1, p.sx, p.sy, r);
+    ball.addColorStop(0, `rgb(${Math.min(255, cr + 70)},${Math.min(255, cg + 70)},${Math.min(255, cb + 70)})`);
+    ball.addColorStop(1, `rgb(${Math.round(cr * 0.62)},${Math.round(cg * 0.62)},${Math.round(cb * 0.62)})`);
+    ctx.fillStyle = ball;
     ctx.beginPath();
     ctx.arc(p.sx, p.sy, r, 0, TAU);
     ctx.fill();
-
-    ctx.strokeStyle = c.id === state.selectedId
-      ? `rgba(${ink()},0.95)`
-      : 'rgba(0,0,0,0.45)';
-
-    ctx.lineWidth = c.id === state.selectedId ? 2.2 : 1.2;
-    ctx.stroke();
+    if (c.id === state.selectedId && state.scene !== 'dipole') {
+      ctx.strokeStyle = `rgba(${ink()},0.85)`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r + 3, 0, TAU);
+      ctx.stroke();
+    }
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = `700 ${Math.max(10, 12 * p.s)}px system-ui, sans-serif`;
+    ctx.font = `700 ${Math.max(10, r * 1.25)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(c.q >= 0 ? '+' : '−', p.sx, p.sy + 0.5);
+    ctx.fillText(pos ? '+' : '−', p.sx, p.sy + 0.5);
+  }
+
+  function drawAntenna() {
+    const top = project({ x: 0, y: 1.15, z: 0 }), bot = project({ x: 0, y: -1.15, z: 0 });
+    const mid1 = project({ x: 0, y: 0.08, z: 0 }), mid2 = project({ x: 0, y: -0.08, z: 0 });
+    ctx.lineCap = 'round';
+    for (const [a, b] of [[top, mid1], [mid2, bot]]) {
+      ctx.strokeStyle = isLight() ? 'rgba(100,116,139,0.85)' : 'rgba(148,163,184,0.7)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.stroke();
+    }
+    ctx.fillStyle = isLight() ? '#b45309' : '#fbbf24';
+    ctx.beginPath();
+    ctx.arc((mid1.sx + mid2.sx) / 2, (mid1.sy + mid2.sy) / 2, 3, 0, TAU);
+    ctx.fill();
   }
 
   function drawGizmo() {
     const ox = 50, oy = H - 50, len = 28;
-
     const axes = [
       { v: { x: 1, y: 0, z: 0 }, c: '#f87171', l: 'x' },
       { v: { x: 0, y: 1, z: 0 }, c: '#4ade80', l: 'y' },
       { v: { x: 0, y: 0, z: 1 }, c: '#60a5fa', l: 'z' },
     ];
-
-    const projected = axes.map((a) => {
-      const cam = worldToCamera(a.v);
-      return { ex: ox + cam.x * len, ey: oy - cam.y * len, depth: cam.z, c: a.c, l: a.l };
-    }).sort((a, b) => a.depth - b.depth);
-
+    const pr = axes
+      .map((a) => {
+        const cam = worldToCamera(a.v);
+        return { ex: ox + cam.x * len, ey: oy - cam.y * len, depth: cam.z, c: a.c, l: a.l };
+      })
+      .sort((a, b) => b.depth - a.depth);
     ctx.lineWidth = 2;
     ctx.font = "600 11px 'JetBrains Mono', monospace";
-
-    for (const a of projected) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    for (const a of pr) {
       ctx.strokeStyle = a.c;
       ctx.fillStyle = a.c;
-
       ctx.beginPath();
       ctx.moveTo(ox, oy);
       ctx.lineTo(a.ex, a.ey);
       ctx.stroke();
-
       ctx.beginPath();
       ctx.arc(a.ex, a.ey, 2.4, 0, TAU);
       ctx.fill();
-
       ctx.fillText(a.l, a.ex + 4, a.ey - 4);
     }
   }
 
+  // --- statics: traced field lines ------------------------------------------------
+
+  type Line = { pts: Vec[]; kind: 'e' | 'b' };
+  let lines: Line[] = [];
+  let linesDirty = true;
+  const linesPerQ = () => 4 + 3 * state.density;
+
+  /** The Coulomb field of the charges where they sit now. */
+  function coulomb(p: Vec): Vec {
+    let E = V.zero();
+    for (const c of charges) {
+      const R = V.sub(p, c.p);
+      const r = V.norm(R) + 1e-4;
+      E = V.add(E, V.mul(R, c.q / (r * r * r)));
+    }
+    return E;
+  }
+
+  /** Evenly spread directions on the unit sphere. */
+  function fib(k: number): Vec[] {
+    const out: Vec[] = [];
+    const ga = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < k; i++) {
+      const y = 1 - ((i + 0.5) / k) * 2;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      out.push({ x: Math.cos(ga * i) * r, y, z: Math.sin(ga * i) * r });
+    }
+    return out;
+  }
+
+  /**
+   * Every charge seeds a number of lines proportional to |q|. A + charge traces
+   * along E until the line ends on a − charge or leaves the box. A − charge
+   * traces backward; if that lands on a + charge the line is one the + charge
+   * already drew and is dropped, otherwise it is a line coming in from infinity.
+   */
+  function buildStatics() {
+    lines = [];
+    const DS = 0.06, SEED = 0.2, HIT = 0.16;
+    for (const c of charges) {
+      const sign = Math.sign(c.q);
+      for (const d of fib(Math.max(2, Math.round(linesPerQ() * Math.abs(c.q))))) {
+        const pts: Vec[] = [];
+        let p = V.add(c.p, V.mul(d, SEED));
+        let ended = false;
+        for (let s = 0; s < 600; s++) {
+          pts.push(p);
+          const e = coulomb(p);
+          const m = V.norm(e);
+          if (m < 1e-6) break;
+          p = V.add(p, V.mul(e, (sign * DS) / m));
+          if (V.norm(p) > FIELD_MAX) break;
+          const sink = charges.find((o) => o !== c && Math.sign(o.q) === -sign && V.norm(V.sub(p, o.p)) < HIT);
+          if (sink) { ended = true; pts.push(sink.p); break; }
+        }
+        if (sign < 0 && ended) continue;
+        if (pts.length < 3) continue;
+        lines.push({ pts: sign > 0 ? pts : pts.reverse(), kind: 'e' });
+      }
+    }
+
+    // circles round a wire along y. Equal ratios between radii put equal
+    // numbers of circles in each doubling of r, so their density falls as 1/r
+    // just like |B| = μ₀I / 2πr.
+    const K = 72;
+    const rings = 3 + Math.floor(state.density / 2);
+    for (const y of [-2.2, 0, 2.2]) {
+      for (let i = 0; i < rings; i++) {
+        const r = 0.28 * Math.pow(1.6, (i * 4) / Math.max(1, rings - 1));
+        const pts: Vec[] = [];
+        for (let j = 0; j <= K; j++) {
+          // current along +y: B = ŷ × r̂ runs from +x towards −z
+          const a = state.current * (j / K) * TAU;
+          pts.push({ x: WIRE_X + r * Math.cos(a), y, z: -r * Math.sin(a) });
+        }
+        lines.push({ pts, kind: 'b' });
+      }
+    }
+    linesDirty = false;
+  }
+
+  function arrowHead(ax: number, ay: number, bx: number, by: number, col: string) {
+    const ang = Math.atan2(by - ay, bx - ax);
+    const s = 7;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - s * Math.cos(ang - 0.42), by - s * Math.sin(ang - 0.42));
+    ctx.lineTo(bx - s * Math.cos(ang + 0.42), by - s * Math.sin(ang + 0.42));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawWire() {
+    const a = project({ x: WIRE_X, y: -BOX, z: 0 });
+    const b = project({ x: WIRE_X, y: BOX, z: 0 });
+    ctx.lineCap = 'round';
+    for (const [w, c] of [[8, isLight() ? 'rgba(146,64,14,0.35)' : 'rgba(0,0,0,0.45)'], [5, '#d97706'], [1.6, '#fde68a']] as [number, string][]) {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(a.sx, a.sy);
+      ctx.lineTo(b.sx, b.sy);
+      ctx.stroke();
+    }
+    for (let t = -3; t <= 3; t += 1.5) {
+      const p0 = project({ x: WIRE_X, y: t * state.current, z: 0 });
+      const p1 = project({ x: WIRE_X, y: (t + 0.4) * state.current, z: 0 });
+      arrowHead(p0.sx, p0.sy, p1.sx, p1.sy, isLight() ? '#92400e' : '#fff7ed');
+    }
+  }
+
+  function drawFieldLines() {
+    if (linesDirty) buildStatics();
+    const showE = state.fieldMode === 'e' || state.fieldMode === 'both';
+    const showB = state.fieldMode === 'b' || state.fieldMode === 'both';
+    for (const ln of lines) {
+      if (ln.kind === 'e' ? !showE : !showB) continue;
+      const rgb = ln.kind === 'e' ? (isLight() ? [37, 99, 235] : [150, 180, 255]) : isLight() ? [220, 38, 38] : [248, 113, 113];
+      const mid = ln.pts[Math.floor(ln.pts.length / 2)];
+      const col = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.78 * cue(worldToCamera(mid).zc)})`;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.6;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let pen = false;
+      for (const p of ln.pts) {
+        const pr = project(p);
+        if (pr.zc <= 0.3) { pen = false; continue; }
+        if (!pen) { ctx.moveTo(pr.sx, pr.sy); pen = true; } else ctx.lineTo(pr.sx, pr.sy);
+      }
+      ctx.stroke();
+      // a head every 1.5 u along the line, so the direction reads everywhere
+      const every = ln.kind === 'e' ? 25 : Math.floor(ln.pts.length / 3);
+      for (let i = Math.floor(every * 0.6); i < ln.pts.length; i += every) {
+        if (i < 1) continue;
+        const a = project(ln.pts[i - 1]), b = project(ln.pts[i]);
+        if (a.zc > 0.3 && b.zc > 0.3) arrowHead(a.sx, a.sy, b.sx, b.sy, col);
+      }
+    }
+  }
+
+  // --- frame ----------------------------------------------------------------------
+
+  type Item = { z: number; draw: () => void };
+
+  /** What the field-strength view shows right now. */
+  function looks() {
+    const statics = state.scene === 'statics';
+    const fog = !!vol && (statics ? state.view !== 'off' : state.view === 'fog' || state.view === 'both');
+    const shade = !statics && (state.view === 'plane' || state.view === 'both');
+    const plane = !statics && (state.layout === 'plane' || shade);
+    return { fog, shade, plane };
+  }
+  let fogShown = false;
+
   function draw() {
     ctx.clearRect(0, 0, W, H);
-
+    const look = looks();
+    fogShown = look.fog;
+    renderGL(look.fog, look.shade);
+    drawBackdrop();
     drawBox();
-    drawPlane();
-    drawWavefronts();
 
-    const items: DrawItem[] = [];
+    const items: Item[] = [];
 
-    if (state.fieldMode !== 'off') {
-      for (const p of samplePoints()) {
-        const f = fieldAt(p);
-        const eMag = V.norm(f.E);
-        const bMag = V.norm(f.B);
-        const depth = worldToCamera(p).zc;
-
-        if (state.fieldMode === 'e' || state.fieldMode === 'both') {
-          if (eMag > 2e-4) {
-            items.push({ kind: 'arrow', z: depth, p, dir: f.E, mag: eMag, color: E_COLOR });
-          }
-        }
-
-        if (state.fieldMode === 'b' || state.fieldMode === 'both') {
-          if (bMag > 2e-4) {
-            items.push({ kind: 'arrow', z: depth + 0.001, p, dir: f.B, mag: bMag, color: B_COLOR });
-          }
+    if (state.scene === 'statics') {
+      if (state.fieldMode === 'b' || state.fieldMode === 'both') drawWire();
+      drawFieldLines();
+    } else {
+      if (look.shade && !vol) drawHeat();
+      if (look.plane) drawPlaneFrame();
+      if (state.fronts) drawFronts();
+      if (state.scene === 'dipole') drawAntenna();
+      if (state.fieldMode !== 'off') {
+        const showE = state.fieldMode !== 'b', showB = state.fieldMode !== 'e';
+        const { pts, spacing } = samples();
+        for (const p of pts) {
+          const f = fieldAt(p);
+          const z = worldToCamera(p).zc;
+          const eM = V.norm(f.E), bM = V.norm(f.B);
+          if (showE && eM > 1e-6) items.push({ z, draw: () => drawArrow(p, f.E, eM, E_RGB, spacing) });
+          if (showB && bM > 1e-6) items.push({ z: z - 1e-3, draw: () => drawArrow(p, f.B, bM, B_RGB, spacing) });
         }
       }
     }
 
-    for (const c of charges) {
-      items.push({ kind: 'charge', z: worldToCamera(c.p).zc, charge: c });
-    }
-
+    for (const c of charges) items.push({ z: worldToCamera(c.p).zc, draw: () => drawCharge(c) });
     items.sort((a, b) => b.z - a.z);
-
-    for (const it of items) {
-      if (it.kind === 'arrow' && it.p && it.dir && it.mag && it.color) {
-        drawArrow3D(it.p, it.dir, it.mag, it.color, state.sampleMode === 'space' ? 0.72 : 0.9);
-      } else if (it.kind === 'charge' && it.charge) {
-        drawCharge(it.charge);
-      }
-    }
+    for (const it of items) it.draw();
 
     drawGizmo();
-    updateReadouts();
+    sync();
   }
 
-  const setEq = equationBar();
+  // --- words and numbers -------------------------------------------------------------
+
+  const setEq = equation();
   const setResult = result();
-  function updateReadouts() {
-    (document.getElementById('nOut') as HTMLElement).textContent = physicalN().toFixed(3);
-    (document.getElementById('vOut') as HTMLElement).textContent = `${fmtSci(physicalV())} m/s`;
-    (document.getElementById('etaOut') as HTMLElement).textContent = `${physicalEta().toFixed(1)} Ω`;
-    (document.getElementById('lambdaOut') as HTMLElement).textContent = `${physicalLambda().toFixed(3)} m`;
-    (document.getElementById('timeOut') as HTMLElement).textContent = state.time.toFixed(2);
-    setResult({
-      value: `${fmtSci(physicalV())} m/s`,
-      status: `refractive index n = ${physicalN().toFixed(3)} · impedance η = ${physicalEta().toFixed(1)} Ω · wavelength λ = ${physicalLambda().toFixed(3)} m`,
-      note: 'E and B are at right angles to each other and to the direction of travel, and their ratio is the impedance of the medium.',
+  const setRows = readout();
+
+  function densityLabel() {
+    if (state.scene === 'statics') return `${linesPerQ()} lines / unit q`;
+    if (state.layout === 'volume') {
+      const k = 3 + state.density;
+      return `${k} × ${k} × ${k}`;
+    }
+    const k = 7 + 2 * state.density;
+    return `${k} × ${k}`;
+  }
+
+  function sync() {
+    el('densityval').textContent = densityLabel();
+    setRows({
+      nOut: n().toFixed(3),
+      vOut: `${visualC().toFixed(3)} u/t`,
+      etaOut: `${eta().toFixed(1)} Ω`,
+      lambdaOut: state.scene === 'dipole' ? `${lambda().toFixed(2)} u` : '—',
     });
-    setEq([
-      [
-        ['\\mathbf E', E_COLOR],
-        '\\perp',
-        ['\\mathbf B', B_COLOR],
-        '\\perp \\mathbf k',
-        '\\quad v = \\dfrac{c}{n},\\; n=\\sqrt{\\varepsilon_r\\mu_r}',
-      ],
-      [
-        `n = ${physicalN().toFixed(3)}`,
-        `\\quad v = ${fmtSci(physicalV())}\\,\\text{m/s}`,
-        `\\quad \\eta = ${physicalEta().toFixed(1)}\\,\\Omega`,
-        `\\quad \\lambda = ${physicalLambda().toFixed(3)}\\,\\text{m}`,
-      ],
-      [
-        'the two fields feed each other and travel together, at right angles to the direction of travel',
-      ],
-    ]);
-  }
 
-  function renderCharges() {
-    const host = document.getElementById('charges')!;
-
-    host.innerHTML = charges.map((c) => `
-      <div class="charge-card ${c.id === state.selectedId ? 'selected' : ''}" data-id="${c.id}">
-        <div class="charge-head">
-          <input type="checkbox" class="charge-on" data-id="${c.id}" ${c.on ? 'checked' : ''} style="accent-color:${c.color}">
-          <button class="charge-select" data-id="${c.id}">${c.q >= 0 ? '+' : '−'} charge ${c.id}</button>
-          <button class="charge-remove" data-id="${c.id}" title="Remove">×</button>
-        </div>
-
-        <div class="control compact">
-          <label>Position x·y·z <b id="posv-${c.id}">${c.p.x.toFixed(1)}, ${c.p.y.toFixed(1)}, ${c.p.z.toFixed(1)}</b></label>
-          <div class="pos-row">
-            <input type="range" class="charge-pos" data-id="${c.id}" data-axis="x" min="-450" max="450" value="${Math.round(c.p.x * 100)}">
-            <input type="range" class="charge-pos" data-id="${c.id}" data-axis="y" min="-450" max="450" value="${Math.round(c.p.y * 100)}">
-            <input type="range" class="charge-pos" data-id="${c.id}" data-axis="z" min="-450" max="450" value="${Math.round(c.p.z * 100)}">
-          </div>
-        </div>
-
-        <div class="control compact">
-          <label>Charge q <b id="qv-${c.id}">${c.q.toFixed(1)}</b></label>
-          <input type="range" class="charge-q" data-id="${c.id}" min="-20" max="20" value="${Math.round(c.q * 10)}">
-        </div>
-
-        <div class="control compact">
-          <label>Motion</label>
-          <select class="charge-mode select" data-id="${c.id}">
-            <option value="manual" ${c.mode === 'manual' ? 'selected' : ''}>Manual</option>
-            <option value="osc-x" ${c.mode === 'osc-x' ? 'selected' : ''}>Oscillate X</option>
-            <option value="osc-y" ${c.mode === 'osc-y' ? 'selected' : ''}>Oscillate Y</option>
-            <option value="osc-z" ${c.mode === 'osc-z' ? 'selected' : ''}>Oscillate Z</option>
-          </select>
-        </div>
-
-        <div class="control compact">
-          <label>Phase <b id="phv-${c.id}">${(c.phase / Math.PI).toFixed(2)}π</b></label>
-          <input type="range" class="charge-phase" data-id="${c.id}" min="0" max="200" value="${Math.round((c.phase / TAU) * 200)}">
-        </div>
-      </div>
-    `).join('');
-  }
-
-  function getCharge(id: number) {
-    return charges.find((c) => c.id === id);
-  }
-
-  document.getElementById('charges')!.addEventListener('click', (e) => {
-    const sel = (e.target as HTMLElement).closest('.charge-select') as HTMLElement | null;
-    const rem = (e.target as HTMLElement).closest('.charge-remove') as HTMLElement | null;
-
-    if (sel) {
-      state.selectedId = +sel.dataset.id!;
-      renderCharges();
-      draw();
+    if (state.scene === 'statics') {
+      const pos = charges.filter((c) => c.q > 0), neg = charges.filter((c) => c.q < 0);
+      const qs = charges.map((c) => (c.q > 0 ? '+' : '−') + Math.abs(c.q).toFixed(1)).join('  ');
+      setEq({
+        rule: [
+          ['\\mathbf E', E_COLOR],
+          '=\\sum_i \\dfrac{q_i\\,\\hat{\\mathbf r}_i}{4\\pi\\varepsilon_0 r_i^{2}}',
+          '\\qquad',
+          ['\\mathbf B', B_COLOR],
+          '=\\dfrac{\\mu_0 I}{2\\pi r}\\,\\hat{\\boldsymbol\\varphi}',
+        ],
+        live: [
+          `\\text{lines} = ${linesPerQ()}\\,|q|`,
+          `\\quad I \\text{ along } ${state.current > 0 ? '+y' : '-y'}`,
+        ],
+      });
+      setResult({
+        value: qs,
+        status: `${pos.length} positive, ${neg.length} negative · current ${state.current > 0 ? 'up' : 'down'} the wire`,
+        note: 'E lines start on + and end on −, or run off to infinity, and never cross. B lines close on themselves: there is no magnetic charge to start on.',
+      });
       return;
     }
 
-    if (rem && charges.length > 1) {
-      const id = +rem.dataset.id!;
-      charges = charges.filter((c) => c.id !== id);
-
-      if (!getCharge(state.selectedId)) {
-        state.selectedId = charges[0].id;
-      }
-
-      renderCharges();
-      draw();
-    }
-  });
-
-  document.getElementById('charges')!.addEventListener('input', (e) => {
-    const target = e.target as HTMLInputElement | HTMLSelectElement;
-    const id = +(target.dataset.id || 0);
-    const c = getCharge(id);
-
-    if (!c) return;
-
-    if (target.classList.contains('charge-q')) {
-      c.q = +(target as HTMLInputElement).value / 10;
-      c.color = c.q >= 0 ? '#f87171' : '#60a5fa';
-
-      const out = document.getElementById(`qv-${c.id}`);
-      if (out) out.textContent = c.q.toFixed(1);
-
-      renderCharges();
-    }
-
-    if (target.classList.contains('charge-pos')) {
-      const axis = (target as HTMLInputElement).dataset.axis as 'x' | 'y' | 'z';
-      const val = +(target as HTMLInputElement).value / 100;
-      c.target[axis] = val;
-      c.origin[axis] = val;
-      if (!state.running) {
-        c.p[axis] = val;
-        c.prevP = { ...c.p };
-        c.prevV = V.zero();
-        c.v = V.zero();
-        c.a = V.zero();
-        draw();
-      }
-      const out = document.getElementById(`posv-${c.id}`);
-      if (out) out.textContent = `${c.target.x.toFixed(1)}, ${c.target.y.toFixed(1)}, ${c.target.z.toFixed(1)}`;
-    }
-
-    if (target.classList.contains('charge-phase')) {
-      c.phase = (+(target as HTMLInputElement).value / 200) * TAU;
-
-      const out = document.getElementById(`phv-${c.id}`);
-      if (out) out.textContent = `${(c.phase / Math.PI).toFixed(2)}π`;
-    }
-
-    if (target.classList.contains('charge-mode')) {
-      c.mode = (target as HTMLSelectElement).value as Charge['mode'];
-      c.origin = { ...c.p };
-      c.target = { ...c.p };
-    }
-  });
-
-  document.getElementById('charges')!.addEventListener('change', (e) => {
-    const cb = (e.target as HTMLElement).closest('.charge-on') as HTMLInputElement | null;
-
-    if (!cb) return;
-
-    const c = getCharge(+cb.dataset.id!);
-    if (c) c.on = cb.checked;
-  });
-
-  function setMediumPreset(name: string) {
-    if (name === 'vacuum') {
-      state.epsR = 1;
-      state.muR = 1;
-      state.sigma = 0;
-    } else if (name === 'air') {
-      state.epsR = 1.0006;
-      state.muR = 1;
-      state.sigma = 0;
-    } else if (name === 'glass') {
-      state.epsR = 4.5;
-      state.muR = 1;
-      state.sigma = 0.02;
-    } else if (name === 'water') {
-      state.epsR = 80;
-      state.muR = 1;
-      state.sigma = 0.08;
-    }
-
-    syncMediumInputs();
-  }
-
-  function syncMediumInputs() {
-    (document.getElementById('eps') as HTMLInputElement).value = String(Math.round(state.epsR * 100));
-    (document.getElementById('mu') as HTMLInputElement).value = String(Math.round(state.muR * 100));
-    (document.getElementById('sigma') as HTMLInputElement).value = String(Math.round(state.sigma * 100));
-
-    (document.getElementById('epsVal') as HTMLElement).textContent = state.epsR.toFixed(state.epsR < 10 ? 2 : 1);
-    (document.getElementById('muVal') as HTMLElement).textContent = state.muR.toFixed(2);
-    (document.getElementById('sigmaVal') as HTMLElement).textContent = state.sigma.toFixed(2);
-  }
-
-  function activateSeg(containerId: string, value: string) {
-    document.querySelectorAll(`#${containerId} button`).forEach((b) => {
-      (b as HTMLElement).classList.toggle('active', (b as HTMLElement).dataset.v === value);
+    setEq({
+      rule: [
+        ['\\mathbf E_{\\text{rad}}', E_COLOR],
+        '\\propto \\dfrac{q\\,\\hat{\\mathbf n}\\times(\\hat{\\mathbf n}\\times\\mathbf a)}{v^{2}\\,r}\\Big|_{t-r/v}',
+        '\\qquad',
+        ['\\mathbf B', B_COLOR],
+        '=\\dfrac{\\hat{\\mathbf n}\\times\\mathbf E}{v}',
+      ],
+      live: state.scene === 'dipole'
+        ? [`v = \\dfrac{c}{n} = \\dfrac{c}{${n().toFixed(2)}}`, `\\quad \\lambda = \\dfrac{v}{f} = ${lambda().toFixed(2)}\\,\\text{u}`]
+        : [`v = \\dfrac{c}{n} = \\dfrac{c}{${n().toFixed(2)}}`, `\\quad |\\mathbf a| = ${V.norm(charges[0]?.a ?? V.zero()).toFixed(2)}`],
+    });
+    setResult({
+      value: `${(1 / n()).toFixed(3)} c`,
+      status: state.scene === 'dipole'
+        ? `n = ${n().toFixed(3)} · η = ${eta().toFixed(1)} Ω · λ = ${lambda().toFixed(2)} u (box ${2 * BOX} u)`
+        : `n = ${n().toFixed(3)} · η = ${eta().toFixed(1)} Ω`,
+      note: state.scene === 'dipole'
+        ? 'The rings are one wavelength apart. Far out, E and B are at right angles to each other and to the direction of travel.'
+        : 'Only an accelerating charge radiates; a still or steadily moving one just carries its Coulomb field along.',
     });
   }
 
-  document.getElementById('fieldMode')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
+  // --- controls -------------------------------------------------------------------
 
-    state.fieldMode = btn.dataset.v as typeof state.fieldMode;
-    activateSeg('fieldMode', state.fieldMode);
+  function panelFor() {
+    const statics = state.scene === 'statics';
+    el('newq').hidden = !statics;
+    el('flip').hidden = !statics;
+    el('shake').hidden = state.scene !== 'charge';
+    el('layout-wrap').hidden = statics;
+    const look = looks();
+    el('plane-wrap').hidden = !look.plane;
+    el('look-wrap').hidden = statics;
+    el('freq-wrap').hidden = state.scene !== 'dipole';
+    el('fogop-wrap').hidden = !look.fog;
+    el('lg-heat').hidden = !look.fog && !look.shade;
+    // statics has no plane; without WebGL2 there is no fog
+    const vb = (v: string) => el('view').querySelector(`[data-v="${v}"]`) as HTMLElement;
+    vb('plane').hidden = vb('both').hidden = statics;
+    if (!vol) vb('fog').hidden = vb('both').hidden = true;
+    el('view-wrap').hidden = statics && !vol;
+    views.select(statics ? (state.view === 'off' ? 'off' : 'fog') : state.view);
+    el('result-label').textContent = statics ? 'Field lines' : 'Wave speed in this medium';
+  }
+
+  const tr = transport({
+    onStep: () => { for (let i = 0; i < 4; i++) integrate(); draw(); },
+    onReset: () => { setScene(state.scene); draw(); },
+  });
+  const scenes = segmented('scene', (s) => { setScene(s as Scene); draw(); });
+  const fields = segmented('field', (v) => { state.fieldMode = v as typeof state.fieldMode; draw(); });
+  const layouts = segmented('layout', (v) => { state.layout = v as typeof state.layout; panelFor(); draw(); });
+  const planes = segmented('plane', (v) => { state.plane = v as typeof state.plane; draw(); });
+  const setOffset = slider('offset', (v) => { state.planePos = v; draw(); }, (v) => v.toFixed(1));
+  const setDensity = slider('density', (v) => { state.density = v; linesDirty = true; draw(); }, () => densityLabel());
+  const views = segmented('view', (v) => {
+    // in statics the only choices are fog or nothing; keep the plane choice for later
+    if (state.scene !== 'statics' || v === 'off' || state.view === 'off' || state.view === 'plane') state.view = v as typeof state.view;
+    panelFor();
     draw();
   });
+  const setFogOp = slider('fogop', (v) => { state.fogOpacity = v; draw(); }, (v) => v.toFixed(2));
+  check('fronts', (on) => { state.fronts = on; draw(); });
+  const setEps = slider('eps', (v) => { state.epsR = v; draw(); }, (v) => v.toFixed(1));
+  slider('mu', (v) => { state.muR = v; draw(); }, (v) => v.toFixed(1));
+  slider('sigma', (v) => { state.sigma = v; draw(); }, (v) => v.toFixed(2));
+  slider('freq', (v) => { state.freq = v; draw(); }, (v) => v.toFixed(2));
 
-  document.getElementById('sampleMode')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
+  el('shake').addEventListener('click', () => { shake(); draw(); });
+  el('newq').addEventListener('click', () => { randomCharges(); draw(); });
+  el('flip').addEventListener('click', () => { state.current *= -1; linesDirty = true; draw(); });
 
-    state.sampleMode = btn.dataset.v as typeof state.sampleMode;
-    activateSeg('sampleMode', state.sampleMode);
+  function show(s: Scene, field: typeof state.fieldMode, layout: typeof state.layout, epsR = 1, view: typeof state.view = 'both') {
+    state.layout = layout;
+    layouts.select(layout);
+    state.plane = 'xy';
+    planes.select('xy');
+    state.planePos = 0;
+    setOffset(0);
+    state.view = vol ? view : view === 'off' ? 'off' : 'plane';
+    state.fogOpacity = 1;
+    setFogOp(1);
+    state.fieldMode = field;
+    fields.select(field);
+    state.epsR = epsR;
+    setEps(epsR);
+    scenes.select(s);
+    setScene(s);
+    tr.setRunning(true);
     draw();
+  }
+
+  tries({
+    jiggle: () => { show('charge', 'e', 'plane'); shake(); },
+    dipole: () => {
+      state.density = 2;
+      setDensity(2);
+      show('dipole', 'both', 'volume', 1, 'fog');
+      cam.pitch = -0.5;
+    },
+    medium: () => show('dipole', 'e', 'plane', 4),
+    statics: () => {
+      show('statics', 'both', 'plane');
+      charges = [makeCharge(1, { x: -2.4, y: 0, z: 0 }), makeCharge(-2, { x: -0.6, y: 0, z: 0 })];
+      state.selectedId = charges[0].id;
+      linesDirty = true;
+      draw();
+    },
   });
 
-  document.getElementById('planeMode')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('button');
-    if (!btn) return;
+  // --- pointer --------------------------------------------------------------------
 
-    state.plane = btn.dataset.v as typeof state.plane;
-    activateSeg('planeMode', state.plane);
-    draw();
-  });
-
-  (document.getElementById('speed') as HTMLInputElement).addEventListener('input', (e) => {
-    state.speed = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('speedVal') as HTMLElement).textContent = `${state.speed.toFixed(2)}×`;
-  });
-
-  (document.getElementById('density') as HTMLInputElement).addEventListener('input', (e) => {
-    state.density = +(e.target as HTMLInputElement).value;
-    (document.getElementById('densityVal') as HTMLElement).textContent = String(state.density);
-    draw();
-  });
-
-  (document.getElementById('fieldScale') as HTMLInputElement).addEventListener('input', (e) => {
-    state.fieldScale = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('fieldScaleVal') as HTMLElement).textContent = state.fieldScale.toFixed(2);
-    draw();
-  });
-
-  (document.getElementById('planePos') as HTMLInputElement).addEventListener('input', (e) => {
-    state.planePos = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('planeVal') as HTMLElement).textContent = state.planePos.toFixed(2);
-    draw();
-  });
-
-  (document.getElementById('preset') as HTMLSelectElement).addEventListener('change', (e) => {
-    setMediumPreset((e.target as HTMLSelectElement).value);
-  });
-
-  (document.getElementById('eps') as HTMLInputElement).addEventListener('input', (e) => {
-    state.epsR = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('epsVal') as HTMLElement).textContent = state.epsR.toFixed(state.epsR < 10 ? 2 : 1);
-    (document.getElementById('preset') as HTMLSelectElement).value = 'custom';
-    draw();
-  });
-
-  (document.getElementById('mu') as HTMLInputElement).addEventListener('input', (e) => {
-    state.muR = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('muVal') as HTMLElement).textContent = state.muR.toFixed(2);
-    (document.getElementById('preset') as HTMLSelectElement).value = 'custom';
-    draw();
-  });
-
-  (document.getElementById('sigma') as HTMLInputElement).addEventListener('input', (e) => {
-    state.sigma = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('sigmaVal') as HTMLElement).textContent = state.sigma.toFixed(2);
-    (document.getElementById('preset') as HTMLSelectElement).value = 'custom';
-    draw();
-  });
-
-  (document.getElementById('freq') as HTMLInputElement).addEventListener('input', (e) => {
-    state.freqMHz = +(e.target as HTMLInputElement).value;
-    (document.getElementById('freqVal') as HTMLElement).textContent = `${state.freqMHz} MHz`;
-    draw();
-  });
-
-  (document.getElementById('amp') as HTMLInputElement).addEventListener('input', (e) => {
-    state.amp = +(e.target as HTMLInputElement).value / 100;
-    (document.getElementById('ampVal') as HTMLElement).textContent = state.amp.toFixed(2);
-  });
-
-  const runBtn = document.getElementById('run') as HTMLButtonElement;
-
-  runBtn.addEventListener('click', () => {
-    state.running = !state.running;
-    runBtn.textContent = state.running ? 'Pause' : 'Run';
-  });
-
-  document.getElementById('step')!.addEventListener('click', () => {
-    advance(1 / 45);
-    draw();
-  });
-
-  document.getElementById('reset')!.addEventListener('click', () => {
-    resetDefaultCharges();
-    draw();
-  });
-
-  document.getElementById('add')!.addEventListener('click', () => {
-    const q = charges.length % 2 === 0 ? 1 : -1;
-
-    const c = makeCharge(q, {
-      x: +(Math.random() * 2 - 1).toFixed(2),
-      y: +(Math.random() * 2 - 1).toFixed(2),
-      z: +(Math.random() * 2 - 1).toFixed(2),
-    }, 'manual', 0);
-
-    charges.push(c);
-    state.selectedId = c.id;
-
-    renderCharges();
-    draw();
-  });
-
-  document.getElementById('dipole')!.addEventListener('click', () => {
-    setDipole();
-    draw();
-  });
-
-  let draggingCharge = false;
+  let dragging: Charge | null = null;
   let orbiting = false;
   let lastX = 0;
   let lastY = 0;
@@ -1266,10 +1540,7 @@ import Caption from '../../../components/sim/Caption.astro';
   // project() draws into), regardless of how the canvas is scaled on screen
   function toLocal(e: PointerEvent) {
     const rect = canvas.getBoundingClientRect();
-    return {
-      x: ((e.clientX - rect.left) / rect.width) * W,
-      y: ((e.clientY - rect.top) / rect.height) * H,
-    };
+    return { x: ((e.clientX - rect.left) / rect.width) * W, y: ((e.clientY - rect.top) / rect.height) * H };
   }
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1277,120 +1548,79 @@ import Caption from '../../../components/sim/Caption.astro';
   canvas.addEventListener('pointerdown', (e) => {
     lastX = e.clientX;
     lastY = e.clientY;
-
-    const wantsOrbit = e.button === 2 || e.altKey || e.shiftKey;
-
-    if (wantsOrbit) {
-      orbiting = true;
-      canvas.setPointerCapture(e.pointerId);
-      return;
-    }
+    canvas.setPointerCapture(e.pointerId);
+    if (e.button === 2 || e.altKey || e.shiftKey) { orbiting = true; return; }
 
     const loc = toLocal(e);
-    let best: Charge | null = null;
-    let bestD = Infinity;
-
+    let best: Charge | null = null, bestD = Infinity;
     for (const c of charges) {
-      const p = project(c.p.x, c.p.y, c.p.z);
+      const p = project(c.p);
       const d = Math.hypot(loc.x - p.sx, loc.y - p.sy);
-
-      if (d < bestD) {
-        bestD = d;
-        best = c;
-      }
+      if (d < bestD) { bestD = d; best = c; }
     }
-
     if (best && bestD < 34) {
       state.selectedId = best.id;
-
-      best.mode = 'manual';
-      best.origin = { ...best.p };
-      best.target = { ...best.p };
-
-      draggingCharge = true;
-
-      renderCharges();
-      canvas.setPointerCapture(e.pointerId);
+      toManual(best);
+      best.shakeFrom = -1;
+      dragging = best;
       return;
     }
-
     orbiting = true;
-    canvas.setPointerCapture(e.pointerId);
   });
 
   canvas.addEventListener('pointermove', (e) => {
     if (orbiting) {
-      state.yaw += (e.clientX - lastX) * 0.01;
-      state.pitch = Math.max(-1.45, Math.min(1.45, state.pitch + (e.clientY - lastY) * 0.01));
-
+      cam.yaw += (e.clientX - lastX) * 0.01;
+      cam.pitch = Math.max(-1.45, Math.min(1.45, cam.pitch + (e.clientY - lastY) * 0.01));
       lastX = e.clientX;
       lastY = e.clientY;
-
-      if (!state.running) draw();
+      if (!tr.running() || state.scene === 'statics') draw();
       return;
     }
-
-    if (draggingCharge) {
-      const c = getCharge(state.selectedId);
-      // drag within a plane at the charge's OWN depth, so a charge placed off
-      // the sampling plane keeps its offset (and its field stays 3D there)
-      const perp = c ? (state.plane === 'xy' ? c.p.z : state.plane === 'xz' ? c.p.y : c.p.x) : state.planePos;
-      const p = intersectActivePlane(toLocal(e).x, toLocal(e).y, perp);
-
-      if (c && p) {
-        // set a target; advance() eases the charge toward it and records the
-        // history and (smoothed) velocity once per frame
-        c.target = p;
-        c.origin = { ...p };
-
-        if (!state.running) {
-          // paused: snap there and keep the field frozen without a spike
-          c.p = { ...p };
-          c.prevP = { ...p };
-          c.prevV = V.zero();
-          c.v = V.zero();
-          c.a = V.zero();
-          draw();
-        }
-      }
+    const c = dragging;
+    if (!c) return;
+    // drag in a plane through the charge: the active arrow plane's orientation,
+    // or facing the camera in the volume view
+    const nrm = state.layout === 'plane' && state.scene !== 'statics' ? planeNormal() : camForward();
+    const loc = toLocal(e);
+    const p = hitPlane(loc.x, loc.y, c.p, nrm);
+    if (!p) return;
+    c.target = p;
+    c.origin = { ...p };
+    if (!tr.running() || state.scene === 'statics') {
+      // paused, or static charges: jump there, as if it had always sat there
+      c.p = { ...p };
+      settle(c);
+      moved++;
+      linesDirty = true;
+      draw();
     }
   });
 
-  const stopDrag = () => {
-    draggingCharge = false;
-    orbiting = false;
-  };
-
+  const stopDrag = () => { dragging = null; orbiting = false; };
   canvas.addEventListener('pointerup', stopDrag);
   canvas.addEventListener('pointercancel', stopDrag);
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-
-    state.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    state.zoom = Math.max(0.35, Math.min(5.5, state.zoom));
-
-    if (!state.running) draw();
+    cam.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    cam.zoom = Math.max(0.35, Math.min(5.5, cam.zoom));
+    if (!tr.running() || state.scene === 'statics') draw();
   }, { passive: false });
 
   let last = 0;
-
   function loop(ts: number) {
-    if (!last) last = ts;
-
-    const dt = Math.min(0.045, (ts - last) / 1000);
+    const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0;
     last = ts;
-
-    if (state.running) {
-      advance(dt * state.speed);
+    if (tr.running() && state.scene !== 'statics') {
+      advance(dt);
+      draw();
     }
-
-    draw();
     requestAnimationFrame(loop);
   }
 
-  syncMediumInputs();
-  resetDefaultCharges();
+  setScene('charge');
+  draw();
   requestAnimationFrame(loop);
 </script>
 
@@ -1402,131 +1632,5 @@ import Caption from '../../../components/sim/Caption.astro';
 
   .em-canvas:active {
     cursor: grabbing;
-  }
-
-  .block-label {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-faint);
-    margin-top: 4px;
-  }
-
-  details.group {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-elev);
-  }
-  details.group > summary {
-    cursor: pointer;
-    list-style: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    user-select: none;
-  }
-  details.group > summary::-webkit-details-marker {
-    display: none;
-  }
-  details.group > summary::after {
-    content: '+';
-    color: var(--text-faint);
-    font-size: 1rem;
-  }
-  details.group[open] > summary::after {
-    content: '−';
-  }
-  details.group > .group-body {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 2px 12px 12px;
-  }
-
-  .select {
-    width: 100%;
-    border: 1px solid var(--border);
-    background: var(--bg-elev);
-    color: var(--text);
-    border-radius: var(--radius-sm);
-    padding: 8px 10px;
-    font: inherit;
-  }
-</style>
-
-<style is:global>
-  .charge-card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-elev);
-    padding: 8px 10px 10px;
-    margin-bottom: 7px;
-  }
-
-  .charge-card.selected {
-    outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  }
-
-  .charge-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 7px;
-  }
-
-  .charge-on {
-    width: 15px;
-    height: 15px;
-    flex: none;
-  }
-
-  .charge-select {
-    flex: 1;
-    border: 0;
-    background: transparent;
-    color: var(--text);
-    text-align: left;
-    padding: 0;
-    font: inherit;
-    font-size: 0.86rem;
-    cursor: pointer;
-  }
-
-  .charge-remove {
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-faint);
-    border-radius: 999px;
-    width: 22px;
-    height: 22px;
-    cursor: pointer;
-  }
-
-  .charge-remove:hover {
-    color: var(--text);
-  }
-
-  .control.compact {
-    margin-bottom: 8px;
-  }
-
-  .control.compact:last-child {
-    margin-bottom: 0;
-  }
-
-  .pos-row {
-    display: flex;
-    gap: 6px;
-  }
-
-  .pos-row input[type='range'] {
-    flex: 1;
-    min-width: 0;
   }
 </style>

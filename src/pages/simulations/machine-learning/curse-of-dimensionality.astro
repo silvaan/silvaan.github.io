@@ -5,6 +5,7 @@ import Slider from '../../../components/sim/Slider.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -57,49 +58,33 @@ import Caption from '../../../components/sim/Caption.astro';
       <div data-for="sparsity shell distance angles">
         <Slider id="n" label="Sample points n" min={100} max={1200} step={50} value={600} />
       </div>
-      <div class="readout" id="readout"></div>
+      <details class="numeric-details">
+        <summary>Values</summary>
+        <div class="readout" id="readout"></div>
+      </details>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      <b>Empty space.</b> Cut every axis into 10 bins and the number of cells is
-      10<sup>d</sup>. At d = 20 that is a hundred billion billion boxes, and your
-      600 points sit in 600 of them. The 2D picture still looks nicely filled,
-      which is the trap: <b>every low-dimensional projection lies</b> about how
-      crowded the real space is.
+      <b>Empty space.</b> To gather 10% of the data a box must span 63% of every
+      axis at d = 5 and 89% at d = 20, so a "local" neighbourhood stops being
+      local. <Try id="sparse" />
     </li>
     <li>
-      Watch the curve on the right. To gather 10% of the data you must span
-      <b>63% of every axis at d = 5</b> and <b>89% at d = 20</b>. A "local"
-      neighbourhood stops being local, so anything built on neighbours (k-NN,
-      kernels, histograms) quietly stops being local too.
+      <b>Volume in the crust.</b> The outer 5% shell holds under 10% of a disc
+      but over <b>99% of a 100D ball</b>, because volume scales like
+      r<sup>d</sup>. <Try id="shell" />
     </li>
     <li>
-      <b>Volume in the crust.</b> Drag d up and watch the dots evacuate the middle
-      of the ball. The outer 5% shell holds under 10% of a 2D disc but over
-      <b>99% of a 100D ball</b>. Nothing moved: it is just that volume scales like
-      r<sup>d</sup>, so almost all of it is near the surface.
+      <b>All distances equal.</b> By d = 60 the spread of the distances is only
+      a few percent of their mean, so nearest and farthest barely differ.
+      <Try id="dist" />
     </li>
     <li>
-      <b>All distances equal.</b> The cloud around the query point collapses into a
-      thin ring: by d = 60 the spread of the distances is only a few percent of
-      their mean, and it keeps shrinking like 1/√d. Nearest and farthest stop
-      being meaningfully different, which is why exact nearest-neighbour search
-      loses its grip in high dimensions.
-    </li>
-    <li>
-      <b>Everything orthogonal.</b> Two random directions have cos θ with mean 0
-      and standard deviation <b>1/√d</b>. By d = 100 nearly every pair sits within
-      a few degrees of 90°. High-dimensional space is roomy enough for enormous
-      numbers of almost-orthogonal directions, which is exactly what makes random
-      projections and superposition in embeddings work.
-    </li>
-    <li>
-      <b>Nothing but corners.</b> The ball inscribed in a cube touches all 2d faces
-      yet fills <b>1 part in 10<sup>28</sup> of it at d = 50</b>. All the volume
-      hides in the 2<sup>d</sup> corners, and the cube's half-diagonal is √d while
-      its inradius stays 1: the box is really a spiky sea urchin, not a box.
+      <b>Everything orthogonal.</b> cos θ between random directions has spread
+      <b>1/√d</b>, so at d = 100 nearly every pair sits within a few degrees of
+      90°. <Try id="angles" />
     </li>
   </Fragment>
 </SimLayout>
@@ -108,7 +93,7 @@ import Caption from '../../../components/sim/Caption.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, tries } from '../../../lib/panel';
 
   const canvas = el('cod') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
@@ -712,9 +697,9 @@ import Caption from '../../../components/sim/Caption.astro';
   }
   const setD = slider('d', (v) => { state.d = v; draw(); });
   slider('n', (v) => { state.n = v; draw(); });
-  slider('frac', (v) => { state.frac = v; draw(); }, (v) => `${v}%`);
-  slider('eps', (v) => { state.eps = v; draw(); }, (v) => `${v}%`);
-  segmented('mode', (m) => { state.mode = m; syncContext(); draw(); });
+  const setFrac = slider('frac', (v) => { state.frac = v; draw(); }, (v) => `${v}%`);
+  const setEps = slider('eps', (v) => { state.eps = v; draw(); }, (v) => `${v}%`);
+  const modes = segmented('mode', (m) => { state.mode = m; syncContext(); draw(); });
   const controls = transport({
     onRun: (running) => { state.playing = running; if (running) requestAnimationFrame(tick); },
     onStep: () => { state.d = state.d >= DMAX ? 1 : state.d + 1; setD(state.d); draw(); },
@@ -744,6 +729,23 @@ import Caption from '../../../components/sim/Caption.astro';
     }
     requestAnimationFrame(tick);
   }
+
+  function show(mode: string, d: number) {
+    state.playing = false;
+    controls.setRunning(false);
+    state.mode = mode;
+    modes.select(mode);
+    syncContext();
+    state.d = d;
+    setD(d);
+    draw();
+  }
+  tries({
+    sparse: () => { state.frac = 10; setFrac(10); show('sparsity', 20); },
+    shell: () => { state.eps = 5; setEps(5); show('shell', 100); },
+    dist: () => show('distance', 60),
+    angles: () => show('angles', 100),
+  });
 
   syncContext();
   draw();

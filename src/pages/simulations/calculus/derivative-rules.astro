@@ -5,6 +5,8 @@ import Slider from '../../../components/sim/Slider.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -38,7 +40,7 @@ import Caption from '../../../components/sim/Caption.astro';
 
     <div class="sim-panel">
       <Seg id="rule" label="Rule" attr="r" options={[{ value: 'sum', label: 'Sum' }, { value: 'product', label: 'Product' }, { value: 'chain', label: 'Chain' }]} />
-      <Transport animate="Watch the step">
+      <Transport>
         <button type="button" class="btn ghost" id="shrink">Shrink h → 0</button>
       </Transport>
       <div id="pairs-sum">
@@ -52,39 +54,63 @@ import Caption from '../../../components/sim/Caption.astro';
       </div>
       <Slider id="x" label="Point x" min={0} max={100} value={40} display="1.00" />
       <Slider id="h" label="Step h" min={0} max={100} value={20} display="0.253" hint={['a big step', 'a tiny one']} />
-      <div class="readout" id="rows"></div>
+      <div id="rows-sum">
+        <Readout
+          title="Values"
+          rows={[
+            { id: 's-du', label: 'Δu' },
+            { id: 's-dv', label: 'Δv' },
+            { id: 's-dsum', label: 'Δ(u+v)' },
+            { id: 's-q', label: 'Δ(u+v)/h' },
+            { id: 's-exact', label: 'u′ + v′' },
+            { id: 's-left', label: 'leftover terms' },
+          ]}
+        />
+      </div>
+      <div id="rows-product" hidden>
+        <Readout
+          title="Values"
+          rows={[
+            { id: 'p-uv', label: 'u, v' },
+            { id: 'p-duv', label: 'Δu, Δv' },
+            { id: 'p-s1', label: 'side strip v·Δu' },
+            { id: 'p-s2', label: 'top strip u·Δv' },
+            { id: 'p-cor', label: 'corner Δu·Δv' },
+            { id: 'p-q', label: 'ΔA / h' },
+            { id: 'p-exact', label: 'u′v + uv′' },
+          ]}
+        />
+      </div>
+      <div id="rows-chain" hidden>
+        <Readout
+          title="Values"
+          rows={[
+            { id: 'c-u', label: 'u = g(x)' },
+            { id: 'c-g1', label: 'g stretches by g′(x)' },
+            { id: 'c-f1', label: 'f stretches by f′(u)' },
+            { id: 'c-prod', label: 'the two multiplied' },
+            { id: 'c-q', label: 'Δy / h at this step' },
+          ]}
+        />
+      </div>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      <b>Sum.</b> Press <b>Watch the step</b> and keep your eyes on the tower.
-      The bottom block pushes up by Δu, carrying the upper block with it, then
-      the upper block grows by Δv on its own. Divide the two rises by h and they
-      are slopes: <b>(u+v)′ = u′ + v′</b>. Shrink h and nothing has to be thrown
-      away, because Δ(u+v) = Δu + Δv is exactly true at every h.
+      <b>Sum.</b> Run it and watch the tower: the top rises by Δu plus Δv,
+      exactly, at every h. So <b>(u+v)′ = u′ + v′</b> with nothing thrown away.
+      <Try id="sum" label="Animate" />
     </li>
     <li>
-      <b>Product.</b> The right edge slides out and paints a strip of area
-      <b>v·Δu</b>, the top edge paints <b>u·Δv</b>, and the little square where
-      they meet belongs to neither. Halve h and each strip roughly halves, but
-      the corner <b>quarters</b>: it is short in two directions at once. That is
-      why <b>(uv)′ = u′v + uv′</b>, and why it is not u′v′, which is only that
-      doomed corner.
+      <b>Product.</b> Shrink h: the two strips shrink like h, the corner like h².
+      Only the strips survive, so <b>(uv)′ = u′v + uv′</b>, not u′v′.
+      <Try id="product" label="Animate" />
     </li>
     <li>
-      <b>Chain.</b> One step goes in at the top and comes out at the bottom
-      having been stretched <b>twice</b>. The second machine's dot sits at
-      <b>u = g(x)</b>, never at x: it only ever sees what the first one handed it,
-      which is why the rule says f′(g(x)). On sin(x²) slide x to about 1.25,
-      where f′ is zero, and the bottom bar collapses even though the middle one is
-      still growing: a chain is as dead as its deadest link.
-    </li>
-    <li>
-      Ask why the sum rule feels obvious and the other two do not. Stacking never
-      lets u and v <b>interact</b>; multiplying does, and that interaction is the
-      extra term. Composing makes them interact in the strongest way of all: the
-      second function is read at a point the first one chose.
+      <b>Chain.</b> On sin(x²) at x = 1.25, f′(u) is almost zero, so the bottom bar
+      collapses while g still stretches: a chain is as dead as its
+      <b>deadest link</b>. <Try id="chain" />
     </li>
   </Fragment>
 </SimLayout>
@@ -95,7 +121,7 @@ import Caption from '../../../components/sim/Caption.astro';
   import type { Part } from '../../../lib/equation';
   import { roundRect } from '../../../lib/theorem';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, result } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   type Rule = 'sum' | 'product' | 'chain';
   type Fn = (x: number) => number;
@@ -293,12 +319,11 @@ import Caption from '../../../components/sim/Caption.astro';
     text('+', TRI.x + tgap - 23, yB - hMax / 2, 0.45, 'center', 17, '600');
     text('=', TRI.x + 2 * tgap - 23, yB - hMax / 2, 0.45, 'center', 17, '600');
 
-    const rows = [
-      ['Δu', f4(du)], ['Δv', f4(dv)], ['Δ(u+v)', f4(du + dv)],
-      ['Δ(u+v)/h', h > 1e-9 ? f4((du + dv) / h) : '—'], ['u′ + v′', f4(p.du(x) + p.dv(x))], ['leftover terms', 'none, ever'],
-    ];
     return {
-      rows,
+      rows: {
+        's-du': f4(du), 's-dv': f4(dv), 's-dsum': f4(du + dv),
+        's-q': h > 1e-9 ? f4((du + dv) / h) : '—', 's-exact': f4(p.du(x) + p.dv(x)), 's-left': 'none, ever',
+      } as Record<string, string>,
       rule: [["(u+v)'", ink(0.95)], '=', ["u'", ACC], '+', ["v'", WARM]] as Part[],
       live: [f3(p.du(x) + p.dv(x)), '=', [f3(p.du(x)), ACC], '+', [f3(p.dv(x)), WARM]] as Part[],
       label: 'Slope of u + v',
@@ -418,10 +443,10 @@ import Caption from '../../../components/sim/Caption.astro';
     const s1 = v * du, s2 = u * dv, cor = du * dv;
     const slope = p.du(x) * v + u * p.dv(x);
     return {
-      rows: [
-        ['u, v', `${f3(u)}, ${f3(v)}`], ['Δu, Δv', `${f4(du)}, ${f4(dv)}`], ['side strip v·Δu', f4(s1)], ['top strip u·Δv', f4(s2)],
-        ['corner Δu·Δv', cor.toFixed(5)], ['ΔA / h', h > 1e-9 ? f4((s1 + s2 + cor) / h) : '—'], ['u′v + uv′', f4(slope)],
-      ],
+      rows: {
+        'p-uv': `${f3(u)}, ${f3(v)}`, 'p-duv': `${f4(du)}, ${f4(dv)}`, 'p-s1': f4(s1), 'p-s2': f4(s2),
+        'p-cor': cor.toFixed(5), 'p-q': h > 1e-9 ? f4((s1 + s2 + cor) / h) : '—', 'p-exact': f4(slope),
+      } as Record<string, string>,
       rule: [["(u\\cdot v)'", ink(0.95)], '=', ["u'v", ACC], '+', ["uv'", WARM]] as Part[],
       live: [f3(slope), '=', [`${p.du(x).toFixed(2)}\\times${v.toFixed(2)}`, ACC], '+', [`${u.toFixed(2)}\\times${p.dv(x).toFixed(2)}`, WARM]] as Part[],
       label: 'Slope of u · v',
@@ -545,7 +570,9 @@ import Caption from '../../../components/sim/Caption.astro';
 
     const g1 = p.dg(x), f1 = p.df(u);
     return {
-      rows: [['u = g(x)', f4(u)], ['g stretches by g′(x)', f4(g1)], ['f stretches by f′(u)', f4(f1)], ['the two multiplied', f4(g1 * f1)], ['Δy / h at this step', h > 1e-9 ? f4(dy / h) : '—']],
+      rows: {
+        'c-u': f4(u), 'c-g1': f4(g1), 'c-f1': f4(f1), 'c-prod': f4(g1 * f1), 'c-q': h > 1e-9 ? f4(dy / h) : '—',
+      } as Record<string, string>,
       rule: [["(f\\circ g)'(x)", TEAL], '=', ["f'(g(x))", WARM], '\\cdot', ["g'(x)", ACC]] as Part[],
       live: [[f3(g1 * f1), TEAL], '=', [f3(f1), WARM], '\\times', [f3(g1), ACC]] as Part[],
       label: 'Slope of f(g(x))',
@@ -557,26 +584,22 @@ import Caption from '../../../components/sim/Caption.astro';
   }
 
   // ===== frame ================================================================
-  const rowsEl = el('rows');
-  let lastRows = '';
+  const setRows = readout();
   function draw() {
     ctx.clearRect(0, 0, W, H);
     const out = state.rule === 'sum' ? drawSum() : state.rule === 'product' ? drawProduct() : drawChain();
     setEq({ rule: out.rule, live: out.live });
     el('result-label').textContent = out.label;
     setResult({ value: out.value, colour: out.colour, status: out.status, note: out.note });
-    const html = out.rows.map(([a, b]) => `<div class="row"><span>${a}</span><b>${b}</b></div>`).join('');
-    if (html !== lastRows) { rowsEl.innerHTML = html; lastRows = html; }
+    setRows(out.rows);
   }
 
   // ===== controls =============================================================
-  const runBtn = el('run');
   let raf = 0, t0 = 0;
   function stopAll() {
     state.playing = false;
     state.shrinking = false;
-    runBtn.textContent = 'Watch the step';
-    runBtn.setAttribute('aria-pressed', 'false');
+    tp.setRunning(false);
     cancelAnimationFrame(raf);
   }
   function loop(now: number) {
@@ -592,30 +615,36 @@ import Caption from '../../../components/sim/Caption.astro';
       raf = requestAnimationFrame(loop);
     }
   }
-  runBtn.addEventListener('click', () => {
-    if (state.playing) { stopAll(); state.tau = 1; draw(); return; }
+  function play() {
     stopAll();
     state.playing = true;
-    runBtn.textContent = 'Stop';
-    runBtn.setAttribute('aria-pressed', 'true');
+    tp.setRunning(true);
     t0 = performance.now();
     raf = requestAnimationFrame(loop);
+  }
+  const tp = transport({
+    onRun: (on) => {
+      if (on) play();
+      else { stopAll(); state.tau = 1; draw(); }
+    },
+    onReset: () => {
+      stopAll();
+      state.tau = 1;
+      state.xs = 40;
+      setX(40);
+      setH(HDEF[state.rule]);
+    },
   });
-  el('shrink').addEventListener('click', () => {
+  function shrink(restart = false) {
     const was = state.shrinking;
     stopAll();
     state.tau = 1;
-    if (was) { draw(); return; }
-    if (state.hs[state.rule] >= 100) setH(0);
+    if (was && !restart) { draw(); return; }
+    if (restart || state.hs[state.rule] >= 100) setH(0);
     state.shrinking = true;
     raf = requestAnimationFrame(loop);
-  });
-  el('reset').addEventListener('click', () => {
-    stopAll();
-    state.tau = 1;
-    setX(40);
-    setH(HDEF[state.rule]);
-  });
+  }
+  el('shrink').addEventListener('click', () => shrink());
 
   const setX = slider('x', (v) => { state.xs = v; draw(); }, () => xOf().toFixed(2));
   const hLabel = () => { const h = hFull(); return h < 0.01 ? h.toFixed(5) : h.toFixed(3); };
@@ -628,20 +657,38 @@ import Caption from '../../../components/sim/Caption.astro';
 
   const pairSeg = (id: string, rule: Rule) =>
     segmented(id, (v) => { state.pi[rule] = +v; if (rule === 'product') computeScale(); setX(state.xs); draw(); });
-  pairSeg('pair0', 'sum');
-  pairSeg('pair1', 'product');
-  pairSeg('pair2', 'chain');
+  const pairs: Record<Rule, ReturnType<typeof segmented>> = {
+    sum: pairSeg('pair0', 'sum'),
+    product: pairSeg('pair1', 'product'),
+    chain: pairSeg('pair2', 'chain'),
+  };
 
-  segmented('rule', (r) => {
+  function pickRule(r: Rule) {
     stopAll();
     state.tau = 1;
-    state.rule = r as Rule;
+    state.rule = r;
     for (const k of ['sum', 'product', 'chain'] as Rule[]) {
       el(`pairs-${k}`).hidden = k !== state.rule;
       el(`cap-${k}`).hidden = k !== state.rule;
+      el(`rows-${k}`).hidden = k !== state.rule;
     }
     setX(state.xs);
     setH(state.hs[state.rule]);
+  }
+  const rules = segmented('rule', (r) => pickRule(r as Rule));
+
+  function show(rule: Rule, pair: number) {
+    rules.select(rule);
+    state.pi[rule] = pair;
+    pairs[rule].select(String(pair));
+    if (rule === 'product') computeScale();
+    pickRule(rule);
+  }
+  tries({
+    sum: () => { show('sum', 0); state.xs = 40; setX(40); play(); },
+    product: () => { show('product', 0); shrink(true); },
+    // sin(x²) at x = 1.25: u = 1.5625, just short of π/2, so f′(u) = cos u ≈ 0
+    chain: () => { show('chain', 0); state.xs = 50; setX(50); setH(HDEF.chain); },
   });
 
   computeScale();

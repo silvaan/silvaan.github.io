@@ -6,12 +6,13 @@ import Checks from '../../../components/sim/Checks.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="calculus"
   title="Stokes' Theorem"
-  description="Stretch any surface across a loop and chop it into patches. Each patch spins by the curl poking through it, neighbours walk every shared edge both ways, and the sum collapses onto the one curve around the edge. Bend the surface and the answer refuses to move."
+  description="Stretch any surface across a loop and chop it into patches. Neighbours walk every shared edge both ways, so the sum collapses onto the one curve around the edge. Lay it flat and this is Green's theorem; bend it and the answer refuses to move."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -27,11 +28,11 @@ import Readout from '../../../components/sim/Readout.astro';
     </div>
 
     <div class="sim-panel">
-      <Seg id="view" label="View" attr="v" options={[{ value: '2d', label: 'Flat' }, { value: '3d', label: 'In space' }]} />
+      <Seg id="view" label="View" attr="v" options={[{ value: '2d', label: "Flat (Green's theorem)" }, { value: '3d', label: 'In space' }]} />
       <div id="shapewrap" hidden>
         <Seg id="shape" label="Surface across the same loop" attr="s" options={[{ value: 'dome', label: 'Dome' }, { value: 'bowl', label: 'Bowl' }, { value: 'crumple', label: 'Crumpled' }]} />
       </div>
-      <Seg id="field" label="Field" attr="f" active="eddy" options={[{ value: 'eddy', label: 'Eddy' }, { value: 'rot', label: 'Rotation' }, { value: 'slant', label: 'Sideways spin' }, { value: 'source', label: 'Source' }]} />
+      <Seg id="field" label="Field" attr="f" active="eddy" options={[{ value: 'eddy', label: 'Eddy' }, { value: 'rot', label: 'Rotation' }, { value: 'slant', label: 'Sideways spin' }, { value: 'two', label: 'Two-sided' }, { value: 'source', label: 'Source' }]} />
       <Slider id="mesh" label="Patches" min={6} max={24} step={2} value={12} hint={['a few big ones', 'hundreds of tiny ones']} />
       <Checks items={[{ id: 'cancel', label: 'Cancel the shared edges' }, { id: 'showfield', label: 'Show the field', checked: true }]} />
       <Readout rows={[{ id: 'rim', label: 'walk around the edge' }, { id: 'sum', label: 'spin added over the patches' }, { id: 'gap', label: 'gap between the two' }]} />
@@ -40,40 +41,25 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Click a patch. The panel on the right opens it up and asks one question on
-      each edge: <b>does the field push me along, or hold me back?</b> Add the four
-      and you have that patch's spin. Divide by its area and you have <b>the curl
-      poking through it</b>, the only part of the curl that patch can feel.
+      In the <b>Flat (Green's theorem)</b> view the surface is just the region
+      inside the loop: Green's theorem is Stokes' theorem lying flat. Click a
+      patch: its four edge walks add up to its spin, and that divided by its
+      area is the curl. <Try id="flat" />
     </li>
     <li>
-      Tick <b>cancel the shared edges</b>. Every inner edge belongs to two patches
-      that walk it in opposite directions, so it is added once and subtracted
-      once. The whole mesh dissolves and leaves <b>one bold loop: the edge of the
-      surface</b>. That collapse is the theorem.
+      Tick <b>cancel the shared edges</b>. Every inner edge is walked twice, in
+      opposite directions, so the mesh dissolves and only the edge of the surface
+      is left. <Try id="cancel" />
     </li>
     <li>
-      Now the punchline. Switch between <b>dome</b>, <b>bowl</b> and <b>crumpled</b>.
-      Every patch changes, the normals point all over the place, and the total
-      does not move by a hair, <b>because all three surfaces share the same
-      edge</b>.
+      Go <b>In space</b> and switch between dome, bowl and crumpled. Every patch
+      changes, yet the total stays put, because all three hang from the same edge.
+      <Try id="bend" />
     </li>
     <li>
-      The number on the left never moves at all, <b>not when you bend the surface
-      and not when you chop it finer</b>, because it is a walk around the one curve
-      all of them hang from. The sum on the right creeps up to meet it as the
-      patches get smaller and cover the surface more honestly.
-    </li>
-    <li>
-      Choose <b>sideways spin</b>, where the curl points along y and never up. A
-      flat surface feels nothing at all. Bend it into a dome and patches light up
-      teal on one side and orange on the other, yet they still add to zero. Only
-      the component <b>through</b> the patch counts, and only the edge decides the
-      total.
-    </li>
-    <li>
-      Choose <b>source</b>: the flow blasts outward, nothing anywhere spins, every
-      patch reads zero and so does the walk around the edge. Spreading is not
-      spinning, and curl is blind to it.
+      On <b>Two-sided</b> teal and orange patches fight each other. Only their
+      signed total survives, and it still matches the walk around the edge.
+      <Try id="two" />
     </li>
   </Fragment>
 </SimLayout>
@@ -81,7 +67,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { stageInk } from '../../../lib/draw';
   import {
     HUE,
@@ -115,7 +101,7 @@ import Readout from '../../../components/sim/Readout.astro';
     type Proj,
   } from '../../../lib/theorem';
 
-  type Field = 'rot' | 'slant' | 'eddy' | 'source';
+  type Field = 'rot' | 'slant' | 'eddy' | 'two' | 'source';
   type Shape = 'dome' | 'bowl' | 'crumple';
 
   const state = {
@@ -139,6 +125,8 @@ import Readout from '../../../components/sim/Readout.astro';
         const e = Math.exp(-(p.x * p.x + p.y * p.y) * 1.6);
         return v3(-p.y * 2.6 * e, p.x * 2.6 * e, 0);
       }
+      case 'two':
+        return v3(0, 1.1 * Math.sin(2.4 * p.x), 0); // curl changes sign across the loop
       case 'source':
         return mul(p, 0.8);
     }
@@ -187,6 +175,7 @@ import Readout from '../../../components/sim/Readout.astro';
     area: number;
     circ: number;
     curlN: number;
+    full: boolean;
   };
 
   let patches: Patch[] = [];
@@ -221,6 +210,7 @@ import Readout from '../../../components/sim/Readout.astro';
         area,
         circ,
         curlN,
+        full: cell.full,
       });
       patchSum += circ;
       absSum += Math.abs(circ);
@@ -554,13 +544,17 @@ import Readout from '../../../components/sim/Readout.astro';
       value: sel ? `${sel.circ >= 0 ? '+' : ''}${fmt(sel.circ)}` : '—',
       colour: sel ? (sel.circ >= 0 ? HUE.with : HUE.against) : undefined,
       status: sel
-        ? `its circulation · curl·n ${sel.curlN.toFixed(3)} · centred at (${sel.c.x.toFixed(2)}, ${sel.c.y.toFixed(2)})`
+        ? `its circulation · curl·n ${sel.curlN.toFixed(3)} · centred at (${sel.c.x.toFixed(2)}, ${sel.c.y.toFixed(2)})${sel.full ? '' : ' · cut by the edge'}`
         : 'click any patch to open it up',
       note:
         state.field === 'rot' && state.view === '2d'
           ? 'This field spins the same everywhere, so every full patch reports the same curl; only the patches cut by the edge differ. Pick Eddy to see it vary.'
           : state.field === 'source'
             ? 'A pure source has no spin: every patch reports zero, and so does the walk round the edge.'
+            : state.field === 'two'
+              ? 'Teal and orange patches pull against each other; only their signed total matches the walk round the edge.'
+            : state.field === 'slant' && state.view === '2d'
+              ? 'The curl points along y and never through the flat sheet, so every patch reads zero. Go In space and bend it.'
             : state.view === '2d'
               ? 'Flattened out, this is exactly Green’s theorem. Switch to In space and bend the surface: only the edge decides.'
               : 'Bend the surface however you like: the patches change, the walk round the edge does not, and the two still agree.',
@@ -614,18 +608,18 @@ import Readout from '../../../components/sim/Readout.astro';
     onTap: pick,
   });
 
-  segmented('view', (v) => {
+  const views = segmented('view', (v) => {
     state.view = v as '2d' | '3d';
     build();
     pickDefault();
     draw();
   });
-  segmented('shape', (s) => {
+  const shapes = segmented('shape', (s) => {
     state.shape = s as Shape;
     build();
     draw();
   });
-  segmented('field', (f) => {
+  const fields = segmented('field', (f) => {
     state.field = f as Field;
     build();
     draw();
@@ -636,13 +630,35 @@ import Readout from '../../../components/sim/Readout.astro';
     pickDefault();
     draw();
   }, (v) => `${v} × ${v} grid`);
-  check('cancel', (on) => {
+  const setCancel = check('cancel', (on) => {
     state.cancel = on;
     kick();
   });
   check('showfield', (on) => {
     state.showField = on;
     draw();
+  });
+
+  /** Put the sim in one view, shape and field, with the edges cancelled or not. */
+  function show(view: '2d' | '3d', shape: Shape, field: Field, cancel: boolean) {
+    state.view = view;
+    views.select(view);
+    state.shape = shape;
+    shapes.select(shape);
+    state.field = field;
+    fields.select(field);
+    state.cancel = cancel;
+    setCancel(cancel);
+    build();
+    pickDefault();
+    kick();
+    draw();
+  }
+  tries({
+    flat: () => show('2d', state.shape, 'eddy', false),
+    cancel: () => show(state.view, state.shape, state.field, true),
+    bend: () => show('3d', state.shape === 'crumple' ? 'dome' : 'crumple', 'eddy', false),
+    two: () => show('2d', state.shape, 'two', false),
   });
 
   build();

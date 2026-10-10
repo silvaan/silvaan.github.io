@@ -7,6 +7,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -93,52 +94,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Watch a single electron with <b>Follow one electron</b> on. It does not
-      sail down the wire. It rattles, gets grabbed by the field for a moment,
-      slams into the lattice, forgets which way it was going, and starts over.
-      The current is not the speed of that rattling, it is the tiny
-      <b>net crawl</b> the rattling has on top of it.
+      Turn thermal motion off and follow one electron: the field speeds it up, a
+      collision resets it, over and over. The average velocity settles at
+      <b>aτ</b>, proportional to the field, and that flat line is Ohm's law. <Try id="drift" />
     </li>
     <li>
-      Turn <b>thermal motion</b> off. Now the drift is all that is left and it
-      is obvious. Turn it back on and it vanishes into the noise, which is
-      honest: the thermal speed is around a million times the drift speed. Both
-      numbers are in the values list, and the ratio is the reason a wire carrying
-      amps still looks like nothing is happening.
+      Double the length and the same voltage makes half the field, so
+      <b>R doubles</b>. Double the cross-section instead and twice as many lanes
+      carry the same drift, so R halves: R = ρL/A. <Try id="long" />
     </li>
     <li>
-      The graph of average velocity settles onto a flat line. That is the whole
-      of Ohm's law: the field <b>accelerates</b>, so without collisions the
-      speed would grow forever, but a collision every τ seconds keeps resetting
-      it. The average lands at <b>aτ</b>, proportional to the field, and current
-      proportional to voltage is nothing but that.
+      Heat a metal and the lattice shakes harder, τ falls and <b>R rises</b>.
+      Carbon goes the other way, because heat frees more carriers than it
+      scatters. <Try id="hot" />
     </li>
     <li>
-      Make the sample twice as long. The same voltage is now spread over twice
-      the distance, so the field is halved, so the drift is halved, so
-      <b>R doubles</b>. Now make it twice as fat instead: same field, same drift,
-      but twice as many lanes carrying it, so <b>R halves</b>. That is the whole
-      content of R = ρL/A, and neither half of it needed an experiment.
-    </li>
-    <li>
-      Raise the temperature. The lattice shakes harder, an electron gets less
-      far before hitting something, τ falls and <b>resistance rises</b>. Carbon
-      does the opposite, because heat there frees more carriers than it
-      scatters, and that sign difference is why carbon and metal resistors age
-      and drift in opposite directions.
-    </li>
-    <li>
-      Every collision hands the field's energy to the lattice, which is where
-      <b>P = VI</b> physically goes. Switch on <b>let it heat itself up</b> with
-      tungsten and turn the voltage to full. The metal glows, its resistance
-      climbs as it does, and on the <b>I–V plot</b> the line <b>bends over</b>:
-      a light bulb is not an ohmic device, it just contains one when it is cold.
-    </li>
-    <li>
-      Compare copper with nichrome at the same size. Copper's resistivity is
-      about sixty times lower, so at a few volts it draws an absurd current and
-      cooks itself. That is why one of them is sold as wire and the other as a
-      heating element: <b>same physics, different τ</b>.
+      Let tungsten <b>heat itself up</b> at full voltage. It glows, its
+      resistance climbs, and the I–V line bends over: a light bulb is only ohmic
+      when it is cold. <Try id="bulb" />
     </li>
   </Fragment>
 </SimLayout>
@@ -146,7 +119,8 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { stageInk, roundRect, arrow, eng } from '../../../lib/draw';
-  import { el, segmented, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
   // Drude, taken literally. An electron is accelerated by the field for a while,
@@ -307,6 +281,7 @@ import Readout from '../../../components/sim/Readout.astro';
   const { label } = makeText(ctx, ink);
   const setResult = result();
   const setRows = readout();
+  const setEq = equation();
 
   const ACC = '#7c8cff'; // the field
   const TEAL = '#5eead4'; // electrons
@@ -549,6 +524,13 @@ import Readout from '../../../components/sim/Readout.astro';
       status: `${mat().name} · I = ${eng(current(), 'A')} · P = ${eng(power(), 'W')} · ${T.toFixed(0)} °C`,
       note,
     });
+    setEq({
+      rule: [['I', GREEN], ' = \\dfrac{V}{R},\\quad R = \\dfrac{\\rho L}{A}'],
+      live: [
+        ['I', GREEN],
+        ` = ${tex(eng(current(), 'A'))},\\quad R = ${tex(fmtR(Rof()))}`,
+      ],
+    });
     setRows({
       'r-R': fmtR(Rof()),
       'r-I': eng(current(), 'A'),
@@ -562,6 +544,11 @@ import Readout from '../../../components/sim/Readout.astro';
   }
 
   // --- frame -----------------------------------------------------------------
+
+  /** An eng() string as TeX: keep the unit upright. */
+  const tex = (s: string) =>
+    s.replace(/ ([^ ]+)$/, (_, u: string) =>
+      '\\,' + u.replace(/([A-Za-z]+)/g, '\\mathrm{$1}').replace(/µ/g, '\\mu ').replace(/Ω/g, '\\Omega'));
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
@@ -592,21 +579,50 @@ import Readout from '../../../components/sim/Readout.astro';
 
   // --- controls --------------------------------------------------------------
 
-  transport({
+  const tp = transport({
     onRun: (running) => (state.running = running),
     onReset: () => { ivTrace = []; seed(); },
   });
-  segmented('plot', (p) => (state.plot = p as typeof state.plot));
-  segmented('mat', (m) => { state.mat = m; ivTrace = []; seed(); });
+  const plotSeg = segmented('plot', (p) => (state.plot = p as typeof state.plot));
+  const pickMat = (m: string) => { state.mat = m; ivTrace = []; seed(); };
+  const matSeg = segmented('mat', pickMat);
 
-  slider('v', (n) => (state.V = n / 100), (n) => `${(n / 100).toFixed(2)} V`);
-  slider('len', (n) => { state.L = n * 10; geometry(); }, (n) => (n * 10 >= 1000 ? `${(n / 100).toFixed(2)} m` : `${n * 10} mm`));
-  slider('area', (n) => { state.A = n / 100; geometry(); }, (n) => `${(n / 100).toFixed(2)} mm²`);
-  slider('tamb', (n) => (state.tamb = n), (n) => `${n} °C`);
+  const setV = slider('v', (n) => (state.V = n / 100), (n) => `${(n / 100).toFixed(2)} V`);
+  const setLen = slider('len', (n) => { state.L = n * 10; geometry(); }, (n) => (n * 10 >= 1000 ? `${(n / 100).toFixed(2)} m` : `${n * 10} mm`));
+  const setArea = slider('area', (n) => { state.A = n / 100; geometry(); }, (n) => `${(n / 100).toFixed(2)} mm²`);
+  const setTamb = slider('tamb', (n) => (state.tamb = n), (n) => `${n} °C`);
   slider('rate', (n) => (state.rate = n / 100), (n) => `${(n / 100).toFixed(1)}×`);
-  check('thermal', (on) => (state.thermal = on));
-  check('heat', (on) => { state.heat = on; ivTrace = []; });
-  check('trail', (on) => { state.trail = on; trail = []; });
+  const setThermal = check('thermal', (on) => (state.thermal = on));
+  const setHeat = check('heat', (on) => { state.heat = on; ivTrace = []; });
+  const setTrail = check('trail', (on) => { state.trail = on; trail = []; });
+
+  // --- what to observe -------------------------------------------------------
+
+  const play = () => { if (!tp.running()) el('run').click(); };
+  const plot = (p: typeof state.plot) => { state.plot = p; plotSeg.select(p); };
+  const material = (m: string) => { matSeg.select(m); pickMat(m); };
+  const volts = (n: number) => { setV(n); state.V = n / 100; };
+  const shape = (len: number, area: number) => {
+    setLen(len); state.L = len * 10;
+    setArea(area); state.A = area / 100;
+    geometry();
+  };
+  const ambient = (t: number) => { setTamb(t); state.tamb = t; };
+  const heating = (on: boolean) => { setHeat(on); state.heat = on; };
+
+  tries({
+    drift: () => {
+      setThermal(false); state.thermal = false;
+      setTrail(true); state.trail = true;
+      heating(false); plot('scope'); play();
+    },
+    long: () => { shape(100, 10); plot('scope'); play(); },
+    hot: () => { heating(false); ambient(200); material('tungsten'); plot('power'); play(); },
+    bulb: () => {
+      ambient(20); material('tungsten'); heating(true);
+      volts(600); plot('iv'); play();
+    },
+  });
 
   seed();
   requestAnimationFrame(frame);

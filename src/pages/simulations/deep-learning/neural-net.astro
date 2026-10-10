@@ -7,12 +7,13 @@ import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
-  title="Neuron Activations"
-  description="Draw a digit and watch it go through a network that already knows how to read one. Every wire is lit by what it carries, every neuron by how hard it is firing, and clicking one opens it up to show the picture it looks for."
+  title="Inside a Digit Classifier"
+  description="Draw a digit and watch a pretrained MNIST classifier read it, as a plain stack of layers or as a convolutional network. Every wire is lit by what it carries, and clicking a neuron opens it up to show the picture it looks for."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -46,6 +47,7 @@ import Readout from '../../../components/sim/Readout.astro';
       <Slider id="edges" label="Wires drawn" min={1} max={100} value={12} display="12%" hint={['only the loudest', 'all of them']} />
       <Checks items={[{ id: 'signed', label: 'Colour a wire by the sign of what it carries', checked: true }]} />
       <Readout
+        title="Values"
         rows={[
           { id: 'r-says', label: 'it says' },
           { id: 'r-conf', label: 'how sure' },
@@ -60,38 +62,23 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Draw a stroke and turn <b>wires drawn</b> down to a few percent. What is
-      left is the handful of connections actually carrying the decision, and you
-      can watch them move as you change the stroke.
-    </li>
-    <li>
-      Count the neurons marked <b>off</b>. For any one digit about half of the
-      first layer sits at exactly zero, and a ReLU that is off sends exactly
-      <b>zero</b> down every wire leaving it, however large the weight on that
-      wire happens to be.
+      Turn <b>wires drawn</b> down to a few percent. What is left is the handful
+      of connections actually carrying the decision. <Try id="wires" />
     </li>
     <li>
       Click a neuron in the first layer. Its incoming weights are one number per
-      pixel, so they are a picture, and it is drawn under the pad. Several come
-      out as smudged strokes and loops: nobody asked for those, they are what
-      minimising the loss left behind.
+      pixel, so they form a <b>picture</b>, drawn under the pad: smudged strokes
+      and loops that minimising the loss left behind. <Try id="unit" />
     </li>
     <li>
-      Switch to <b>convolutional</b>. The first stage is now eight copies of
-      your digit, each filtered by one three-by-three kernel that is reused at
-      every position. Click one to see the nine numbers that made it.
+      Switch to <b>Convolutional</b>. The first stage is eight filtered copies of
+      your digit, each made by one 3×3 kernel reused at every position. It is
+      right more often on unseen digits with about <b>a sixth</b> of the weights. <Try id="cnn" />
     </li>
     <li>
-      The panel prices the difference. The convolutional network is right more
-      often on digits it has never seen, using about <b>a sixth</b> of the
-      weights, because it is told in advance that neighbouring pixels are
-      related and the plain stack has to discover that for itself.
-    </li>
-    <li>
-      Draw something that is not a digit at all. It answers anyway, often with
-      real confidence. Softmax has to hand out one unit of probability, so a
-      classifier trained on ten digits has no way at all to say
-      <b>none of these</b>.
+      Draw something that is not a digit. It answers anyway: softmax hands out
+      exactly one unit of probability, so it has no way to say <b>none of
+      these</b>. <Try id="junk" />
     </li>
   </Fragment>
 </SimLayout>
@@ -100,7 +87,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import {
     ACCURACY, CNN, MLP_ARCH, cnnForward, cnnFilter, cnnFilter2, mlpForward, mlpUnitImage,
     mlpWeightsInto, normalise, samples,
@@ -579,8 +566,8 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   }
 
-  segmented('model', (m) => { state.model = m; state.sel = null; draw(); });
-  slider('edges', (v) => { state.edges = v / 100; draw(); }, (v) => `${v}%`);
+  const models = segmented('model', (m) => { state.model = m; state.sel = null; draw(); });
+  const setEdges = slider('edges', (v) => { state.edges = v / 100; draw(); }, (v) => `${v}%`);
   check('signed', (on) => { state.signed = on; draw(); });
   el('clear').addEventListener('click', () => {
     ink140.fill(0);
@@ -589,6 +576,54 @@ import Readout from '../../../components/sim/Readout.astro';
     draw();
   });
   el('sample').addEventListener('click', loadSample);
+
+  // --- the What-to-observe buttons -------------------------------------------
+  function useModel(m: string) {
+    state.model = m;
+    models.select(m);
+  }
+  /** A real digit on the pad if there is none, so there is something to look at. */
+  function ensureDigit() {
+    if (!seen.some((v) => v > 0.02)) loadSample();
+  }
+  tries({
+    wires: () => {
+      useModel('mlp');
+      state.sel = null;
+      state.edges = 0.03;
+      setEdges(3);
+      ensureDigit();
+      draw();
+    },
+    unit: () => {
+      useModel('mlp');
+      ensureDigit();
+      state.sel = { layer: 0, i: 0 };
+      draw();
+    },
+    cnn: () => {
+      useModel('cnn');
+      ensureDigit();
+      state.sel = { layer: 0, i: 0 };
+      draw();
+    },
+    junk: () => {
+      // a hash sign: two strokes each way, nothing like any digit
+      ink140.fill(0);
+      state.sample = -1;
+      const line = (x0: number, y0: number, x1: number, y1: number) => {
+        last = null;
+        for (let t = 0; t <= 60; t++) paint(x0 + ((x1 - x0) * t) / 60, y0 + ((y1 - y0) * t) / 60);
+      };
+      line(50, 22, 44, 118);
+      line(92, 22, 86, 118);
+      line(22, 52, 118, 50);
+      line(22, 90, 118, 88);
+      last = null;
+      seen = normalise(ink140, PAD);
+      draw();
+    },
+  });
 
   loadSample();
 </script>

@@ -6,106 +6,106 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
   title="Backpropagation"
-  description="One tiny network, one example, every number on screen. Push the input forward unit by unit, watch the error appear, then send it back down the same wires. Ten steps, and at the last one every weight takes one step downhill."
+  description="One tiny network, one example, every number on screen. Push the input forward, send the error back down the same wires, then see why the activation's slope decides whether a gradient survives many layers."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="bp" class="bp-canvas" width="1000" height="612" role="img" aria-label="A two-input, two-hidden, one-output network with every weight, activation and partial derivative printed beside it, and a strip of the ten steps of one training pass."></canvas>
+        <canvas id="bp" class="bp-canvas" width="1000" height="612" role="img" aria-label="A two-input, two-hidden, one-output network with every weight, activation and partial derivative printed beside it, and a strip of the ten steps of one training pass. A second view plots the activation, its slope, and the gradient left after many layers."></canvas>
       </div>
-      <Caption
-        legend={[{ label: 'values going forward', color: '#5eead4' }, { label: 'gradients coming back', color: '#fbbf24' }, { label: 'the update', color: '#7c8cff' }, { label: 'a negative weight', color: '#f87171' }]}
-        hint="Wire thickness is the size of the weight · click a cell of the strip to jump to that step"
-      />
+      <div id="netcap">
+        <Caption
+          legend={[{ label: 'values going forward', color: '#5eead4' }, { label: 'gradients coming back', color: '#fbbf24' }, { label: 'the update', color: '#7c8cff' }, { label: 'a negative weight', color: '#f87171' }]}
+          hint="Wire thickness is the size of the weight · click a cell of the strip to jump to that step"
+        />
+      </div>
+      <div id="actcap" hidden>
+        <Caption
+          legend={[{ label: 'activation φ(z)', color: '#5eead4' }, { label: 'slope φ′(z)', color: '#fbbf24' }, { label: 'saturated, |φ′| &lt; 0.1', color: 'rgba(248,113,113,0.6)' }]}
+          hint="Click the top plot to move z"
+          hintId="act-hint"
+        />
+      </div>
       <Result label="Step" />
     </div>
 
     <div class="sim-panel">
-      <Transport step>
-        <button type="button" class="btn ghost" id="fast">Run 100 passes</button>
-      </Transport>
-      <Slider id="x1" label="Input x<sub>1</sub> = a<sup>[0]</sup><sub>1</sub>" min={-1} max={1} step={0.05} value={0.9} display="0.90" />
-      <Slider id="x2" label="Input x<sub>2</sub> = a<sup>[0]</sup><sub>2</sub>" min={-1} max={1} step={0.05} value={0.3} display="0.30" />
-      <Seg id="target" label="Target y" attr="y" options={[{ value: '1', label: '1' }, { value: '0', label: '0' }]} />
-      <Seg id="act" label="Activation φ" attr="a" options={[{ value: 'tanh', label: 'tanh' }, { value: 'sig', label: 'σ' }, { value: 'relu', label: 'ReLU' }]} />
-      <Slider id="lr" label="Learning rate η" min={0.05} max={5} step={0.05} value={0.5} display="0.50" />
-      <Readout rows={[{ id: 'pass', label: 'passes done' }, { id: 'yhat', label: 'prediction a<sup>[2]</sup>' }, { id: 'loss', label: 'loss' }]} />
-      <div class="control">
-        <span class="section-label">Gradients <b id="gstate">none yet</b></span>
-        <div class="grads">
-          <div class="g" id="cw00"><span>∂L/∂W<sup>[1]</sup><sub>11</sub></span><b>—</b></div>
-          <div class="g" id="cw01"><span>∂L/∂W<sup>[1]</sup><sub>12</sub></span><b>—</b></div>
-          <div class="g" id="cb0"><span>∂L/∂b<sup>[1]</sup><sub>1</sub></span><b>—</b></div>
-          <div class="g" id="cw10"><span>∂L/∂W<sup>[1]</sup><sub>21</sub></span><b>—</b></div>
-          <div class="g" id="cw11"><span>∂L/∂W<sup>[1]</sup><sub>22</sub></span><b>—</b></div>
-          <div class="g" id="cb1"><span>∂L/∂b<sup>[1]</sup><sub>2</sub></span><b>—</b></div>
-          <div class="g" id="cv0"><span>∂L/∂W<sup>[2]</sup><sub>1</sub></span><b>—</b></div>
-          <div class="g" id="cv1"><span>∂L/∂W<sup>[2]</sup><sub>2</sub></span><b>—</b></div>
-          <div class="g" id="cc"><span>∂L/∂b<sup>[2]</sup></span><b>—</b></div>
-        </div>
+      <Seg id="view" label="View" attr="v" options={[{ value: 'net', label: 'Network' }, { value: 'act', label: 'Activation φ and depth' }]} />
+      <Seg
+        id="act"
+        label="Activation φ"
+        attr="a"
+        options={[
+          { value: 'tanh', label: 'tanh' },
+          { value: 'sig', label: 'σ' },
+          { value: 'relu', label: 'ReLU' },
+          { value: 'leaky', label: 'Leaky' },
+          { value: 'gelu', label: 'GELU' },
+          { value: 'softplus', label: 'Softplus' },
+        ]}
+      />
+      <div id="actwrap" hidden>
+        <Slider id="z" label="Pre-activation z" min={-5} max={5} step={0.05} value={0} display="0.00" />
+        <Slider id="depth" label="Layers n" min={1} max={30} value={10} />
       </div>
-      <div class="control">
-        <span class="section-label">Loss after each pass</span>
-        <canvas id="losscurve" class="mini-canvas" width="300" height="120" role="img" aria-label="Loss after each training pass"></canvas>
+      <div id="netwrap">
+        <Transport step>
+          <button type="button" class="btn ghost" id="fast">Run 100 passes</button>
+        </Transport>
+        <Slider id="x1" label="Input x<sub>1</sub> = a<sup>[0]</sup><sub>1</sub>" min={-1} max={1} step={0.05} value={0.9} display="0.90" />
+        <Slider id="x2" label="Input x<sub>2</sub> = a<sup>[0]</sup><sub>2</sub>" min={-1} max={1} step={0.05} value={0.3} display="0.30" />
+        <Seg id="target" label="Target y" attr="y" options={[{ value: '1', label: '1' }, { value: '0', label: '0' }]} />
+        <Slider id="lr" label="Learning rate η" min={0.05} max={5} step={0.05} value={0.5} display="0.50" />
+        <Readout rows={[{ id: 'pass', label: 'passes done' }, { id: 'yhat', label: 'prediction a<sup>[2]</sup>' }, { id: 'loss', label: 'loss' }]} />
+        <div class="control">
+          <span class="section-label">Gradients <b id="gstate">none yet</b></span>
+          <div class="grads">
+            <div class="g" id="cw00"><span>∂L/∂W<sup>[1]</sup><sub>11</sub></span><b>—</b></div>
+            <div class="g" id="cw01"><span>∂L/∂W<sup>[1]</sup><sub>12</sub></span><b>—</b></div>
+            <div class="g" id="cb0"><span>∂L/∂b<sup>[1]</sup><sub>1</sub></span><b>—</b></div>
+            <div class="g" id="cw10"><span>∂L/∂W<sup>[1]</sup><sub>21</sub></span><b>—</b></div>
+            <div class="g" id="cw11"><span>∂L/∂W<sup>[1]</sup><sub>22</sub></span><b>—</b></div>
+            <div class="g" id="cb1"><span>∂L/∂b<sup>[1]</sup><sub>2</sub></span><b>—</b></div>
+            <div class="g" id="cv0"><span>∂L/∂W<sup>[2]</sup><sub>1</sub></span><b>—</b></div>
+            <div class="g" id="cv1"><span>∂L/∂W<sup>[2]</sup><sub>2</sub></span><b>—</b></div>
+            <div class="g" id="cc"><span>∂L/∂b<sup>[2]</sup></span><b>—</b></div>
+          </div>
+        </div>
+        <div class="control">
+          <span class="section-label">Loss after each pass</span>
+          <canvas id="losscurve" class="mini-canvas" width="300" height="120" role="img" aria-label="Loss after each training pass"></canvas>
+        </div>
       </div>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Step through one whole pass slowly. The forward half (teal) does one
-      thing at every unit: <b>multiply, add, squash</b>. The backward half
-      (amber) also does one thing at every unit: <b>multiply by the local
-      slope, and hand the result back down the wires</b>.
+      Step through one pass. Forward (teal), every unit does <b>multiply, add,
+      squash</b>. Backward (amber), every unit <b>multiplies by its local slope
+      φ′ and hands the result back</b> down the same wires. <Try id="pass" label="Play a pass" />
     </li>
     <li>
-      Look at step 6 and step 9, the two gradient steps. They are the same
-      formula: <b>the gradient of a weight is the delta at its head times the
-      activation at its tail</b>. A bias has nothing at its tail, so its
-      gradient is just the delta. That is why ∂L/∂b<sup>[1]</sup><sub>1</sub>
-      and δ<sup>[1]</sup><sub>1</sub> always print the same number.
+      Steps 7 and 9 are one formula: <b>a weight's gradient is the delta at its
+      head times the activation at its tail</b>. A bias has no tail, so its
+      gradient is the delta itself. <Try id="grads" />
     </li>
     <li>
-      At step 8 the weight W<sup>[2]</sup><sub>1</sub> is used a second time, now
-      in the other direction: it carried a<sup>[1]</sup><sub>1</sub> out, and it
-      carries δ back. <b>The
-      backward pass is the forward pass run through the transposed weights</b>,
-      which is why it costs the same as the forward pass rather than one forward
-      pass per parameter.
+      With <b>ReLU</b>, push unit 1's z<sup>[1]</sup> below zero. Its slope is
+      exactly 0, so its δ and both weights into it get no gradient: a
+      <b>dead unit</b>. <Try id="dead" />
     </li>
     <li>
-      Set an input to <b>zero</b> with its slider and watch the gradients of
-      both weights leaving it collapse to zero. A weight that had no influence
-      on the answer gets no blame, automatically.
-    </li>
-    <li>
-      Pick <b>ReLU</b> and drive a unit's z<sup>[1]</sup> below zero. Its slope
-      is exactly 0, so δ for that unit is 0 and every weight below it stops
-      learning. That is a dead unit, seen in the act of dying.
-    </li>
-    <li>
-      Pick <b>σ</b> and push an input to ±1. The pre-activation saturates, the
-      slope φ'(z<sup>[1]</sup>) collapses toward zero, and the gradients shrink
-      with it. Stack
-      a few more layers of that and the gradient reaching the first one is
-      nothing: the vanishing gradient, and the reason tanh and ReLU exist.
-    </li>
-    <li>
-      Raise <b>η</b> past 3 and hold Run. The updates overshoot the target and
-      the loss curve climbs instead of falling. Backpropagation only computes
-      the direction; how far to move along it is a separate decision, and it is
-      the one made in
-      <a href="/simulations/deep-learning/gradient-descent">Gradient Descent</a>.
-    </li>
-    <li>
-      Press <b>Run 100 passes</b>. The prediction slides onto the target and the
-      loss curve flattens. Nothing else happened in those hundred passes than
-      the ten steps you just watched, repeated.
+      In the <b>Activation</b> view the bottom plot multiplies φ′ over n layers.
+      σ′ never exceeds 0.25, so ten σ layers cut the gradient at least a
+      millionfold: it <b>vanishes</b>. tanh′ peaks at 1 and tanh is zero-centred, but
+      it saturates in its tails too; ReLU passes exactly 1 for z &gt; 0. <Try id="vanish" />
     </li>
   </Fragment>
 </SimLayout>
@@ -116,18 +116,56 @@ import Readout from '../../../components/sim/Readout.astro';
   import type { Part } from '../../../lib/equation';
   import { arrow, roundRect } from '../../../lib/theorem';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   // --- the network -----------------------------------------------------------
   // Two inputs, two hidden units, one output, one training example. Nine
   // parameters in total, which is few enough to print every gradient.
   const sig = (z: number) => 1 / (1 + Math.exp(-z));
+  const erf = (x: number) => {
+    // Abramowitz-Stegun approximation
+    const t = 1 / (1 + 0.3275911 * Math.abs(x));
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t) * Math.exp(-x * x);
+    return x >= 0 ? y : -y;
+  };
+  const Phi = (z: number) => 0.5 * (1 + erf(z / Math.SQRT2));
+  const pdf = (z: number) => Math.exp(-z * z / 2) / Math.sqrt(2 * Math.PI);
 
-  type Act = { f: (z: number) => number; d: (z: number) => number; tex: string; dtex: string };
+  type Act = {
+    name: string; f: (z: number) => number; d: (z: number) => number;
+    tex: string; dtex: string; ftex: string; note: string;
+  };
   const ACTS: Record<string, Act> = {
-    tanh: { f: Math.tanh, d: (z) => 1 - Math.tanh(z) ** 2, tex: '\\tanh', dtex: "\\tanh'" },
-    sig: { f: sig, d: (z) => sig(z) * (1 - sig(z)), tex: '\\sigma', dtex: "\\sigma'" },
-    relu: { f: (z) => Math.max(0, z), d: (z) => (z > 0 ? 1 : 0), tex: '\\mathrm{ReLU}', dtex: "\\mathrm{ReLU}'" },
+    tanh: {
+      name: 'tanh', f: Math.tanh, d: (z) => 1 - Math.tanh(z) ** 2, tex: '\\tanh', dtex: "\\tanh'",
+      ftex: '\\tanh z = \\tfrac{e^{z}-e^{-z}}{e^{z}+e^{-z}}',
+      note: 'Zero-centred, with slope 1 at z = 0. Its tails still saturate, so a tanh layer far from 0 passes almost nothing back.',
+    },
+    sig: {
+      name: 'σ', f: sig, d: (z) => sig(z) * (1 - sig(z)), tex: '\\sigma', dtex: "\\sigma'",
+      ftex: '\\sigma(z) = \\tfrac{1}{1+e^{-z}}',
+      note: 'Its slope peaks at 0.25, at z = 0. Every σ layer at least quarters the gradient, saturated or not, and the tails kill it.',
+    },
+    relu: {
+      name: 'ReLU', f: (z) => Math.max(0, z), d: (z) => (z > 0 ? 1 : 0), tex: '\\mathrm{ReLU}', dtex: "\\mathrm{ReLU}'",
+      ftex: '\\mathrm{ReLU}(z) = \\max(0, z)',
+      note: 'Slope exactly 1 for z > 0, so depth costs nothing there. Exactly 0 for z < 0: a unit stuck there is dead.',
+    },
+    leaky: {
+      name: 'leaky ReLU', f: (z) => (z > 0 ? z : 0.1 * z), d: (z) => (z > 0 ? 1 : 0.1), tex: '\\mathrm{lReLU}', dtex: "\\mathrm{lReLU}'",
+      ftex: '\\mathrm{lReLU}(z) = \\max(0.1\\,z,\\; z)',
+      note: 'A ReLU that leaks a slope of 0.1 below zero, so the gradient shrinks there instead of dying.',
+    },
+    gelu: {
+      name: 'GELU', f: (z) => z * Phi(z), d: (z) => Phi(z) + z * pdf(z), tex: '\\mathrm{GELU}', dtex: "\\mathrm{GELU}'",
+      ftex: '\\mathrm{GELU}(z) = z\\,\\Phi(z)',
+      note: 'A smooth ReLU, the default in most transformers. Its slope overshoots 1 a little past z = 0 (up to 1.13), so a deep stack there can grow the gradient.',
+    },
+    softplus: {
+      name: 'softplus', f: (z) => (z > 30 ? z : Math.log(1 + Math.exp(z))), d: sig, tex: '\\mathrm{softplus}', dtex: "\\mathrm{softplus}'",
+      ftex: '\\mathrm{softplus}(z) = \\log(1+e^{z})',
+      note: 'A smooth ReLU whose slope is exactly σ(z): near 1 for large z, near 0 far below it.',
+    },
   };
 
   type Params = { w: number[][]; b: number[]; v: number[]; c: number };
@@ -160,6 +198,9 @@ import Readout from '../../../components/sim/Readout.astro';
     x: [0.9, 0.3],
     y: 1,
     act: 'tanh',
+    view: 'net' as 'net' | 'act',
+    z: 0, // where the activation view reads φ and φ′
+    n: 10, // layers in the depth plot
   };
 
   let P = clone(START);
@@ -367,7 +408,116 @@ import Readout from '../../../components/sim/Readout.astro';
     label(value, x, y + 5, value === '?' ? 0.25 : 0.92, 'center', value === '?' ? 15 : 14.5);
   }
 
+  // --- the activation view: φ and φ′ on top, φ′ multiplied over n layers below ---
+  const AP = { x: 60, y: 36, w: W - 100, h: 300 };
+  const DP = { x: 60, y: 404, w: W - 100, h: 160 };
+  const AXR = [-5, 5] as const, AYR = [-1.6, 3] as const;
+  const ax = (z: number) => AP.x + ((z - AXR[0]) / (AXR[1] - AXR[0])) * AP.w;
+  const ay = (y: number) => AP.y + AP.h - ((y - AYR[0]) / (AYR[1] - AYR[0])) * AP.h;
+  // the depth plot is logarithmic: 10 at the top, 1e-12 at the floor
+  const LOG_HI = 1, LOG_LO = -12;
+  const PRESETS = ['sig', 'tanh', 'relu', 'leaky', 'gelu', 'softplus'];
+  const PCOL: Record<string, string> = {
+    sig: '#f87171', tanh: '#5eead4', relu: '#7c8cff', leaky: '#a3e635', gelu: '#c084fc', softplus: '#f472b6',
+  };
+  /** |φ′(z)|ⁿ: the factor left after n layers that all sit at the same z. */
+  const survive = (key: string, n: number) => Math.abs(ACTS[key].d(S.z)) ** n;
+
+  function drawAct() {
+    const A = ACTS[S.act];
+    ctx.clearRect(0, 0, W, H);
+
+    // where the slope has all but vanished
+    for (let px = AP.x; px <= AP.x + AP.w; px += 3) {
+      const z = AXR[0] + ((px - AP.x) / AP.w) * (AXR[1] - AXR[0]);
+      if (Math.abs(A.d(z)) < 0.1) {
+        ctx.fillStyle = 'rgba(248,113,113,0.08)';
+        ctx.fillRect(px, AP.y, 3, AP.h);
+      }
+    }
+    ctx.strokeStyle = ink(0.07);
+    ctx.lineWidth = 1;
+    for (let zv = -5; zv <= 5; zv++) {
+      ctx.beginPath(); ctx.moveTo(ax(zv), AP.y); ctx.lineTo(ax(zv), AP.y + AP.h); ctx.stroke();
+      label(String(zv), ax(zv), AP.y + AP.h + 17, 0.3, 'center', 11.5);
+    }
+    for (const yv of [-1, 1, 2, 3]) label(String(yv), AP.x - 10, ay(yv) + 4, 0.3, 'right', 11.5);
+    ctx.strokeStyle = ink(0.25);
+    ctx.beginPath(); ctx.moveTo(AP.x, ay(0)); ctx.lineTo(AP.x + AP.w, ay(0)); ctx.stroke();
+    label('z', AP.x + AP.w + 14, ay(0) + 4, 0.4, 'center', 11);
+
+    const plot = (fn: (z: number) => number, color: string, width: number) => {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(AP.x, AP.y, AP.w, AP.h); ctx.clip();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let i = 0; i <= 500; i++) {
+        const z = AXR[0] + ((AXR[1] - AXR[0]) * i) / 500;
+        i ? ctx.lineTo(ax(z), ay(fn(z))) : ctx.moveTo(ax(z), ay(fn(z)));
+      }
+      ctx.stroke();
+      ctx.restore();
+    };
+    plot(A.d, AMB(), 2);
+    plot(A.f, TEAL(), 2.8);
+
+    // where the network's two hidden units sit right now
+    for (let j = 0; j < 2; j++) {
+      const z = Math.max(AXR[0], Math.min(AXR[1], C.z[j]));
+      ctx.strokeStyle = ink(0.35);
+      ctx.beginPath(); ctx.moveTo(ax(z), AP.y + AP.h - 10); ctx.lineTo(ax(z), AP.y + AP.h); ctx.stroke();
+      label(`z_${j + 1}`, ax(z), AP.y + AP.h - 14, 0.5, 'center', 10.5);
+    }
+
+    const zv = S.z;
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(ax(zv), AP.y); ctx.lineTo(ax(zv), AP.y + AP.h); ctx.stroke();
+    for (const [v, c, r] of [[A.f(zv), TEAL(), 5.5], [A.d(zv), AMB(), 5]] as [number, string, number][]) {
+      ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(ax(zv), ay(v), r, 0, Math.PI * 2); ctx.fill();
+    }
+    label(`z = ${zv.toFixed(2)}`, ax(zv) + 8, AP.y + 14, 0.6, 'left', 11.5);
+
+    // --- depth: one line per preset, the chosen one bold -----------------------
+    label(`|φ′(z)|^k after k layers, every layer at z = ${zv.toFixed(2)} (log scale)`, DP.x, DP.y - 12, 0.5, 'left', 11.5);
+    const dy = (v: number) => {
+      const l = v <= 0 ? LOG_LO - 1 : Math.log10(v);
+      return DP.y + ((LOG_HI - Math.max(LOG_LO, Math.min(LOG_HI, l))) / (LOG_HI - LOG_LO)) * DP.h;
+    };
+    const dx = (k: number) => DP.x + (k / S.n) * DP.w;
+    ctx.strokeStyle = ink(0.08);
+    for (const e of [1, 0, -3, -6, -9, -12]) {
+      ctx.beginPath(); ctx.moveTo(DP.x, dy(10 ** e)); ctx.lineTo(DP.x + DP.w, dy(10 ** e)); ctx.stroke();
+      label(e === 0 ? '1' : e === 1 ? '10' : `1e${e}`, DP.x - 8, dy(10 ** e) + 4, 0.3, 'right', 10.5);
+    }
+    label('0 layers', DP.x, DP.y + DP.h + 16, 0.3, 'left', 11);
+    label(`${S.n}`, DP.x + DP.w, DP.y + DP.h + 16, 0.3, 'right', 11);
+    const order = PRESETS.filter((p) => p !== S.act).concat(S.act);
+    for (const key of order) {
+      const on = key === S.act;
+      ctx.strokeStyle = PCOL[key];
+      ctx.globalAlpha = on ? 1 : 0.35;
+      ctx.lineWidth = on ? 2.6 : 1.4;
+      ctx.beginPath();
+      for (let k = 0; k <= S.n; k++) {
+        const y = dy(survive(key, k));
+        k ? ctx.lineTo(dx(k), y) : ctx.moveTo(dx(k), y);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // names at the right end, nudged apart so they never overprint
+    const ends = PRESETS.map((key) => ({ key, y: dy(survive(key, S.n)) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 12);
+    for (const e of ends)
+      label(ACTS[e.key].name, DP.x + DP.w + 6, e.y + 4, e.key === S.act ? 1 : 0.55, 'left', 10.5, PCOL[e.key]);
+    words();
+  }
+
   function draw() {
+    if (S.view === 'act') return drawAct();
     const k = S.k;
     const g = G();
     const back = PHASE(k) === 'bwd';
@@ -390,7 +540,7 @@ import Readout from '../../../components/sim/Readout.astro';
     label('a^[0] = x', IN_X, 62, 0.5, 'center', 12);
     label('the example', IN_X, 80, 0.3, 'center', 11);
     label('layer 1', H_X, 62, 0.5, 'center', 12);
-    label(`2 units, φ = ${S.act === 'sig' ? 'σ' : S.act}`, H_X, 80, 0.3, 'center', 11);
+    label(`2 units, φ = ${ACTS[S.act].name}`, H_X, 80, 0.3, 'center', 11);
     label('layer 2 = L', O_X, 62, 0.5, 'center', 12);
     label('1 unit, σ', O_X, 80, 0.3, 'center', 11);
     label('loss', LOSS_X, 62, 0.5, 'center', 12);
@@ -510,7 +660,31 @@ import Readout from '../../../components/sim/Readout.astro';
   // below never moves when the step changes.
   const dL = (x: string) => `\\partial L/\\partial ${x}`;
 
+  const sci = (v: number) => (v === 0 ? '0' : v >= 1e-3 && v < 1e4 ? v.toPrecision(3) : v.toExponential(1));
+
   function words() {
+    if (S.view === 'act') {
+      const A = ACTS[S.act];
+      const T = TEAL(), M = AMB();
+      const d = A.d(S.z), g = survive(S.act, S.n);
+      setEq({
+        rule: [[A.ftex, T], '\\qquad', [`g_n = \\prod_{l=1}^{n} ${A.dtex}(z_l)`, M]],
+        live: [
+          [`${A.tex}(${S.z.toFixed(2)}) = ${A.f(S.z).toFixed(3)}`, T],
+          [`\\quad ${A.dtex}(${S.z.toFixed(2)}) = ${d.toFixed(3)}`, M],
+          [`\\quad |g_{${S.n}}| = ${sci(g).replace(/e([+-]?\d+)/, '\\times10^{$1}')}`, M],
+        ],
+      });
+      el('result-label').textContent = `Gradient left after ${S.n} layers`;
+      setResult({
+        value: sci(g),
+        colour: g < 1e-3 ? RED() : g > 10 ? RED() : M,
+        status: g < 1e-3 ? 'vanished: the first layers get almost no signal' : g > 10 ? 'exploding: each layer multiplies it up' : 'survives the stack',
+        note: A.note,
+      });
+      return;
+    }
+    el('result-label').textContent = 'Step';
     const [rule, live, sentence] = eqLines();
     setEq({ rule, live });
     const k = S.k;
@@ -702,17 +876,35 @@ import Readout from '../../../components/sim/Readout.astro';
   });
 
   const two = (v: number) => v.toFixed(2);
-  slider('x1', (v) => { S.x[0] = v; restart(true); }, two);
-  slider('x2', (v) => { S.x[1] = v; restart(true); }, two);
   slider('lr', (v) => { S.lr = v; }, two);
   segmented('target', (y) => { S.y = +y; restart(true); });
-  segmented('act', (a) => { S.act = a; restart(true); });
+  const acts = segmented('act', (a) => { S.act = a; restart(true); });
+  function setView(v: 'net' | 'act') {
+    S.view = v;
+    views.select(v);
+    if (v === 'act') S.playing = false;
+    el('netwrap').hidden = v !== 'net';
+    el('netcap').hidden = v !== 'net';
+    el('actwrap').hidden = v !== 'act';
+    el('actcap').hidden = v !== 'act';
+  }
+  const views = segmented('view', (v) => setView(v as 'net' | 'act'));
+  const setZ = slider('z', (v) => { S.z = v; }, two);
+  const setDepth = slider('depth', (v) => { S.n = v; });
+  const setX1 = slider('x1', (v) => { S.x[0] = v; restart(true); }, two);
+  const setX2 = slider('x2', (v) => { S.x[1] = v; restart(true); }, two);
 
   // clicking the strip rewinds inside the current pass; nothing has changed yet
   canvas.addEventListener('click', (ev) => {
     const r = canvas.getBoundingClientRect();
     const x = ((ev.clientX - r.left) / r.width) * W;
     const y = ((ev.clientY - r.top) / r.height) * H;
+    if (S.view === 'act') {
+      if (y < AP.y || y > AP.y + AP.h + 20 || x < AP.x || x > AP.x + AP.w) return;
+      S.z = Math.round((AXR[0] + ((x - AP.x) / AP.w) * (AXR[1] - AXR[0])) * 20) / 20;
+      setZ(S.z);
+      return;
+    }
     if (y < BAR.y - 8 || y > BAR.y + BAR.h + 8) return;
     const gap = 6;
     const cw = (BAR.w - gap * (BAR.n - 1)) / BAR.n;
@@ -726,7 +918,52 @@ import Readout from '../../../components/sim/Readout.astro';
   canvas.addEventListener('mousemove', (ev) => {
     const r = canvas.getBoundingClientRect();
     const y = ((ev.clientY - r.top) / r.height) * H;
+    if (S.view === 'act') {
+      canvas.style.cursor = y > AP.y && y < AP.y + AP.h ? 'crosshair' : 'default';
+      return;
+    }
     canvas.style.cursor = y > BAR.y - 8 && y < BAR.y + BAR.h + 8 ? 'pointer' : 'default';
+  });
+
+  // --- the What-to-observe buttons -------------------------------------------
+  function setInputs(a: number, b: number) {
+    S.x = [a, b];
+    setX1(a);
+    setX2(b);
+  }
+  tries({
+    pass: () => {
+      setView('net');
+      reset();
+      S.playing = true;
+      last = performance.now() - STEP_MS;
+    },
+    grads: () => {
+      setView('net');
+      S.playing = false;
+      restart(false);
+      S.k = 8;
+    },
+    dead: () => {
+      setView('net');
+      S.act = 'relu';
+      acts.select('relu');
+      // z₁ = 0.6·(−0.5) − 0.4·0.5 + 0.1 = −0.4 with the starting weights
+      reset();
+      setInputs(-0.5, 0.5);
+      restart(true);
+      S.k = 8;
+    },
+    vanish: () => {
+      setView('act');
+      S.act = 'sig';
+      acts.select('sig');
+      restart(true);
+      S.z = 0.5;
+      setZ(0.5);
+      S.n = 10;
+      setDepth(10);
+    },
   });
 
   reset();

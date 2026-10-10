@@ -8,6 +8,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -36,7 +37,7 @@ import Readout from '../../../components/sim/Readout.astro';
         ]}
         hint="Drag the tips of î and ĵ, or the ring marked v"
       />
-      <Result label="Determinant" />
+      <Result label="det of the frame shown" />
     </div>
 
     <div class="sim-panel">
@@ -63,12 +64,20 @@ import Readout from '../../../components/sim/Readout.astro';
           { value: '1,1,1,1', label: 'Collapse' },
         ]}
       />
-      <Slider id="t" label="Interpolate I → A" min={0} max={100} value={100} display="1.00" />
+      <Seg
+        id="path"
+        label="Path from I to A"
+        attr="p"
+        options={[
+          { value: 'polar', label: 'Turn + stretch' },
+          { value: 'linear', label: 'Straight blend' },
+        ]}
+      />
+      <Slider id="t" label="Sweep I → A, t" min={0} max={100} value={100} display="1.00" />
       <Transport animate="Animate I → A" reset={false} />
       <Checks
         label="Show"
         items={[
-          { id: 'eig', label: 'Eigenvectors' },
           { id: 'ghost', label: 'The original grid', checked: true },
           { id: 'vec', label: 'A vector to drag', checked: true },
         ]}
@@ -80,7 +89,7 @@ import Readout from '../../../components/sim/Readout.astro';
           { id: 'r-j', label: 'ĵ →' },
           { id: 'r-v', label: 'v' },
           { id: 'r-av', label: 'Av' },
-          { id: 'r-eig', label: 'eigenvalues' },
+          { id: 'r-turn', label: 'turned so far' },
         ]}
       />
     </div>
@@ -88,34 +97,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Drag the tip of <b>î</b> (indigo) or <b>ĵ</b> (teal). The whole grid follows:
-      a linear map is nothing more than where the two basis vectors land.
+      Pick <b>Shear</b> and drag the ring <b>v</b>. Its image is x steps along Aî
+      plus y steps along Aĵ (the dashed legs): where the basis lands decides
+      everything. <Try id="shear" />
     </li>
     <li>
-      Leave <b>The original grid</b> on and the dotted grid stays where it
-      was, so the solid one has something to move against. Every solid line is
-      still straight, still evenly spaced, still parallel to its neighbours:
-      that, and the origin staying put, is the whole of what <b>linear</b> means.
+      Animate <b>Rotate 90°</b> on the <b>Turn + stretch</b> path. The frame at
+      time t is R(tθ) blended with A's stretch, so the grid turns rigidly and
+      det stays 1 the whole way. <Try id="turn" label="Animate" />
     </li>
     <li>
-      Drag the ring marked <b>v</b>, an ordinary vector that is not a basis
-      vector. The two dashed pieces show how its image is assembled: go
-      <b>x</b> times where î landed, then <b>y</b> times where ĵ landed. Nothing
-      else is ever needed, which is what makes the map linear.
+      Same matrix on the <b>Straight blend</b> (1−t)I + tA. It cuts the corner
+      instead of turning: halfway the grid has shrunk to det 0.5, then grows
+      back. Both paths end on the same A. <Try id="blend" label="Animate" />
     </li>
     <li>
-      Watch the shaded unit square. Its signed area <b>is</b> the determinant;
-      pick <b>Collapse</b> and the plane flattens onto a line as
-      <b>det → 0</b> (and the map becomes non-invertible).
-    </li>
-    <li>
-      Turn on <b>Eigenvectors</b>. Those dashed lines are the directions that
-      only <b>stretch</b>, never rotate, scaled by their eigenvalue. Rotations
-      have none (the values go complex).
-    </li>
-    <li>
-      Slide <b>Interpolate</b> or hit <b>Animate</b> to sweep continuously from
-      the identity to the matrix, the moving-picture view of a transformation.
+      The shaded square's area and the directions that only stretch have their
+      own pages: <a href="/simulations/linear-algebra/determinant">Determinant</a>
+      and <a href="/simulations/linear-algebra/eigenvectors">Eigenvectors</a>.
     </li>
   </Fragment>
 </SimLayout>
@@ -124,12 +123,12 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, matrix, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, matrix, check, result, readout, tries } from '../../../lib/panel';
 
   // A = the target matrix; M = the matrix actually drawn, interpolated from I by t.
   const A = { a: 1, b: 0, c: 0, d: 1 };
   const M = { a: 1, b: 0, c: 0, d: 1 };
-  const view = { t: 1, showEig: false, showGhost: true, showVec: true };
+  const view = { t: 1, path: 'polar', showGhost: true, showVec: true };
   const vec = { x: 2, y: 1 };
   const IH = '#7c8cff', JH = '#5eead4', VEC = '#fbbf24';
 
@@ -143,12 +142,30 @@ import Readout from '../../../components/sim/Readout.astro';
   const ORIGIN = { x: W / 2, y: H / 2 };
   const UNIT = 52;
 
+  /**
+   * The rotation part of A's polar decomposition A = R(θ)S, with S symmetric.
+   * θ = atan2(c − b, a + d) is the angle that makes R(−θ)A symmetric.
+   */
+  const angleOf = () => Math.atan2(A.c - A.b, A.a + A.d);
   function recompute() {
     const t = view.t;
-    M.a = 1 - t + t * A.a;
-    M.b = t * A.b;
-    M.c = t * A.c;
-    M.d = 1 - t + t * A.d;
+    if (view.path === 'linear') {
+      // (1 − t)I + tA: every entry slides straight to its target
+      M.a = 1 - t + t * A.a;
+      M.b = t * A.b;
+      M.c = t * A.c;
+      M.d = 1 - t + t * A.d;
+      return;
+    }
+    // R(tθ) · ((1 − t)I + tS): turn by a fraction of the angle, blend in the stretch
+    const th = angleOf(), c = Math.cos(th), s = Math.sin(th);
+    const S = { a: c * A.a + s * A.c, b: c * A.b + s * A.d, c: -s * A.a + c * A.c, d: -s * A.b + c * A.d };
+    const B = { a: 1 - t + t * S.a, b: t * S.b, c: t * S.c, d: 1 - t + t * S.d };
+    const ct = Math.cos(t * th), st = Math.sin(t * th);
+    M.a = ct * B.a - st * B.c;
+    M.b = ct * B.b - st * B.d;
+    M.c = st * B.a + ct * B.c;
+    M.d = st * B.b + ct * B.d;
   }
   const toScreen = (x: number, y: number) => ({ px: ORIGIN.x + (M.a * x + M.b * y) * UNIT, py: ORIGIN.y - (M.c * x + M.d * y) * UNIT });
   const rawToScreen = (x: number, y: number) => ({ px: ORIGIN.x + x * UNIT, py: ORIGIN.y - y * UNIT });
@@ -166,38 +183,6 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.closePath();
     ctx.fill();
     if (text) label(text, p.px + 8, p.py - 8, 1, 'left', 13, color);
-  }
-
-  type Eig = { l: number; v: [number, number] };
-  function eigen(m: typeof M): Eig[] {
-    const tr = m.a + m.d, det = m.a * m.d - m.b * m.c;
-    const disc = (tr * tr) / 4 - det;
-    if (disc < -1e-9) return [];
-    const s = Math.sqrt(Math.max(0, disc));
-    const ls = [tr / 2 + s, tr / 2 - s];
-    const norm = (x: number, y: number): [number, number] => { const n = Math.hypot(x, y) || 1; return [x / n, y / n]; };
-    const vecFor = (l: number): [number, number] => {
-      if (Math.abs(m.b) > 1e-9) return norm(m.b, l - m.a);
-      if (Math.abs(m.c) > 1e-9) return norm(l - m.d, m.c);
-      return Math.abs(m.a - l) < 1e-9 ? [1, 0] : [0, 1];
-    };
-    const out: Eig[] = [{ l: ls[0], v: vecFor(ls[0]) }];
-    if (Math.abs(ls[0] - ls[1]) > 1e-6) out.push({ l: ls[1], v: vecFor(ls[1]) });
-    return out;
-  }
-
-  function drawEigen(eigs: Eig[]) {
-    for (const e of eigs) {
-      const [vx, vy] = e.v;
-      const p1 = rawToScreen(vx * 9, vy * 9), p2 = rawToScreen(-vx * 9, -vy * 9);
-      ctx.strokeStyle = VEC;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([7, 5]);
-      ctx.beginPath(); ctx.moveTo(p1.px, p1.py); ctx.lineTo(p2.px, p2.py); ctx.stroke();
-      ctx.setLineDash([]);
-      const lc = Math.max(-3.2, Math.min(3.2, e.l));
-      arrowTo(rawToScreen(vx * lc, vy * lc), VEC, `λ = ${e.l.toFixed(2)}`, 2.5);
-    }
   }
 
   /** The free vector, drawn where it started and where A sends it, built from x·Aî then y·Aĵ. */
@@ -252,15 +237,20 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.fillStyle = det >= 0 ? 'rgba(94,234,212,0.14)' : 'rgba(248,113,113,0.16)';
     ctx.beginPath(); ctx.moveTo(o.px, o.py); ctx.lineTo(i.px, i.py); ctx.lineTo(ij.px, ij.py); ctx.lineTo(j.px, j.py); ctx.closePath(); ctx.fill();
 
-    const eigs = eigen(M);
-    if (view.showEig) drawEigen(eigs);
     arrowTo(i, IH, 'î');
     arrowTo(j, JH, 'ĵ');
     if (view.showVec) drawVector();
 
     const vo = { x: M.a * vec.x + M.b * vec.y, y: M.c * vec.x + M.d * vec.y };
     (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = M[k].toFixed(2)));
-    const eigText = eigs.length ? eigs.map((e) => e.l.toFixed(2)).join(', ') : 'complex';
+    const detA = A.a * A.d - A.b * A.c;
+    const turned = view.path === 'polar' ? (angleOf() * view.t * 180) / Math.PI : null;
+    const pathNote =
+      view.path === 'linear'
+        ? 'Straight blend: each entry slides from I to A on its own, so a rotation cuts the corner and the grid shrinks on the way.'
+        : detA < 0
+          ? 'A turns the plane over, so any path from I has to pass through det 0 on the way; here the stretch part does it.'
+          : 'Turn + stretch: the frame is R(tθ) times a blend of A\'s symmetric stretch, so a rotation stays a rotation the whole way.';
     setEq({
       rule: ['A(x,y) = x\\,', ['A\\hat{\\imath}', IH], '+\\;y\\,', ['A\\hat{\\jmath}', JH], '\\qquad\\det A = ad-bc'],
       live: [[`A\\hat{\\imath}=(${M.a.toFixed(2)},${M.c.toFixed(2)})`, IH], [`\\quad A\\hat{\\jmath}=(${M.b.toFixed(2)},${M.d.toFixed(2)})`, JH], `\\quad\\det A = ${det.toFixed(3)}`],
@@ -268,21 +258,22 @@ import Readout from '../../../components/sim/Readout.astro';
     setResult({
       value: det.toFixed(3),
       colour: Math.abs(det) < 0.02 ? '#f87171' : det >= 0 ? JH : '#f87171',
-      status: Math.abs(det) < 0.02 ? 'The plane has been flattened onto a line: not invertible' : `î → (${M.a.toFixed(2)}, ${M.c.toFixed(2)}) · ĵ → (${M.b.toFixed(2)}, ${M.d.toFixed(2)})${det < 0 ? ' · orientation reversed' : ''}`,
-      note: 'The two columns are just where the basis lands; every other vector follows by adding. The shaded square shows the area scale, which is the determinant.',
+      status: `t = ${view.t.toFixed(2)} · ${Math.abs(det) < 0.02 ? 'flattened onto a line' : `î → (${M.a.toFixed(2)}, ${M.c.toFixed(2)}) · ĵ → (${M.b.toFixed(2)}, ${M.d.toFixed(2)})${det < 0 ? ' · orientation reversed' : ''}`}`,
+      note: view.t >= 0.999 ? 'The two columns are just where the basis lands; every other vector follows by adding.' : pathNote,
     });
     setRows({
       'r-i': `(${M.a.toFixed(2)}, ${M.c.toFixed(2)})`,
       'r-j': `(${M.b.toFixed(2)}, ${M.d.toFixed(2)})`,
       'r-v': view.showVec ? `(${vec.x.toFixed(2)}, ${vec.y.toFixed(2)})` : '—',
       'r-av': view.showVec ? `(${vo.x.toFixed(2)}, ${vo.y.toFixed(2)})` : '—',
-      'r-eig': eigText,
+      'r-turn': turned === null ? '—' : `${turned.toFixed(1)}°`,
     });
   }
 
   const sync = matrix(A, ['a', 'b', 'c', 'd'], () => { recompute(); draw(); });
-  const setT = slider('t', (v) => { view.t = v / 100; recompute(); draw(); }, (v) => (v / 100).toFixed(2));
-  segmented('presets', (m) => {
+  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; recompute(); draw(); }, (v) => (v / 100).toFixed(2));
+  function preset(m: string) {
+    cancelAnimationFrame(raf);
     const [a, b, c, d] = m.split(',').map(Number);
     Object.assign(A, { a, b, c, d });
     view.t = 1;
@@ -290,10 +281,11 @@ import Readout from '../../../components/sim/Readout.astro';
     sync();
     recompute();
     draw();
-  });
-  check('eig', (on) => { view.showEig = on; draw(); });
+  }
+  const presets = segmented('presets', preset);
+  const paths = segmented('path', (p) => { view.path = p; recompute(); draw(); });
   check('ghost', (on) => { view.showGhost = on; draw(); });
-  check('vec', (on) => { view.showVec = on; draw(); });
+  const setVec = check('vec', (on) => { view.showVec = on; draw(); });
   let raf = 0;
   el('run').addEventListener('click', () => {
     cancelAnimationFrame(raf);
@@ -307,6 +299,26 @@ import Readout from '../../../components/sim/Readout.astro';
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+  });
+
+  function show(m: string, path: string) {
+    presets.select(m);
+    preset(m);
+    view.path = path;
+    paths.select(path);
+    recompute();
+    draw();
+  }
+  tries({
+    shear: () => {
+      show('1,1,0,1', 'polar');
+      Object.assign(vec, { x: 2, y: 1 });
+      view.showVec = true;
+      setVec(true);
+      draw();
+    },
+    turn: () => { show('0,-1,1,0', 'polar'); el('run').click(); },
+    blend: () => { show('0,-1,1,0', 'linear'); el('run').click(); },
   });
 
   // drag the basis tips where they land, and the free vector at its input tip
@@ -325,7 +337,7 @@ import Readout from '../../../components/sim/Readout.astro';
   canvas.addEventListener('pointerdown', (e) => {
     dragging = near(e, 'i') ? 'i' : near(e, 'j') ? 'j' : near(e, 'v') ? 'v' : null;
     if (dragging) {
-      if (dragging !== 'v') { view.t = 1; setT(100); recompute(); }
+      if (dragging !== 'v') { cancelAnimationFrame(raf); view.t = 1; setT(100); recompute(); presets.clear(); }
       canvas.setPointerCapture(e.pointerId);
     }
   });

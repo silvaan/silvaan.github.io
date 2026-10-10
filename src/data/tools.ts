@@ -36,7 +36,7 @@ export const AREAS: Area[] = [
         slug: 'partial-derivatives',
         title: 'Partial Derivatives',
         description:
-          'Slide a vertical plane through a surface and what it cuts is one ordinary curve. The slope of its tangent is a partial derivative; turn the plane for the other.',
+          'A surface has a slope for every direction you could walk. Freeze one variable and slide a plane through it for ∂f/∂x or ∂f/∂y, then turn the plane to any direction u and watch D_u f = ∇f·u peak along the gradient.',
         href: '/simulations/calculus/partial-derivatives',
         status: 'live',
       },
@@ -105,14 +105,6 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'scalar-fields',
-        title: 'Scalar Fields & Gradients',
-        description:
-          'Drag a tiny probe through a 3D density cloud. An arrow shows the direction of steepest increase, with the gradient magnitude alongside.',
-        href: '/simulations/calculus/scalar-fields',
-        status: 'live',
-      },
-      {
         slug: 'hessian',
         title: 'The Hessian',
         description:
@@ -137,18 +129,10 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'green-theorem',
-        title: "Green's Theorem",
-        description:
-          'Chop a wobbly region into little squares, each carrying its own spin. Every shared edge is walked twice in opposite directions, so only the rim survives.',
-        href: '/simulations/calculus/green-theorem',
-        status: 'live',
-      },
-      {
         slug: 'stokes-theorem',
         title: "Stokes' Theorem",
         description:
-          'Tile a surface with little loops and watch every shared edge cancel in pairs until only the boundary is left. Bend the surface and the answer refuses to move.',
+          "Stretch any surface across a loop and chop it into patches. Neighbours walk every shared edge both ways, so the sum collapses onto the one curve around the edge. Lay it flat and this is Green's theorem; bend it and the answer refuses to move.",
         href: '/simulations/calculus/stokes-theorem',
         status: 'live',
       },
@@ -161,19 +145,11 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'divergence',
-        title: 'Divergence',
+        slug: 'divergence-curl',
+        title: 'Divergence & Curl',
         description:
-          'Place a tiny material patch in a vector field and watch it expand near sources, contract near sinks, or deform at zero divergence.',
-        href: '/simulations/calculus/divergence',
-        status: 'live',
-      },
-      {
-        slug: 'curl',
-        title: 'Curl',
-        description:
-          'Drop a paddle wheel into a vector field and drag it around. It spins fast in the core of a differential rotation and barely at all out at the rim.',
-        href: '/simulations/calculus/curl',
+          'Two numbers at every point of a flow. Drop in a material patch and its area grows or shrinks with the divergence; drop in a paddle wheel and it spins with the curl.',
+        href: '/simulations/calculus/divergence-curl',
         status: 'live',
       },
     ],
@@ -204,7 +180,7 @@ export const AREAS: Area[] = [
         slug: 'change-of-basis',
         title: 'Change of Basis',
         description:
-          'The same arrow, watched through two different grids and written down as two different pairs of numbers. The dictionary between them is a matrix, and a transformation translated is the sandwich.',
+          'The same arrow, watched through two different grids and written down as two different pairs of numbers. The dictionary between them is a matrix, the pairs it can reach are the span of the basis, and a transformation translated is the sandwich.',
         href: '/simulations/linear-algebra/change-of-basis',
         status: 'live',
       },
@@ -233,14 +209,6 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'span',
-        title: 'Span',
-        description:
-          'Drag two vectors and see everywhere their scaled sums can reach, the whole plane, or a single line when they line up.',
-        href: '/simulations/linear-algebra/span',
-        status: 'live',
-      },
-      {
         slug: 'svd',
         title: 'Singular Value Decomposition',
         description:
@@ -260,16 +228,8 @@ export const AREAS: Area[] = [
         slug: 'central-limit-theorem',
         title: 'Central Limit Theorem',
         description:
-          'Average samples from any distribution and watch the means pile up into a Gaussian, faster as the sample size grows.',
+          'Add up n draws from any distribution, over and over. The sums and the means pile into a bell whatever the source looked like, and with ±1 coin steps each sum is a random walk spreading like √n.',
         href: '/simulations/statistics/central-limit-theorem',
-        status: 'live',
-      },
-      {
-        slug: 'random-walk',
-        title: 'Random Walk',
-        description:
-          'Thousands of aimless walkers spread from a point into a Gaussian whose width grows like the square root of time, the particle view of diffusion.',
-        href: '/simulations/statistics/random-walk',
         status: 'live',
       },
       {
@@ -292,7 +252,7 @@ export const AREAS: Area[] = [
         slug: 'monte-carlo',
         title: 'Monte Carlo',
         description:
-          'Throw random darts at a square with a circle inside and count the hits. The fraction inside estimates π, converging slowly as 1/√n.',
+          "Throw random darts at a box and count the hits: the fraction times the box is the area. Estimate π, the area under a curve or a ball's volume in ten dimensions, and watch the error fall like 1/√n.",
         href: '/simulations/statistics/monte-carlo',
         status: 'live',
       },
@@ -308,16 +268,8 @@ export const AREAS: Area[] = [
         slug: 'mle',
         title: 'Maximum Likelihood',
         description:
-          'Slide a Gaussian over sample data and watch the likelihood rise and fall. The best fit lands exactly on the sample mean and standard deviation.',
+          'Slide a Gaussian over sample data and watch the likelihood rise and fall. The best fit lands on the sample mean and the spread that divides by n, not n − 1.',
         href: '/simulations/statistics/mle',
-        status: 'live',
-      },
-      {
-        slug: 'least-squares',
-        title: 'Least Squares',
-        description:
-          'Drag data points and fit the best line live. The residuals are drawn as literal squares, least squares minimises their total area.',
-        href: '/simulations/statistics/least-squares',
         status: 'live',
       },
       {
@@ -364,7 +316,7 @@ export const AREAS: Area[] = [
         slug: 'hierarchical',
         title: 'Hierarchical Clustering',
         description:
-          'Merge the closest groups over and over to build a dendrogram, then slice it at any height to read off clusters at that scale.',
+          'Merge the two closest groups over and over until everything is one, watch the dendrogram grow branch by branch, and drag a cut across it to choose the clusters.',
         href: '/simulations/machine-learning/hierarchical',
         status: 'live',
       },
@@ -380,7 +332,7 @@ export const AREAS: Area[] = [
         slug: 'linear-models',
         title: 'Linear Models',
         description:
-          'Regression and classification are the same straight line wx + b wearing two costumes. Change what the score turns into, and one gradient descent fits both.',
+          'Linear and logistic regression score the input with the same line, z = wx + b. Draw each residual as a literal square, snap to the least-squares optimum, and watch the same descent fit both models.',
         href: '/simulations/machine-learning/linear-models',
         status: 'live',
       },
@@ -400,14 +352,6 @@ export const AREAS: Area[] = [
         href: '/simulations/machine-learning/curse-of-dimensionality',
         status: 'live',
       },
-      {
-        slug: 'activations',
-        title: 'Activation Functions',
-        description:
-          'Compare sigmoid, tanh, ReLU and friends alongside their derivatives, and see where flat slopes make gradients vanish.',
-        href: '/simulations/machine-learning/activations',
-        status: 'live',
-      },
     ],
   },
   {
@@ -425,18 +369,10 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'gradient-descent',
-        title: 'Gradient Descent',
-        description:
-          'Tune the learning rate and the starting point, then watch optimization roll downhill into a minimum, or overshoot it and diverge.',
-        href: '/simulations/deep-learning/gradient-descent',
-        status: 'live',
-      },
-      {
         slug: 'backpropagation',
         title: 'Backpropagation',
         description:
-          'One tiny network with every number on screen. Push the example forward unit by unit, then send the error back down the same wires that carried the value out, one of the ten steps at a time.',
+          "One tiny network, one example, every number on screen. Push the input forward, send the error back down the same wires, then see why the activation's slope decides whether a gradient survives many layers.",
         href: '/simulations/deep-learning/backpropagation',
         status: 'live',
       },
@@ -444,7 +380,7 @@ export const AREAS: Area[] = [
         slug: 'optimizers',
         title: 'Optimizers',
         description:
-          'Race SGD, Momentum, NAG, AdaGrad, RMSProp and Adam down the same loss, drawn either as a surface you can click on or as a volumetric cloud in three parameters.',
+          'Six optimizers descend the same loss: a 1D slice where too big a learning rate overshoots and diverges, a surface you can click on, or a density cloud in three parameters.',
         href: '/simulations/deep-learning/optimizers',
         status: 'live',
       },
@@ -457,19 +393,11 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'initialisation',
-        title: 'Weight Initialisation',
+        slug: 'signal-propagation',
+        title: 'Initialisation & Normalisation',
         description:
-          'Every layer multiplies the spread of the signal, and depth multiplies that again. Watch the activations collapse to zero or run off to infinity, then see the one scale that keeps them steady.',
-        href: '/simulations/deep-learning/initialisation',
-        status: 'live',
-      },
-      {
-        slug: 'normalisation',
-        title: 'Batch & Layer Normalisation',
-        description:
-          'Subtract a mean, divide by a spread, and hand the scale back as two learned numbers. The only real choice is which way you slice the batch, and one of the two survives a batch of size one.',
-        href: '/simulations/deep-learning/normalisation',
+          'Every layer multiplies the spread of the signal by a factor, and depth compounds it. Pick a weight scale and watch the activations survive, vanish or overflow, then normalise each layer and see the scale stop compounding.',
+        href: '/simulations/deep-learning/signal-propagation',
         status: 'live',
       },
       {
@@ -482,9 +410,9 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'neural-net',
-        title: 'Neuron Activations',
+        title: 'Inside a Digit Classifier',
         description:
-          'Draw a digit and watch it cross a network that already knows how to read one. Every wire is lit by what it carries, every neuron by how hard it fires, and clicking one shows the picture it looks for.',
+          'Draw a digit and watch a pretrained MNIST classifier read it, as a plain stack of layers or as a convolutional network. Every wire is lit by what it carries, and clicking a neuron opens it up to show the picture it looks for.',
         href: '/simulations/deep-learning/neural-net',
         status: 'live',
       },
@@ -508,31 +436,23 @@ export const AREAS: Area[] = [
         slug: 'positional-encoding',
         title: 'Positional Encoding',
         description:
-          'Attention reads a set, so order has to be added to the vectors themselves. Fast waves separate neighbours, slow ones keep distant tokens apart, and the similarity depends on distance alone.',
+          'Attention reads a set, so order has to be written into the vectors. Added sinusoids make a score depend on where two words sit; rotary makes it depend on their offset alone.',
         href: '/simulations/deep-learning/positional-encoding',
         status: 'live',
       },
       {
-        slug: 'convolution-arithmetic',
-        title: 'Convolution Arithmetic',
+        slug: 'convolution',
+        title: 'Convolution',
         description:
-          'Where the window is allowed to sit decides how big the answer is. Padding lets it hang over the edge, stride decides how far it hops, dilation spreads it out, and one formula ties all three together.',
-        href: '/simulations/deep-learning/convolution-arithmetic',
-        status: 'live',
-      },
-      {
-        slug: 'convolution-channels',
-        title: 'Convolution Channels',
-        description:
-          'A kernel is as deep as its input. Watch each slice read its own channel, the slices sum into one number, and every extra filter add a whole output channel.',
-        href: '/simulations/deep-learning/convolution-channels',
+          'A window of weights slides over a grid and each position gives one number. Padding, stride and dilation decide how many positions there are, and with several channels every filter reads all of them at once and sums the slices.',
+        href: '/simulations/deep-learning/convolution',
         status: 'live',
       },
       {
         slug: 'receptive-field',
         title: 'Receptive Field',
         description:
-          'Trace the cone of pixels one output cell can see. Depth adds to the window, stride multiplies it and costs resolution, and dilation doubles it for free while leaving holes behind.',
+          'Trace the cone of pixels one output cell can see. Depth adds to the window, stride multiplies it and costs resolution, doubling dilation grows it exponentially for free, and a repeated dilation leaves holes.',
         href: '/simulations/deep-learning/receptive-field',
         status: 'live',
       },
@@ -604,7 +524,7 @@ export const AREAS: Area[] = [
         slug: 'data-manifold',
         title: 'The Data Manifold',
         description:
-          'Explore the enormous space of possible pixel arrays and see how real images occupy only a thin, structured region where probability concentrates.',
+          'Every 28 × 28 image is a point in a 784-dimensional space, yet real images of one kind lie on a thin curved sheet inside it. Walk the sheet, average two images, add noise and pull it back.',
         href: '/simulations/generative-ai/data-manifold',
         status: 'live',
       },
@@ -633,18 +553,10 @@ export const AREAS: Area[] = [
     icon: 'M13 2 L4 14 h6 l-1 8 9-12 h-6 z',
     simulators: [
       {
-        slug: 'em-fields',
-        title: 'Electric & Magnetic Fields',
-        description:
-          'Orbit a 3D scene of charges and currents, switching between electric field lines and the magnetic field around a wire.',
-        href: '/simulations/physics/em-fields',
-        status: 'live',
-      },
-      {
         slug: 'em-waves',
         title: 'Electromagnetic Waves',
         description:
-          'Drag charges through space and watch retarded E and B fields ripple outward. Build a dipole antenna and tune the medium to change wave speed and impedance.',
+          'Shake a charge and watch its field ripple outward as a glowing shell, at the speed the medium allows. Build a dipole antenna to see its radiation glow as a doughnut round the wire, with E and B turning transverse in 3D, or switch to statics for Coulomb field lines and the magnetic circles round a wire.',
         href: '/simulations/physics/em-waves',
         status: 'live',
       },
@@ -660,7 +572,7 @@ export const AREAS: Area[] = [
         slug: 'heat-equation',
         title: 'Heat Equation',
         description:
-          'Watch temperature diffuse across a room from a radiator and a cold window, and paint in your own heat.',
+          'Watch heat diffuse through a 3D room as glowing fog, from a radiator to a cold window, paint in your own heat or cold, and see a thermometer settle into steady state.',
         href: '/simulations/physics/heat-equation',
         status: 'live',
       },
@@ -714,9 +626,9 @@ export const AREAS: Area[] = [
       },
       {
         slug: 'schrodinger',
-        title: 'Schrödinger Equation',
+        title: 'Quantum Tunnelling',
         description:
-          'Launch a quantum wave packet at a barrier taller than its energy and watch part of it tunnel through, the wave nature of matter in action.',
+          'Fire a wave packet at a wall taller than its energy. Classically it bounces straight back; as a wave, part of it leaks through the wall and out the far side.',
         href: '/simulations/physics/schrodinger',
         status: 'live',
       },
@@ -759,7 +671,7 @@ export const AREAS: Area[] = [
       //   slug: 'quantum-fields',
       //   title: 'Quantum Fields',
       //   description:
-      //     'Split a field into waves and it becomes a grid of oscillators, one per momentum. Quantise them and the energy comes in steps: those steps are the particles, and one mass slider sets their weight, their reach and their speed.',
+      //     'A field fills all of space, and splitting it into waves turns it into a grid of independent oscillators, one per momentum. Excite a mode into a coherent state and a classical-looking wave appears whose energy comes in steps of ω: those steps are the particles. One mass slider decides how heavy they are, how far they reach and how fast they move.',
       //   href: '/simulations/physics/quantum-fields',
       //   status: 'live',
       // },
@@ -767,16 +679,8 @@ export const AREAS: Area[] = [
         slug: 'special-relativity',
         title: 'Special Relativity',
         description:
-          'Boost to a moving frame on a spacetime diagram and watch its axes skew: relativity of simultaneity, time dilation and length contraction, all at once.',
+          'Space and time are one fabric. Boost to a moving frame and its grid skews: clocks tick slow, rulers shrink, and simultaneity comes apart. Yet every arrow in spacetime keeps one length that all observers agree on.',
         href: '/simulations/physics/special-relativity',
-        status: 'live',
-      },
-      {
-        slug: 'four-vectors',
-        title: 'Four-Vectors',
-        description:
-          'One arrow in spacetime, read by many observers. Boost and both shadows change while the length refuses to: proper time, the speed of light, the rest mass.',
-        href: '/simulations/physics/four-vectors',
         status: 'live',
       },
       {
@@ -840,7 +744,7 @@ export const AREAS: Area[] = [
         slug: 'rlc',
         title: 'RC, RL and RLC Circuits',
         description:
-          'One store of energy makes a circuit slow; two make it ring. Watch the transient, the damping and the frequency response all follow the same pair of poles as you move R.',
+          'A resistor, a coil and a capacitor in one loop. The two stores pass energy back and forth, so the circuit rings, and one number, the damping ratio ζ, decides whether it rings, settles as fast as it can or crawls. The same two poles decide which frequencies get through.',
         href: '/simulations/electronics/rlc',
         status: 'live',
       },

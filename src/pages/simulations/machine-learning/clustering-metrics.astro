@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -95,72 +96,25 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Silhouette, DBI and DBCV never see the shapes. <b>Silhouette</b> asks each
-      point whether it is closer, on average, to its own cluster (a) than to
-      the nearest other one (b). <b>Davies–Bouldin</b> asks each cluster how
-      badly it is confused with its worst neighbour, spread over separation,
-      and lower is better. <b>DBCV</b> asks whether the widest gap you have to
-      jump <em>inside</em> a cluster is smaller than the gap to the next
-      cluster. All three work on data nobody has labelled, which is the only
-      situation in which clustering is actually used.
+      On <b>Moons</b>, switch between <b>k-means</b> and <b>True classes</b>.
+      Silhouette and DBI prefer the straight k-means cut, because they measure
+      distance to a centre; <b>DBCV</b> follows chains of dense points and
+      prefers the crescents. <Try id="moons" />
     </li>
     <li>
-      Choose <b>Moons</b> and switch between <b>k-means</b> and <b>True
-      classes</b>. k-means cuts each crescent in half with a straight line, and
-      silhouette and DBI both prefer that cut to the real crescents, because
-      they measure distance to a centre and so assume clusters are round.
-      DBCV disagrees: it follows chains of dense points, so a crescent is one
-      tight cluster to it and the k-means cut jumps a gap it should not.
-      <b>Circles</b> makes the point more strongly: the true rings get a
-      silhouette near 0 and a DBI near 40 (both rings share one centre), and
-      DBCV is the only internal score that prefers them.
+      <b>DBSCAN</b> on <b>Circles</b> finds both rings exactly, so purity, Rand
+      and ARI are perfect, yet silhouette sits near 0. Only DBCV, built on the
+      same idea of density, gives it credit. <Try id="circles" />
     </li>
     <li>
-      Set the clusters to <b>DBSCAN</b> on <b>Circles</b>. It finds both rings
-      exactly, so purity, Rand and ARI are all perfect, and yet silhouette sits
-      near 0 and DBI near 40. Only DBCV, built on the same idea of density as
-      DBSCAN itself, gives it credit. Hover a point to see its ε circle, and
-      shrink ε until the rings break into pieces and grey noise. Noise is
-      counted as one more cluster by silhouette, DBI and the external scores,
-      and left out of every cluster by DBCV, which still counts it in n.
+      <b>Purity</b> on <b>Uneven</b> climbs to 1 as k grows, because cutting a
+      cluster into pieces never makes a piece less uniform. Inverse purity is
+      the one that falls. <Try id="purity" />
     </li>
     <li>
-      <b>Purity</b> labels each cluster with its majority class and grades it
-      like a classifier. Choose <b>Uneven</b>, keep k-means, and push <b>k</b>
-      from 2 up to 6. The vote bars get smaller but stay one colour, so purity
-      climbs to a perfect 1. Cutting a cluster into pieces can never make a
-      piece less uniform, and one cluster per point would score 1 too. The
-      <em>inverse purity</em> reads the contingency table by columns instead
-      (is each class kept in one piece?), and it is the one that falls.
-    </li>
-    <li>
-      The <b>Rand</b> matrix has one cell for every pair of points, sorted by
-      true class, so the truth is the row of squares down the diagonal. Teal
-      is a pair both partitions keep together, red a pair only the clustering
-      puts together, amber a pair only the truth puts together. Rand is simply
-      the share of cells that are not red or amber. Split a class with a
-      higher <b>k</b> and its square fills with amber; merge two and red
-      appears between them.
-    </li>
-    <li>
-      Set the clusters to <b>Random</b>. The Rand index still reads about 0.5
-      or more, because most cells of the matrix are pairs that are apart in both,
-      and those agree for free. The <b>ARI</b> panel shows where random labels
-      of the same sizes land: a narrow spike, far from 0. ARI stretches the
-      scale so that the spike becomes 0 and a perfect match stays 1, which is
-      why it is the one to report.
-    </li>
-    <li>
-      On <b>Blobs</b>, slide <b>Labels scrambled</b> slowly from 0. Every
-      metric degrades, but not at the same rate: at 10% ARI has already lost
-      more than a quarter of its value, while purity and the Rand index have
-      lost about a tenth. DBCV collapses fastest of all: one point dropped in
-      the wrong place is a wide gap inside the cluster it lands in.
-    </li>
-    <li>
-      Click the point with the lowest silhouette (it is picked for you when the
-      pointer is off the canvas) until it lands in the cluster its b pointed
-      at. Its own s usually turns positive, and the average rises with it.
+      With <b>Random</b> clusters the Rand index still reads 0.5 or more, since
+      pairs apart in both agree for free. <b>ARI</b> rescales so random labels
+      land at 0, which is why it is the one to report. <Try id="random" />
     </li>
   </Fragment>
 </SimLayout>
@@ -169,7 +123,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   const HUES = ['#60a5fa', '#f472b6', '#a3e635', '#c084fc', '#fde047', '#94a3b8'];
   const A_COL = '#2dd4bf'; // what a metric rewards: inside distance, agreeing pairs, the majority
@@ -1352,7 +1306,7 @@ import Readout from '../../../components/sim/Readout.astro';
     refresh();
   });
   el('home').addEventListener('click', () => { resetView(); draw(); });
-  segmented('focus', (f) => { state.focus = f as Focus; draw(); });
+  const focus = segmented('focus', (f) => { state.focus = f as Focus; draw(); });
   const source = segmented('source', (s) => { state.source = s; showKnobs(); refresh(); });
   const setK = slider('k', (v) => {
     state.k = v;
@@ -1368,8 +1322,9 @@ import Readout from '../../../components/sim/Readout.astro';
     show('eps', state.source === 'dbscan');
     show('minpts', state.source === 'dbscan');
   };
-  segmented('data', (d) => {
+  function setData(d: string) {
     state.data = d;
+    dataSeg.select(d);
     state.k = NATURAL[d] ?? state.k;
     setK(state.k);
     state.eps = EPS[d] ?? state.eps;
@@ -1377,6 +1332,25 @@ import Readout from '../../../components/sim/Readout.astro';
     resetView();
     build(d);
     refresh();
+  }
+  const dataSeg = segmented('data', (d) => setData(d));
+
+  /** Data, cluster source and explained metric in one go, with k optionally overridden. */
+  function show(d: string, src: string, f: Focus, k?: number) {
+    state.source = src;
+    source.select(src);
+    showKnobs();
+    setData(d);
+    if (k !== undefined) { state.k = k; setK(k); refresh(); }
+    state.focus = f;
+    focus.select(f);
+    draw();
+  }
+  tries({
+    moons: () => show('moons', 'truth', 'dbcv'),
+    circles: () => show('circles', 'dbscan', 'sil'),
+    purity: () => show('uneven', 'kmeans', 'purity', 6),
+    random: () => show('blobs', 'random', 'ari'),
   });
 
   showKnobs();

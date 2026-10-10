@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -77,35 +78,23 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Press <b>Shrink it to a point</b>. The shaded area collapses and the
-      probability goes to <b>zero</b>, even though the density there is perfectly
-      healthy. For a continuous quantity, <b>P(X = c) = 0</b> always, and that is
-      not a paradox: it takes a stretch to hold any probability.
+      Shrink the stretch to a point: the area goes to <b>zero</b> while the
+      density there stays healthy. For a continuous quantity P(X = c) = 0.
+      <Try id="shrink" label="Animate" />
     </li>
     <li>
-      Pick <b>narrow</b>. The curve shoots past <b>height 4</b>, which no
-      probability may do. A density is not a probability; it is probability
-      <b>per unit of x</b>, and only its area has to behave.
+      On <b>narrow</b> the curve climbs to almost 4, far above 1. A density is
+      probability <b>per unit of x</b>, and only its area has to add to 1.
+      <Try id="narrow" />
     </li>
     <li>
-      The curve underneath is the running total, the <b>CDF</b>. The shaded area
-      upstairs is exactly the vertical step F(b) − F(a) downstairs. Two pictures
-      of one number.
+      The shaded area is exactly the step <b>F(b) − F(a)</b> of the running total
+      below. On <b>decay</b> a stretch further right holds less. <Try id="decay" />
     </li>
     <li>
-      Try <b>decay</b> and slide the stretch to the right. Equal widths keep
-      giving smaller probabilities, because the density is what changes, never the
-      width.
-    </li>
-    <li>
-      Switch to <b>two</b> dimensions. Now the density is a height over the
-      plane, the region is a patch of ground, and the probability is the volume
-      standing on it. Every one-dimensional idea survives with an extra integral.
-    </li>
-    <li>
-      In two dimensions, watch the dots as you move the circle. The share of dots
-      caught inside tracks the integral, which is exactly what makes Monte Carlo
-      work.
+      In <b>two</b> dimensions the probability is the volume over the circle, and
+      the share of sampled dots inside it tracks that volume: Monte Carlo.
+      <Try id="two" />
     </li>
   </Fragment>
 </SimLayout>
@@ -114,7 +103,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   type D1 = { f: (x: number) => number; lo: number; hi: number; name: string };
   const G1: Record<string, D1> = {
@@ -139,7 +128,7 @@ import Readout from '../../../components/sim/Readout.astro';
 
   const canvas = el('pd') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink, inv } = stageInk(canvas);
+  const { ink } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
@@ -358,7 +347,6 @@ import Readout from '../../../components/sim/Readout.astro';
       label(String(v), px2(v), S2.y + S2.s + 16, 0.3, 'center', 11);
       label(String(v), S2.x - 8, py2(v) + 4, 0.3, 'right', 11);
     }
-    void inv;
     return { p: area2(), peak, total: area2Total(), inside };
   }
   function area2Total() {
@@ -410,26 +398,27 @@ import Readout from '../../../components/sim/Readout.astro';
   const setR = slider('rr', (v) => { state.r = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
   const pushAB = () => { setA(Math.round(state.a * 100)); setB(Math.round(state.b * 100)); };
 
-  segmented('dim', (v) => {
-    state.dim = +v as 1 | 2;
-    if (state.dim === 2) { calibrate2(); sample(); }
-    el('d1wrap').hidden = state.dim !== 1;
-    el('d2wrap').hidden = state.dim !== 2;
-    draw();
-  });
-  segmented('dist', (v) => {
+  function setDim(dim: 1 | 2) {
+    state.dim = dim;
+    if (dim === 2) { calibrate2(); sample(); }
+    el('d1wrap').hidden = dim !== 1;
+    el('d2wrap').hidden = dim !== 2;
+  }
+  function setDist(v: string) {
     state.d1 = v;
     const d = cur1();
     state.a = Math.max(d.lo, Math.min(d.hi, state.a));
     state.b = Math.max(d.lo, Math.min(d.hi, state.b));
     pushAB();
-    draw();
-  });
-  segmented('dist2', (v) => { state.d2 = v; calibrate2(); sample(); draw(); });
+  }
+  const dims = segmented('dim', (v) => { setDim(+v as 1 | 2); draw(); });
+  const dists = segmented('dist', (v) => { setDist(v); draw(); });
+  const dists2 = segmented('dist2', (v) => { state.d2 = v; calibrate2(); sample(); draw(); });
 
-  let raf = 0;
+  let raf = 0, timer = 0;
+  const stopShrink = () => { cancelAnimationFrame(raf); clearTimeout(timer); };
   el('run').addEventListener('click', () => {
-    cancelAnimationFrame(raf);
+    stopShrink();
     const step = () => {
       if (state.dim === 1) {
         const mid = (state.a + state.b) / 2;
@@ -443,9 +432,37 @@ import Readout from '../../../components/sim/Readout.astro';
         if (state.r < 0.1) { draw(); return; }
       }
       draw();
-      raf = requestAnimationFrame(() => setTimeout(step, 30));
+      raf = requestAnimationFrame(() => { timer = window.setTimeout(step, 30); });
     };
     step();
+  });
+
+  /** One dimension, a density and a stretch from a to b. */
+  function show1(dist: string, a: number, b: number) {
+    stopShrink();
+    setDim(1);
+    dims.select('1');
+    dists.select(dist);
+    setDist(dist);
+    state.a = a;
+    state.b = b;
+    pushAB();
+    draw();
+  }
+  tries({
+    shrink: () => { if (state.dim !== 1) show1('normal', -1, 1); el('run').click(); },
+    narrow: () => show1('spike', -0.1, 0.1),
+    decay: () => show1('expo', 2.5, 3.5),
+    two: () => {
+      stopShrink();
+      state.d2 = 'blob';
+      dists2.select('blob');
+      Object.assign(state, { cx: 0.2, cy: 0.1, r: 1.2 });
+      setR(120);
+      setDim(2);
+      dims.select('2');
+      draw();
+    },
   });
 
   // drag: the handles in 1D, the region in 2D

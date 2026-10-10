@@ -7,6 +7,7 @@ import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -93,55 +94,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Hit <b>Reset</b> then <b>Step</b>. DBSCAN picks a dense point and
-      <b>floods outward</b> through neighbors within ε, so a cluster takes on
-      whatever shape the data has, even a long crescent.
+      Press <b>Run</b>. DBSCAN starts at a dense point and <b>floods outward</b>
+      through neighbors within ε, so a cluster takes whatever shape the data
+      has, even a crescent. <Try id="flood" label="Run" />
     </li>
     <li>
       Grey points are <b>noise</b>: they never gather enough ε-neighbors to join
-      anyone. Built-in outlier detection, for free.
+      anyone. Shrink <b>ε</b> and everything shatters into noise; grow it and
+      separate clusters <b>merge</b>. <Try id="noise" />
     </li>
     <li>
-      The two knobs fight each other. Too small an <b>ε</b> (or too high
-      <b>min points</b>) shatters everything into noise; too large and separate
-      clusters <b>merge</b>. The right density sits in between.
+      In the <b>Reachability</b> view, <b>One way</b>: a core reaches the border
+      on its fringe, but the border reaches nothing back, because a hop must
+      leave from a core. Reachability is <b>not symmetric</b>. <Try id="oneway" />
     </li>
     <li>
-      Open the <b>Reachability</b> view. Everything above rests on three
-      relations: q is <b>directly reachable</b> from p when p is a core and q
-      lies within ε of it; q is <b>reachable</b> from p when a chain of such
-      steps gets there, every point along the way being a core; and p and q are
-      <b>connected</b> when some one core reaches both.
-    </li>
-    <li>
-      <b>One way</b> is the case to sit with. A core reaches the border point on
-      its fringe, but the border point reaches nothing at all, because the
-      definition asks the point you leave <b>from</b> to be a core. Reachability
-      is not symmetric, and the whole rest of DBSCAN is arranged around that.
-    </li>
-    <li>
-      <b>Blocked</b> shows what a border point cannot do. It is reached from the
-      left cluster, and a point of the right cluster sits within ε of it, yet
-      the chain <b>stops</b> there: a hop may only leave a core. Two clusters
-      stay two, and the border point simply joins whichever was found first.
-    </li>
-    <li>
-      <b>Two borders</b> is why clusters are defined by connectivity and not by
-      reachability. Neither border reaches the other, in either direction, and
-      they still belong to the same cluster, because one core in the middle
-      reaches both. Drop the connectivity requirement and a cluster would stop
-      being a single set.
-    </li>
-    <li>
-      <b>Not core</b> is the trap. The two points sit well within ε of each
-      other, and still nothing holds between them: neither is a core, so no
-      relation can start anywhere. <b>Being close is not the same as being
-      reachable.</b>
-    </li>
-    <li>
-      In any case, drag <b>ε</b> or <b>min points</b> and watch the verdicts
-      flip one at a time. Raising min points turns cores into borders, and a
-      chain that ran through them dies where they stand.
+      <b>Two borders</b>: neither reaches the other, yet they share a cluster,
+      because one core reaches both. That relation, <b>connected</b>, is what
+      defines a cluster. <Try id="borders" />
     </li>
   </Fragment>
 </SimLayout>
@@ -151,7 +121,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { arrow, roundRect } from '../../../lib/theorem';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   type P = { x: number; y: number };
   const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399', '#f472b6', '#38bdf8'];
@@ -608,14 +578,16 @@ import Readout from '../../../components/sim/Readout.astro';
     showMode();
   }
 
-  segmented('mode', (m) => {
-    mode = m as 'clusters' | 'reach';
+  function setMode(m: 'clusters' | 'reach') {
+    mode = m;
+    modes.select(m);
     state.running = false;
     controls.setRunning(false);
     showMode();
-  });
-  segmented('rcase', (c) => loadCase(+c));
-  segmented('data', (d) => { state.data = d; gen(); runFull(); });
+  }
+  const modes = segmented('mode', (m) => setMode(m as 'clusters' | 'reach'));
+  const rcases = segmented('rcase', (c) => loadCase(+c));
+  const dataSeg = segmented('data', (d) => { state.data = d; gen(); runFull(); });
 
   const controls = transport({
     onRun: (running) => {
@@ -677,6 +649,33 @@ import Readout from '../../../components/sim/Readout.astro';
     } else drawReach();
     requestAnimationFrame(loop);
   }
+
+  /** The clusters view on a given data set and ε, freshly generated. */
+  function showData(data: string, eps: number) {
+    if (mode !== 'clusters') setMode('clusters');
+    state.data = data;
+    dataSeg.select(data);
+    state.eps = eps;
+    setEps(eps);
+    gen();
+    runFull();
+  }
+  function showCase(i: number) {
+    setMode('reach');
+    rcases.select(String(i));
+    loadCase(i);
+  }
+  tries({
+    flood: () => {
+      showData('moons', 42);
+      restart();
+      state.running = true;
+      controls.setRunning(true);
+    },
+    noise: () => showData('noise', 42),
+    oneway: () => showCase(1),
+    borders: () => showCase(3),
+  });
 
   gen();
   runFull();

@@ -5,6 +5,7 @@ import Checks from '../../../components/sim/Checks.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -57,6 +58,7 @@ import Readout from '../../../components/sim/Readout.astro';
         ]}
       />
       <Readout
+        title="Values"
         rows={[
           { id: 'r-xx', label: 'f<sub>xx</sub>' },
           { id: 'r-xy', label: 'f<sub>xy</sub>' },
@@ -71,45 +73,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Walk the point around. The gradient tells you which way is downhill and
-      nothing else, while the two coloured axes tell you how the ground bends,
-      and they are not the same question. On a level spot the gradient vanishes
-      entirely and the axes carry on saying something.
+      At the centre of the <b>Saddle</b> the gradient vanishes, but the axes do
+      not: one eigenvalue is positive, one negative, so one slice curves up and
+      the other down. <Try id="saddle" />
     </li>
     <li>
-      The two axes are the eigenvectors, and they are always at right angles,
-      because a Hessian is symmetric. Along one the surface bends the most it
-      can; along the other, the least. Every other direction bends somewhere in
-      between, which is the whole content of the four numbers.
+      The two slices on the right cut the surface along each eigenvector. Their
+      bending at the point is λ<sub>1</sub> and λ<sub>2</sub>: both positive is
+      a <b>bowl</b>, both negative a dome. <Try id="bowl" />
     </li>
     <li>
-      The two slices on the right are the surface cut along each axis, with the
-      parabola that matches it drawn through. Their curvature is λ<sub>1</sub>
-      and λ<sub>2</sub>, so the eigenvalues are not abstract: they are the second
-      derivatives you would measure by walking those two ways.
+      On <b>Narrow valley</b> the eigenvalues differ thirtyfold: a thin ellipse
+      and a large condition number, which is what makes
+      <a href="/simulations/deep-learning/optimizers">gradient descent</a>
+      zigzag. <Try id="valley" />
     </li>
     <li>
-      Choose <b>Saddle</b>. One eigenvalue is positive and one negative, one
-      slice curves up while the other curves down, and the point is a minimum
-      and a maximum at the same time depending on which way you face. Both
-      eigenvalues positive is a bowl, both negative a dome, and that test is the
-      whole second-derivative test in two dimensions.
-    </li>
-    <li>
-      Choose <b>Narrow valley</b>. The two eigenvalues differ by a factor of
-      thirty, so the ellipse is a long thin cigar and the ratio in the panel is
-      large. That ratio is the condition number, and it is exactly what makes
-      <a href="/simulations/deep-learning/gradient-descent">gradient descent</a>
-      zigzag: a step that suits the sharp direction is far too small for the
-      gentle one.
-    </li>
-    <li>
-      Choose <b>Ripples</b> or <b>Two hills</b> and move about. The Hessian is
-      not one matrix for the surface but a different matrix at every point, and
-      the axes turn as you go. Everything here is a statement about the
-      neighbourhood of one point, which is what
-      <a href="/simulations/calculus/curvature">second derivatives</a> always
-      are.
+      On <b>Ripples</b> the Hessian is a different matrix at every point: drag
+      the point and the axes turn with it. <Try id="ripples" />
     </li>
   </Fragment>
 </SimLayout>
@@ -118,7 +99,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect, arrow } from '../../../lib/draw';
-  import { el, segmented, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, check, result, readout, tries } from '../../../lib/panel';
 
   const UP = '#5eead4';
   const DOWN = '#f87171';
@@ -422,9 +403,11 @@ import Readout from '../../../components/sim/Readout.astro';
     const cond = small > 1e-6 ? big / small : Infinity;
     setEq({
       rule: [
-        ['f(p + d) \\approx f(p) + \\nabla f^{\\top} d + \\tfrac12\\, d^{\\top} H d', GRAD],
-        '\\qquad',
-        ['H e_i = \\lambda_i e_i', UP],
+        'f(p + d) \\approx f(p) +',
+        ['\\nabla f^{\\top} d', GRAD],
+        '+',
+        ['\\tfrac12\\, d^{\\top} H d', QUAD],
+        '\\qquad H e_i = \\lambda_i e_i',
       ],
       live: [
         [`\\lambda_1 = ${n2(E.l1)}`, E.l1 >= 0 ? UP : DOWN],
@@ -485,12 +468,27 @@ import Readout from '../../../components/sim/Readout.astro';
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
-  segmented('fn', (f) => {
+  const fns = segmented('fn', (f) => {
     state.fn = f;
     state.p = f === 'ripples' ? [0.5, 0.4] : f === 'hills' ? [-0.2, -0.1] : [0.6, 0.5];
     draw();
   });
-  check('eig', (on) => { state.eig = on; draw(); });
+  const setEig = check('eig', (on) => { state.eig = on; draw(); });
+  function show(fn: string, p: [number, number]) {
+    state.fn = fn;
+    fns.select(fn);
+    state.p = p;
+    // the items are about the eigen axes, so make sure they are on screen
+    state.eig = true;
+    setEig(true);
+    draw();
+  }
+  tries({
+    saddle: () => show('saddle', [0, 0]),
+    bowl: () => show('bowl', [0.6, 0.5]),
+    valley: () => show('valley', [0.6, 0.5]),
+    ripples: () => show('ripples', [0.5, 0.4]),
+  });
   check('quad', (on) => { state.quad = on; draw(); });
   check('grad', (on) => { state.grad = on; draw(); });
 

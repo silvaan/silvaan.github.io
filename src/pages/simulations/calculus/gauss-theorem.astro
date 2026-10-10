@@ -6,6 +6,7 @@ import Checks from '../../../components/sim/Checks.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -30,12 +31,9 @@ import Readout from '../../../components/sim/Readout.astro';
       <Seg id="view" label="View" attr="v" options={[{ value: '2d', label: 'Flat' }, { value: '3d', label: 'Solid' }]} />
       <Seg id="field" label="Field" attr="f" active="blob" options={[{ value: 'blob', label: 'Hot spot' }, { value: 'source', label: 'Source' }, { value: 'uniform', label: 'Uniform' }, { value: 'swirl', label: 'Swirl' }]} />
       <Slider id="mesh" label="Boxes" min={6} max={24} step={2} value={14} hint={['a few big ones', 'hundreds of tiny ones']} />
-      <div class="control">
-        <div class="checks">
-          <label class="check"><input type="checkbox" id="cancel" /> <span>Cancel the shared walls</span></label>
-          <label class="check" id="cutwrap" hidden><input type="checkbox" id="cut" checked /> <span>Cut it open</span></label>
-          <label class="check"><input type="checkbox" id="showfield" checked /> <span>Show the field</span></label>
-        </div>
+      <Checks items={[{ id: 'cancel', label: 'Cancel the shared walls' }, { id: 'showfield', label: 'Show the field', checked: true }]} />
+      <div id="cutwrap" hidden>
+        <Checks items={[{ id: 'cut', label: 'Cut it open', checked: true }]} />
       </div>
       <Readout rows={[{ id: 'skin', label: 'flow out through the skin' }, { id: 'sum', label: 'leak added over the boxes' }, { id: 'gap', label: 'gap between the two' }]} />
     </div>
@@ -43,40 +41,24 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      Click a box. The panel on the right opens it up and puts an arrow through
-      each wall: <b>red where flow pours out</b>, <b>blue where it pours in</b>. Out
-      minus in is that box's leak, and divided by its size it is
-      <b>divergence</b>, which is all divergence ever was.
+      Click a box. The card on the right puts an arrow through each wall,
+      <b>red where flow pours out</b> and <b>blue where it pours in</b>. Out minus
+      in, divided by the box's size, is its <b>divergence</b>. <Try id="box" />
     </li>
     <li>
-      In the region itself only the <b>skin</b> carries arrows, because the skin is
-      the only place the flow can actually get out. Every wall on the inside is
-      shared by two boxes: the flow leaving one is exactly the flow entering the
-      other.
+      Tick <b>cancel the shared walls</b>. Whatever leaves one box enters its
+      neighbour, so the inner walls dissolve in pairs and only the outer skin is
+      left. That is the theorem. <Try id="cancel" />
     </li>
     <li>
-      Tick <b>cancel the shared walls</b> and watch that happen. The whole grid
-      dissolves in pairs and leaves <b>only the outer skin</b>, the walls with
-      nobody on the far side. That is the theorem, and the two numbers below the
-      picture never move while it happens.
+      On <b>Hot spot</b> all the divergence sits in one lump in the middle. Only
+      the boxes over the lump light up, yet the skin far away reports all of it.
+      <Try id="hot" />
     </li>
     <li>
-      The number on the left never moves: it is what crosses the real boundary of
-      the region. Drag <b>boxes</b> and the sum on the right creeps up to meet it,
-      because a pile of boxes only approximates a lumpy shape until the boxes get
-      small.
-    </li>
-    <li>
-      Choose <b>uniform</b>: the flow marches straight through, every box is
-      perfectly balanced, and nothing leaks out of the skin. Choose <b>swirl</b>:
-      the flow is anything but boring, yet still nothing accumulates anywhere.
-      <b>Spinning is not spreading.</b>
-    </li>
-    <li>
-      Choose <b>hot spot</b>, where all the divergence sits in one lump near the
-      middle. Only the boxes covering the lump light up, but the skin far away
-      still reports every drop of it, because there is nowhere else for the flow
-      to go.
+      On <b>Swirl</b> the flow is busy but nothing accumulates: every box is
+      balanced and the skin reports zero. <b>Spinning is not spreading.</b>
+      <Try id="swirl" />
     </li>
   </Fragment>
 </SimLayout>
@@ -84,7 +66,7 @@ import Readout from '../../../components/sim/Readout.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, result, readout } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { stageInk } from '../../../lib/draw';
   import {
     HUE,
@@ -802,14 +784,14 @@ import Readout from '../../../components/sim/Readout.astro';
     onTap: pick,
   });
 
-  segmented('view', (v) => {
+  const views = segmented('view', (v) => {
     state.view = v as '2d' | '3d';
     state.sel = -1;
     build();
     pickDefault();
     draw();
   });
-  segmented('field', (f) => {
+  const fields = segmented('field', (f) => {
     state.field = f as Field;
     build();
     draw();
@@ -820,7 +802,7 @@ import Readout from '../../../components/sim/Readout.astro';
     pickDefault();
     draw();
   }, (v) => `${v} × ${v} grid`);
-  check('cancel', (on) => {
+  const setCancel = check('cancel', (on) => {
     state.cancel = on;
     kick();
   });
@@ -833,6 +815,27 @@ import Readout from '../../../components/sim/Readout.astro';
   check('showfield', (on) => {
     state.showField = on;
     draw();
+  });
+
+  /** Put the sim in one view and field, with the walls cancelled or not. */
+  function show(view: '2d' | '3d', field: Field, cancel: boolean) {
+    state.view = view;
+    views.select(view);
+    state.field = field;
+    fields.select(field);
+    state.cancel = cancel;
+    setCancel(cancel);
+    state.sel = -1;
+    build();
+    pickDefault();
+    kick();
+    draw();
+  }
+  tries({
+    box: () => show('2d', 'blob', false),
+    cancel: () => show(state.view, state.field, true),
+    hot: () => show('3d', 'blob', false),
+    swirl: () => show(state.view, 'swirl', false),
   });
 
   build();

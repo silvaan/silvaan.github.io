@@ -1,0 +1,979 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Initialisation & Normalisation"
+  description="Every layer multiplies the spread of the signal by a factor, and depth compounds it. Pick a weight scale and watch the activations survive, vanish or overflow, then normalise each layer and see the scale stop compounding."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="sp"
+          width="1000"
+          height="640"
+          role="img"
+          aria-label="The spread of the activations and of the gradients at each layer drawn as two ribbons on a log scale; or one batch of activations before and after batch or layer normalisation."
+        ></canvas>
+      </div>
+      <div id="depthcap">
+        <Caption
+          legend={[
+            { label: 'the signal going forward', color: '#5eead4' },
+            { label: 'gradients coming back', color: '#f59e0b' },
+            { label: 'the other schemes, or no normalisation', color: 'rgba(160,165,175,0.55)' },
+          ]}
+          hint="The ribbon is the spread of what a layer holds, on a log scale"
+        />
+      </div>
+      <div id="layercap" hidden>
+        <Caption
+          legend={[
+            { label: 'above the mean', color: '#5eead4' },
+            { label: 'below it', color: '#f59e0b' },
+            { label: 'the slice being averaged', color: '#7c8cff' },
+          ]}
+          hint="One column is one feature, one dot one example · click the left grid to pick a slice"
+          hintId="layer-hint"
+        />
+      </div>
+      <Result label="Signal scale at the last layer" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="view"
+        label="View"
+        attr="v"
+        options={[
+          { value: 'depth', label: 'Through the depth' },
+          { value: 'layer', label: 'Inside one layer' },
+        ]}
+      />
+      <Seg
+        id="norm"
+        label="Normalise each layer"
+        attr="k"
+        options={[
+          { value: 'none', label: 'Not at all' },
+          { value: 'batch', label: 'Batch norm' },
+          { value: 'layer', label: 'Layer norm' },
+        ]}
+      />
+      <div id="depthwrap">
+        <Seg
+          id="scheme"
+          label="Initialisation"
+          attr="s"
+          active="he"
+          options={[
+            { value: 'he', label: 'He' },
+            { value: 'xavier', label: 'Xavier' },
+            { value: 'small', label: '0.01' },
+            { value: 'unit', label: 'N(0, 1)' },
+          ]}
+        />
+        <Seg id="act" label="Activation" attr="a" options={[{ value: 'relu', label: 'ReLU' }, { value: 'tanh', label: 'tanh' }, { value: 'linear', label: 'linear' }]} />
+        <Slider id="scale" label="Break it on purpose" min={40} max={200} value={100} display="×1.00" hint={['smaller weights', 'bigger weights']} />
+        <Slider id="depth" label="Layers" min={4} max={40} value={24} />
+        <Slider id="width" label="Units per layer" min={16} max={96} step={8} value={64} />
+        <Actions>
+          <button type="button" class="btn" id="sweep">Send a batch through</button>
+          <button type="button" class="btn ghost" id="reseed">New weights</button>
+        </Actions>
+        <Readout
+          title="Values"
+          rows={[
+            { id: 'r-sigma', label: 'weight std σ' },
+            { id: 'r-ideal', label: 'σ that keeps the scale' },
+            { id: 'r-growth', label: 'growth per layer' },
+            { id: 'r-first', label: 'signal scale, layer 1' },
+            { id: 'r-last', label: 'signal scale, last layer' },
+            { id: 'r-grad', label: 'gradient scale, layer 1' },
+            { id: 'r-survive', label: 'layers before it breaks' },
+          ]}
+        />
+      </div>
+      <div id="layerwrap" hidden>
+        <Slider id="batch" label="Examples in the batch" min={1} max={16} value={12} hint={['a single example', 'a full batch']} />
+        <Slider id="gamma" label="Learned scale γ" min={0} max={300} value={100} display="1.00" />
+        <Slider id="beta" label="Learned shift β" min={-200} max={200} value={0} display="0.00" />
+        <Slider id="drift" label="Drift of the incoming layer" min={0} max={300} value={80} display="0.80" hint={['every feature alike', 'wildly different']} />
+        <Readout
+          title="Values"
+          rows={[
+            { id: 'r-feat', label: 'feature spreads, widest ÷ narrowest' },
+            { id: 'r-ex', label: 'example spreads, widest ÷ narrowest' },
+            { id: 'r-mean', label: 'mean of everything' },
+            { id: 'r-std', label: 'spread of everything' },
+            { id: 'r-slice', label: 'numbers averaged per slice' },
+          ]}
+        />
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      On <b>He</b> with ReLU the ribbon runs flat: the signal reaches the last
+      layer the size it left. On 0.01 or N(0, 1) every layer shrinks or grows it,
+      and 24 layers compound that until it <b>vanishes</b> or <b>overflows</b>.
+      <Try id="small" label="0.01" /> <Try id="unit" label="N(0, 1)" />
+    </li>
+    <li>
+      <b>Xavier</b> with ReLU shrinks the signal by about 0.71 per layer,
+      because ReLU zeroes half its inputs. He is Xavier with that factor of two
+      put back, a √2 in σ. <Try id="xavier" />
+    </li>
+    <li>
+      Keep N(0, 1) and turn on <b>Batch norm</b>. Each layer is reset to spread
+      1, so the weight scale stops compounding: the signal runs flat and the
+      gradient falls from 10¹⁸ to below 100. Layer norm holds it nearer 1. <Try id="rescue" />
+    </li>
+    <li>
+      <b>Inside one layer</b>, batch norm averages down a column, layer norm
+      across a row. Drag the batch to 1: batch norm outputs only β, layer norm
+      does not notice. That is why transformers use layer norm. <Try id="batch1" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
+
+  const FWD = '#5eead4', BWD = '#f59e0b', SLICE = '#7c8cff', BAD = '#f87171';
+  const BATCH = 96, EPS = 1e-5;
+
+  type Norm = 'none' | 'batch' | 'layer';
+  const state = {
+    view: 'depth' as 'depth' | 'layer',
+    norm: 'none' as Norm,
+    // through the depth
+    scheme: 'he', act: 'relu', scale: 1, depth: 24, width: 64, seed: 7,
+    // inside one layer
+    batch: 12, gamma: 1, beta: 0, drift: 0.8,
+  };
+  // a one-shot sweep: the batch goes up, then the gradient comes back down
+  const anim = { on: false, t: 0 };
+  const frontOf = () => (anim.on ? Math.min(1, anim.t) * state.depth : state.depth);
+  const backOf = () => (anim.on ? (anim.t <= 1 ? state.depth : state.depth * (2 - anim.t)) : 0);
+
+  const canvas = el('sp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => redraw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // --- a repeatable normal source -------------------------------------------
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  let rnd = mulberry32(state.seed);
+  const gauss = () => {
+    const u = Math.max(1e-9, rnd());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+  };
+
+  const ACT: Record<string, { f: (z: number) => number; d: (z: number) => number }> = {
+    relu: { f: (z) => (z > 0 ? z : 0), d: (z) => (z > 0 ? 1 : 0) },
+    tanh: { f: Math.tanh, d: (z) => 1 - Math.tanh(z) ** 2 },
+    linear: { f: (z) => z, d: () => 1 },
+  };
+
+  /** The weight standard deviation each scheme asks for, before the scale knob. */
+  function sigmaOf() {
+    const n = state.width;
+    const base =
+      state.scheme === 'he' ? Math.sqrt(2 / n)
+      : state.scheme === 'xavier' ? Math.sqrt(1 / n)
+      : state.scheme === 'small' ? 0.01
+      : 1;
+    return base * state.scale;
+  }
+  /** The σ that would hold the scale steady for the activation in use. */
+  const idealSigma = () => Math.sqrt((state.act === 'relu' ? 2 : 1) / state.width);
+
+  // =========================================================================
+  // Through the depth
+  // =========================================================================
+  type Pass = { fwd: number[]; bwd: number[] };
+  let pass: Pass = { fwd: [], bwd: [] };
+
+  /**
+   * Normalise a batch of pre-activations in place, either down each feature
+   * (batch norm) or across each example (layer norm). Returns the spread each
+   * group was divided by, which the backward pass needs.
+   */
+  function normForward(z: Float64Array, n: number, kind: Norm) {
+    const groups = kind === 'batch' ? n : BATCH;
+    const size = kind === 'batch' ? BATCH : n;
+    const at = (g: number, i: number) => (kind === 'batch' ? i * n + g : g * n + i);
+    const s = new Float64Array(groups);
+    for (let g = 0; g < groups; g++) {
+      let m = 0;
+      for (let i = 0; i < size; i++) m += z[at(g, i)];
+      m /= size;
+      let v = 0;
+      for (let i = 0; i < size; i++) v += (z[at(g, i)] - m) ** 2;
+      s[g] = Math.sqrt(v / size + EPS);
+      for (let i = 0; i < size; i++) z[at(g, i)] = (z[at(g, i)] - m) / s[g];
+    }
+    return s;
+  }
+  /** The gradient back through the normalisation: dx = (dy − mean dy − x̂ · mean(dy x̂)) / s. */
+  function normBackward(dy: Float64Array, xh: Float64Array, s: Float64Array, n: number, kind: Norm) {
+    const groups = kind === 'batch' ? n : BATCH;
+    const size = kind === 'batch' ? BATCH : n;
+    const at = (g: number, i: number) => (kind === 'batch' ? i * n + g : g * n + i);
+    const dx = new Float64Array(dy.length);
+    for (let g = 0; g < groups; g++) {
+      let m1 = 0, m2 = 0;
+      for (let i = 0; i < size; i++) { m1 += dy[at(g, i)]; m2 += dy[at(g, i)] * xh[at(g, i)]; }
+      m1 /= size; m2 /= size;
+      for (let i = 0; i < size; i++) dx[at(g, i)] = (dy[at(g, i)] - m1 - xh[at(g, i)] * m2) / s[g];
+    }
+    return dx;
+  }
+
+  /** Push a batch through, then push a gradient back, recording the spread at each layer. */
+  function propagate(): Pass {
+    rnd = mulberry32(state.seed);
+    const n = state.width, L = state.depth, sigma = sigmaOf();
+    const A = ACT[state.act];
+    const norm = state.norm;
+
+    const Ws: Float64Array[] = [];
+    for (let l = 0; l < L; l++) {
+      const w = new Float64Array(n * n);
+      for (let i = 0; i < w.length; i++) w[i] = gauss() * sigma;
+      Ws.push(w);
+    }
+
+    // forward: unit-variance inputs, then layer after layer
+    let a = new Float64Array(BATCH * n);
+    for (let i = 0; i < a.length; i++) a[i] = gauss();
+    const zs: Float64Array[] = [];
+    const ss: (Float64Array | null)[] = [];
+    const fwd: number[] = [std(a)];
+    for (let l = 0; l < L; l++) {
+      const z = new Float64Array(BATCH * n);
+      const w = Ws[l];
+      for (let b = 0; b < BATCH; b++)
+        for (let j = 0; j < n; j++) {
+          let s = 0;
+          const off = j * n, ab = b * n;
+          for (let i = 0; i < n; i++) s += w[off + i] * a[ab + i];
+          z[b * n + j] = s;
+        }
+      // an overflowed batch has no mean to take, so normalisation cannot rescue it
+      const finite = Number.isFinite(std(z));
+      ss.push(norm !== 'none' && finite ? normForward(z, n, norm) : null);
+      zs.push(z);
+      fwd.push(std(z));
+      const out = new Float64Array(BATCH * n);
+      for (let i = 0; i < z.length; i++) out[i] = A.f(z[i]);
+      a = out;
+    }
+
+    // backward: a unit-variance gradient at the top, back down the same weights
+    let d = new Float64Array(BATCH * n);
+    for (let i = 0; i < d.length; i++) d[i] = gauss();
+    const bwd: number[] = new Array(L + 1).fill(0);
+    bwd[L] = std(d);
+    for (let l = L - 1; l >= 0; l--) {
+      const z = zs[l], w = Ws[l], s = ss[l];
+      let g = new Float64Array(BATCH * n);
+      for (let i = 0; i < d.length; i++) g[i] = d[i] * A.d(z[i]);
+      if (s) g = normBackward(g, z, s, n, norm);
+      const back = new Float64Array(BATCH * n);
+      for (let b = 0; b < BATCH; b++)
+        for (let i = 0; i < n; i++) {
+          let sum = 0;
+          for (let j = 0; j < n; j++) sum += w[j * n + i] * g[b * n + j];
+          back[b * n + i] = sum;
+        }
+      d = back;
+      bwd[l] = std(d);
+    }
+    return { fwd, bwd };
+  }
+
+  /**
+   * The scale of the pre-activations, layer by layer, without touching a matrix.
+   * A pre-activation is a sum of n independent terms, so Var[z] = n σ² E[a²],
+   * and each activation has its own second moment: ReLU keeps half of what came
+   * in, the identity keeps all of it, tanh has to be measured.
+   */
+  const NORMS = Array.from({ length: 256 }, (_, i) => {
+    // a fixed low-discrepancy normal sample, so the curve never flickers
+    const u = (i + 0.5) / 256;
+    return Math.sqrt(2) * inverseErf(2 * u - 1);
+  });
+  function inverseErf(x: number) {
+    const a = 0.147;
+    const ln = Math.log(1 - x * x);
+    const t = 2 / (Math.PI * a) + ln / 2;
+    return Math.sign(x) * Math.sqrt(Math.sqrt(t * t - ln / a) - t);
+  }
+  function secondMoment(p: number, act: string) {
+    if (act === 'linear') return p * p;
+    if (act === 'relu') return (p * p) / 2;
+    let s = 0;
+    for (const z of NORMS) s += Math.tanh(p * z) ** 2;
+    return s / NORMS.length;
+  }
+  function scaleCurve(scheme: string, useKnob: boolean) {
+    const n = state.width;
+    const base =
+      scheme === 'he' ? Math.sqrt(2 / n)
+      : scheme === 'xavier' ? Math.sqrt(1 / n)
+      : scheme === 'small' ? 0.01
+      : 1;
+    const sigma = base * (useKnob ? state.scale : 1);
+    const out = [1];
+    let m = 1;
+    for (let l = 0; l < state.depth; l++) {
+      const p = Math.sqrt(n * sigma * sigma * m);
+      out.push(p);
+      if (!Number.isFinite(p) || p > 1e150) { for (let k = l + 1; k < state.depth; k++) out.push(Infinity); break; }
+      m = secondMoment(p, state.act);
+    }
+    return out;
+  }
+
+  function std(v: Float64Array) {
+    let m = 0;
+    for (const x of v) m += x;
+    m /= v.length;
+    let s = 0;
+    for (const x of v) s += (x - m) ** 2;
+    const out = Math.sqrt(s / v.length);
+    return Number.isFinite(out) ? out : Infinity;
+  }
+
+  // --- layout ----------------------------------------------------------------
+  const FWD_R = { x: 62, y: 152, w: 876, h: 140 };
+  const BWD_R = { x: 62, y: 382, w: 876, h: 120 };
+  const SUM = { x: 62, y: 556, w: 876 };
+
+  /**
+   * One ribbon, whose half-width is the spread of what the layer holds, on a
+   * log scale so a collapse and an explosion are both visible in one picture.
+   */
+  const halfOf = (v: number, base: number) => {
+    if (!(v > 0) || !Number.isFinite(v)) return Number.isFinite(v) ? 1.2 : base * 2.1;
+    return Math.max(1.2, Math.min(base * 2.1, base + (base / 3.4) * Math.log10(v)));
+  };
+
+  function ribbon(
+    box: { x: number; y: number; w: number; h: number },
+    vals: number[],
+    colour: string,
+    upto: number,
+    from: number
+  ) {
+    const base = box.h / 4;
+    const cy = box.y + box.h / 2;
+    const px = (l: number) => box.x + (l / Math.max(1, state.depth)) * box.w;
+    const a = Math.max(0, Math.ceil(from)), b = Math.min(vals.length - 1, Math.floor(upto));
+    if (b <= a) return;
+    ctx.beginPath();
+    for (let l = a; l <= b; l++) (l > a ? ctx.lineTo : ctx.moveTo).call(ctx, px(l), cy - halfOf(vals[l], base));
+    for (let l = b; l >= a; l--) ctx.lineTo(px(l), cy + halfOf(vals[l], base));
+    ctx.closePath();
+    ctx.fillStyle = colour + '2e';
+    ctx.fill();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(box.x, cy);
+    ctx.lineTo(box.x + box.w, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function ticks(box: { x: number; y: number; w: number; h: number }) {
+    const px = (l: number) => box.x + (l / Math.max(1, state.depth)) * box.w;
+    const step = state.depth <= 12 ? 1 : state.depth <= 24 ? 4 : 8;
+    for (let l = 0; l <= state.depth; l += step) {
+      ctx.strokeStyle = ink(0.1);
+      ctx.beginPath();
+      ctx.moveTo(px(l), box.y + box.h);
+      ctx.lineTo(px(l), box.y + box.h + 5);
+      ctx.stroke();
+      label(l === 0 ? 'in' : String(l), px(l), box.y + box.h + 20, 0.3, 'center', 11);
+    }
+  }
+
+  function ghost(c: number[], name: string, at: number) {
+    const base = FWD_R.h / 4;
+    const cy = FWD_R.y + FWD_R.h / 2;
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let l = 0; l < c.length; l++) {
+      const x = FWD_R.x + (l / Math.max(1, state.depth)) * FWD_R.w;
+      l ? ctx.lineTo(x, cy - halfOf(c[l], base)) : ctx.moveTo(x, cy - halfOf(c[l], base));
+    }
+    ctx.stroke();
+    const gx = FWD_R.x + (at / Math.max(1, state.depth)) * FWD_R.w;
+    const top = cy - halfOf(c[Math.min(at, c.length - 1)], base);
+    // a curve pinned at the ceiling would put its name on the subtitle, so it goes underneath
+    label(name, gx, top - 7 < FWD_R.y - 2 ? top + 15 : top - 7, 0.35, 'center', 10.5);
+  }
+
+  function ribbons() {
+    label('how wide the signal is, layer by layer', FWD_R.x, FWD_R.y - 34, 0.5, 'left', 13);
+    label(
+      state.norm === 'none'
+        ? 'the ribbon is the spread of what that layer holds'
+        : `the spread after each layer's ${state.norm} norm; the outline is the same weights without it`,
+      FWD_R.x, FWD_R.y - 16, 0.3, 'left', 11
+    );
+
+    // without normalisation: the schemes you did not pick, as outlines. With
+    // it: what this same scheme would have done without
+    const GHOST: Record<string, string> = { he: 'He', xavier: 'Xavier', small: '0.01', unit: 'N(0,1)' };
+    if (state.norm === 'none') {
+      for (const k of Object.keys(GHOST)) {
+        if (k === state.scheme) continue;
+        ghost(scaleCurve(k, false), GHOST[k], Math.round(state.depth * (0.42 + 0.17 * Object.keys(GHOST).indexOf(k))));
+      }
+    } else ghost(scaleCurve(state.scheme, true), `${GHOST[state.scheme]}, no norm`, Math.round(state.depth * 0.6));
+
+    ribbon(FWD_R, pass.fwd, FWD, frontOf(), 0);
+    ticks(FWD_R);
+
+    label('and what the gradient has left when it gets back', BWD_R.x, BWD_R.y - 34, 0.5, 'left', 13);
+    label('the same weights, travelling the other way', BWD_R.x, BWD_R.y - 16, 0.3, 'left', 11);
+    ribbon(BWD_R, pass.bwd, BWD, state.depth, backOf());
+    ticks(BWD_R);
+    const dead = pass.fwd[pass.fwd.length - 1] < 1e-6;
+    const blown = !Number.isFinite(pass.fwd[pass.fwd.length - 1]);
+    if (dead || blown)
+      label(
+        blown ? 'off the top: these are infinities in a real network' : 'pinched out: nothing reaches the end',
+        FWD_R.x + FWD_R.w / 2,
+        FWD_R.y + FWD_R.h + 38,
+        0.8, 'center', 12, BAD
+      );
+  }
+
+  /** The one multiplication that decides everything. */
+  function arithmetic() {
+    const g = growth();
+    const last = pass.fwd[pass.fwd.length - 1];
+    const ok = Math.abs(Math.log(g || 1e-9)) < 0.12;
+    const n = survives();
+    label(
+      `${g.toFixed(3)} per layer   →   ${fmt(g ** state.depth)} after ${state.depth}`,
+      SUM.x, SUM.y + 8, 1, 'left', 21, ok ? FWD : BAD
+    );
+    label(
+      ok
+        ? state.norm === 'none'
+          ? 'the signal arrives the size it left, so every layer is doing work'
+          : 'every layer is reset to spread 1, so the weight scale has nothing to compound'
+        : g < 1
+          ? 'every layer shrinks it, and the shrinking compounds until nothing is left'
+          : 'every layer amplifies it, and the amplification compounds until it overflows',
+      SUM.x, SUM.y + 34, 0.45, 'left', 12
+    );
+    label(
+      `measured at the last layer: ${fmt(last)}` +
+        (n === Infinity ? ' · it would survive any depth' : ` · it breaks down after about ${n} layers`),
+      SUM.x, SUM.y + 54, 0.3, 'left', 11,
+      n !== Infinity && n <= state.depth ? BAD : undefined
+    );
+  }
+
+  /** How many layers this growth can take before the scale leaves a million either way. */
+  function survives() {
+    const g = growth();
+    if (!(g > 0) || !Number.isFinite(g)) return 0;
+    const r = Math.abs(Math.log(g));
+    return r < 1e-4 ? Infinity : Math.max(1, Math.round(Math.log(1e6) / r));
+  }
+
+  /** The geometric mean of the per-layer ratio, which is what depth compounds. */
+  function growth() {
+    const f = pass.fwd;
+    let n = 0, s = 0;
+    for (let l = 1; l < f.length; l++) {
+      if (!(f[l] > 0) || !(f[l - 1] > 0) || !Number.isFinite(f[l])) continue;
+      s += Math.log(f[l] / f[l - 1]);
+      n++;
+    }
+    return n ? Math.exp(s / n) : 0;
+  }
+  const fmt = (v: number) =>
+    !Number.isFinite(v) ? 'overflow' : v === 0 ? '0' : v < 1e-3 || v >= 1e4 ? v.toExponential(1) : v.toFixed(3);
+
+  function drawDepth() {
+    ctx.clearRect(0, 0, W, H);
+    ribbons();
+    arithmetic();
+
+    const sigma = sigmaOf(), ideal = idealSigma(), g = growth();
+    const last = pass.fwd[pass.fwd.length - 1];
+    const gradFirst = pass.bwd[0];
+    const normed = state.norm !== 'none';
+    setEq({
+      rule: normed
+        ? [
+            ['\\operatorname{Var}[z^{(l)}] = n\\,\\operatorname{Var}[W]\\,\\mathbb{E}[a^2]', FWD],
+            '\\qquad',
+            ['\\hat z^{(l)} = \\dfrac{z^{(l)} - \\mu}{\\sigma}', SLICE],
+          ]
+        : [
+            ['\\operatorname{Var}[z^{(l)}] = \\tfrac{n}{2}\\,\\operatorname{Var}[W]\\,\\operatorname{Var}[z^{(l-1)}]', FWD],
+            '\\qquad',
+            ['\\sigma_{\\text{He}} = \\sqrt{2/n}', BWD],
+          ],
+      live: [
+        `\\sigma = ${sigma.toExponential(2)}`,
+        `\\quad \\sigma_{\\text{ideal}} = ${ideal.toExponential(2)}`,
+        [`\\quad \\text{growth} = ${g.toFixed(3)}`, FWD],
+        [`\\quad ${g.toFixed(3)}^{${state.depth}} = ${fmt(g ** state.depth)}`, Math.abs(Math.log(g || 1e-9)) < 0.12 ? FWD : BAD],
+      ],
+    });
+    setRows({
+      'r-sigma': sigma.toExponential(3),
+      'r-ideal': ideal.toExponential(3),
+      'r-growth': g.toFixed(4),
+      'r-first': fmt(pass.fwd[1] ?? 0),
+      'r-last': fmt(last),
+      'r-grad': fmt(gradFirst),
+      'r-survive': survives() === Infinity ? 'any' : String(survives()),
+    });
+    const dead = last < 1e-6, blown = !Number.isFinite(last) || last > 1e6;
+    el('result-label').textContent = 'Signal scale at the last layer';
+    setResult({
+      value: fmt(last),
+      colour: dead || blown ? BAD : FWD,
+      status: `${state.depth} layers of ${state.width} units, ${state.act}${normed ? `, ${state.norm} norm` : ''} · each one multiplies the spread by ${g.toFixed(3)} · the gradient reaching layer 1 is ${fmt(gradFirst)}`,
+      note: blown
+        ? 'The weights are too big. Each layer amplifies, the amplification compounds, and in a real network these numbers become infinities within a few more layers.'
+        : dead
+          ? 'The weights are too small. Every layer shrinks the signal, and after this many layers there is nothing left to distinguish one input from another.'
+          : normed
+            ? 'Each layer divides by the spread it measured, so the weight scale cancels. On the way back the gradient is divided by the same spread, so it no longer compounds the weights either, though batch norm still lets it creep up layer by layer.'
+            : state.act === 'relu' && state.scheme === 'xavier'
+              ? 'Xavier assumes the activation passes the signal through. ReLU deletes half of it, so the scale shrinks by 1/√2 every layer, and He is exactly this scale with that factor of two put back.'
+              : 'The spread arrives at the top roughly as it left, so every layer is doing work and the gradient has something to come back through.',
+    });
+  }
+
+  function run() {
+    pass = propagate();
+    if (state.view === 'depth') drawDepth();
+  }
+
+  // =========================================================================
+  // Inside one layer
+  // =========================================================================
+  const FEAT = 14, MAXB = 16;
+  let X: number[][] = [], Y: number[][] = [];
+  /** Which slice each cell was normalised with, for the outline. */
+  let pick = { row: 0, col: 0 };
+
+  function buildBatch() {
+    const r = mulberry32(4242);
+    const g = () => {
+      const u = Math.max(1e-9, r());
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r());
+    };
+    // every feature gets its own offset and width, which is what drift means
+    const off: number[] = [], wid: number[] = [];
+    for (let f = 0; f < FEAT; f++) {
+      off.push(g() * 1.6 * state.drift);
+      wid.push(Math.exp(g() * 0.9 * state.drift));
+    }
+    X = [];
+    for (let b = 0; b < MAXB; b++) {
+      const row: number[] = [];
+      for (let f = 0; f < FEAT; f++) row.push(off[f] + wid[f] * g());
+      X.push(row);
+    }
+  }
+
+  const batchRows = () => X.slice(0, state.batch);
+
+  function normaliseBatch() {
+    const R = batchRows();
+    const out = R.map((r) => r.slice());
+    if (state.norm === 'none') return out;
+    if (state.norm === 'batch') {
+      for (let f = 0; f < FEAT; f++) {
+        let m = 0;
+        for (const r of R) m += r[f];
+        m /= R.length;
+        let v = 0;
+        for (const r of R) v += (r[f] - m) ** 2;
+        v /= R.length;
+        const s = Math.sqrt(v + EPS);
+        for (let b = 0; b < R.length; b++) out[b][f] = state.gamma * ((R[b][f] - m) / s) + state.beta;
+      }
+    } else {
+      for (let b = 0; b < R.length; b++) {
+        const r = R[b];
+        const m = r.reduce((a, x) => a + x, 0) / FEAT;
+        const v = r.reduce((a, x) => a + (x - m) ** 2, 0) / FEAT;
+        const s = Math.sqrt(v + EPS);
+        for (let f = 0; f < FEAT; f++) out[b][f] = state.gamma * ((r[f] - m) / s) + state.beta;
+      }
+    }
+    return out;
+  }
+
+  const GA = { x: 68, y: 120, w: 360, h: 248 };
+  const GB = { x: 572, y: 120, w: 360, h: 248 };
+  const PL = { x: 68, y: 476, w: 864, h: 96 };
+
+  /** One column per feature, one dot per example. */
+  function grid(g: typeof GA, data: number[][], title: string, sub: string, outline: boolean) {
+    label(title, g.x, g.y - 34, 0.5, 'left', 13);
+    label(sub, g.x, g.y - 16, 0.3, 'left', 11);
+
+    let scale = 0.3;
+    for (const r of data) for (const v of r) scale = Math.max(scale, Math.abs(v));
+    scale *= 1.12;
+    const cw = g.w / FEAT;
+    const yv = (v: number) => g.y + g.h / 2 - (v / scale) * (g.h / 2 - 8);
+
+    ctx.fillStyle = inv(0.45);
+    roundRect(ctx, g.x, g.y, g.w, g.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    roundRect(ctx, g.x + 0.5, g.y + 0.5, g.w - 1, g.h - 1, 10);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.2);
+    ctx.beginPath();
+    ctx.moveTo(g.x + 6, yv(0));
+    ctx.lineTo(g.x + g.w - 6, yv(0));
+    ctx.stroke();
+
+    // the slice each method averages over
+    if (outline && state.norm === 'batch') {
+      ctx.fillStyle = 'rgba(124,140,255,0.16)';
+      ctx.fillRect(g.x + pick.col * cw, g.y + 2, cw, g.h - 4);
+    }
+
+    ctx.save();
+    roundRect(ctx, g.x, g.y, g.w, g.h, 10);
+    ctx.clip();
+    for (let f = 0; f < FEAT; f++) {
+      const xc = g.x + (f + 0.5) * cw;
+      const col = data.map((r) => r[f]);
+      const m = col.reduce((a, v) => a + v, 0) / col.length;
+      const sd = stdOf(col);
+      ctx.fillStyle = 'rgba(160,170,190,0.12)';
+      ctx.fillRect(xc - cw * 0.32, yv(m + sd), cw * 0.64, Math.max(1, yv(m - sd) - yv(m + sd)));
+      ctx.strokeStyle = ink(0.4);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(xc - cw * 0.36, yv(m));
+      ctx.lineTo(xc + cw * 0.36, yv(m));
+      ctx.stroke();
+      for (let b = 0; b < col.length; b++) {
+        const on = state.norm === 'layer' && outline && b === pick.row;
+        ctx.fillStyle = on ? SLICE : col[b] >= m ? FWD : BWD;
+        ctx.beginPath();
+        ctx.arc(xc + ((b % 3) - 1) * cw * 0.16, yv(col[b]), on ? 4 : 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // layer norm works along one example, so that example is a line across
+    if (outline && state.norm === 'layer' && data[pick.row]) {
+      ctx.strokeStyle = SLICE;
+      ctx.lineWidth = 1.6;
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      for (let f = 0; f < FEAT; f++) {
+        const xc = g.x + (f + 0.5) * cw + ((pick.row % 3) - 1) * cw * 0.16;
+        f ? ctx.lineTo(xc, yv(data[pick.row][f])) : ctx.moveTo(xc, yv(data[pick.row][f]));
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+
+    label(`± ${scale.toFixed(1)}`, g.x - 8, g.y + 12, 0.3, 'right', 11);
+    label('0', g.x - 8, yv(0) + 4, 0.3, 'right', 11);
+    label('one column per feature, one dot per example', g.x, g.y + g.h + 20, 0.3, 'left', 11);
+  }
+
+  function middle() {
+    const cx = (GA.x + GA.w + GB.x) / 2;
+    const cy = GA.y + GA.h / 2;
+    ctx.strokeStyle = ink(0.28);
+    ctx.fillStyle = ink(0.28);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(GA.x + GA.w + 16, cy);
+    ctx.lineTo(GB.x - 25, cy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(GB.x - 16, cy);
+    ctx.lineTo(GB.x - 25, cy - 5);
+    ctx.lineTo(GB.x - 25, cy + 5);
+    ctx.closePath();
+    ctx.fill();
+    const name = state.norm === 'none' ? 'nothing' : state.norm === 'batch' ? 'down a column' : 'across a row';
+    label(name, cx, cy - 16, 0.55, 'center', 11.5, state.norm === 'none' ? undefined : SLICE);
+    if (state.norm !== 'none') {
+      label(`γ ${state.gamma.toFixed(2)}`, cx, cy + 22, 0.45, 'center', 11.5);
+      label(`β ${state.beta.toFixed(2)}`, cx, cy + 38, 0.45, 'center', 11.5);
+    }
+  }
+
+  /** The two distributions, drawn on one axis so the change is the whole point. */
+  function dists() {
+    label('everything in the batch, before and after', PL.x, PL.y - 22, 0.5, 'left', 13);
+    const before = batchRows().flat(), after = Y.flat();
+    let lim = 0.5;
+    for (const v of before.concat(after)) lim = Math.max(lim, Math.abs(v));
+    lim = Math.min(lim, 12);
+    const px = (v: number) => PL.x + ((Math.max(-lim, Math.min(lim, v)) + lim) / (2 * lim)) * PL.w;
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
+    ctx.strokeStyle = ink(0.22);
+    ctx.beginPath();
+    ctx.moveTo(px(0), PL.y);
+    ctx.lineTo(px(0), PL.y + PL.h);
+    ctx.stroke();
+    label('0', px(0), PL.y + PL.h + 18, 0.3, 'center', 11);
+    label(`−${lim.toFixed(0)}`, PL.x + 4, PL.y + PL.h + 18, 0.3, 'left', 11);
+    label(`${lim.toFixed(0)}`, PL.x + PL.w - 4, PL.y + PL.h + 18, 0.3, 'right', 11);
+
+    const hist = (vals: number[], colour: string, alpha: number, fill: boolean) => {
+      const BINS = 72;
+      const h = new Float64Array(BINS);
+      for (const v of vals) {
+        const t = (Math.max(-lim, Math.min(lim, v)) + lim) / (2 * lim);
+        h[Math.min(BINS - 1, Math.floor(t * BINS))]++;
+      }
+      let mx = 1;
+      for (const c of h) mx = Math.max(mx, c);
+      ctx.beginPath();
+      ctx.moveTo(PL.x, PL.y + PL.h);
+      for (let i = 0; i < BINS; i++) {
+        const x = PL.x + ((i + 0.5) / BINS) * PL.w;
+        ctx.lineTo(x, PL.y + PL.h - (h[i] / mx) * (PL.h - 10));
+      }
+      ctx.lineTo(PL.x + PL.w, PL.y + PL.h);
+      if (fill) {
+        ctx.fillStyle = colour;
+        ctx.globalAlpha = alpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = fill ? 0.9 : alpha;
+      ctx.lineWidth = fill ? 2 : 1.6;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+    hist(before, ink(0.5), 0.55, false);
+    hist(after, FWD, 0.16, true);
+    label('before', PL.x + 10, PL.y + 18, 0.45, 'left', 11.5);
+    label('after', PL.x + 10, PL.y + 36, 0.9, 'left', 11.5, FWD);
+  }
+
+  /** Widest divided by narrowest, along whichever axis is asked for. */
+  function spreadRatio(d: number[][], axis: 'feature' | 'example') {
+    const stds: number[] = [];
+    if (axis === 'feature') {
+      for (let f = 0; f < FEAT; f++) stds.push(stdOf(d.map((r) => r[f])));
+    } else for (const r of d) stds.push(stdOf(r));
+    const mx = Math.max(...stds), mn = Math.min(...stds);
+    return mn < 1e-9 ? Infinity : mx / mn;
+  }
+  function stdOf(v: number[]) {
+    if (v.length < 2) return 0;
+    const m = v.reduce((a, x) => a + x, 0) / v.length;
+    return Math.sqrt(v.reduce((a, x) => a + (x - m) ** 2, 0) / v.length);
+  }
+  const fmtR = (v: number) => (!Number.isFinite(v) ? '∞' : v > 1e4 ? v.toExponential(1) : v.toFixed(2));
+
+  function drawLayer() {
+    ctx.clearRect(0, 0, W, H);
+    Y = normaliseBatch();
+    pick = { row: Math.min(pick.row, state.batch - 1), col: pick.col };
+    grid(GA, batchRows(), 'what the layer receives', 'a row is an example, a column a feature', true);
+    grid(GB, Y, 'what it passes on', state.norm === 'none' ? 'unchanged' : 'each slice to mean 0, spread 1, then γ and β', false);
+    middle();
+    dists();
+
+    const rf = spreadRatio(Y, 'feature'), re = spreadRatio(Y, 'example');
+    const flat = state.norm === 'batch' && state.batch === 1;
+    const all = Y.flat();
+    const mean = all.reduce((a, x) => a + x, 0) / all.length;
+    setEq({
+      rule: [
+        ['\\hat x = \\dfrac{x - \\mu}{\\sqrt{\\sigma^2 + \\epsilon}}', SLICE],
+        '\\qquad',
+        ['y = \\gamma\\,\\hat x + \\beta', FWD],
+      ],
+      live: [
+        state.norm === 'none' ? '\\text{no slice taken}' : `\\mu, \\sigma \\text{ ${state.norm === 'batch' ? 'down each column' : 'across each row'}}`,
+        `\\quad \\gamma = ${state.gamma.toFixed(2)},\\; \\beta = ${state.beta.toFixed(2)}`,
+        [`\\quad \\text{features } ${fmtR(rf)}\\times`, FWD],
+      ],
+    });
+    setRows({
+      'r-feat': `${fmtR(rf)}×`,
+      'r-ex': `${fmtR(re)}×`,
+      'r-mean': mean.toFixed(3),
+      'r-std': stdOf(all).toFixed(3),
+      'r-slice': state.norm === 'none' ? 'none' : state.norm === 'batch' ? `${state.batch} per feature` : `${FEAT} per example`,
+    });
+    el('result-label').textContent = 'Widest feature ÷ narrowest';
+    setResult({
+      value: flat ? 'everything is β' : `${fmtR(rf)}×`,
+      colour: flat ? BAD : rf < 1.05 ? FWD : BWD,
+      status: flat
+        ? 'a column of one number has no spread, so every output collapses to β'
+        : `across examples the ratio is ${fmtR(re)}× · everything now has mean ${mean.toFixed(2)} and spread ${stdOf(all).toFixed(2)}`,
+      note: flat
+        ? 'Batch norm needs its neighbours in the batch. With a single example there is nothing to take a spread over, which is exactly the situation a model is in at inference.'
+        : state.norm === 'none'
+          ? 'Some features are many times wider than others, so a single learning rate is far too large for one and far too small for the next.'
+          : state.norm === 'batch'
+            ? 'Every feature now has the same spread, whatever the layer below did to it, so the next layer sees a fixed scale.'
+            : 'Every example is put on the same footing as itself and depends on no other example, which is what makes this the one that survives a batch of size one.',
+    });
+  }
+
+  // =========================================================================
+  // Driving
+  // =========================================================================
+  function redraw() {
+    if (state.view === 'depth') drawDepth();
+    else drawLayer();
+  }
+
+  let lastTs = 0;
+  function tick(ts: number) {
+    if (anim.on) {
+      const dt = lastTs ? (ts - lastTs) / 1000 : 0;
+      anim.t += dt / (anim.t <= 1 ? 1.1 : 0.9);
+      if (anim.t >= 2) { anim.t = 0; anim.on = false; }
+      if (state.view === 'depth') drawDepth();
+    }
+    lastTs = ts;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state.view !== 'layer') return;
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W;
+    const y = ((e.clientY - r.top) / r.height) * H;
+    if (x < GA.x || x > GA.x + GA.w || y < GA.y || y > GA.y + GA.h) return;
+    pick = {
+      col: Math.max(0, Math.min(FEAT - 1, Math.floor(((x - GA.x) / GA.w) * FEAT))),
+      row: Math.max(0, Math.min(state.batch - 1, Math.floor(((y - GA.y) / GA.h) * state.batch))),
+    };
+    drawLayer();
+  });
+
+  function setView(v: 'depth' | 'layer') {
+    state.view = v;
+    views.select(v);
+    el('depthwrap').hidden = v !== 'depth';
+    el('depthcap').hidden = v !== 'depth';
+    el('layerwrap').hidden = v !== 'layer';
+    el('layercap').hidden = v !== 'layer';
+    canvas.classList.toggle('pick', v === 'layer');
+    anim.on = false;
+    redraw();
+  }
+  function setNorm(k: Norm) {
+    state.norm = k;
+    norms.select(k);
+    run();
+    if (state.view === 'layer') drawLayer();
+  }
+  function setScheme(s: string) {
+    state.scheme = s;
+    schemes.select(s);
+    run();
+  }
+  const views = segmented('view', (v) => setView(v as 'depth' | 'layer'));
+  const norms = segmented('norm', (k) => setNorm(k as Norm));
+  const schemes = segmented('scheme', setScheme);
+  const acts = segmented('act', (a) => { state.act = a; run(); });
+  const setScale = slider('scale', (v) => { state.scale = v / 100; run(); }, (v) => `×${(v / 100).toFixed(2)}`);
+  slider('depth', (v) => { state.depth = v; run(); });
+  slider('width', (v) => { state.width = v; run(); });
+  el('sweep').addEventListener('click', () => { anim.on = true; anim.t = 0; drawDepth(); });
+  el('reseed').addEventListener('click', () => { state.seed = (Math.random() * 1e9) | 0; run(); });
+  const setBatch = slider('batch', (v) => { state.batch = v; drawLayer(); });
+  slider('gamma', (v) => { state.gamma = v / 100; drawLayer(); }, (v) => (v / 100).toFixed(2));
+  slider('beta', (v) => { state.beta = v / 100; drawLayer(); }, (v) => (v / 100).toFixed(2));
+  slider('drift', (v) => { state.drift = v / 100; buildBatch(); drawLayer(); }, (v) => (v / 100).toFixed(2));
+
+  /** The depth view on a given scheme, ReLU, the default knob and no normalisation. */
+  function depthOn(scheme: string, norm: Norm = 'none') {
+    state.view = 'depth';
+    state.act = 'relu';
+    acts.select('relu');
+    state.scale = 1;
+    setScale(100);
+    state.norm = norm;
+    norms.select(norm);
+    setScheme(scheme);
+    setView('depth');
+  }
+  tries({
+    small: () => depthOn('small'),
+    unit: () => depthOn('unit'),
+    xavier: () => depthOn('xavier'),
+    rescue: () => depthOn('unit', 'batch'),
+    batch1: () => {
+      state.norm = 'batch';
+      norms.select('batch');
+      run();
+      state.batch = 1;
+      setBatch(1);
+      setView('layer');
+    },
+  });
+
+  buildBatch();
+  run();
+</script>
+
+<style>
+  #sp.pick {
+    cursor: crosshair;
+  }
+</style>

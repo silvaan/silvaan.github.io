@@ -6,12 +6,13 @@ import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="machine-learning"
   title="Hierarchical Clustering"
-  description="Merge the two closest groups over and over until everything is one, and watch the dendrogram grow branch by branch."
+  description="Merge the two closest groups over and over until everything is one, watch the dendrogram grow branch by branch, and drag a cut across it to choose the clusters."
 >
   <div class="sim">
     <div class="sim-view">
@@ -24,7 +25,7 @@ import Readout from '../../../components/sim/Readout.astro';
           aria-label="Points coloured by their current cluster on the left, and the dendrogram of merges growing on the right."
         ></canvas>
       </div>
-      <Caption hint="Click the left half to add points" />
+      <Caption hint="Click the left half to add points · drag the cut line up and down the dendrogram" />
       <Result label="Clusters" />
     </div>
 
@@ -42,26 +43,35 @@ import Readout from '../../../components/sim/Readout.astro';
           { value: 'average', label: 'Average' },
           { value: 'single', label: 'Single' },
           { value: 'complete', label: 'Complete' },
+          { value: 'ward', label: 'Ward' },
         ]}
       />
-      <Readout rows={[{ id: 'r-merges', label: 'merges done' }, { id: 'r-clusters', label: 'clusters' }, { id: 'r-last', label: 'last merge distance' }]} />
+      <Readout
+        rows={[
+          { id: 'r-merges', label: 'merges done' },
+          { id: 'r-clusters', label: 'clusters' },
+          { id: 'r-last', label: 'last merge distance' },
+          { id: 'r-cut', label: 'cut height' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
       Each <b>Step</b> joins the <b>two nearest groups</b> and records how far
-      apart they were as the bar's height. Short bars mean tight, obvious groups;
-      tall bars join things only reluctantly.
+      apart they were as the bar's height. Short bars are tight, obvious groups;
+      tall bars join things reluctantly. <Try id="grow" label="Run" />
     </li>
     <li>
-      You never chose a number of clusters. One tree holds them at <b>every
-      scale</b>: stop early for many small groups, run to the end for one.
+      Drag the <b>cut line</b> on the dendrogram. Every branch it crosses is one
+      cluster, so one tree holds the clustering at <b>every scale</b>, and a long
+      gap between bars marks a natural cut. <Try id="cut" />
     </li>
     <li>
-      Switch the <b>linkage</b>. Single-link chains through bridges and can merge
-      far things via stepping stones; complete-link keeps clusters compact. Same
-      points, different tree.
+      Switch the <b>linkage</b>. Single-link chains through stepping stones;
+      complete-link and <b>Ward</b> keep groups compact. Same points, different
+      tree. <Try id="single" />
     </li>
   </Fragment>
 </SimLayout>
@@ -70,12 +80,14 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, transport, result, readout } from '../../../lib/panel';
+  import { el, segmented, transport, result, readout, tries } from '../../../lib/panel';
 
   type Node = { x: number; height: number; members: number[]; left?: Node; right?: Node; repL?: number; repR?: number };
   const PALETTE = ['#7c8cff', '#f59e0b', '#2dd4bf', '#f87171', '#a78bfa', '#34d399', '#f472b6', '#38bdf8'];
 
-  const state = { link: 'average', merges: 0, running: false };
+  const CUT = '#f472b6';
+  // cutH is the height the user dragged the cut to; null means it follows the merges
+  const state = { link: 'average', merges: 0, running: false, cutH: null as number | null };
   let pts: { x: number; y: number }[] = [];
   let mergeNodes: Node[] = [];
   let leafNodes: Node[] = [];
@@ -106,6 +118,16 @@ import Readout from '../../../components/sim/Readout.astro';
 
   const dist = (a: number, b: number) => Math.hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y);
   function linkage(A: number[], B: number[]) {
+    if (state.link === 'ward') {
+      // the rise in within-cluster squared error from merging, as a distance
+      const c = (S: number[]) => {
+        let x = 0, y = 0;
+        for (const i of S) { x += pts[i].x; y += pts[i].y; }
+        return { x: x / S.length, y: y / S.length };
+      };
+      const a = c(A), b = c(B);
+      return Math.sqrt((2 * A.length * B.length) / (A.length + B.length)) * Math.hypot(a.x - b.x, a.y - b.y);
+    }
     let best = state.link === 'single' ? Infinity : state.link === 'complete' ? -Infinity : 0;
     let cnt = 0;
     for (const a of A)
@@ -148,6 +170,7 @@ import Readout from '../../../components/sim/Readout.astro';
       assignX(root);
     }
     state.merges = 0;
+    state.cutH = null;
   }
 
   function clustersAt(m: number) {
@@ -174,12 +197,43 @@ import Readout from '../../../components/sim/Readout.astro';
     average: 'd(A,B) = \\frac{1}{|A|\\,|B|}\\sum_{a\\in A}\\sum_{b\\in B} \\lVert a - b\\rVert',
     single: 'd(A,B) = \\min_{a\\in A,\\,b\\in B} \\lVert a - b\\rVert',
     complete: 'd(A,B) = \\max_{a\\in A,\\,b\\in B} \\lVert a - b\\rVert',
+    ward: 'd(A,B) = \\sqrt{\\tfrac{2|A|\\,|B|}{|A|+|B|}}\\;\\lVert \\bar a - \\bar b\\rVert',
   };
+
+  const ddx = (x: number) => RIGHT.x0 + (x / Math.max(1, pts.length - 1)) * (RIGHT.x1 - RIGHT.x0);
+  const ddy = (ht: number) => RIGHT.y1 - (ht / maxH) * (RIGHT.y1 - RIGHT.y0);
+  const heightAt = (y: number) => ((RIGHT.y1 - y) / (RIGHT.y1 - RIGHT.y0)) * maxH;
+  const CUT_MAX = 1.04; // the cut can sit a little above the last merge: one cluster
+
+  /** Where the cut line sits: where it was dragged, or between the last merge done and the next. */
+  function cutHeight() {
+    if (state.cutH !== null) return state.cutH;
+    const n = mergeNodes.length, m = state.merges;
+    if (!n) return 0;
+    if (m <= 0) return mergeNodes[0].height / 2;
+    if (m >= n) return maxH * CUT_MAX;
+    return (mergeNodes[m - 1].height + mergeNodes[m].height) / 2;
+  }
+  /** Drop the cut at a height: every merge below it is done. Heights only rise, so that is a prefix. */
+  function setCut(h: number) {
+    state.cutH = Math.max(0, Math.min(maxH * CUT_MAX, h));
+    state.merges = mergeNodes.filter((n) => n.height <= state.cutH!).length;
+    state.running = false;
+    controls.setRunning(false);
+  }
+  /** A cut that leaves exactly k clusters, halfway between the two merges around it. */
+  function cutFor(k: number) {
+    const n = mergeNodes.length;
+    const m = Math.max(0, Math.min(n, pts.length - k));
+    state.cutH = null;
+    state.merges = m;
+    setCut(cutHeight());
+  }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
     label('the points', LEFT.x0, LEFT.y0 - 12, 0.45, 'left', 11.5);
-    label('the dendrogram: bar height is the merge distance', RIGHT.x0, RIGHT.y0 - 30, 0.45, 'left', 11.5);
+    label('the dendrogram: bar height is the merge distance', RIGHT.x0, RIGHT.y0 - 40, 0.45, 'left', 11.5);
 
     if (pts.length === 0) {
       label('click here to add points', LEFT.x0 + 10, LEFT.y0 + 24, 0.4, 'left', 12);
@@ -198,9 +252,7 @@ import Readout from '../../../components/sim/Readout.astro';
     }
 
     if (root && pts.length > 1) {
-      const L = pts.length;
-      const dx = (x: number) => RIGHT.x0 + (x / (L - 1)) * (RIGHT.x1 - RIGHT.x0);
-      const dy = (ht: number) => RIGHT.y1 - (ht / maxH) * (RIGHT.y1 - RIGHT.y0);
+      const dx = ddx, dy = ddy;
       ctx.strokeStyle = ink(0.12);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -209,9 +261,10 @@ import Readout from '../../../components/sim/Readout.astro';
       ctx.stroke();
       label('0', RIGHT.x0 - 16, RIGHT.y1 + 4, 0.3, 'right', 11);
       label(maxH.toFixed(0), RIGHT.x0 - 16, RIGHT.y0 + 4, 0.3, 'right', 11);
-      for (let k = 0; k < state.merges; k++) {
+      for (let k = 0; k < mergeNodes.length; k++) {
         const n = mergeNodes[k];
-        const col = cl.rootColor.get(cl.find(n.repL!)) || ink(0.4);
+        // merges above the cut are still to come: drawn faintly so the cut has a tree to cross
+        const col = k < state.merges ? cl.rootColor.get(cl.find(n.repL!)) || ink(0.4) : ink(0.13);
         const yTop = dy(n.height);
         const lx = dx(n.left!.x), rx = dx(n.right!.x);
         ctx.strokeStyle = col;
@@ -229,6 +282,20 @@ import Readout from '../../../components/sim/Readout.astro';
         ctx.arc(dx(leaf.x), dy(0), 1.8, 0, Math.PI * 2);
         ctx.fill();
       }
+      const cy = dy(cutHeight());
+      ctx.strokeStyle = CUT;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      ctx.moveTo(RIGHT.x0 - 14, cy);
+      ctx.lineTo(RIGHT.x1 + 14, cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = CUT;
+      ctx.beginPath();
+      ctx.arc(RIGHT.x1 + 18, cy, 5, 0, Math.PI * 2);
+      ctx.fill();
+      label(`cut · ${cl.nClusters} cluster${cl.nClusters === 1 ? '' : 's'}`, RIGHT.x1, cy - 8, 1, 'right', 11, CUT);
     }
     words(cl, cl.nClusters);
   }
@@ -245,10 +312,15 @@ import Readout from '../../../components/sim/Readout.astro';
         ? state.merges >= mergeNodes.length && mergeNodes.length ? `All ${mergeNodes.length} merges done: everything is one cluster` : `${state.merges} of ${mergeNodes.length} merges done`
         : 'No points yet',
       note: last !== null
-        ? `The last merge joined two groups ${last.toFixed(1)} px apart, under ${state.link} linkage. Every merge takes the two closest groups left.`
+        ? `The last merge joined two groups ${last.toFixed(1)} px apart, under ${state.link} linkage. Every branch the cut crosses is one cluster.`
         : 'Step joins the two nearest groups; the height of each bar in the dendrogram is how far apart they were.',
     });
-    setRows({ 'r-merges': String(state.merges), 'r-clusters': String(nClusters), 'r-last': last !== null ? last.toFixed(1) : '—' });
+    setRows({
+      'r-merges': String(state.merges),
+      'r-clusters': String(nClusters),
+      'r-last': last !== null ? last.toFixed(1) : '—',
+      'r-cut': cl && mergeNodes.length ? cutHeight().toFixed(1) : '—',
+    });
   }
 
   function loop() {
@@ -261,30 +333,73 @@ import Readout from '../../../components/sim/Readout.astro';
     else requestAnimationFrame(loop);
   }
 
-  canvas.addEventListener('pointerdown', (e) => {
+  const at = (e: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * W;
-    const y = ((e.clientY - rect.top) / rect.height) * H;
+    return { x: ((e.clientX - rect.left) / rect.width) * W, y: ((e.clientY - rect.top) / rect.height) * H };
+  };
+  const onTree = (x: number, y: number) =>
+    mergeNodes.length > 0 && x > RIGHT.x0 - 30 && x < RIGHT.x1 + 40 && y > RIGHT.y0 - 50 && y < RIGHT.y1 + 20;
+  let dragging = false;
+  canvas.addEventListener('pointermove', (e) => {
+    const { x, y } = at(e);
+    if (dragging) { setCut(heightAt(y)); return; }
+    canvas.style.cursor = onTree(x, y) ? 'ns-resize' : x > LEFT.x1 + 20 ? 'default' : 'crosshair';
+  });
+  const endDrag = () => (dragging = false);
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const { x, y } = at(e);
+    if (onTree(x, y)) {
+      canvas.setPointerCapture(e.pointerId);
+      dragging = true;
+      setCut(heightAt(y));
+      return;
+    }
     if (x > LEFT.x1 + 20) return;
     pts.push({ x: Math.max(LEFT.x0, Math.min(LEFT.x1, x)), y: Math.max(LEFT.y0, Math.min(LEFT.y1, y)) });
     build();
   });
 
-  segmented('link', (l) => { state.link = l; build(); });
+  const links = segmented('link', (l) => { state.link = l; build(); });
   const controls = transport({
     onRun: (running) => {
+      state.cutH = null;
       if (running && state.merges >= mergeNodes.length) state.merges = 0;
       state.running = running;
     },
-    onStep: () => { if (state.merges < mergeNodes.length) state.merges++; },
-    onReset: () => { state.merges = 0; state.running = false; controls.setRunning(false); },
+    onStep: () => { state.cutH = null; if (state.merges < mergeNodes.length) state.merges++; },
+    onReset: () => { state.cutH = null; state.merges = 0; state.running = false; controls.setRunning(false); },
   });
   el('regen').addEventListener('click', () => { gen(); build(); });
   el('clear').addEventListener('click', () => {
     pts = []; mergeNodes = []; leafNodes = []; root = null;
+    state.cutH = null;
     state.merges = 0;
     state.running = false;
     controls.setRunning(false);
+  });
+
+  tries({
+    grow: () => {
+      if (pts.length < 2) { gen(); build(); }
+      state.cutH = null;
+      state.merges = 0;
+      state.running = true;
+      controls.setRunning(true);
+    },
+    cut: () => {
+      if (pts.length < 5) { gen(); build(); }
+      cutFor(4);
+    },
+    single: () => {
+      if (pts.length < 5) gen();
+      state.link = 'single';
+      links.select('single');
+      build();
+      cutFor(4);
+    },
   });
 
   gen();
@@ -295,5 +410,6 @@ import Readout from '../../../components/sim/Readout.astro';
 <style>
   #hc {
     cursor: crosshair;
+    touch-action: none;
   }
 </style>

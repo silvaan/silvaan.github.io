@@ -6,6 +6,7 @@ import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
@@ -67,53 +68,25 @@ import Readout from '../../../components/sim/Readout.astro';
 
   <Fragment slot="observe">
     <li>
-      The left panel is the whole training set, one dot per example. Press
-      <b>New batch</b> and a handful of them light up, no example twice, the
-      way an epoch shuffles the set and deals it out. That draw, and nothing
-      else, is what the next step is allowed to know about.
+      Press <b>New batch</b>. A handful of examples light up, each adds its own
+      violet arrow, and their average (indigo) is the step. The teal arrow is
+      the true gradient over all 256, which nobody computes. <Try id="draw" label="New batch" />
     </li>
     <li>
-      Each lit example gets its own violet arrow on the surface, and they point
-      all over the place. An example's arrow runs along the line from the origin
-      to its dot in the data panel, because a linear model's gradient for one
-      example is its own features scaled by how wrong the prediction is. Hover a
-      dot to see its arrow pick itself out.
+      At <b>batch size</b> 1 the step can point almost the wrong way. The dashed
+      ring is the spread of the average and shrinks like 1/√B: sixteen times the
+      work buys only about four times less noise.
+      <Try id="b1" label="B = 1" /> <Try id="b16" label="B = 16" />
     </li>
     <li>
-      The indigo arrow is the average of the violet ones, and it is the step
-      that actually gets taken. The teal arrow is the gradient over all 256
-      examples, the direction nobody can afford to compute. The gap between the
-      two is the whole subject.
+      At <b>256</b> the batch is the whole set. The factor √((N − B)/(N − 1))
+      for drawing without replacement reaches 0, the ring closes and indigo lies
+      on teal. <Try id="b256" label="B = 256" />
     </li>
     <li>
-      Hold still and press <b>New batch</b> a few times. The indigo arrow jumps
-      around while the teal one stays put, and each draw drops a dot on the
-      bottom plot. The dots scatter around the curve: that curve is the typical
-      miss, not a promise about any single draw.
-    </li>
-    <li>
-      At <b>batch size</b> 1 the indigo arrow is a violet one and can point
-      almost the wrong way. Raise the batch and it swings into line, but slowly:
-      the dashed ring around the teal tip is the spread of the average, and it
-      shrinks like one over the square root, so sixteen times the work buys four
-      times less noise. That poor exchange rate is the argument against very
-      large batches. Push the slider to 256 and the batch is the whole set: the
-      ring closes to nothing and the indigo arrow lies exactly on the teal one,
-      the only batch size that is never wrong and never worth it.
-    </li>
-    <li>
-      Let a run finish with a small batch. It does not stop at the minimum, it
-      arrives and then jitters around it forever, in a ball whose radius the
-      panel reports. Stochastic descent converges to a <b>region</b>, not a
-      point, and the region is set by the learning rate against the batch size.
-    </li>
-    <li>
-      That is why the two knobs move together. Double the batch and the noise
-      falls by √2; double the learning rate as well and the ball is back to the
-      size it was, which is the rule of thumb behind scaling the learning rate
-      with the batch. The ball is also the useful part: a run that jitters
-      cannot sit in a hole narrower than the jitter, so noise quietly selects
-      the wide flat minima.
+      Run with a small batch. It never stops at the minimum but jitters in a
+      <b>ball</b> around it, whose size is set by the learning rate against the
+      batch size. <Try id="jitter" label="Run" />
     </li>
   </Fragment>
 </SimLayout>
@@ -122,7 +95,7 @@ import Readout from '../../../components/sim/Readout.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, arrow } from '../../../lib/draw';
-  import { el, slider, check, transport, result, readout } from '../../../lib/panel';
+  import { el, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const TRUE = '#5eead4', BATCH = '#7c8cff', EX = '#a78bfa', PATH = '#f59e0b';
   const N = 256; // examples in the whole set
@@ -228,8 +201,11 @@ import Readout from '../../../components/sim/Readout.astro';
     return Math.sqrt(v / N);
   }
   /**
-   * Which shrinks like one over the square root once B of them are averaged,
-   * and all the way to nothing when the batch is the whole set.
+   * Which shrinks like one over the square root once B of them are averaged.
+   * The batch is drawn without replacement from a finite set, so the spread
+   * also carries the factor √((N − B)/(N − 1)), which takes it all the way to
+   * nothing when the batch is the whole set. The ring, the curve, the equation
+   * and the readouts all use this one number.
    */
   const shrink = (B: number) => Math.sqrt(Math.max(0, (N - B) / (N - 1)) / B);
   const noiseAt = (w: number[], B: number) => sigmaAt(w) * shrink(B);
@@ -484,7 +460,7 @@ import Readout from '../../../components/sim/Readout.astro';
     ctx.fillStyle = TRUE;
     ctx.lineWidth = 2.6;
     arrow(ctx, x, y, x - g[0] * K, y + g[1] * K, 9);
-    const ring = (sd / Math.sqrt(state.batch)) * K;
+    const ring = sd * shrink(state.batch) * K;
     if (ring > 1.5) {
       ctx.strokeStyle = `${BATCH}88`;
       ctx.setLineDash([3, 4]);
@@ -641,11 +617,11 @@ import Readout from '../../../components/sim/Readout.astro';
     const rad = ballRadius();
     setEq({
       rule: [
-        ['g_B = \\dfrac{1}{B}\\sum_{i \\in B} \\nabla L_i', BATCH],
-        '\\qquad',
+        ['g_B = \\tfrac{1}{B}\\sum_{i \\in B} \\nabla L_i', BATCH],
+        '\\quad',
         ['\\mathbb{E}[g_B] = \\nabla L', TRUE],
-        '\\qquad',
-        ['\\operatorname{sd}[g_B] = \\dfrac{\\sigma}{\\sqrt{B}}', PATH],
+        '\\quad',
+        ['\\operatorname{sd}[g_B] = \\tfrac{\\sigma}{\\sqrt{B}}\\sqrt{\\tfrac{N-B}{N-1}}', PATH],
       ],
       live: [
         [`B = ${state.batch}`, BATCH],
@@ -674,7 +650,7 @@ import Readout from '../../../components/sim/Readout.astro';
           ? 'The noise is larger than the gradient itself, so any single step points almost anywhere. The run still arrives, because the errors average out over many steps rather than within one.'
           : state.batch > 128
             ? 'A large batch buys a clean gradient at a poor exchange rate, and it removes the jitter that keeps a run out of narrow holes.'
-            : 'Four times the batch halves the miss, never more, because the estimate improves with the square root of the count and not with the count.',
+            : 'Four times the batch only halves the miss, because the estimate improves with the square root of the count and not with the count.',
     });
   }
 
@@ -733,19 +709,40 @@ import Readout from '../../../components/sim/Readout.astro';
   });
   canvas.addEventListener('pointerleave', () => (state.hover = -1));
 
-  slider('batch', (v) => {
+  const setBatchSlider = slider('batch', (v) => {
     state.batch = v;
     hist = [];
     resample();
   });
+  /** Hold still at the start with a given batch size, and show one draw. */
+  function atBatch(B: number) {
+    if (ctl.running()) el('run').click();
+    state.batch = B;
+    setBatchSlider(B);
+    reset();
+  }
   slider('lr', (v) => (state.lr = v / 100), (v) => (v / 100).toFixed(2));
   check('singles', (on) => (state.singles = on));
   check('cloud', (on) => (state.cloud = on));
   el('draw').addEventListener('click', () => resample());
-  transport({
+  const ctl = transport({
     onRun: (running) => (state.running = running),
     onStep: () => step(),
     onReset: () => reset(),
+  });
+
+  tries({
+    draw: () => {
+      if (ctl.running()) el('run').click();
+      resample();
+    },
+    b1: () => atBatch(1),
+    b16: () => atBatch(16),
+    b256: () => atBatch(256),
+    jitter: () => {
+      atBatch(4);
+      el('run').click();
+    },
   });
 
   reset();
