@@ -641,6 +641,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'atomic-orbitals',
+        title: 'Atomic Orbitals',
+        description:
+          'The exact hydrogen orbitals drawn as glowing clouds of probability: shells and nodal planes, the phase winding of m, the signed lobes of chemistry, measurements that collapse the cloud to a point, and superpositions that slosh and emit light.',
+        href: '/simulations/physics/atomic-orbitals',
+        status: 'live',
+      },
+      {
         slug: 'stern-gerlach',
         title: 'Stern-Gerlach Experiment',
         description:
