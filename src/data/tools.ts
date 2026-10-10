@@ -757,6 +757,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'transmission-line',
+        title: 'Transmission Lines',
+        description:
+          'Close a switch on a two-wire line and watch the energy travel through the space between the wires, not down the copper, as a wave at v = 1/√(LC) that the load swallows, doubles or turns upside down.',
+        href: '/simulations/electronics/transmission-line',
+        status: 'live',
+      },
+      {
         slug: 'mosfet',
         title: 'MOSFET & CMOS Logic',
         description:
