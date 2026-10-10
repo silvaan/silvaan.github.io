@@ -1,0 +1,1809 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+import Actions from '../../../components/sim/Actions.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Wi-Fi in a House"
+  description="Maxwell's equations solved on the GPU over a whole house at the true wavelength, 12.5 cm at 2.4 GHz and 6 cm at 5 GHz. Watch the router's wave spill through doorways, bounce off walls and leave dead spots a few centimetres across, then switch to the signal map to see which rooms a phone can still stream from, and why 5 GHz is faster but fades sooner."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="wifi3d" class="wifi-canvas" width="820" height="660" role="img" aria-label="A house floor plan in three dimensions with walls of drywall, brick or concrete, glass windows, wooden doors and a metal fridge. The floor is coloured by the Wi-Fi field: the instantaneous wave from the router, or the signal strength in dBm with contour lines at -67 and -80 dBm. A phone marker reads the local signal and link rate."></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'router', color: '#38bdf8' },
+          { label: 'phone', color: '#34d399' },
+          { label: 'mesh node', color: '#f472b6' },
+          { label: '−67 dBm: video calls', color: '#9ca3af' },
+          { label: '−80 dBm: barely connects', color: '#f87171' },
+        ]}
+        hint="Drag the router, the phone or the mesh node · click the floor to put the phone there · drag empty space to orbit · scroll to zoom"
+      />
+      <Result label="Signal at the phone" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running />
+      <Seg
+        id="view"
+        label="Show"
+        active="signal"
+        options={[
+          { value: 'wave', label: 'Wave' },
+          { value: 'signal', label: 'Signal (dBm)' },
+          { value: 'model', label: 'Model' },
+        ]}
+      />
+      <Seg
+        id="band"
+        label="Band"
+        attr="b"
+        options={[
+          { value: '24', label: '2.4 GHz' },
+          { value: '5', label: '5 GHz' },
+        ]}
+      />
+      <Seg
+        id="walls"
+        label="Walls"
+        attr="w"
+        active="brick"
+        options={[
+          { value: 'drywall', label: 'Drywall' },
+          { value: 'brick', label: 'Brick' },
+          { value: 'concrete', label: 'Concrete' },
+        ]}
+      />
+      <Slider id="txp" label="Router power" min={14} max={23} step={1} value={20} display="20 dBm" hint={['14 dBm', '23 dBm']} />
+      <Checks
+        items={[
+          { id: 'mesh', label: 'Mesh node' },
+          { id: 'smooth', label: 'Smooth like a phone', checked: true },
+          { id: 'doors', label: 'Close the inner doors' },
+        ]}
+      />
+      <Seg
+        id="camv"
+        label="Camera"
+        attr="c"
+        options={[
+          { value: 'persp', label: 'Perspective' },
+          { value: 'top', label: 'Top down' },
+        ]}
+      />
+      <Actions><button type="button" class="btn ghost" id="zoomPhone">Zoom to phone</button></Actions>
+      <Readout
+        title="Phone"
+        open
+        rows={[
+          { id: 'phDbm', label: 'signal' },
+          { id: 'phRaw', label: 'at one point' },
+          { id: 'phModel', label: 'multi-wall model' },
+          { id: 'phRate', label: 'link rate' },
+          { id: 'phSnr', label: 'SNR' },
+          { id: 'phDist', label: 'to the router' },
+          { id: 'phWalls', label: 'walls in the way' },
+        ]}
+      />
+      <Readout
+        title="Simulation"
+        rows={[
+          { id: 'smGrid', label: 'grid' },
+          { id: 'smCell', label: 'cell' },
+          { id: 'smTime', label: 'simulated time' },
+          { id: 'smSpf', label: 'steps / frame' },
+          { id: 'smFps', label: 'frame rate' },
+          { id: 'smJs', label: 'JS per frame' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Put the phone on the far bed of the brick house. At <b>2.4 GHz</b> it holds
+      on; at <b>5 GHz</b> every wall costs more and it falls to Poor. On the sofa it
+      is the other way round: 867 Mbit/s at 5 GHz against 144. <Try id="far24" label="2.4 GHz" /> <Try id="far5" label="5 GHz" />
+    </li>
+    <li>
+      Echoes from the walls interfere into <b>standing waves</b>, with dead spots
+      λ/2 apart: 6 cm at 2.4 GHz, 3 cm at 5 GHz. A hand's width can change the
+      reading at one point by 10 dB; a phone's antenna averages over a few cm. <Try id="fringes" />
+    </li>
+    <li>
+      The metal <b>fridge</b> reflects almost everything, so it casts a radio
+      shadow that only echoes from the kitchen walls fill in. <Try id="fridge" />
+    </li>
+    <li>
+      In the concrete house 5 GHz reaches the bedroom only at Poor. A <b>mesh
+      node</b> in the hall, in sight of the bedroom door, lifts it to Good: the
+      phone joins whichever node is stronger. <Try id="mesh" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { el, result, readout, slider, segmented, check, transport, tries } from '../../../lib/panel';
+  import { Camera3D, orbitControls, drawBackdrop, PlaneShade, ramp32, type Vec } from '../../../lib/scene3d';
+
+  const canvas = el('wifi3d') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => requestDraw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  // ---- physics constants -------------------------------------------------------------
+  // The house is 12 m × 9 m; the grid adds 45 cm of outdoors on every side, the
+  // outer 36 cm of it an absorbing sponge so nothing comes back from the edge.
+  const C0 = 299792458, EPS0 = 8.8541878128e-12;
+  const S = 0.65;                      // Courant number c·dt/dx (2D limit 1/√2)
+  const HW = 12, HD = 9, MG = 0.45, SPONGE = 0.36;
+  const DW = HW + 2 * MG, DD = HD + 2 * MG;
+  const L_RX = 20;                     // calibration: 1 m in open air reads −40 dBm at 2.4 GHz and 20 dBm out
+  const WALL_H = 1.05;                 // drawn height of the cut-away walls, metres
+  // A 2D slice spreads like a cylinder, so its power falls as 1/r where a real
+  // router's falls as 1/r². The map multiplies by 1/d (d = straight-line
+  // distance), which is exact for the direct wave but leaves a path of length
+  // L > d too strong by L/d: in 2D the echoes would never die. A faint loss in
+  // the air, 0.2 Np/m (0.87 dB/m, standing in for the floor, the ceiling and
+  // the extra spreading), damps the long paths, and the map adds it back along d.
+  const AIR_LOSS = 0.2;                // power attenuation, Np/m
+
+  type BandKey = '24' | '5';
+  // cells are λ/8: 1.5 cm at 2.4 GHz (860 × 660) and 7.5 mm at 5 GHz (1720 × 1320)
+  const BANDS: Record<BandKey, { f: number; dx: number; label: string; noise: number; width: string; rates: number[] }> = {
+    // 802.11n, 20 MHz, two streams, short guard interval (MCS 0-7)
+    '24': { f: 2.4e9, dx: 0.015, label: '2.4 GHz', noise: -95, width: '20 MHz', rates: [14.4, 28.9, 43.3, 57.8, 86.7, 115.6, 130, 144.4] },
+    // 802.11ac, 80 MHz, two streams, short guard interval (MCS 0-9); 6 dB more noise in 4× the bandwidth
+    '5': { f: 5.0e9, dx: 0.0075, label: '5 GHz', noise: -89, width: '80 MHz', rates: [65, 130, 195, 260, 390, 520, 585, 650, 780, 866.7] },
+  };
+  const MCS_SNR = [5, 8, 11, 14, 18, 22, 24, 26, 30, 32]; // dB a receiver needs for each MCS
+
+  // Materials. The conductivities were tuned with a 1D run of this same Yee
+  // update (a normally incident plane wave, cell-quantised slabs) so that one
+  // 12 cm wall loses the typical published amount: drywall 3 / 4 dB, brick
+  // 6 / 10 dB, concrete 12 / 20 dB at 2.4 / 5 GHz; a tiled bathroom wall 2-3 dB
+  // more; a 4.5 cm wooden door 3 / 4 dB. A pane of glass is one cell whose
+  // permittivity gives 2 / 3 dB by reflection alone, as real glass does.
+  type MatKey = 'drywall' | 'brick' | 'concrete';
+  const MAT: Record<string, { er: number; er5?: number; s24: number; s5: number }> = {
+    drywall: { er: 2.7, s24: 0.0112, s5: 0.0227 },
+    brick: { er: 3.9, s24: 0.0276, s5: 0.0535 },
+    concrete: { er: 5.3, s24: 0.0485, s5: 0.0829 },
+    drywallTile: { er: 2.7, s24: 0.0259, s5: 0.0414 },
+    brickTile: { er: 3.9, s24: 0.0416, s5: 0.0727 },
+    concreteTile: { er: 5.3, s24: 0.0616, s5: 0.0997 },
+    glass: { er: 2.9, er5: 3.365, s24: 0, s5: 0 },
+    wood: { er: 2.0, s24: 0.0464, s5: 0.0589 },
+  };
+  // the losses those give (dB at 2.4 / 5 GHz), which the multi-wall model adds up
+  const LOSS: Record<string, [number, number]> = {
+    drywall: [3, 4], brick: [6, 10], concrete: [12, 20],
+    drywallExt: [4.3, 7.7], brickExt: [10.3, 18.3], concreteExt: [19.8, 35.2], // the 24 cm outer walls
+    drywallTile: [5, 7], brickTile: [8, 13], concreteTile: [14, 23],
+    glass: [2, 3], wood: [3, 4], metal: [30, 35],
+  };
+
+  // ---- the floor plan ----------------------------------------------------------------
+  // Plan metres: x east 0..12, y north 0..9. Roles say what a cell is made of;
+  // the walls preset decides which material the walls use.
+  const AIR = 0, EXT = 1, INT = 2, TILE = 3, GLASS = 4, DOOR = 5, IDOOR = 6, METAL = 7;
+  type Piece = { o: 'h' | 'v' | 'box'; c: number; a: number; b: number; t: number; role: number; x0: number; y0: number; x1: number; y1: number; swing?: number };
+  const pieces: Piece[] = [];
+  const DOOR_T = 0.045, GLASS_T = 0.03;
+  function addPiece(o: 'h' | 'v', c: number, a: number, b: number, t: number, role: number, swing?: number) {
+    const r = o === 'h' ? { x0: a, x1: b, y0: c - t / 2, y1: c + t / 2 } : { y0: a, y1: b, x0: c - t / 2, x1: c + t / 2 };
+    pieces.push({ o, c, a, b, t, role, ...r, swing });
+  }
+  /** A straight wall with openings: open doorways, windows, doors (always shut) and inner doors (shut on request). */
+  function wall(o: 'h' | 'v', c: number, a: number, b: number, t: number, role: number, gaps: [number, number, 'open' | 'glass' | 'door' | 'idoor', number?][] = []) {
+    let s = a;
+    for (const [g0, g1, kind, sw] of gaps) {
+      if (g0 > s) addPiece(o, c, s, g0, t, role);
+      if (kind === 'glass') addPiece(o, c, g0, g1, GLASS_T, GLASS);
+      else if (kind === 'door') addPiece(o, c, g0, g1, DOOR_T, DOOR, sw);
+      else if (kind === 'idoor') addPiece(o, c, g0, g1, DOOR_T, IDOOR, sw ?? 1);
+      s = g1;
+    }
+    if (b > s) addPiece(o, c, s, b, t, role);
+  }
+  const TE = 0.24, TI = 0.12;
+  // the shell, with its windows and the front door
+  wall('h', 0.12, 0, 12, TE, EXT, [[3.2, 5.4, 'glass'], [5.9, 6.8, 'door'], [8.6, 10.6, 'glass']]);
+  wall('h', 8.88, 0, 12, TE, EXT, [[1.2, 2.6, 'glass'], [5.0, 5.8, 'glass'], [8.6, 10.6, 'glass']]);
+  wall('v', 0.12, 0.24, 8.76, TE, EXT, [[1.6, 3.4, 'glass'], [6.2, 7.8, 'glass']]);
+  wall('v', 11.88, 0.24, 8.76, TE, EXT, [[6.0, 7.6, 'glass']]);
+  // inside: living | kitchen, the long wall to the north rooms, office, hall, bathroom, bedroom
+  wall('v', 7.0, 0.24, 4.94, TI, INT, [[3.9, 4.8, 'idoor', -1]]);
+  wall('h', 5.0, 0.24, 11.76, TI, INT, [[1.3, 2.2, 'idoor', 1], [4.6, 5.8, 'open']]);
+  wall('v', 3.8, 5.06, 6.6, TI, INT);
+  wall('v', 3.8, 6.6, 8.76, TI, TILE);
+  wall('h', 6.6, 3.86, 7.34, TI, TILE, [[4.9, 5.7, 'door', 1]]);
+  wall('v', 7.4, 5.06, 6.6, TI, INT, [[5.4, 6.3, 'idoor', 1]]);
+  wall('v', 7.4, 6.6, 8.76, TI, TILE);
+  const FRIDGE = { x0: 7.1, y0: 2.4, x1: 7.8, y1: 3.1 };
+  pieces.push({ o: 'box', c: 0, a: 0, b: 0, t: 0, role: METAL, ...FRIDGE });
+
+  const ROOMS = [
+    { name: 'Living room', x: 3.6, y: 2.5 },
+    { name: 'Kitchen', x: 10.3, y: 4.3 },
+    { name: 'Office', x: 1.9, y: 6.6 },
+    { name: 'Hall', x: 5.6, y: 5.75 },
+    { name: 'Bathroom', x: 5.0, y: 7.4 },
+    { name: 'Bedroom', x: 9.6, y: 7.9 },
+  ];
+  // furniture is drawn but not simulated (wood and fabric barely matter)
+  const FURN = [
+    { x0: 1.4, y0: 0.3, x1: 3.0, y1: 0.7, h: 0.5 },   // TV unit, the router sits on it
+    { x0: 2.6, y0: 3.4, x1: 4.9, y1: 4.25, h: 0.45 }, // sofa
+    { x0: 3.1, y0: 2.0, x1: 4.3, y1: 2.6, h: 0.4 },   // coffee table
+    { x0: 8.6, y0: 1.7, x1: 10.4, y1: 2.6, h: 0.9 },  // kitchen island
+    { x0: 11.1, y0: 0.3, x1: 11.7, y1: 2.6, h: 0.9 }, // counter
+    { x0: 9.5, y0: 5.2, x1: 11.3, y1: 7.2, h: 0.5 },  // bed
+    { x0: 0.4, y0: 8.0, x1: 2.2, y1: 8.7, h: 0.75 },  // desk
+    { x0: 5.9, y0: 7.6, x1: 7.3, y1: 8.75, h: 0.55 }, // bathtub
+  ];
+
+  // ---- state -------------------------------------------------------------------------
+  type View = 'wave' | 'signal' | 'model';
+  const state = {
+    playing: true,
+    view: 'signal' as View,
+    band: '24' as BandKey,
+    walls: 'brick' as MatKey,
+    tx: 20,
+    mesh: false,
+    smooth: true,
+    doors: false,
+    router: { x: 2.2, y: 0.55 },
+    node: { x: 6.2, y: 5.8 },
+    phone: { x: 10.3, y: 5.8 },
+  };
+
+  const band = () => BANDS[state.band];
+  const lambda = () => C0 / band().f;
+  const fspl = (d: number, f: number) => 20 * Math.log10((4 * Math.PI * d * f) / C0);
+  /** dBm at 1 m in open air: transmit power, free-space loss over the first metre, the receive-side calibration. */
+  const offset = () => state.tx - fspl(1, band().f) - L_RX;
+
+  function roleMat(role: number): { er: number; sigma: number } | 'air' | 'pec' {
+    const b5 = state.band === '5';
+    const pick = (k: string) => {
+      const m = MAT[k];
+      return { er: b5 && m.er5 ? m.er5 : m.er, sigma: b5 ? m.s5 : m.s24 };
+    };
+    if (role === EXT || role === INT) return pick(state.walls);
+    if (role === TILE) return pick(state.walls + 'Tile');
+    if (role === GLASS) return pick('glass');
+    if (role === DOOR) return pick('wood');
+    if (role === IDOOR) return state.doors ? pick('wood') : 'air';
+    if (role === METAL) return 'pec';
+    return 'air';
+  }
+  function roleLoss(role: number) {
+    const i = state.band === '5' ? 1 : 0;
+    if (role === EXT) return LOSS[state.walls + 'Ext'][i];
+    if (role === INT) return LOSS[state.walls][i];
+    if (role === TILE) return LOSS[state.walls + 'Tile'][i];
+    if (role === GLASS) return LOSS.glass[i];
+    if (role === DOOR) return LOSS.wood[i];
+    if (role === IDOOR) return state.doors ? LOSS.wood[i] : 0;
+    if (role === METAL) return LOSS.metal[i];
+    return 0;
+  }
+
+  // ---- the multi-wall model (COST 231): free space plus every wall on the straight line
+  function segHits(ax: number, ay: number, bx: number, by: number, p: Piece) {
+    let t0 = 0, t1 = 1;
+    const dx = bx - ax, dy = by - ay;
+    if (Math.abs(dx) < 1e-12) { if (ax < p.x0 || ax > p.x1) return false; }
+    else {
+      let u = (p.x0 - ax) / dx, v = (p.x1 - ax) / dx;
+      if (u > v) [u, v] = [v, u];
+      t0 = Math.max(t0, u); t1 = Math.min(t1, v);
+      if (t0 > t1) return false;
+    }
+    if (Math.abs(dy) < 1e-12) { if (ay < p.y0 || ay > p.y1) return false; }
+    else {
+      let u = (p.y0 - ay) / dy, v = (p.y1 - ay) / dy;
+      if (u > v) [u, v] = [v, u];
+      t0 = Math.max(t0, u); t1 = Math.min(t1, v);
+      if (t0 > t1) return false;
+    }
+    return true;
+  }
+  function modelPath(px: number, py: number, s: { x: number; y: number }) {
+    let loss = 0, walls = 0;
+    for (const p of pieces) {
+      const l = roleLoss(p.role);
+      if (l > 0 && segHits(s.x, s.y, px, py, p)) { loss += l; walls++; }
+    }
+    const d = Math.max(0.1, Math.hypot(px - s.x, py - s.y));
+    return { dbm: state.tx - fspl(d, band().f) - L_RX - loss, walls, d };
+  }
+  function modelAt(px: number, py: number) {
+    const a = modelPath(px, py, state.router).dbm;
+    return state.mesh ? Math.max(a, modelPath(px, py, state.node).dbm) : a;
+  }
+  // a 10 cm grid over the whole domain, for the Model view
+  const MGX = Math.round(DW / 0.1), MGY = Math.round(DD / 0.1);
+  const modelBuf = new Float32Array(MGX * MGY);
+  let modelDirty = true;
+  function fillModel() {
+    for (let j = 0; j < MGY; j++)
+      for (let i = 0; i < MGX; i++) modelBuf[j * MGX + i] = modelAt((i + 0.5) * 0.1 - MG, (j + 0.5) * 0.1 - MG);
+  }
+
+  // ---- camera ------------------------------------------------------------------------
+  const cam = new Camera3D(W, H, { dist: 28, yaw: 0, pitch: -0.98, zoom: 1.72 });
+  const tgt = { x: 0, z: 0.35 };
+  /** Plan metres (x east, y north) and a height to the camera's world. */
+  const w3 = (px: number, py: number, h = 0): Vec => ({ x: px - HW / 2 - tgt.x, y: h, z: py - HD / 2 - tgt.z });
+  const P = (px: number, py: number, h = 0) => cam.project(w3(px, py, h));
+  const CAMS = {
+    persp: { yaw: 0, pitch: -0.98, zoom: 1.72, tx: 0, tz: 0.35 },
+    top: { yaw: 0, pitch: -Math.PI / 2 + 1e-4, zoom: 1.92, tx: 0, tz: 0 },
+  };
+  let tween: { from: typeof CAMS.persp; to: typeof CAMS.persp; t0: number } | null = null;
+  function flyTo(to: typeof CAMS.persp) {
+    let yaw = cam.yaw;
+    while (yaw - to.yaw > Math.PI) yaw -= 2 * Math.PI;
+    while (to.yaw - yaw > Math.PI) yaw += 2 * Math.PI;
+    tween = { from: { yaw, pitch: cam.pitch, zoom: cam.zoom, tx: tgt.x, tz: tgt.z }, to, t0: performance.now() };
+    requestDraw();
+  }
+  function stepTween(now: number) {
+    if (!tween) return;
+    const u = Math.min(1, (now - tween.t0) / 650), e = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
+    const a = tween.from, b = tween.to;
+    cam.yaw = a.yaw + (b.yaw - a.yaw) * e;
+    cam.pitch = a.pitch + (b.pitch - a.pitch) * e;
+    cam.zoom = a.zoom + (b.zoom - a.zoom) * e;
+    tgt.x = a.tx + (b.tx - a.tx) * e;
+    tgt.z = a.tz + (b.tz - a.tz) * e;
+    if (u >= 1) tween = null;
+    // the 2D fallback samples the model around the camera's target
+    if (!gpu) modelDirty = true;
+  }
+
+  // ---- WebGL2: the FDTD solver, the signal map and the floor -----------------------
+  const VS_FULL = `#version 300 es
+in vec2 p;
+void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
+
+  // One leapfrog step of the 2D TMz Yee scheme per pass. Each texel holds
+  // (Ez, Hx, Hy, ⟨Ez²⟩). A cell recomputes the two neighbouring H values its
+  // curl needs from the previous E, exactly as those neighbours do, so a full
+  // step takes one pass and one texture. Units: H is scaled by η₀.
+  const FS_STEP = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp usampler2D;
+uniform highp sampler2D uF;
+uniform usampler2D uM;
+uniform float uCa[8], uCb[8];
+uniform float uS, uSp, uG, uGa, uAmp, uAvg;
+uniform ivec2 uN, uSrc;
+out vec4 o;
+// sponge loss per step, matched in E and H (σ*/μ₀ = σ/ε₀), cubic grading
+float gAt(vec2 q) {
+  vec2 hi = vec2(uN) - 1.0 - uSp;
+  vec2 d = max(vec2(0.0), max(uSp - q, q - hi)) / uSp;
+  return uG * (d.x * d.x * d.x + d.y * d.y * d.y);
+}
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  ivec2 nm = uN - 1;
+  vec4 c = texelFetch(uF, p, 0);
+  vec4 r = texelFetch(uF, min(p + ivec2(1, 0), nm), 0);
+  vec4 u = texelFetch(uF, min(p + ivec2(0, 1), nm), 0);
+  vec4 l = texelFetch(uF, max(p - ivec2(1, 0), ivec2(0)), 0);
+  vec4 d = texelFetch(uF, max(p - ivec2(0, 1), ivec2(0)), 0);
+  vec2 q = vec2(p);
+  float g = gAt(q + vec2(0.0, 0.5));
+  float hxc = ((1.0 - g) * c.g - uS * (u.r - c.r)) / (1.0 + g);
+  g = gAt(q + vec2(0.5, 0.0));
+  float hyc = ((1.0 - g) * c.b + uS * (r.r - c.r)) / (1.0 + g);
+  g = gAt(q + vec2(0.0, -0.5));
+  float hxd = ((1.0 - g) * d.g - uS * (c.r - d.r)) / (1.0 + g);
+  g = gAt(q + vec2(-0.5, 0.0));
+  float hyl = ((1.0 - g) * l.b + uS * (c.r - l.r)) / (1.0 + g);
+  uint m = texelFetch(uM, p, 0).r;
+  float ca, cb;
+  if (m == 0u) { g = gAt(q) + uGa; ca = (1.0 - g) / (1.0 + g); cb = uS / (1.0 + g); }
+  else { ca = uCa[int(m)]; cb = uCb[int(m)]; }
+  float ez = ca * c.r + cb * ((hyc - hyl) - (hxc - hxd));
+  if (p == uSrc) ez += uAmp;
+  if (p.x == 0 || p.y == 0 || p.x == nm.x || p.y == nm.y) ez = 0.0;
+  o = vec4(ez, hxc, hyc, c.a + uAvg * (ez * ez - c.a));
+}`;
+
+  // From the raw fields to what is shown: Ez and the mean power of each source,
+  // scaled so open air at 1 m is 1, with the extra 1/r a point source has over
+  // the line source a 2D grid really simulates.
+  const FS_MAP = `#version 300 es
+precision highp float;
+uniform highp sampler2D uF1, uF2;
+uniform int uTwo;
+uniform vec2 uR1, uR2;
+uniform float uDx, uNorm, uAir;
+out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec2 q = vec2(p) + 0.5;
+  vec4 a = texelFetch(uF1, p, 0);
+  float d1 = max(0.1, distance(q, uR1) * uDx);
+  float k1 = uNorm * exp(uAir * (d1 - 1.0)) / d1;
+  float e = a.r * sqrt(k1), p1 = a.a * k1, p2 = 0.0;
+  if (uTwo == 1) {
+    vec4 b = texelFetch(uF2, p, 0);
+    float d2 = max(0.1, distance(q, uR2) * uDx);
+    float k2 = uNorm * exp(uAir * (d2 - 1.0)) / d2;
+    e += b.r * sqrt(k2);
+    p2 = b.a * k2;
+  }
+  o = vec4(e, p1, p2, 1.0);
+}`;
+
+  // The floor: projected with the same maths as Camera3D, so the GPU's
+  // perspective-correct interpolation lines it up with the 2D overlay.
+  const VS_FLOOR = `#version 300 es
+in vec2 aP;
+uniform float uYaw, uPitch, uDist, uK;
+uniform vec2 uC, uLogical, uTgt, uMid;
+out vec2 vP;
+void main() {
+  vP = aP;
+  float X = aP.x - uMid.x - uTgt.x, Z = aP.y - uMid.y - uTgt.y;
+  float cy = cos(uYaw), sy = sin(uYaw), cp = cos(uPitch), sp = sin(uPitch);
+  float x1 = X * cy + Z * sy, z1 = -X * sy + Z * cy;
+  float y2 = -z1 * sp, zc = z1 * cp + uDist;
+  float nx = (2.0 * uC.x / uLogical.x - 1.0) * zc + 2.0 * uK * x1 / uLogical.x;
+  float ny = (1.0 - 2.0 * uC.y / uLogical.y) * zc + 2.0 * uK * y2 / uLogical.y;
+  gl_Position = vec4(nx, ny, 0.0, zc);
+}`;
+
+  const FS_FLOOR = `#version 300 es
+precision highp float;
+uniform sampler2D uD, uModel, uLut, uPos, uNeg;
+uniform int uMode, uSmooth, uLight;
+uniform vec2 uDom, uTexN, uHouse;
+uniform float uMg, uOff, uLodPhone, uLodCont, uLodEnv, uSponge;
+in vec2 vP;
+out vec4 o;
+const float LOG10 = 0.30103;
+vec4 lut(sampler2D s, float t) { return texture(s, vec2(clamp(t, 0.0, 1.0) * (255.0 / 256.0) + 0.5 / 256.0, 0.5)); }
+float dbOf(vec2 p) { return uOff + 10.0 * LOG10 * log2(max(max(p.x, p.y), 1e-14)); }
+void main() {
+  vec2 uv = (vP + uMg) / uDom;
+  vec2 tx = uv * uTexN;
+  vec2 a = dFdx(tx), b = dFdy(tx);
+  vec2 fw = max(fwidth(vP), vec2(1e-4));
+  float lod = 0.5 * log2(max(max(dot(a, a), dot(b, b)), 1e-8));
+  bool inside = vP.x > 0.0 && vP.y > 0.0 && vP.x < uHouse.x && vP.y < uHouse.y;
+  float edge = min(min(vP.x + uMg, uDom.x - uMg - vP.x), min(vP.y + uMg, uDom.y - uMg - vP.y));
+  float fade = smoothstep(0.02, uSponge, edge) * (inside ? 1.0 : 0.55);
+  vec4 col = vec4(0.0);
+  float dbc = -200.0;
+  bool lines = false;
+  if (uMode == 0) {
+    // crests only where a wavelength spans enough pixels to be drawn; finer
+    // than that they would alias into moire, so they fade into their envelope
+    float ppw = exp2(uLodEnv - lod);
+    float crest = smoothstep(4.0, 8.0, ppw);
+    float e = textureLod(uD, uv, lod + 0.5).r;
+    vec2 pe = textureLod(uD, uv, max(lod, uLodEnv)).gb;
+    float env = sqrt(2.0 * (pe.x + pe.y)) + 1e-9;
+    float de = uOff + 10.0 * LOG10 * log2(pe.x + pe.y + 1e-14);
+    float s = pow(clamp((de + 100.0) / 60.0, 0.0, 1.0), 0.8);
+    float v = clamp(e / env, -1.0, 1.0);
+    v = sign(v) * pow(abs(v), 0.75) * s;
+    vec4 wave = v >= 0.0 ? lut(uPos, v) : lut(uNeg, -v);
+    vec4 glow = 0.5 * (lut(uPos, s * 0.75) + lut(uNeg, s * 0.75));
+    col = mix(glow, wave, crest);
+  } else {
+    float db;
+    if (uMode == 2) {
+      db = texture(uModel, uv).r;
+      dbc = db;
+    } else {
+      db = dbOf(textureLod(uD, uv, uSmooth == 1 ? max(lod, uLodPhone) : lod).gb);
+      dbc = dbOf(textureLod(uD, uv, max(lod, uLodCont)).gb);
+    }
+    col = lut(uLut, (db + 95.0) / 65.0);
+    lines = true;
+  }
+  col.rgb *= col.a;
+  if (lines) {
+    float w = max(fwidth(dbc), 1e-3);
+    float l67 = 1.0 - smoothstep(0.6, 1.6, abs(dbc + 67.0) / w);
+    float l80 = 1.0 - smoothstep(0.5, 1.4, abs(dbc + 80.0) / w);
+    vec3 c67 = uLight == 1 ? vec3(0.11, 0.12, 0.14) : vec3(1.0);
+    vec3 c80 = uLight == 1 ? vec3(0.86, 0.15, 0.15) : vec3(0.97, 0.44, 0.44);
+    col = mix(col, vec4(c67 * 0.9, 0.9), l67 * 0.9);
+    col = mix(col, vec4(c80 * 0.85, 0.85), l80 * 0.85);
+  }
+  col *= fade;
+  // the floor itself, with a faint metre grid
+  vec4 base = vec4(0.0);
+  if (inside) {
+    vec2 g = abs(fract(vP + 0.5) - 0.5) / fw;
+    float gl = 1.0 - min(min(g.x, g.y), 1.0);
+    float k = uLight == 1 ? 0.035 + 0.05 * gl : 0.03 + 0.045 * gl;
+    base = uLight == 1 ? vec4(vec3(0.1) * k, k) : vec4(vec3(1.0) * k, k);
+  }
+  o = col + base * (1.0 - col.a);
+}`;
+
+  type Field = { tex: WebGLTexture[]; fb: WebGLFramebuffer[]; cur: number; n: number; sx: number; sy: number };
+  type Gpu = {
+    gl: WebGL2RenderingContext;
+    glc: HTMLCanvasElement;
+    step: WebGLProgram; map: WebGLProgram; floor: WebGLProgram;
+    u: Record<string, WebGLUniformLocation | null>;
+    vaoFull: WebGLVertexArrayObject; vaoFloor: WebGLVertexArrayObject;
+    lut: WebGLTexture; pos: WebGLTexture; neg: WebGLTexture; model: WebGLTexture;
+    mat: WebGLTexture | null; dTex: WebGLTexture | null; dFb: WebGLFramebuffer | null;
+    f1: Field | null; f2: Field | null;
+    NX: number; NY: number; levels: number;
+  };
+
+  function compile(gl: WebGL2RenderingContext, vs: string, fs: string) {
+    const sh = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+      return s;
+    };
+    const p = gl.createProgram()!;
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'link');
+    return p;
+  }
+
+  function makeGpu(): Gpu | null {
+    const glc = document.createElement('canvas');
+    const gl = glc.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: false, preserveDrawingBuffer: false });
+    if (!gl) return null;
+    try {
+      if (!gl.getExtension('EXT_color_buffer_float')) return null;
+      // a float render target has to actually work, not just be advertised
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, 4, 0, gl.RGBA, gl.FLOAT, null);
+      const fb = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteFramebuffer(fb);
+      gl.deleteTexture(t);
+      if (!ok) return null;
+
+      const step = compile(gl, VS_FULL, FS_STEP), map = compile(gl, VS_FULL, FS_MAP), floor = compile(gl, VS_FLOOR, FS_FLOOR);
+      const u: Record<string, WebGLUniformLocation | null> = {};
+      const grab = (p: WebGLProgram, pre: string, names: string[]) => names.forEach((n) => (u[pre + n] = gl.getUniformLocation(p, n)));
+      grab(step, 's.', ['uF', 'uM', 'uCa', 'uCb', 'uS', 'uSp', 'uG', 'uGa', 'uAmp', 'uAvg', 'uN', 'uSrc']);
+      grab(map, 'm.', ['uF1', 'uF2', 'uTwo', 'uR1', 'uR2', 'uDx', 'uNorm', 'uAir']);
+      grab(floor, 'f.', ['uYaw', 'uPitch', 'uDist', 'uK', 'uC', 'uLogical', 'uTgt', 'uMid', 'uD', 'uModel', 'uLut', 'uPos', 'uNeg',
+        'uMode', 'uSmooth', 'uLight', 'uDom', 'uTexN', 'uHouse', 'uMg', 'uOff', 'uLodPhone', 'uLodCont', 'uLodEnv', 'uSponge']);
+
+      const vaoFull = gl.createVertexArray()!;
+      gl.bindVertexArray(vaoFull);
+      const b1 = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, b1);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      for (const p of [step, map]) {
+        const loc = gl.getAttribLocation(p, 'p');
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      }
+      const vaoFloor = gl.createVertexArray()!;
+      gl.bindVertexArray(vaoFloor);
+      const b2 = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, b2);
+      const x0 = -MG, y0 = -MG, x1 = HW + MG, y1 = HD + MG;
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([x0, y0, x1, y0, x0, y1, x1, y1]), gl.STATIC_DRAW);
+      const lf = gl.getAttribLocation(floor, 'aP');
+      gl.enableVertexAttribArray(lf);
+      gl.vertexAttribPointer(lf, 2, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(null);
+
+      const tex2 = (filter: number) => {
+        const t = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return t;
+      };
+      const g: Gpu = {
+        gl, glc, step, map, floor, u, vaoFull, vaoFloor,
+        lut: tex2(gl.LINEAR), pos: tex2(gl.LINEAR), neg: tex2(gl.LINEAR), model: tex2(gl.LINEAR),
+        mat: null, dTex: null, dFb: null, f1: null, f2: null, NX: 0, NY: 0, levels: 1,
+      };
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      return g;
+    } catch (e) {
+      console.warn('wifi-house: WebGL2 setup failed', e);
+      return null;
+    }
+  }
+
+  const gpu = makeGpu();
+
+  // the GL canvas goes under the 2D canvas, which keeps the walls, markers and labels on top
+  if (gpu) {
+    const st = document.createElement('style');
+    st.textContent = `
+.wifi-wrap { position: relative; width: 100%; margin: 0 auto; aspect-ratio: ${W} / ${H}; }
+.sim:fullscreen .wifi-wrap { width: min(100%, calc((100vh - 150px) * ${W / H})); }
+.wifi-wrap > canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; margin: 0 !important; }
+.wifi-wrap > canvas.wifi-top { background: transparent !important; }
+.wifi-wrap > canvas.wifi-gl { pointer-events: none; }`;
+    document.head.appendChild(st);
+    const wrap = document.createElement('div');
+    wrap.className = 'wifi-wrap';
+    canvas.parentNode!.insertBefore(wrap, canvas);
+    gpu.glc.className = 'wifi-gl';
+    gpu.glc.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(gpu.glc);
+    canvas.classList.add('wifi-top');
+    wrap.appendChild(canvas);
+  }
+
+  // ---- grid set-up per band ------------------------------------------------------------
+  let NX = 0, NY = 0, DX = 0.015, STEPS_PER_PERIOD = 12, OMEGA = 0, NORM = 1, SETTLE = 4000;
+
+  /** The roles rasterised onto the grid; thickness is a whole number of cells, as in the tuning run. */
+  function rasterise(): Uint8Array {
+    const roles = new Uint8Array(NX * NY);
+    const cell = (v: number) => Math.round((v + MG) / DX);
+    for (const p of pieces) {
+      let i0: number, i1: number, j0: number, j1: number;
+      if (p.o === 'box') {
+        i0 = cell(p.x0); i1 = cell(p.x1); j0 = cell(p.y0); j1 = cell(p.y1);
+      } else {
+        const n = p.role === GLASS ? 1 : Math.max(1, Math.round(p.t / DX));
+        const k0 = Math.round((p.c + MG) / DX - n / 2);
+        if (p.o === 'h') { i0 = cell(p.a); i1 = cell(p.b); j0 = k0; j1 = k0 + n; }
+        else { j0 = cell(p.a); j1 = cell(p.b); i0 = k0; i1 = k0 + n; }
+      }
+      for (let j = Math.max(0, j0); j < Math.min(NY, j1); j++)
+        for (let i = Math.max(0, i0); i < Math.min(NX, i1); i++) roles[j * NX + i] = p.role;
+    }
+    return roles;
+  }
+
+  /** Update coefficients per role for the current band, walls and doors. */
+  function coeffs() {
+    const dt = (S * DX) / C0;
+    const ca = new Float32Array(8), cb = new Float32Array(8);
+    for (let r = 0; r < 8; r++) {
+      const m = roleMat(r);
+      if (m === 'pec') { ca[r] = 0; cb[r] = 0; }
+      else {
+        const mm = m === 'air' ? { er: 1, sigma: AIR_SIGMA } : m;
+        const g = (mm.sigma * dt) / (2 * EPS0) / mm.er;
+        ca[r] = (1 - g) / (1 + g);
+        cb[r] = S / mm.er / (1 + g);
+      }
+    }
+    return { ca, cb };
+  }
+
+  function makeField(g: Gpu): Field {
+    const gl = g.gl;
+    const tex: WebGLTexture[] = [], fb: WebGLFramebuffer[] = [];
+    for (let k = 0; k < 2; k++) {
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, NX, NY);
+      const f = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+      tex.push(t);
+      fb.push(f);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex, fb, cur: 0, n: 0, sx: 0, sy: 0 };
+  }
+  function freeField(g: Gpu, f: Field | null) {
+    if (!f) return;
+    f.tex.forEach((t) => g.gl.deleteTexture(t));
+    f.fb.forEach((b) => g.gl.deleteFramebuffer(b));
+  }
+  function clearField(g: Gpu, f: Field) {
+    const gl = g.gl;
+    for (const b of f.fb) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, b);
+      gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    f.n = 0;
+    f.cur = 0;
+  }
+
+  function setupBand() {
+    const b = band();
+    DX = b.dx;
+    NX = Math.round(DW / DX);
+    NY = Math.round(DD / DX);
+    const k = (2 * Math.PI * b.f) / C0;
+    OMEGA = (2 * Math.PI * b.f * S * DX) / C0; // radians per step
+    STEPS_PER_PERIOD = (2 * Math.PI) / OMEGA;
+    // Mean power of a unit soft source in 2D at 1 m: s² k dx² / (16 π S² r)
+    // from the 2D Green's function; the Yee grid gives about 12 % more
+    // (checked on a CPU run of this update), so that is folded in.
+    NORM = 1 / (1.12 * (k * DX * DX) / (16 * Math.PI * S * S));
+    // about three crossings of the house: by then the echoes have built up (checked)
+    SETTLE = Math.round((3 * HW) / (S * DX));
+    modelDirty = true;
+    if (!gpu) return;
+    const gl = gpu.gl;
+    freeField(gpu, gpu.f1);
+    freeField(gpu, gpu.f2);
+    gpu.f2 = null;
+    if (gpu.mat) gl.deleteTexture(gpu.mat);
+    if (gpu.dTex) gl.deleteTexture(gpu.dTex);
+    if (gpu.dFb) gl.deleteFramebuffer(gpu.dFb);
+    gpu.NX = NX;
+    gpu.NY = NY;
+    const mat = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, mat);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, NX, NY, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, rasterise());
+    gpu.mat = mat;
+    gpu.f1 = makeField(gpu);
+    if (state.mesh) gpu.f2 = makeField(gpu);
+    // the display texture: (Ez, power from the router, power from the node), mipmapped
+    gpu.levels = Math.floor(Math.log2(Math.max(NX, NY))) + 1;
+    const d = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, d);
+    gl.texStorage2D(gl.TEXTURE_2D, gpu.levels, gl.RGBA16F, NX, NY);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gpu.dTex = d;
+    const dfb = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dfb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, d, 0);
+    gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gpu.dFb = dfb;
+    settleFrom = 0;
+    spf = state.band === '5' ? 6 : 12;
+  }
+
+  // σ of the air that gives AIR_LOSS: power falls as e^(−σ η₀ r)
+  const AIR_SIGMA = AIR_LOSS / 376.73;
+  const srcCell = (s: { x: number; y: number }) => [Math.floor((s.x + MG) / DX), Math.floor((s.y + MG) / DX)];
+  let settleFrom = 0;
+
+  function runSteps(g: Gpu, f: Field, src: { x: number; y: number }, n: number, co: { ca: Float32Array; cb: Float32Array }) {
+    const gl = g.gl, u = g.u;
+    gl.useProgram(g.step);
+    gl.bindVertexArray(g.vaoFull);
+    gl.viewport(0, 0, NX, NY);
+    gl.uniform1i(u['s.uF'], 0);
+    gl.uniform1i(u['s.uM'], 1);
+    gl.uniform1fv(u['s.uCa'], co.ca);
+    gl.uniform1fv(u['s.uCb'], co.cb);
+    gl.uniform1f(u['s.uS'], S);
+    const sp = SPONGE / DX;
+    gl.uniform1f(u['s.uSp'], sp);
+    gl.uniform1f(u['s.uG'], (10 * S) / sp);
+    gl.uniform1f(u['s.uGa'], (AIR_SIGMA * S * DX) / C0 / (2 * EPS0));
+    // ⟨Ez²⟩ is a running mean over the last four periods
+    gl.uniform1f(u['s.uAvg'], 1 / (4 * STEPS_PER_PERIOD));
+    gl.uniform2i(u['s.uN'], NX, NY);
+    const [sx, sy] = srcCell(src);
+    gl.uniform2i(u['s.uSrc'], sx, sy);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, g.mat);
+    gl.activeTexture(gl.TEXTURE0);
+    const ramp = 3 * STEPS_PER_PERIOD;
+    for (let k = 0; k < n; k++) {
+      const t = f.n;
+      // a soft source switched on smoothly over three periods, so it rings at one frequency
+      const r = t < ramp ? Math.sin((t / ramp) * Math.PI / 2) ** 2 : 1;
+      gl.uniform1f(u['s.uAmp'], r * Math.sin(OMEGA * t));
+      gl.bindTexture(gl.TEXTURE_2D, f.tex[f.cur]);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb[1 - f.cur]);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      f.cur = 1 - f.cur;
+      f.n++;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  function mapPass(g: Gpu) {
+    const gl = g.gl, u = g.u;
+    if (!g.f1) return;
+    gl.useProgram(g.map);
+    gl.bindVertexArray(g.vaoFull);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, g.dFb);
+    gl.viewport(0, 0, NX, NY);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, g.f1.tex[g.f1.cur]);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, (g.f2 ?? g.f1).tex[(g.f2 ?? g.f1).cur]);
+    gl.uniform1i(u['m.uF1'], 0);
+    gl.uniform1i(u['m.uF2'], 2);
+    gl.uniform1i(u['m.uTwo'], g.f2 && state.mesh ? 1 : 0);
+    const [ax, ay] = srcCell(state.router), [bx, by] = srcCell(state.node);
+    gl.uniform2f(u['m.uR1'], ax + 0.5, ay + 0.5);
+    gl.uniform2f(u['m.uR2'], bx + 0.5, by + 0.5);
+    gl.uniform1f(u['m.uDx'], DX);
+    gl.uniform1f(u['m.uNorm'], NORM);
+    gl.uniform1f(u['m.uAir'], AIR_LOSS);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, g.dTex);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
+
+  // The phone's reading, read back from the display texture every so often.
+  // The copy goes through a pixel buffer and a fence, so the CPU never waits
+  // for the GPU: the numbers arrive a frame or two later.
+  const phone = { dbm: -200, raw: -200, node: false, have: false };
+  let readBuf = new Float32Array(4 * 64);
+  let pbo: WebGLBuffer | null = null, fence: WebGLSync | null = null;
+  let pend = { x0: 0, y0: 0, n: 1, cx: 0, cy: 0, two: false };
+  function requestRead(g: Gpu) {
+    if (fence || !g.f1) return;
+    const gl = g.gl;
+    const n = Math.max(2, Math.round(0.045 / DX)); // a phone averages over ~4.5 cm
+    const cx = (state.phone.x + MG) / DX, cy = (state.phone.y + MG) / DX;
+    const x0 = Math.max(0, Math.min(NX - n, Math.round(cx - n / 2))), y0 = Math.max(0, Math.min(NY - n, Math.round(cy - n / 2)));
+    if (!pbo) pbo = gl.createBuffer();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, 2 * n * n * 16, gl.STREAM_READ);
+    // straight from the float fields, so nothing needs converting on the way
+    const fields = [g.f1, state.mesh ? g.f2 : null];
+    fields.forEach((f, k) => {
+      if (!f) return;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, f.fb[f.cur]);
+      gl.readPixels(x0, y0, n, n, gl.RGBA, gl.FLOAT, k * n * n * 16);
+    });
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    pend = { x0, y0, n, cx, cy, two: !!fields[1] };
+  }
+  /** True when a reading came in. */
+  function pollRead(g: Gpu) {
+    if (!fence) return false;
+    const gl = g.gl;
+    const st = gl.clientWaitSync(fence, 0, 0);
+    if (st === gl.TIMEOUT_EXPIRED) return false;
+    gl.deleteSync(fence);
+    fence = null;
+    if (st === gl.WAIT_FAILED) return false;
+    const { x0, y0, n, cx, cy, two } = pend;
+    const len = (two ? 2 : 1) * n * n * 4;
+    if (readBuf.length < len) readBuf = new Float32Array(len);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, readBuf, 0, len);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    // ⟨Ez²⟩ scaled as the map pass does: 1 at 1 m in open air, with the point-source 1/r
+    const scale = (src: { x: number; y: number }) => {
+      const [sx, sy] = srcCell(src);
+      const d = Math.max(0.1, Math.hypot(cx - sx - 0.5, cy - sy - 0.5) * DX);
+      return (NORM * Math.exp(AIR_LOSS * (d - 1))) / d;
+    };
+    const k1 = scale(state.router), k2 = scale(state.node);
+    let s1 = 0, s2 = 0;
+    const o2 = n * n * 4;
+    for (let k = 0; k < n * n; k++) { s1 += readBuf[k * 4 + 3]; if (two) s2 += readBuf[o2 + k * 4 + 3]; }
+    s1 = (s1 / (n * n)) * k1;
+    s2 = (s2 / (n * n)) * k2;
+    const ci = Math.min(n - 1, Math.max(0, Math.floor(cx) - x0)), cj = Math.min(n - 1, Math.max(0, Math.floor(cy) - y0));
+    const q = (cj * n + ci) * 4 + 3;
+    const r1 = readBuf[q] * k1, r2 = two ? readBuf[o2 + q] * k2 : 0;
+    const best = two ? Math.max(s1, s2) : s1;
+    const db = (p: number) => (p > 1e-14 ? offset() + 10 * Math.log10(p) : -200);
+    phone.dbm = db(state.smooth ? best : Math.max(r1, r2));
+    phone.raw = db(Math.max(r1, r2));
+    phone.node = two && (state.smooth ? s2 > s1 : r2 > r1);
+    phone.have = true;
+    return true;
+  }
+
+  // ---- colours -------------------------------------------------------------------------
+  const COL = {
+    router: (l: boolean) => (l ? '#0284c7' : '#38bdf8'),
+    phone: (l: boolean) => (l ? '#059669' : '#34d399'),
+    node: (l: boolean) => (l ? '#db2777' : '#f472b6'),
+  };
+  // the signal ramp, −95 dBm (left) to −30 dBm (right)
+  const signalStops = (l: boolean) =>
+    l
+      ? [[0, 245, 243, 255, 0], [0.1, 199, 210, 254, 0.42], [0.3, 139, 92, 246, 0.56], [0.5, 192, 38, 211, 0.64], [0.68, 225, 29, 72, 0.74], [0.85, 234, 88, 12, 0.84], [1, 180, 83, 9, 0.92]]
+      : [[0, 30, 27, 75, 0], [0.1, 49, 46, 129, 0.42], [0.3, 109, 40, 217, 0.6], [0.5, 192, 38, 211, 0.7], [0.68, 244, 63, 94, 0.8], [0.85, 251, 146, 60, 0.88], [1, 254, 240, 138, 0.95]];
+  const waveStops = (l: boolean) =>
+    l
+      ? {
+          pos: [[0, 255, 244, 230, 0], [0.1, 253, 196, 150, 0.3], [0.4, 249, 125, 60, 0.6], [0.75, 220, 60, 30, 0.8], [1, 140, 20, 24, 0.9]],
+          neg: [[0, 232, 242, 255, 0], [0.1, 186, 212, 250, 0.3], [0.4, 96, 158, 240, 0.6], [0.75, 37, 99, 220, 0.8], [1, 23, 45, 125, 0.9]],
+        }
+      : {
+          pos: [[0, 120, 40, 20, 0], [0.1, 170, 56, 24, 0.3], [0.4, 226, 88, 32, 0.62], [0.75, 249, 146, 48, 0.85], [1, 255, 232, 170, 0.95]],
+          neg: [[0, 20, 40, 90, 0], [0.1, 32, 64, 150, 0.3], [0.4, 46, 116, 226, 0.62], [0.75, 96, 174, 250, 0.85], [1, 205, 236, 255, 0.95]],
+        };
+  function stopColour(stops: number[][], t: number) {
+    let i = 1;
+    while (i < stops.length - 1 && t > stops[i][0]) i++;
+    const a = stops[i - 1], b = stops[i];
+    const u = Math.max(0, Math.min(1, (t - a[0]) / (b[0] - a[0])));
+    const m = (k: number) => a[k] + (b[k] - a[k]) * u;
+    return `rgba(${m(1) | 0},${m(2) | 0},${m(3) | 0},${Math.max(m(4), 0.25).toFixed(3)})`;
+  }
+  // wall colours: [top (the cut), sides, edge] as rgb strings
+  const WALLC: Record<string, (l: boolean) => string> = {
+    drywall: (l) => (l ? '100,116,139' : '226,232,240'),
+    brick: (l) => (l ? '194,65,12' : '240,128,84'),
+    concrete: (l) => (l ? '71,85,105' : '148,163,184'),
+    tile: (l) => (l ? '13,148,136' : '94,234,212'),
+    glass: (l) => (l ? '2,132,199' : '125,211,252'),
+    wood: (l) => (l ? '180,83,9' : '217,149,72'),
+    metal: (l) => (l ? '51,65,85' : '203,213,225'),
+  };
+
+  let lutFor: boolean | null = null;
+  let shadeLut = new Uint32Array(256);
+  function themeColours(light: boolean) {
+    if (lutFor === light) return;
+    lutFor = light;
+    shadeLut = ramp32(signalStops(light));
+    if (!gpu) return;
+    const gl = gpu.gl;
+    const up = (t: WebGLTexture, a: Uint32Array) => {
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(a.buffer));
+    };
+    const w = waveStops(light);
+    up(gpu.lut, shadeLut);
+    up(gpu.pos, ramp32(w.pos));
+    up(gpu.neg, ramp32(w.neg));
+    gpu.glc.style.background = light
+      ? 'radial-gradient(circle at 50% 42%, rgba(99,102,241,0.05), rgba(255,255,255,0) 70%), var(--stage-bg)'
+      : 'radial-gradient(circle at 50% 42%, rgba(99,102,241,0.13), rgba(13,14,18,0) 70%), var(--stage-bg)';
+  }
+
+  // ---- drawing the floor ---------------------------------------------------------------
+  let glScale = 1;
+  function renderFloor(g: Gpu, light: boolean) {
+    const gl = g.gl, u = g.u;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(1, Math.round(W * dpr * glScale)), h = Math.max(1, Math.round(H * dpr * glScale));
+    if (g.glc.width !== w || g.glc.height !== h) { g.glc.width = w; g.glc.height = h; }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (state.view === 'model' && modelDirty) uploadModel(g);
+    gl.useProgram(g.floor);
+    gl.bindVertexArray(g.vaoFloor);
+    gl.uniform1f(u['f.uYaw'], cam.yaw);
+    gl.uniform1f(u['f.uPitch'], cam.pitch);
+    gl.uniform1f(u['f.uDist'], cam.dist);
+    gl.uniform1f(u['f.uK'], cam.k);
+    gl.uniform2f(u['f.uC'], cam.cx, cam.cy);
+    gl.uniform2f(u['f.uLogical'], W, H);
+    gl.uniform2f(u['f.uTgt'], tgt.x, tgt.z);
+    gl.uniform2f(u['f.uMid'], HW / 2, HD / 2);
+    const bindT = (unit: number, t: WebGLTexture | null, name: string) => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.uniform1i(u[name], unit);
+    };
+    bindT(3, g.dTex, 'f.uD');
+    bindT(4, g.model, 'f.uModel');
+    bindT(5, g.lut, 'f.uLut');
+    bindT(6, g.pos, 'f.uPos');
+    bindT(7, g.neg, 'f.uNeg');
+    gl.uniform1i(u['f.uMode'], state.view === 'wave' ? 0 : state.view === 'signal' ? 1 : 2);
+    gl.uniform1i(u['f.uSmooth'], state.smooth ? 1 : 0);
+    gl.uniform1i(u['f.uLight'], light ? 1 : 0);
+    gl.uniform2f(u['f.uDom'], DW, DD);
+    gl.uniform2f(u['f.uTexN'], NX, NY);
+    gl.uniform2f(u['f.uHouse'], HW, HD);
+    gl.uniform1f(u['f.uMg'], MG);
+    gl.uniform1f(u['f.uOff'], offset());
+    gl.uniform1f(u['f.uLodPhone'], Math.log2(0.045 / DX));
+    gl.uniform1f(u['f.uLodCont'], Math.log2(0.3 / DX));
+    gl.uniform1f(u['f.uLodEnv'], Math.log2(lambda() / DX));
+    gl.uniform1f(u['f.uSponge'], SPONGE);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disable(gl.BLEND);
+  }
+  function uploadModel(g: Gpu) {
+    fillModel();
+    modelDirty = false;
+    const gl = g.gl;
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, g.model);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, MGX, MGY, 0, gl.RED, gl.FLOAT, modelBuf);
+  }
+
+  // without WebGL2 the Model view is drawn in 2D on a 10 cm grid
+  const SH = 6.6;
+  const shade = gpu ? null : new PlaneShade(W, H, { half: SH, grid: 132, step: 2 });
+  function fillShade() {
+    if (!shade) return;
+    shade.sample('xz', 0, (x, _y, z, i) => {
+      const px = x + HW / 2 + tgt.x, py = z + HD / 2 + tgt.z;
+      const inDom = px > -MG && px < HW + MG && py > -MG && py < HD + MG;
+      shade.a[i] = inDom ? modelAt(px, py) : NaN;
+    });
+    modelDirty = false;
+  }
+
+  // ---- drawing the house -----------------------------------------------------------------
+  function quad(pts: Projected[]) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].sx, pts[0].sy);
+    for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].sx, pts[k].sy);
+    ctx.closePath();
+  }
+  type Projected = ReturnType<typeof cam.project>;
+
+  /** A box standing on the floor: visible sides translucent, the cut top solid. */
+  function box(x0: number, y0: number, x1: number, y1: number, h: number, rgb: string, light: boolean, o: { side?: number; top?: number; edge?: number } = {}) {
+    const eye = cam.eye();
+    const c = (i: number, j: number, k: number) => P(i ? x1 : x0, j ? y1 : y0, k ? h : 0);
+    const sideA = o.side ?? (light ? 0.1 : 0.09), topA = o.top ?? (light ? 0.7 : 0.75), edgeA = o.edge ?? (light ? 0.55 : 0.45);
+    // sides: −x, +x, −y, +y in plan; visible when the eye is on their outer side
+    const e = { x: eye.x + HW / 2 + tgt.x, y: eye.z + HD / 2 + tgt.z };
+    const faces: [boolean, Projected[]][] = [
+      [e.x < x0, [c(0, 0, 0), c(0, 1, 0), c(0, 1, 1), c(0, 0, 1)]],
+      [e.x > x1, [c(1, 0, 0), c(1, 1, 0), c(1, 1, 1), c(1, 0, 1)]],
+      [e.y < y0, [c(0, 0, 0), c(1, 0, 0), c(1, 0, 1), c(0, 0, 1)]],
+      [e.y > y1, [c(0, 1, 0), c(1, 1, 0), c(1, 1, 1), c(0, 1, 1)]],
+    ];
+    ctx.lineWidth = 1;
+    for (const [vis, pts] of faces) {
+      if (!vis) continue;
+      quad(pts);
+      ctx.fillStyle = `rgba(${rgb},${sideA})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(${rgb},${edgeA * 0.6})`;
+      ctx.stroke();
+    }
+    quad([c(0, 0, 1), c(1, 0, 1), c(1, 1, 1), c(0, 1, 1)]);
+    ctx.fillStyle = `rgba(${rgb},${topA})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${rgb},${edgeA})`;
+    ctx.stroke();
+  }
+
+  function pieceColour(p: Piece) {
+    if (p.role === EXT || p.role === INT) return state.walls;
+    if (p.role === TILE) return 'tile';
+    if (p.role === GLASS) return 'glass';
+    if (p.role === DOOR || p.role === IDOOR) return 'wood';
+    return 'metal';
+  }
+
+  function drawFurniture(light: boolean) {
+    const k = ink();
+    ctx.lineWidth = 1;
+    for (const f of FURN) {
+      ctx.strokeStyle = `rgba(${k},${light ? 0.22 : 0.18})`;
+      quad([P(f.x0, f.y0), P(f.x1, f.y0), P(f.x1, f.y1), P(f.x0, f.y1)]);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(${k},${light ? 0.3 : 0.24})`;
+      quad([P(f.x0, f.y0, f.h), P(f.x1, f.y0, f.h), P(f.x1, f.y1, f.h), P(f.x0, f.y1, f.h)]);
+      ctx.fillStyle = `rgba(${k},${light ? 0.03 : 0.025})`;
+      ctx.fill();
+      ctx.stroke();
+      for (const [x, y] of [[f.x0, f.y0], [f.x1, f.y0], [f.x1, f.y1], [f.x0, f.y1]]) {
+        const a = P(x, y), b = P(x, y, f.h);
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+      }
+    }
+  }
+
+  /** An open inner door: the leaf swung back against the wall, and its arc on the floor. */
+  function drawDoorSwing(p: Piece, light: boolean) {
+    const k = ink(), sw = p.swing ?? 1, len = p.b - p.a;
+    ctx.strokeStyle = `rgba(${k},${light ? 0.28 : 0.22})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let s = 0; s <= 16; s++) {
+      const a = (s / 16) * (Math.PI / 2);
+      const u = p.a + Math.cos(a) * len, v = p.c + sw * Math.sin(a) * len;
+      const q = p.o === 'h' ? P(u, v) : P(v, u);
+      if (s === 0) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+    }
+    ctx.stroke();
+    const tip = p.o === 'h' ? [p.a, p.c + sw * len] : [p.c + sw * len, p.a];
+    const hinge = p.o === 'h' ? [p.a, p.c] : [p.c, p.a];
+    const rgb = WALLC.wood(light);
+    const a0 = P(hinge[0], hinge[1]), a1 = P(tip[0], tip[1]);
+    const b0 = P(hinge[0], hinge[1], WALL_H * 0.92), b1 = P(tip[0], tip[1], WALL_H * 0.92);
+    quad([a0, a1, b1, b0]);
+    ctx.fillStyle = `rgba(${rgb},${light ? 0.12 : 0.1})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${rgb},${light ? 0.5 : 0.45})`;
+    ctx.stroke();
+  }
+
+  function drawHouse(light: boolean) {
+    const items = pieces.map((p) => {
+      const cx = (p.x0 + p.x1) / 2, cy = (p.y0 + p.y1) / 2;
+      return { p, z: cam.toCam(w3(cx, cy, 0.5)).zc };
+    });
+    items.sort((a, b) => b.z - a.z);
+    for (const { p } of items) {
+      const key = pieceColour(p), rgb = WALLC[key](light);
+      if (p.role === IDOOR && !state.doors) { drawDoorSwing(p, light); continue; }
+      if (p.role === GLASS) {
+        box(p.x0, p.y0, p.x1, p.y1, WALL_H, rgb, light, { side: light ? 0.16 : 0.14, top: light ? 0.7 : 0.8, edge: light ? 0.75 : 0.7 });
+      } else if (p.role === DOOR || p.role === IDOOR) {
+        box(p.x0, p.y0, p.x1, p.y1, WALL_H * 0.92, rgb, light, { side: light ? 0.2 : 0.18, top: 0.85 });
+      } else if (p.role === METAL) {
+        box(p.x0, p.y0, p.x1, p.y1, 1.35, rgb, light, { side: light ? 0.55 : 0.5, top: 0.95, edge: 0.85 });
+      } else {
+        box(p.x0, p.y0, p.x1, p.y1, WALL_H, rgb, light);
+      }
+    }
+  }
+
+  function drawLabels(light: boolean) {
+    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    for (const r of ROOMS) {
+      const q = P(r.x, r.y, 0.02);
+      ctx.strokeStyle = light ? 'rgba(255,255,255,0.7)' : 'rgba(13,14,18,0.6)';
+      ctx.lineWidth = 3;
+      ctx.strokeText(r.name.toUpperCase(), q.sx, q.sy);
+      ctx.fillStyle = `rgba(${ink()},${light ? 0.7 : 0.65})`;
+      ctx.fillText(r.name.toUpperCase(), q.sx, q.sy);
+    }
+    const f = P((FRIDGE.x0 + FRIDGE.x1) / 2, (FRIDGE.y0 + FRIDGE.y1) / 2, 1.35);
+    ctx.font = "500 9.5px 'JetBrains Mono', monospace";
+    ctx.fillStyle = `rgba(${ink()},0.6)`;
+    ctx.fillText('fridge', f.sx, f.sy - 12);
+  }
+
+  const HEAD = { router: 0.75, node: 0.75, phone: 1.0 };
+
+  function wifiGlyph(x: number, y: number, r: number, col: string) {
+    ctx.strokeStyle = col;
+    ctx.lineCap = 'round';
+    for (let k = 1; k <= 3; k++) {
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(x, y + r * 0.55, (r * k) / 3, -Math.PI * 0.78, -Math.PI * 0.22);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+  }
+
+  function stem(px: number, py: number, h: number, col: string) {
+    const top = P(px, py, h), foot = P(px, py, 0);
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = col;
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(top.sx, top.sy);
+    ctx.lineTo(foot.sx, foot.sy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.ellipse(foot.sx, foot.sy, 6, 6 * Math.max(0.25, Math.abs(Math.sin(cam.pitch))), 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    return top;
+  }
+
+  function drawAP(s: { x: number; y: number }, col: string, label: string, light: boolean) {
+    const t = stem(s.x, s.y, HEAD.router, col);
+    ctx.fillStyle = light ? 'rgba(255,255,255,0.9)' : 'rgba(13,14,18,0.85)';
+    ctx.beginPath();
+    ctx.arc(t.sx, t.sy, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    wifiGlyph(t.sx, t.sy - 1, 7, col);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(t.sx, t.sy + 4.5, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(label, t.sx, t.sy - 15);
+  }
+
+  function bars(x: number, y: number, n: number, col: string, light: boolean) {
+    for (let k = 0; k < 4; k++) {
+      const h = 3 + k * 2.5;
+      ctx.fillStyle = k < n ? col : `rgba(${ink()},${light ? 0.18 : 0.22})`;
+      ctx.fillRect(x + k * 4, y - h, 3, h);
+    }
+  }
+
+  function drawPhone(light: boolean, dbm: number) {
+    const col = COL.phone(light);
+    const t = stem(state.phone.x, state.phone.y, HEAD.phone, col);
+    ctx.fillStyle = light ? 'rgba(255,255,255,0.92)' : 'rgba(13,14,18,0.88)';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(t.sx - 7, t.sy - 11, 14, 22, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.fillRect(t.sx - 2.5, t.sy + 7, 5, 1.4);
+    const q = quality(dbm);
+    const rate = linkRate(dbm);
+    const txt = dbm > -150 ? `${fmtDbm(dbm)} dBm` : 'no signal';
+    const sub = rate > 0 ? `${rate >= 100 ? Math.round(rate) : rate.toFixed(1)} Mbit/s` : 'no link';
+    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    const w1 = ctx.measureText(txt).width;
+    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    const w2 = ctx.measureText(sub).width;
+    const bw = Math.max(w1 + 24, w2) + 14;
+    const bx = t.sx + 14, by = t.sy - 20;
+    ctx.fillStyle = light ? 'rgba(255,255,255,0.88)' : 'rgba(13,14,18,0.78)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, bw, 36, 6);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${ink()},0.18)`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    ctx.fillStyle = q.colour(light);
+    ctx.fillText(txt, bx + 7, by + 11);
+    bars(bx + 11 + w1, by + 16, q.bars, q.colour(light), light);
+    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    ctx.fillStyle = `rgba(${ink()},0.7)`;
+    ctx.fillText(sub, bx + 7, by + 26);
+  }
+
+  /** The straight line from the access point the phone uses, which the multi-wall model follows. */
+  function drawSightLine(light: boolean) {
+    const s = phoneNode() ? state.node : state.router;
+    const a = P(s.x, s.y, 0.02), b = P(state.phone.x, state.phone.y, 0.02);
+    ctx.setLineDash([2, 4]);
+    ctx.strokeStyle = `rgba(${ink()},${light ? 0.55 : 0.5})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  let barGrad: CanvasGradient | null = null, barFor: boolean | null = null;
+  function drawColourBar(light: boolean, dbm: number) {
+    const x = W - 40, y0 = 70, y1 = H - 150, w = 10;
+    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    if (state.view === 'wave') {
+      // a small key for the wave: crest and trough
+      const s = waveStops(light);
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      const items: [string, string][] = [['Ez > 0', stopColour(s.pos, 0.8)], ['Ez < 0', stopColour(s.neg, 0.8)]];
+      items.forEach(([t, c], i) => {
+        const y = y0 + i * 18;
+        ctx.fillStyle = c;
+        ctx.fillRect(x, y - 5, w, 10);
+        ctx.fillStyle = `rgba(${ink()},0.6)`;
+        ctx.fillText(t, x - 6, y);
+      });
+      return;
+    }
+    const ty = (d: number) => y1 - ((d + 95) / 65) * (y1 - y0);
+    if (barFor !== light || !barGrad) {
+      barFor = light;
+      barGrad = ctx.createLinearGradient(0, y1, 0, y0);
+      const st = signalStops(light);
+      for (let k = 0; k <= 32; k++) barGrad.addColorStop(k / 32, stopColour(st, k / 32));
+    }
+    ctx.fillStyle = `rgba(${ink()},${light ? 0.05 : 0.04})`;
+    ctx.beginPath();
+    ctx.roundRect(x - 2, y0 - 2, w + 4, y1 - y0 + 4, 4);
+    ctx.fill();
+    ctx.fillStyle = barGrad;
+    ctx.fillRect(x, y0, w, y1 - y0);
+    ctx.strokeStyle = `rgba(${ink()},0.25)`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 0.5, y0 - 0.5, w + 1, y1 - y0 + 1);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (const d of [-30, -40, -50, -67, -80, -95]) {
+      const y = ty(d), key = d === -67 || d === -80;
+      ctx.fillStyle = d === -80 ? (light ? '#dc2626' : '#f87171') : `rgba(${ink()},${key ? 0.85 : 0.5})`;
+      ctx.fillText(String(d).replace('-', '−'), x - 6, y);
+      ctx.fillRect(x - 3, y - 0.5, key ? w + 3 : 3, 1);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(${ink()},0.55)`;
+    ctx.fillText('dBm', x + w / 2, y0 - 14);
+    if (dbm > -150) {
+      const yp = ty(Math.max(-95, Math.min(-30, dbm)));
+      ctx.fillStyle = COL.phone(light);
+      ctx.beginPath();
+      ctx.moveTo(x + w + 3, yp);
+      ctx.lineTo(x + w + 10, yp - 5);
+      ctx.lineTo(x + w + 10, yp + 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  function drawInfo(light: boolean) {
+    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = `rgba(${ink()},0.6)`;
+    const lam = lambda() * 100;
+    const what = state.view === 'wave' ? 'Ez, instantaneous' : state.view === 'signal' ? 'mean power, dBm' : 'multi-wall model, dBm';
+    ctx.fillText(`${band().label} · λ = ${lam.toFixed(1)} cm · ${what}`, 14, 12);
+    // pixels per wavelength at the camera's target
+    if (gpu && state.view === 'wave' && (lambda() * cam.k) / cam.dist < 8) {
+      ctx.fillStyle = light ? '#b45309' : '#fbbf24';
+      ctx.fillText(`zoom in to see the ${lam.toFixed(lam < 10 ? 0 : 1)} cm waves (scroll, or Zoom to phone)`, 14, 44);
+    }
+    if (!gpu) {
+      ctx.fillStyle = light ? '#b45309' : '#fbbf24';
+      ctx.fillText('No WebGL2 float targets here: showing the multi-wall model only', 14, 28);
+    } else if (fillFrac() < 1 && state.view !== 'model') {
+      ctx.fillStyle = `rgba(${ink()},0.5)`;
+      ctx.fillText(`filling the house · ${Math.round(fillFrac() * 100)} %`, 14, 28);
+    }
+  }
+
+  // ---- readings --------------------------------------------------------------------------
+  const fmtDbm = (d: number) => (d < 0 ? '−' : '') + Math.abs(d).toFixed(0);
+  function quality(d: number) {
+    const q =
+      d >= -55 ? { s: 'Excellent', bars: 4, c: ['#16a34a', '#4ade80'] }
+      : d >= -67 ? { s: 'Good', bars: 3, c: ['#65a30d', '#a3e635'] }
+      : d >= -75 ? { s: 'Fair', bars: 2, c: ['#ca8a04', '#facc15'] }
+      : d >= -80 ? { s: 'Fair', bars: 1, c: ['#ea580c', '#fb923c'] }
+      : d >= -90 ? { s: 'Poor', bars: 1, c: ['#dc2626', '#f87171'] }
+      : { s: 'No signal', bars: 0, c: ['#dc2626', '#f87171'] };
+    return { ...q, colour: (l: boolean) => (l ? q.c[0] : q.c[1]) };
+  }
+  /** The fastest MCS the SNR supports, as the PHY rate in Mbit/s. */
+  function linkRate(d: number) {
+    const b = band(), snr = d - b.noise;
+    let rate = 0;
+    for (let m = 0; m < b.rates.length; m++) if (snr >= MCS_SNR[m]) rate = b.rates[m];
+    return rate;
+  }
+  const phoneNode = () => state.mesh && (gpu && state.view !== 'model' ? phone.node : modelPath(state.phone.x, state.phone.y, state.node).dbm > modelPath(state.phone.x, state.phone.y, state.router).dbm);
+
+  function fillFrac() {
+    if (!gpu || !gpu.f1) return 1;
+    const n = Math.min(gpu.f1.n, gpu.f2 && state.mesh ? gpu.f2.n : Infinity) - settleFrom;
+    return Math.max(0, Math.min(1, n / SETTLE));
+  }
+
+  /** The phone's dBm in the current view. */
+  function phoneDbm() {
+    if (!gpu || state.view === 'model') return modelAt(state.phone.x, state.phone.y);
+    return phone.have ? phone.dbm : -200;
+  }
+
+  // ---- words and numbers -----------------------------------------------------------------
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let lastSync = 0;
+  const perf = { fps: 0, js: 0, frame: 16.7 };
+
+  function sync(force = false) {
+    const now = performance.now();
+    if (!force && now - lastSync < 150) return;
+    lastSync = now;
+    const light = isLight();
+    const d = phoneDbm();
+    const q = quality(d);
+    const rate = linkRate(d);
+    const b = band();
+    const viaNode = phoneNode();
+    const src = viaNode ? state.node : state.router;
+    const mp = modelPath(state.phone.x, state.phone.y, src);
+    const mBest = modelAt(state.phone.x, state.phone.y);
+    const settling = gpu && state.view !== 'model' && fillFrac() < 1;
+    const rateTxt = rate > 0 ? `${rate >= 100 ? Math.round(rate) : rate.toFixed(1)} Mbit/s` : 'no link';
+    setRows({
+      phDbm: d > -150 ? `${fmtDbm(d)} dBm · ${q.s}` : 'no signal',
+      phRaw: gpu && state.view !== 'model' ? (phone.raw > -150 ? `${fmtDbm(phone.raw)} dBm` : 'no signal') : 'only in the wave sim',
+      phModel: `${fmtDbm(mBest)} dBm`,
+      phRate: `${rateTxt} (${b.width})`,
+      phSnr: `${Math.max(0, d - b.noise).toFixed(0)} dB over ${fmtDbm(b.noise)} dBm noise`,
+      phDist: `${mp.d.toFixed(1)} m${viaNode ? ' (to the mesh node)' : ''}`,
+      phWalls: `${mp.walls} on the straight line`,
+      smGrid: gpu ? `${NX} × ${NY} cells${state.mesh ? ' × 2 fields' : ''}` : 'no WebGL2: model only',
+      smCell: gpu ? `${(DX * 1000).toFixed(1)} mm = λ/${(lambda() / DX).toFixed(1)}` : '10 cm (model)',
+      smTime: gpu && gpu.f1 ? `${((gpu.f1.n * S * DX) / C0 * 1e9).toFixed(1)} ns (${gpu.f1.n} steps)` : '—',
+      smSpf: gpu ? `${spf}${state.mesh ? ' per field' : ''}` : '—',
+      smFps: `${perf.fps.toFixed(0)} fps`,
+      smJs: `${perf.js.toFixed(2)} ms`,
+    });
+    const note = settling
+      ? 'The wave is still filling the house: the reading settles once the echoes have built up.'
+      : state.band === '5'
+        ? `5 GHz: an ${b.width} channel carries up to 867 Mbit/s, but every wall costs more, so far rooms fade first.`
+        : `2.4 GHz: the longer wave loses less in each wall and bends round doorways, but a ${b.width} channel tops out at 144 Mbit/s.`;
+    const status = d > -150 ? `${q.s} · ${rateTxt}${viaNode ? ' · via the mesh node' : ''}` : 'No signal';
+    setResult({ value: d > -150 ? `${fmtDbm(d)} dBm` : 'none', status: settling ? `filling… ${status}` : status, note, colour: q.colour(light) });
+    const wc = `rgb(${WALLC[state.walls](light)})`, rc = COL.router(light), pc = COL.phone(light);
+    setEq({
+      rule: [
+        '\\nabla^2 E_z - \\tfrac{\\varepsilon_r}{c^2}\\ddot E_z',
+        ['- \\mu_0\\sigma\\dot E_z', wc],
+        '=',
+        ['\\mu_0\\dot J_z', rc],
+        ['\\quad L_{\\text{fs}} = 20\\log_{10}\\tfrac{4\\pi d f}{c}', pc],
+      ],
+      live: [
+        `f = ${b.label.replace(' GHz', '')}\\,\\mathrm{GHz}`,
+        `\\quad \\lambda = ${(lambda() * 100).toFixed(1)}\\,\\mathrm{cm}`,
+        [`\\quad P = ${d > -150 ? (d < 0 ? '-' : '') + Math.abs(d).toFixed(0) : '-\\infty'}\\,\\mathrm{dBm}`, pc],
+        [rate > 0 ? `\\quad ${rate >= 100 ? Math.round(rate) : rate.toFixed(1)}\\,\\mathrm{Mbit/s}` : '\\quad \\text{no link}', pc],
+      ],
+    });
+  }
+
+  // ---- the frame -------------------------------------------------------------------------
+  let spf = 12;
+  const MAX_SPF = 240;
+  // ?spf=N pins the steps per frame (for testing on software GL, where the adaptive rate is tiny)
+  const FIXED_SPF = Math.max(0, Math.min(MAX_SPF, +(new URLSearchParams(location.search).get('spf') ?? 0) || 0));
+  let drawQueued = true;
+  function requestDraw() { drawQueued = true; }
+
+  function draw() {
+    const light = isLight();
+    themeColours(light);
+    ctx.clearRect(0, 0, W, H);
+    if (gpu) {
+      renderFloor(gpu, light);
+    } else if (shade) {
+      drawBackdrop(ctx, W, H, light);
+      if (modelDirty) fillShade();
+      const lut = shadeLut;
+      shade.render(ctx, cam, 'xz', 0, (a) => (a !== a ? 0 : lut[Math.max(0, Math.min(255, (((a + 95) / 65) * 255) | 0))]));
+      drawModelContours(light);
+    }
+    drawFurniture(light);
+    if (state.view === 'model') drawSightLine(light);
+    drawHouse(light);
+    drawLabels(light);
+    drawAP(state.router, COL.router(light), 'router', light);
+    if (state.mesh) drawAP(state.node, COL.node(light), 'mesh node', light);
+    const d = phoneDbm();
+    drawPhone(light, d);
+    drawColourBar(light, d);
+    drawInfo(light);
+    sync();
+  }
+
+  /** Contours for the 2D fallback, by marching squares on the shade grid. */
+  function drawModelContours(light: boolean) {
+    if (!shade) return;
+    const G = shade.grid, A = shade.a;
+    const coord = (g: number) => -SH + ((g + 0.5) / G) * 2 * SH;
+    for (const lv of [-67, -80]) {
+      ctx.beginPath();
+      for (let j = 0; j < G - 1; j++)
+        for (let i = 0; i < G - 1; i++) {
+          const q = j * G + i;
+          const a = A[q], b = A[q + 1], c = A[q + G + 1], dd = A[q + G];
+          if (a !== a || b !== b || c !== c || dd !== dd) continue;
+          const sa = a < lv, sb = b < lv, sc = c < lv, sd = dd < lv;
+          if (sa === sb && sb === sc && sc === sd) continue;
+          const pts: [number, number][] = [];
+          if (sa !== sb) pts.push([i + (lv - a) / (b - a), j]);
+          if (sb !== sc) pts.push([i + 1, j + (lv - b) / (c - b)]);
+          if (sc !== sd) pts.push([i + 1 - (lv - c) / (dd - c), j + 1]);
+          if (sd !== sa) pts.push([i, j + 1 - (lv - dd) / (a - dd)]);
+          for (let k = 0; k + 1 < pts.length; k += 2) {
+            const A1 = cam.project({ x: coord(pts[k][0]), y: 0, z: coord(pts[k][1]) });
+            const B1 = cam.project({ x: coord(pts[k + 1][0]), y: 0, z: coord(pts[k + 1][1]) });
+            ctx.moveTo(A1.sx, A1.sy);
+            ctx.lineTo(B1.sx, B1.sy);
+          }
+        }
+      ctx.strokeStyle = lv === -67 ? (light ? 'rgba(28,30,36,0.85)' : 'rgba(255,255,255,0.85)') : light ? '#dc2626' : '#f87171';
+      ctx.lineWidth = lv === -67 ? 1.4 : 1.1;
+      ctx.stroke();
+    }
+  }
+
+  let lastFrame = 0, lastAdapt = 0, lastRead = 0, slowFrames = 0;
+  function frame(now: number) {
+    const t0 = performance.now();
+    const dt = lastFrame ? now - lastFrame : 16.7;
+    lastFrame = now;
+    stepTween(now);
+    if (tween) drawQueued = true;
+    const stepping = !!gpu && state.playing && state.view !== 'model';
+    if (gpu && gpu.f1) {
+      if (stepping) {
+        if (dt < 1000) perf.frame = perf.frame * 0.9 + Math.min(dt, 250) * 0.1;
+        perf.fps = 1000 / perf.frame;
+        // steps per frame follow the frame rate: more while frames come at the display rate, fewer when they lag
+        if (now - lastAdapt > 200) {
+          lastAdapt = now;
+          if (perf.frame > 20 && spf > 1) spf = Math.max(1, Math.round(spf * 0.8));
+          else if (perf.frame < 17.6 && spf < MAX_SPF) spf = Math.min(MAX_SPF, spf + Math.max(1, Math.round(spf * 0.25)));
+          // when one step a frame is still too slow, lower the floor's resolution
+          if (spf === 1 && perf.frame > 45) slowFrames++;
+          else slowFrames = 0;
+          if (slowFrames > 3 && glScale > 0.5) { glScale = glScale > 0.75 ? 0.7 : 0.5; slowFrames = 0; }
+        }
+        if (FIXED_SPF) spf = FIXED_SPF;
+        const co = coeffs();
+        runSteps(gpu, gpu.f1, state.router, spf, co);
+        if (state.mesh && gpu.f2) runSteps(gpu, gpu.f2, state.node, spf, co);
+        drawQueued = true;
+      }
+      if (drawQueued) mapPass(gpu);
+      if (pollRead(gpu) && !state.playing) drawQueued = true;
+      if (drawQueued && (now - lastRead > 120 || !state.playing)) {
+        lastRead = now;
+        requestRead(gpu);
+      }
+    }
+    if (drawQueued) {
+      draw();
+      drawQueued = false;
+    }
+    perf.js = perf.js * 0.9 + (performance.now() - t0) * 0.1;
+    requestAnimationFrame(frame);
+  }
+
+  // ---- interaction -----------------------------------------------------------------------
+  type Grab = 'router' | 'node' | 'phone' | null;
+  let dragging: Grab = null;
+  const clampPlan = (p: { x: number; y: number }) => {
+    let x = Math.max(0.35, Math.min(HW - 0.35, p.x)), y = Math.max(0.35, Math.min(HD - 0.35, p.y));
+    // never inside the fridge
+    const f = FRIDGE, m = 0.06;
+    if (x > f.x0 - m && x < f.x1 + m && y > f.y0 - m && y < f.y1 + m) {
+      const opts = [[f.x0 - m - x, 0], [f.x1 + m - x, 0], [0, f.y0 - m - y], [0, f.y1 + m - y]];
+      opts.sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]));
+      x += opts[0][0];
+      y += opts[0][1];
+    }
+    return { x, y };
+  };
+  /** The point of the floor (or of a level h above it) under the pointer, in plan metres. */
+  function floorAt(x: number, y: number, h = 0) {
+    const hit = cam.hitPlane(x, y, { x: 0, y: h, z: 0 }, { x: 0, y: 1, z: 0 });
+    if (!hit) return null;
+    return { x: hit.x + HW / 2 + tgt.x, y: hit.z + HD / 2 + tgt.z };
+  }
+  function pick(x: number, y: number): Grab {
+    const cand: [Grab, { x: number; y: number }, number][] = [['phone', state.phone, HEAD.phone], ['router', state.router, HEAD.router]];
+    if (state.mesh) cand.push(['node', state.node, HEAD.node]);
+    let best: Grab = null, bd = 18;
+    for (const [k, s, h] of cand) {
+      for (const hh of [h, 0]) {
+        const q = P(s.x, s.y, hh);
+        const d = Math.hypot(q.sx - x, q.sy - y);
+        if (d < bd) { bd = d; best = k; }
+      }
+    }
+    return best;
+  }
+
+  function sourceMoved(which: 'router' | 'node') {
+    modelDirty = true;
+    if (!gpu) return;
+    const f = which === 'router' ? gpu.f1 : gpu.f2;
+    if (f) clearField(gpu, f);
+    settleFrom = 0;
+  }
+
+  orbitControls(canvas, cam, W, H, {
+    changed: () => { tween = null; cams.clear(); requestDraw(); },
+    grab: (x, y) => {
+      dragging = pick(x, y);
+      if (dragging) canvas.style.cursor = 'grabbing';
+      return !!dragging;
+    },
+    drag: (x, y) => {
+      if (!dragging) return;
+      const h = HEAD[dragging];
+      const p = floorAt(x, y, h);
+      if (!p) return;
+      const c = clampPlan(p);
+      state[dragging] = c;
+      if (dragging !== 'phone') sourceMoved(dragging);
+      requestDraw();
+    },
+    release: () => {
+      dragging = null;
+      canvas.style.cursor = '';
+      sync(true);
+    },
+    click: (x, y) => {
+      const p = floorAt(x, y);
+      if (!p || p.x < 0 || p.y < 0 || p.x > HW || p.y > HD) return;
+      state.phone = clampPlan(p);
+      requestDraw();
+    },
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (dragging) return;
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    canvas.style.cursor = pick(x, y) ? 'grab' : '';
+  });
+
+  // ---- controls --------------------------------------------------------------------------
+  const tp = transport({
+    onRun: (on) => { state.playing = on; requestDraw(); },
+    onReset: () => resetFields(),
+  });
+  function resetFields() {
+    if (gpu) {
+      if (gpu.f1) clearField(gpu, gpu.f1);
+      if (gpu.f2) clearField(gpu, gpu.f2);
+    }
+    settleFrom = 0;
+    phone.have = false;
+    requestDraw();
+  }
+  const views = segmented('view', (v) => { state.view = v as View; requestDraw(); sync(true); });
+  const bandSeg = segmented('band', (v) => { setBand(v as BandKey); });
+  function setBand(b: BandKey) {
+    if (b === state.band && gpu?.f1) return;
+    state.band = b;
+    bandSeg.select(b);
+    setupBand();
+    phone.have = false;
+    requestDraw();
+    sync(true);
+  }
+  /** Walls or doors changed: the field keeps running and settles into the new house. */
+  function wallsChanged() {
+    modelDirty = true;
+    if (gpu && gpu.f1) settleFrom = Math.max(gpu.f1.n, gpu.f2?.n ?? 0);
+    requestDraw();
+    sync(true);
+  }
+  const wallSeg = segmented('walls', (v) => { state.walls = v as MatKey; wallsChanged(); });
+  const setTx = slider('txp', (v) => { state.tx = v; modelDirty = true; requestDraw(); sync(true); }, (v) => `${v} dBm`);
+  function setMesh(on: boolean) {
+    state.mesh = on;
+    setMeshBox(on);
+    if (gpu) {
+      if (on && !gpu.f2 && gpu.f1) {
+        gpu.f2 = makeField(gpu);
+        settleFrom = 0; // the node's field starts from nothing
+      }
+      if (!on && gpu.f2) { freeField(gpu, gpu.f2); gpu.f2 = null; }
+    }
+    modelDirty = true;
+    requestDraw();
+    sync(true);
+  }
+  const setMeshBox = check('mesh', (on) => setMesh(on));
+  const setSmooth = check('smooth', (on) => { state.smooth = on; phone.have = false; requestDraw(); sync(true); });
+  const setDoors = check('doors', (on) => { state.doors = on; wallsChanged(); });
+  const cams = segmented('camv', (v) => flyTo(CAMS[v as 'persp' | 'top']));
+  el('zoomPhone').addEventListener('click', () => {
+    cams.clear();
+    flyTo({ yaw: cam.yaw, pitch: -1.0, zoom: 5.2, tx: gpu ? state.phone.x - HW / 2 : 0, tz: gpu ? state.phone.y - HD / 2 + 0.15 : 0 });
+  });
+  if (!gpu) {
+    // without the wave solver only the model can be shown
+    state.view = 'model';
+    views.select('model');
+    (el('view').closest('.control') as HTMLElement).hidden = true;
+    (el('smooth').closest('label') as HTMLElement).hidden = true;
+    (el('run').closest('.actions') as HTMLElement).hidden = true;
+  }
+
+  /** Put the house in a known state. */
+  function setup(o: {
+    view?: View; band?: BandKey; walls?: MatKey; mesh?: boolean; smooth?: boolean; doors?: boolean;
+    router?: { x: number; y: number }; phone?: { x: number; y: number }; node?: { x: number; y: number };
+    cam?: typeof CAMS.persp;
+  }) {
+    const view = gpu ? o.view ?? 'signal' : 'model';
+    state.view = view; views.select(view);
+    state.walls = o.walls ?? 'brick'; wallSeg.select(state.walls);
+    state.tx = 20; setTx(20);
+    state.smooth = o.smooth ?? true; setSmooth(state.smooth);
+    state.doors = o.doors ?? false; setDoors(state.doors);
+    state.router = o.router ?? { x: 2.2, y: 0.55 };
+    state.node = o.node ?? { x: 6.2, y: 5.8 };
+    state.phone = o.phone ?? { x: 10.3, y: 5.8 };
+    const b = o.band ?? state.band;
+    if (b !== state.band) setBand(b);
+    setMesh(o.mesh ?? false);
+    resetFields();
+    modelDirty = true;
+    state.playing = true;
+    tp.setRunning(true);
+    const c = o.cam ?? CAMS.persp;
+    cams.select(c === CAMS.top ? 'top' : 'persp');
+    if (c !== CAMS.persp && c !== CAMS.top) cams.clear();
+    flyTo(c);
+    sync(true);
+  }
+
+  tries({
+    far24: () => setup({ band: '24', walls: 'brick' }),
+    far5: () => setup({ band: '5', walls: 'brick' }),
+    fringes: () =>
+      setup({
+        view: 'wave', band: '5', smooth: false,
+        cam: { yaw: -0.35, pitch: -1.0, zoom: 5.2, tx: 10.3 - HW / 2, tz: 5.8 - HD / 2 + 0.15 },
+      }),
+    fridge: () =>
+      setup({
+        band: '5', walls: 'drywall', router: { x: 6.2, y: 2.75 }, phone: { x: 9.0, y: 2.75 },
+        cam: { yaw: 0, pitch: -1.2, zoom: 2.7, tx: 8.2 - HW / 2, tz: 3.0 - HD / 2 },
+      }),
+    mesh: () => setup({ band: '5', walls: 'concrete', mesh: true }),
+  });
+
+  // the model has no standing waves to show
+  if (!gpu) (document.querySelector('[data-try=fringes]') as HTMLElement).hidden = true;
+
+  // keep the page's default toggles in sync with the state
+  setMeshBox(state.mesh);
+  setSmooth(state.smooth);
+  setDoors(state.doors);
+  setupBand();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .wifi-canvas {
+    cursor: default;
+    touch-action: none;
+  }
+</style>

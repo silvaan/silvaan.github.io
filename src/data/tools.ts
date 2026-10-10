@@ -561,6 +561,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'wifi-house',
+        title: 'Wi-Fi in a House',
+        description:
+          "Maxwell's equations on the GPU over a whole house at the true Wi-Fi wavelength: watch 2.4 and 5 GHz spill through doorways, leave dead spots a few centimetres across and fade behind brick and concrete, with the signal a phone would read in every room.",
+        href: '/simulations/physics/wifi-house',
+        status: 'live',
+      },
+      {
         slug: 'entropy',
         title: 'Entropy',
         description:
