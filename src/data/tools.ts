@@ -588,7 +588,7 @@ export const AREAS: Area[] = [
         slug: 'wave-equation',
         title: 'Wave Equation',
         description:
-          'Pluck a string and watch the pulse travel and reflect. The contrast with heat: waves keep their shape and carry energy instead of smearing out.',
+          'Tap a drum skin and watch rings run out, cross and bounce off the rim. Load a drum mode and it stands still between its nodal lines; switch to the heat equation and the same bump just slumps in place.',
         href: '/simulations/physics/wave-equation',
         status: 'live',
       },
