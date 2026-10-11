@@ -2,6 +2,7 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Readout from '../../../components/sim/Readout.astro';
 import Result from '../../../components/sim/Result.astro';
@@ -12,62 +13,120 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="General Relativity"
-  description="Mass bends spacetime. The funnel is the real curved geometry of space around a black hole, the clocks show time running slow deep in the well, and the ruler shows a proper metre swallowing less and less coordinate distance as you fall towards the horizon."
+  description="See a black hole the way its light does. Every pixel is a photon traced back along its bent path, so the far side of the glowing disk rises over the top and the whole sky folds round a shadow 2.6 times the size of the horizon. Then put a particle in orbit: it traces rosettes that never close, cannot circle closer than 3 rₛ, and its clock runs slow near the hole."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="gr" class="gr-canvas" width="700" height="640" role="img" aria-label="Flamm's paraboloid of the space around a black hole, with clocks ticking at different rates by depth, a probe ring, and a ruler laid along the radial direction."></canvas>
+        <div class="gr-wrap" id="gr-wrap">
+          <canvas id="grgl" aria-hidden="true"></canvas>
+          <canvas
+            id="gr"
+            width="960"
+            height="600"
+            role="img"
+            aria-label="A Schwarzschild black hole rendered by tracing light rays through curved spacetime, with a glowing accretion disk; or, in the orbits view, a test particle orbiting the hole with its effective potential and clocks."
+          ></canvas>
+        </div>
       </div>
-      <Caption hint="Drag to orbit, scroll to zoom; the bright ring is the horizon, the white ring is your probe, and colour runs red (slow clocks) to teal (normal)" />
-      <Result label="Clock rate at the probe" />
+      <Caption
+        legend={[
+          { label: 'approaching side: brighter, bluer', color: '#9cc4ff', id: 'lg-blue' },
+          { label: 'receding side: dimmer, redder', color: '#ff7a3d', id: 'lg-red' },
+          { label: 'orbit, coloured by its clock rate', color: '#c084fc', id: 'lg-orbit' },
+          { label: 'Newton', color: '#8b909c', id: 'lg-newton' },
+          { label: 'photon sphere 1.5 r<sub>s</sub>', color: '#f59e0b', id: 'lg-ps' },
+          { label: 'innermost stable orbit 3 r<sub>s</sub>', color: '#2dd4bf', id: 'lg-isco' },
+        ]}
+        hint="Drag to orbit the camera, scroll to move closer or farther"
+      />
+      <Result label="Shadow radius" />
     </div>
 
     <div class="sim-panel">
-      <Transport />
       <Seg
-        id="show"
-        label="Show"
+        id="view"
+        label="View"
         options={[
-          { value: 'both', label: 'Clocks + ruler' },
-          { value: 'clocks', label: 'Clocks' },
-          { value: 'ruler', label: 'Ruler' },
+          { value: 'see', label: 'What you see' },
+          { value: 'orbits', label: 'Orbits' },
         ]}
       />
-      <Slider id="rs" label="Schwarzschild radius r<sub>s</sub>" min={6} max={45} value={20} display="2.0" />
-      <Slider id="probe" label="Probe radius r" min={0} max={1000} value={250} display="4.0" />
-      <Slider id="speed" label="Clock speed" min={0} max={40} value={10} display="1.0×" />
-      <Readout
-        title="Values"
-        rows={[
-          { id: 'ratioOut', label: 'r / r<sub>s</sub>' },
-          { id: 'dilOut', label: 'Clock rate √(1−r<sub>s</sub>/r)' },
-          { id: 'stretchOut', label: 'Ruler stretch 1/√(1−r<sub>s</sub>/r)' },
-          { id: 'farOut', label: '1 s here = distant' },
-          { id: 'realOut', label: 'Real distance from horizon' },
-          { id: 'coordOut', label: 'Coordinate r − r<sub>s</sub>' },
-        ]}
-      />
+      <Transport running />
+
+      <div id="see-ctl">
+        <Slider id="dist" label="Camera distance r" min={6} max={60} step={0.5} value={22} display="22 rₛ" />
+        <Slider id="tilt" label="Height above the disk" min={-85} max={85} step={1} value={8} display="8°" />
+        <Checks
+          items={[
+            { id: 'disk', label: 'Accretion disk', checked: true },
+            { id: 'grid', label: 'Sky grid' },
+            { id: 'flat', label: 'Flat space (light goes straight)' },
+            { id: 'guides', label: 'Shadow guides' },
+          ]}
+        />
+        <Readout
+          title="Numbers"
+          rows={[
+            { id: 'r-cam', label: 'Camera at r / r<sub>s</sub>' },
+            { id: 'r-camclock', label: 'Camera clock √(1 − r<sub>s</sub>/r)' },
+            { id: 'r-bc', label: 'Shadow radius b<sub>c</sub>' },
+            { id: 'r-ang', label: 'Shadow across your sky' },
+            { id: 'r-res', label: 'Render resolution' },
+          ]}
+        />
+      </div>
+
+      <div id="orb-ctl" hidden>
+        <Seg
+          id="preset"
+          label="Orbit"
+          attr="p"
+          options={[
+            { value: 'rosette', label: 'Rosette' },
+            { value: 'circle', label: 'Circle' },
+            { value: 'whirl', label: 'Zoom-whirl' },
+            { value: 'flyby', label: 'Fly-by' },
+            { value: 'plunge', label: 'Plunge' },
+          ]}
+        />
+        <Slider id="L" label="Angular momentum L" min={0} max={4} step={0.005} value={2.17} display="2.17 rₛc" />
+        <Slider id="E" label="Energy E" min={0.9} max={1.03} step={0.0005} value={0.975} display="0.9750" />
+        <Slider id="speed" label="Speed" min={0.25} max={6} step={0.25} value={1.5} display="1.5×" />
+        <Checks items={[{ id: 'newton', label: 'Newtonian comparison' }]} />
+        <Readout
+          title="Numbers"
+          rows={[
+            { id: 'r-r', label: 'r / r<sub>s</sub>' },
+            { id: 'r-rate', label: 'Clock rate dτ/dt' },
+            { id: 'r-prec', label: 'Precession per orbit' },
+            { id: 'r-kind', label: 'Orbit' },
+            { id: 'r-t', label: 'Far clock t' },
+            { id: 'r-tau', label: 'Particle clock τ' },
+          ]}
+        />
+      </div>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Run the clocks. The far ones keep pace, but each clock deeper in the well
-      runs <b>slower</b>, at exactly √(1 − rₛ/r). <Try id="clocks" label="Run" />
+      The disk is flat, yet its <b>far side</b> shows above the hole and again below it: that light
+      bent over and under the shadow to reach you. The side turning towards you is brighter and bluer. <Try id="lens" />
     </li>
     <li>
-      The blocks on the bottom bar are identical real metres placed by their r
-      coordinate, so they <b>pile up near the horizon</b>: many real metres fit
-      in a small change of r. <Try id="ruler" />
+      Hide the disk and paint a target on the sky: its <b>gold spot</b>, straight behind the hole,
+      shows as a ring all the way round it, an Einstein ring. Tick Flat space and the spot just hides
+      behind a black ball of radius r<sub>s</sub>. <Try id="ring" />
     </li>
     <li>
-      Put the probe just outside <b>r = rₛ</b>: its clock almost freezes and the
-      ruler stretch blows up, while far away both fade to 1. <Try id="horizon" />
+      A bound orbit never closes: each pass the closest point moves on, tracing a <b>rosette</b>. Newton's
+      ellipse with the same start closes on itself. <Try id="rosette" />
     </li>
     <li>
-      Grow <b>rₛ</b> (more mass) and the whole well deepens: the time dilation
-      and the stretching reach farther out. <Try id="mass" />
+      Below L = √3 r<sub>s</sub>c there is no stable orbit, so the particle <b>plunges</b>. Seen from far
+      away its clock slows to a stop and it freezes at the horizon. <Try id="plunge" />
     </li>
   </Fragment>
 </SimLayout>
@@ -75,399 +134,1435 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, transport, readout, result, tries } from '../../../lib/panel';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
-  const TAU = Math.PI * 2;
-  const RMAX = 10;
-  const NORM = 2.0 / RMAX;
-  const Y0 = 0.85; // vertical centring offset
+  // Units: the Schwarzschild radius r_s = 1, c = 1, so M = 1/2.
+  const M = 0.5;
+  const RIN = 3, ROUT = 14; // the disk, from the innermost stable orbit outwards
+  const BC = 1.5 * Math.sqrt(3); // critical impact parameter, the shadow's radius
+  const AMBER = '#f59e0b', TEAL = '#2dd4bf', CLOCK = '#60a5fa', GREY = '#8b909c';
+
+  type V3 = [number, number, number];
+  const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const scale3 = (a: V3, s: number): V3 => [a[0] * s, a[1] * s, a[2] * s];
+  const add3 = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const unit = (a: V3): V3 => scale3(a, 1 / (Math.hypot(a[0], a[1], a[2]) || 1));
+
+  const state = {
+    view: 'see' as 'see' | 'orbits',
+    running: true,
+    // camera
+    D: 22,
+    tilt: (8 * Math.PI) / 180,
+    yaw: 0.35,
+    disk: true,
+    grid: false,
+    flat: false,
+    guides: false,
+    anim: 0,
+    // orbits
+    speed: 1.5,
+    newton: false,
+  };
+
+  const wrap = el('gr-wrap');
+  const canvas = el('gr') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => { dirty = true; });
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  // the theme, read once per frame rather than on every stroke
+  const theme = { ink: '232,233,236', inv: '13,14,18', light: false };
+  const readTheme = () => {
+    theme.ink = css('--stage-ink') || '232,233,236';
+    theme.inv = css('--stage-ink-inv') || '13,14,18';
+    theme.light = css('--stage-light') === '1';
+  };
+  readTheme();
+  const ink = (a: number) => `rgba(${theme.ink},${a})`;
+  const inv = (a: number) => `rgba(${theme.inv},${a})`;
+  const light = () => theme.light;
+  let dirty = true;
 
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const canvas = document.getElementById('gr') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
-  const isLight = () => css('--stage-light') === '1';
-  const ink = () => css('--stage-ink') || '232,233,236';
 
-  const CX = W / 2, CY = H / 2;
-  const CAM = 4.4, FOCAL = 2.7, SCALE = 250;
+  // =====================================================================
+  //  What you see: a ray tracer in a fragment shader
+  // =====================================================================
+  //
+  // Each pixel's ray leaves the camera (a static observer at r = D) and is
+  // followed backwards. A photon in Schwarzschild spacetime stays in one plane
+  // through the hole, where u = 1/r obeys u'' + u = (3/2) r_s u² as a function
+  // of the angle φ. Integrate that with RK4, watch for crossings of the disk
+  // plane on the way, and when the ray falls in (u ≥ 1) it is part of the
+  // shadow; when it gets far away, its direction there picks the sky.
 
-  const CLOCK_FR = [0.012, 0.05, 0.14, 0.34, 0.7, 1.0];
-  const CLOCK_PHI = -Math.PI / 2;
-  const RULER_PHI = Math.PI / 2;
-  const RULER_UNIT = 1.15; // proper length per ruler segment
+  const VS = `#version 300 es
+in vec2 p;
+void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
 
-  const state = {
-    rs: 2, probe: 4, speed: 1, show: 'both' as 'both' | 'clocks' | 'ruler',
-    yaw: 0.62, pitch: -0.5, zoom: 1, running: false,
-  };
-  let T = 0;
-  const clockTau = CLOCK_FR.map(() => 0);
-  let probeTau = 0;
-  let rulerTicks: number[] = [];
+  const FS = `#version 300 es
+precision highp float;
+uniform vec2 uRes;
+uniform vec3 uEye, uFwd, uRight, uUp, uTarget;
+uniform float uTanY, uAspect, uTime, uBoost;
+uniform int uDisk, uGrid, uFlat, uSteps;
+out vec4 o;
 
-  const zDepth = (r: number) => 2 * Math.sqrt(state.rs * Math.max(0, r - state.rs));
-  const dil = (r: number) => Math.sqrt(Math.max(0, 1 - state.rs / r));
+const float RIN = ${RIN.toFixed(1)};
+const float ROUT = ${ROUT.toFixed(1)};
+const float PI = 3.14159265;
 
-  function world(r: number, phi: number) {
-    const R = r * NORM;
-    return { x: R * Math.cos(phi), y: zDepth(r) * NORM - Y0, z: R * Math.sin(phi) };
-  }
+float hash13(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+vec3 hash33(vec3 p) {
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.xxy + p.yxx) * p.zyx);
+}
+float vnoise(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = mix(hash13(i), hash13(i + vec3(1, 0, 0)), f.x);
+  float b = mix(hash13(i + vec3(0, 1, 0)), hash13(i + vec3(1, 1, 0)), f.x);
+  float c = mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), f.x);
+  float d = mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), f.x);
+  return mix(mix(a, b, f.y), mix(c, d, f.y), f.z);
+}
+float fbm(vec3 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.07 + vec3(1.7, 9.2, 3.1); a *= 0.5; }
+  return s;
+}
 
-  function project(p: { x: number; y: number; z: number }) {
-    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
-    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-    const x1 = p.x * cy + p.z * sy;
-    const z1 = -p.x * sy + p.z * cy;
-    const y2 = p.y * cp - z1 * sp;
-    const z2 = p.y * sp + z1 * cp;
-    const zc = z2 + CAM;
-    const s = (FOCAL / Math.max(0.05, zc)) * state.zoom;
-    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, s, zc };
-  }
-  const projRP = (r: number, phi: number) => project(world(r, phi));
+// colour of a glowing gas by its temperature, relative to the disk's hottest ring
+vec3 heat(float t) {
+  vec3 c0 = vec3(0.30, 0.02, 0.00), c1 = vec3(1.00, 0.22, 0.03), c2 = vec3(1.00, 0.58, 0.22);
+  vec3 c3 = vec3(1.00, 0.86, 0.68), c4 = vec3(0.86, 0.92, 1.00), c5 = vec3(0.62, 0.76, 1.00);
+  if (t < 0.45) return mix(c0, c1, smoothstep(0.15, 0.45, t));
+  if (t < 0.80) return mix(c1, c2, (t - 0.45) / 0.35);
+  if (t < 1.10) return mix(c2, c3, (t - 0.80) / 0.30);
+  if (t < 1.45) return mix(c3, c4, (t - 1.10) / 0.35);
+  return mix(c4, c5, clamp((t - 1.45) / 0.6, 0.0, 1.0));
+}
 
-  function dilColor(t: number, alpha = 1) {
-    t = Math.max(0, Math.min(1, t));
-    const stops = [[235, 80, 70], [240, 190, 70], [45, 212, 191]];
-    const seg = t * 2;
-    const i = Math.min(1, Math.floor(seg));
-    const fr = seg - i;
-    const a = stops[i], b = stops[i + 1];
-    let r = a[0] + (b[0] - a[0]) * fr;
-    let g = a[1] + (b[1] - a[1]) * fr;
-    let bl = a[2] + (b[2] - a[2]) * fr;
-    if (isLight()) { r *= 0.72; g *= 0.72; bl *= 0.72; }
-    return `rgba(${r | 0},${g | 0},${bl | 0},${alpha})`;
-  }
+// The disk where the ray crosses it at P (radius r). b is the ray's impact
+// parameter and n the normal of its orbit plane, which give the photon's
+// angular momentum about the disk axis and so the Doppler shift.
+vec4 disk(vec3 P, float r, float b, vec3 n) {
+  float x = RIN / r;
+  // thin-disk emission: zero at the inner edge, peaks near 4 r_s, falls as r^-3
+  float F = x * x * x * (1.0 - sqrt(x)) / 0.0567;
+  float Om = sqrt(0.5 / (r * r * r));
+  // the gas orbits about +y; ut is its dt/dτ (gravity and motion in GR, motion only when flat)
+  float ut = uFlat == 1 ? inversesqrt(1.0 - 0.5 / r) : inversesqrt(1.0 - 1.5 / r);
+  float g = uBoost / (ut * (1.0 + Om * b * n.y));
+  float T = pow(F, 0.25) * g;
+  float I = F * g * g * g * g;
 
-  function computeRulerTicks() {
-    rulerTicks = [state.rs];
-    let acc = 0, threshold = RULER_UNIT;
-    const steps = 3000;
-    const step = (RMAX - state.rs) / steps;
-    for (let i = 1; i <= steps; i++) {
-      const rm = state.rs + (i - 0.5) * step;
-      acc += (1 / Math.sqrt(Math.max(1e-6, 1 - state.rs / rm))) * step;
-      if (acc >= threshold) { rulerTicks.push(state.rs + i * step); threshold += RULER_UNIT; }
+  // swirling texture carried round at the orbital speed; two copies cross-fade
+  // so the shear never winds it up into a blur
+  float th = atan(P.z, P.x);
+  float per = 90.0;
+  float t1 = mod(uTime, per), t2 = mod(uTime + 0.5 * per, per);
+  float w1 = 1.0 - abs(2.0 * t1 / per - 1.0);
+  float a1 = th + Om * t1, a2 = th + Om * t2 + 1.3;
+  float n1 = fbm(vec3(cos(a1) * 2.2, sin(a1) * 2.2, r * 2.6));
+  float n2 = fbm(vec3(cos(a2) * 2.2 + 7.0, sin(a2) * 2.2, r * 2.6 + 3.0));
+  float tex = mix(n2, n1, w1);
+  float rings = 0.75 + 0.25 * sin(r * 5.3 + 2.0 * tex);
+  float m = (0.35 + 1.25 * tex * tex) * rings;
+
+  float edge = smoothstep(RIN, RIN + 0.18, r) * (1.0 - smoothstep(ROUT - 6.0, ROUT, r));
+  vec3 c = heat(T) * I * m * 1.6;
+  float a = clamp(0.25 + 0.9 * F, 0.0, 0.92) * edge * (0.55 + 0.6 * tex);
+  return vec4(c * edge, a);
+}
+
+vec3 sky(vec3 d, float px) {
+  vec3 c = vec3(0.004, 0.005, 0.011);
+  // a faint galactic band
+  vec3 nG = normalize(vec3(0.25, 0.9, 0.36));
+  float gb = dot(d, nG);
+  float cl = fbm(d * 3.2 + 4.0);
+  c += exp(-gb * gb * 16.0) * (0.012 + 0.05 * cl * cl) * vec3(0.55, 0.52, 0.8);
+  float dim = uGrid == 1 ? 0.35 : 1.0;
+  for (int l = 0; l < 3; l++) {
+    float sc = l == 0 ? 60.0 : (l == 1 ? 130.0 : 260.0);
+    vec3 p = d * sc;
+    vec3 cell = floor(p);
+    vec3 h = hash33(cell);
+    if (h.x > (l == 0 ? 0.86 : 0.9)) {
+      vec3 q = normalize(cell + 0.2 + 0.6 * hash33(cell + 17.0)) * sc;
+      float dd = length(p - q);
+      float rad = 0.06, pr = max(px * sc * 0.75, rad);
+      float I = (rad * rad) / (pr * pr) * exp(-dd * dd / (pr * pr)) * (0.5 + 2.5 * h.y * h.y * h.y) * (l == 0 ? 2.2 : 1.0);
+      vec3 tint = mix(vec3(1.0, 0.8, 0.62), vec3(0.72, 0.84, 1.0), h.z);
+      c += I * tint * dim;
     }
   }
+  return c;
+}
 
-  // proper (real) radial distance from the horizon out to r
-  function properDist(r: number) {
-    if (r <= state.rs) return 0;
-    const steps = 500;
-    const step = (r - state.rs) / steps;
-    let acc = 0;
-    for (let i = 0; i < steps; i++) {
-      const rm = state.rs + (i + 0.5) * step;
-      acc += step / Math.sqrt(Math.max(1e-6, 1 - state.rs / rm));
-    }
-    return acc;
-  }
+void main() {
+  vec2 ndc = gl_FragCoord.xy / uRes * 2.0 - 1.0;
+  vec3 d = normalize(uFwd + uRight * (ndc.x * uTanY * uAspect) + uUp * (ndc.y * uTanY));
+  float D = length(uEye);
+  vec3 e1 = uEye / D;
+  float dr = dot(d, e1);
+  vec3 tv = d - dr * e1;
+  float dt = length(tv);
+  vec3 e2 = dt > 1e-6 ? tv / dt : normalize(cross(e1, vec3(0.31, 0.87, 0.4)));
+  dt = max(dt, 1e-5);
+  vec3 n = cross(e1, e2);
+  bool isFlat = uFlat == 1;
+  float k = isFlat ? 0.0 : 1.5;
 
-  function ringPath(r: number) {
-    ctx.beginPath();
-    const N = 64;
-    for (let i = 0; i <= N; i++) {
-      const p = projRP(r, (i / N) * TAU);
-      i === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
-    }
-  }
+  // start: u = 1/D, and du/dφ from the angle the ray makes with the radial
+  // direction as the static camera measures it
+  float u = 1.0 / D;
+  float lap = isFlat ? 1.0 : sqrt(1.0 - u);
+  float w = -u * lap * dr / dt;
+  float b = D * dt / lap;
 
-  function drawFunnel() {
-    // radial spokes
-    ctx.lineWidth = 1;
-    for (let k = 0; k < 24; k++) {
-      const phi = (k / 24) * TAU;
-      ctx.beginPath();
-      for (let i = 0; i <= 40; i++) {
-        const r = state.rs + ((RMAX - state.rs) * i) / 40;
-        const p = projRP(r, phi);
-        i === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
+  float phi = 0.0;
+  float sPrev = e1.y;
+  vec3 col = vec3(0.0);
+  float A = 0.0;
+  int fate = 0; // 0 still going, 1 escaped, 2 fell in
+  for (int i = 0; i < 600; i++) {
+    if (i >= uSteps) break;
+    float hmax = u > 0.25 ? 0.05 : 0.11;
+    float h = clamp(0.08 * u / max(abs(w), 1e-6), 1e-4, hmax);
+    // RK4 on (u, w = du/dφ), w' = -u + k u²
+    float k1u = w, k1w = -u + k * u * u;
+    float u2 = u + 0.5 * h * k1u, w2 = w + 0.5 * h * k1w;
+    float k2u = w2, k2w = -u2 + k * u2 * u2;
+    float u3 = u + 0.5 * h * k2u, w3 = w + 0.5 * h * k2w;
+    float k3u = w3, k3w = -u3 + k * u3 * u3;
+    float u4 = u + h * k3u, w4 = w + h * k3w;
+    float k4u = w4, k4w = -u4 + k * u4 * u4;
+    float un = u + h / 6.0 * (k1u + 2.0 * k2u + 2.0 * k3u + k4u);
+    float wn = w + h / 6.0 * (k1w + 2.0 * k2w + 2.0 * k3w + k4w);
+    float phin = phi + h;
+    float sN = e1.y * cos(phin) + e2.y * sin(phin);
+    if (uDisk == 1 && sPrev * sN < 0.0 && A < 0.98) {
+      float f = sPrev / (sPrev - sN);
+      float uc = mix(u, un, f);
+      if (uc > 0.0) {
+        float rc = 1.0 / uc;
+        if (rc > RIN && rc < ROUT) {
+          float pc = phi + f * h;
+          vec3 P = rc * (cos(pc) * e1 + sin(pc) * e2);
+          vec4 c = disk(P, rc, b, n);
+          col += (1.0 - A) * c.a * c.rgb;
+          A += (1.0 - A) * c.a;
+        }
       }
-      ctx.strokeStyle = `rgba(${ink()},0.16)`;
-      ctx.stroke();
     }
-    // rings at equal coordinate r, coloured by clock rate
-    const rings = 22;
-    for (let k = 1; k <= rings; k++) {
-      const r = state.rs + ((RMAX - state.rs) * k) / rings;
-      ringPath(r);
-      ctx.strokeStyle = dilColor(dil(r), isLight() ? 0.6 : 0.5);
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
+    sPrev = sN;
+    phi = phin;
+    u = un;
+    w = wn;
+    if (u >= 1.0) { fate = 2; break; }
+    if (u <= 0.0 || (u < 0.004 && w < 0.0)) { fate = 1; break; }
+  }
+  // the direction the ray leaves in: dr/dφ along the radius plus r along φ
+  vec3 pr = cos(phi) * e1 + sin(phi) * e2;
+  vec3 pt = -sin(phi) * e1 + cos(phi) * e2;
+  vec3 esc = normalize(-w * pr + max(u, 0.0) * pt);
+
+  // derivatives only in uniform control flow, so the sky is looked up for every pixel
+  float px = length(fwidth(esc));
+  vec3 skyc = sky(esc, px);
+  // the sky grid: a target painted round the point straight behind the hole
+  // (as seen from the starting camera), rings every 10°, spokes every 30°
+  float th = acos(clamp(dot(esc, uTarget), -1.0, 1.0));
+  vec3 ax = normalize(cross(uTarget, vec3(0.0, 1.0, 0.0)));
+  vec3 ay = cross(ax, uTarget);
+  float az = atan(dot(esc, ay), dot(esc, ax)), az2 = atan(-dot(esc, ay), -dot(esc, ax));
+  float fTh = fwidth(th), fAz = min(fwidth(az), fwidth(az2)) * sin(th);
+  if (uGrid == 1) {
+    float spR = PI / 18.0, spS = PI / 6.0;
+    float dR = abs(fract(th / spR + 0.5) - 0.5) * spR;
+    float dS = abs(fract(az / spS + 0.5) - 0.5) * spS * sin(th);
+    float gR = (1.0 - smoothstep(0.0, max(fTh * 1.4, 0.004), dR)) * clamp(1.0 - fTh / (spR * 0.3), 0.0, 1.0);
+    float gS = (1.0 - smoothstep(0.0, max(fAz * 1.4, 0.004), dS)) * clamp(1.0 - fAz / (spS * 0.3), 0.0, 1.0)
+      * smoothstep(0.6 * spR, spR, th) * smoothstep(0.6 * spR, spR, PI - th);
+    // far hemisphere (behind the hole) teal, near hemisphere (behind you) violet
+    vec3 gc = th < 0.5 * PI ? vec3(0.10, 0.78, 0.70) : vec3(0.62, 0.42, 1.0);
+    if (abs(th - 0.5 * PI) < 0.5 * spR) gc = vec3(0.85, 0.85, 0.9);
+    skyc += 0.5 * gc * max(gR, gS);
+    // the gold spot dead behind the hole, and a rose one dead behind you
+    float cap = 0.035;
+    skyc += vec3(1.6, 1.0, 0.25) * (1.0 - smoothstep(cap - fTh, cap + fTh, th));
+    skyc += vec3(1.5, 0.35, 0.55) * (1.0 - smoothstep(cap - fTh, cap + fTh, PI - th));
+  }
+  if (fate == 1) col += (1.0 - A) * skyc;
+
+  vec3 c = vec3(1.0) - exp(-col * 1.35);
+  c = pow(c, vec3(0.9));
+  o = vec4(c, 1.0);
+}`;
+
+  type GLView = {
+    gl: WebGL2RenderingContext;
+    canvas: HTMLCanvasElement;
+    u: Record<string, WebGLUniformLocation | null>;
+  };
+
+  function makeGL(): GLView | null {
+    const glc = el('grgl') as HTMLCanvasElement;
+    const gl = glc.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
+    if (!gl) return null;
+    const sh = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        console.error('schwarzschild: shader failed to compile', gl.getShaderInfoLog(s));
+        return null;
+      }
+      return s;
+    };
+    const vs = sh(gl.VERTEX_SHADER, VS), fs = sh(gl.FRAGMENT_SHADER, FS);
+    if (!vs || !fs) return null;
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error('schwarzschild: shader failed to link', gl.getProgramInfoLog(prog));
+      return null;
     }
-    // event horizon (throat)
-    ringPath(state.rs);
-    ctx.fillStyle = isLight() ? 'rgba(20,20,26,0.9)' : 'rgba(0,0,0,0.92)';
-    ctx.fill();
-    ctx.strokeStyle = '#fbbf24';
-    ctx.lineWidth = 2.6;
-    ctx.stroke();
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const u: GLView['u'] = {};
+    for (const n of ['uRes', 'uTarget', 'uEye', 'uFwd', 'uRight', 'uUp', 'uTanY', 'uAspect', 'uTime', 'uBoost', 'uDisk', 'uGrid', 'uFlat', 'uSteps'])
+      u[n] = gl.getUniformLocation(prog, n);
+    return { gl, canvas: glc, u };
+  }
+  const glv = makeGL();
+
+  // the point of the sky straight behind the hole from the starting camera
+  const TARGET: V3 = [-Math.cos(0.1396) * Math.sin(0.35), -Math.sin(0.1396), -Math.cos(0.1396) * Math.cos(0.35)];
+
+  /** The camera: on a sphere of radius D round the hole, looking at it. */
+  function camera() {
+    const ct = Math.cos(state.tilt);
+    const eye: V3 = [state.D * ct * Math.sin(state.yaw), state.D * Math.sin(state.tilt), state.D * ct * Math.cos(state.yaw)];
+    const fwd = scale3(eye, -1 / state.D);
+    const right = unit(cross(fwd, [0, 1, 0]));
+    const up = cross(right, fwd);
+    // the field of view narrows as you back off, so the disk keeps filling the frame
+    const tanY = Math.max(0.24, Math.min(1.1, 9.5 / state.D));
+    return { eye, fwd, right, up, tanY };
   }
 
-  function billboardClock(sx: number, sy: number, radius: number, tau: number, r: number, label?: string) {
-    ctx.beginPath();
-    ctx.arc(sx, sy, radius, 0, TAU);
-    ctx.fillStyle = isLight() ? 'rgba(255,255,255,0.92)' : 'rgba(10,11,15,0.9)';
-    ctx.fill();
-    ctx.strokeStyle = dilColor(dil(r));
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-    // hand
-    const ang = -tau * 1.7 - Math.PI / 2;
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(sx + Math.cos(ang) * radius * 0.82, sy + Math.sin(ang) * radius * 0.82);
-    ctx.strokeStyle = `rgba(${ink()},1)`;
-    ctx.lineWidth = Math.max(1.4, radius * 0.11);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(sx, sy, Math.max(1.5, radius * 0.12), 0, TAU);
-    ctx.fillStyle = `rgba(${ink()},1)`;
-    ctx.fill();
-    if (label) {
-      ctx.fillStyle = css('--text-faint') || '#8b93a5';
-      ctx.font = "10px 'JetBrains Mono', monospace";
-      ctx.textAlign = 'center';
-      ctx.fillText(label, sx, sy + radius + 12);
-      ctx.textAlign = 'left';
+  // --- adaptive resolution ------------------------------------------------
+  // A few fixed levels, changed at most every 0.75 s from the time between
+  // back-to-back frames. Once the view holds still, one frame is drawn at full
+  // resolution.
+  const LEVELS = [0.25, 0.35, 0.5, 0.7, 1];
+  let level = 2, avg = 0.016, lastT = 0, lastChange = 0, refined = false, lastMove = 0;
+
+  function adapt(t: number) {
+    if (lastT) {
+      const dt = (t - lastT) / 1000;
+      if (dt < 2) {
+        avg = avg * 0.8 + Math.min(dt, 0.25) * 0.2;
+        if (t - lastChange > 750) {
+          let i = level;
+          if (avg > 0.024 && i > 0) i--;
+          else if (avg < 0.0175 && i < LEVELS.length - 1) i++;
+          if (i !== level) { level = i; lastChange = t; }
+        }
+      }
     }
+    lastT = t;
+  }
+
+  function renderGL(scaleOverride?: number) {
+    if (!glv) return;
+    const { gl, canvas: glc, u } = glv;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const s = scaleOverride ?? LEVELS[level];
+    const w = Math.max(1, Math.round(W * dpr * s)), h = Math.max(1, Math.round(H * dpr * s));
+    if (glc.width !== w || glc.height !== h) { glc.width = w; glc.height = h; }
+    const cam = camera();
+    gl.viewport(0, 0, w, h);
+    gl.uniform2f(u.uRes, w, h);
+    gl.uniform3f(u.uEye, ...cam.eye);
+    gl.uniform3f(u.uTarget, ...TARGET);
+    gl.uniform3f(u.uFwd, ...cam.fwd);
+    gl.uniform3f(u.uRight, ...cam.right);
+    gl.uniform3f(u.uUp, ...cam.up);
+    gl.uniform1f(u.uTanY, cam.tanY);
+    gl.uniform1f(u.uAspect, W / H);
+    gl.uniform1f(u.uTime, state.anim);
+    gl.uniform1f(u.uBoost, state.flat ? 1 : 1 / Math.sqrt(1 - 1 / state.D));
+    gl.uniform1i(u.uDisk, state.disk ? 1 : 0);
+    gl.uniform1i(u.uGrid, state.grid ? 1 : 0);
+    gl.uniform1i(u.uFlat, state.flat ? 1 : 0);
+    gl.uniform1i(u.uSteps, s < 0.4 ? 260 : 420);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // --- the same tracer on the CPU, for placing labels ---------------------
+  /** Follow one ray; returns whether it falls in and its first disk crossing. */
+  function traceRay(d: V3) {
+    const D = state.D, eye = camera().eye;
+    const e1 = scale3(eye, 1 / D);
+    const dr = dot(d, e1);
+    const tv = add3(d, scale3(e1, -dr));
+    const dt = Math.max(1e-5, Math.hypot(...tv));
+    const e2 = scale3(tv, 1 / dt);
+    const k = state.flat ? 0 : 1.5;
+    let u = 1 / D;
+    const lap = state.flat ? 1 : Math.sqrt(1 - u);
+    let w = (-u * lap * dr) / dt, phi = 0, sPrev = e1[1];
+    for (let i = 0; i < 600; i++) {
+      const h = Math.min(Math.max((0.08 * u) / Math.max(Math.abs(w), 1e-6), 1e-4), u > 0.25 ? 0.05 : 0.11);
+      const f = (uu: number) => -uu + k * uu * uu;
+      const k1u = w, k1w = f(u);
+      const k2u = w + 0.5 * h * k1w, k2w = f(u + 0.5 * h * k1u);
+      const k3u = w + 0.5 * h * k2w, k3w = f(u + 0.5 * h * k2u);
+      const k4u = w + h * k3w, k4w = f(u + h * k3u);
+      const un = u + (h / 6) * (k1u + 2 * k2u + 2 * k3u + k4u);
+      const wn = w + (h / 6) * (k1w + 2 * k2w + 2 * k3w + k4w);
+      const sN = e1[1] * Math.cos(phi + h) + e2[1] * Math.sin(phi + h);
+      if (sPrev * sN < 0) {
+        const fr = sPrev / (sPrev - sN), uc = u + (un - u) * fr;
+        if (uc > 0 && 1 / uc > RIN && 1 / uc < ROUT) {
+          const pc = phi + fr * h;
+          const P = add3(scale3(e1, Math.cos(pc) / uc), scale3(e2, Math.sin(pc) / uc));
+          return { fell: false, hit: P };
+        }
+      }
+      sPrev = sN; phi += h; u = un; w = wn;
+      if (u >= 1) return { fell: true, hit: null };
+      if (u <= 0 || (u < 0.004 && w < 0)) return { fell: false, hit: null };
+    }
+    return { fell: true, hit: null };
+  }
+
+  /** Angular radius of the shadow seen by the static camera. */
+  function shadowAngle() {
+    const D = state.D;
+    return state.flat ? Math.asin(1 / D) : Math.asin(Math.min(1, (BC * Math.sqrt(1 - 1 / D)) / D));
+  }
+
+  let labelKey = '';
+  let farSide: number | null = null;
+  /** Up the middle of the picture, the first point where the disk's far side shows over the top. */
+  function findFarSide() {
+    const key = [state.D, state.tilt, state.yaw, state.flat, state.disk].join();
+    if (key === labelKey) return;
+    labelKey = key;
+    farSide = null;
+    if (!state.disk || state.flat || Math.abs(state.tilt) > 0.6) return;
+    const cam = camera();
+    const R = (H / 2) * (Math.tan(shadowAngle()) / cam.tanY);
+    const horiz = unit([cam.eye[0], 0, cam.eye[2]]);
+    const sgn = state.tilt >= 0 ? 1 : -1;
+    for (let y = R * 1.1 + 2; y < H / 2 - 10; y += 1.5) {
+      const ny = (sgn * y) / (H / 2);
+      const d = unit(add3(cam.fwd, scale3(cam.up, ny * cam.tanY)));
+      const t = traceRay(d);
+      if (t.hit && dot(t.hit, horiz) < 0) {
+        farSide = y;
+        return;
+      }
+    }
+  }
+
+  function txt(s: string, x: number, y: number, colour: string, align: CanvasTextAlign = 'left', size = 12, weight = '') {
+    ctx.font = `${weight} ${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = align;
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+    ctx.strokeText(s, x, y);
+    ctx.fillStyle = colour;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  function drawSeeOverlay() {
+    ctx.clearRect(0, 0, W, H);
+    if (!glv) {
+      ctx.fillStyle = '#05060a';
+      ctx.fillRect(0, 0, W, H);
+      txt('This view needs WebGL2, which this browser does not offer.', W / 2, H / 2 - 8, 'rgba(232,233,236,0.85)', 'center', 14);
+      txt('The Orbits view works without it.', W / 2, H / 2 + 16, 'rgba(232,233,236,0.6)', 'center', 12);
+      return;
+    }
+    const cam = camera();
+    const cx = W / 2, cy = H / 2;
+    const pxPerTan = H / 2 / cam.tanY;
+    if (state.guides) {
+      const Rs = pxPerTan * Math.tan(shadowAngle());
+      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = state.flat ? 'rgba(255,255,255,0.75)' : AMBER;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Rs, 0, Math.PI * 2);
+      ctx.stroke();
+      // the horizon as it would look if light went straight
+      if (!state.flat) {
+        const Rh = pxPerTan * Math.tan(Math.asin(1 / state.D));
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, Rh, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      const a = -0.72;
+      const lx = cx + Math.cos(a) * Rs, ly = cy + Math.sin(a) * Rs;
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lx, ly);
+      ctx.lineTo(lx + 46, ly - 34);
+      ctx.lineTo(lx + 56, ly - 34);
+      ctx.stroke();
+      if (state.flat) {
+        txt('black ball, radius 1.00 rₛ', lx + 60, ly - 30, 'rgba(255,255,255,0.92)');
+      } else {
+        txt(`shadow, radius ${BC.toFixed(2)} rₛ`, lx + 60, ly - 30, AMBER, 'left', 12, '600');
+        txt('the photon ring hugs its edge', lx + 60, ly - 14, 'rgba(255,255,255,0.7)', 'left', 11);
+        const Rh = pxPerTan * Math.tan(Math.asin(1 / state.D));
+        const hx = cx - Rh * 0.71, hy = cy + Rh * 0.71;
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        ctx.lineTo(cx - Rs - 40, cy + Rs * 0.95);
+        ctx.stroke();
+        txt('horizon rₛ, if light went straight', cx - Rs - 44, cy + Rs * 0.95 + 4, 'rgba(255,255,255,0.85)', 'right', 11);
+      }
+      findFarSide();
+      if (farSide !== null) {
+        const sgn = state.tilt >= 0 ? -1 : 1;
+        const y = cy + sgn * farSide;
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+        ctx.beginPath();
+        ctx.moveTo(cx - 4, y);
+        ctx.lineTo(cx - 70, y + sgn * 26);
+        ctx.lineTo(cx - 80, y + sgn * 26);
+        ctx.stroke();
+        txt('far side of the disk,', cx - 84, y + sgn * 26 - 2, 'rgba(255,255,255,0.9)', 'right', 11);
+        txt(state.tilt >= 0 ? 'bent up over the top' : 'bent down under the bottom', cx - 84, y + sgn * 26 + 12, 'rgba(255,255,255,0.7)', 'right', 11);
+      }
+    }
+    // where you are
+    const clock = Math.sqrt(1 - 1 / state.D);
+    txt(`camera at r = ${state.D.toFixed(1)} rₛ`, 16, H - 34, 'rgba(255,255,255,0.75)', 'left', 12);
+    txt(`your clock runs at ${clock.toFixed(3)} of a far clock`, 16, H - 16, 'rgba(160,200,255,0.85)', 'left', 12);
+    if (state.flat) txt('FLAT SPACE: light goes straight', W - 16, 26, 'rgba(255,255,255,0.85)', 'right', 12, '600');
+  }
+
+  // =====================================================================
+  //  Orbits: a massive test particle on an exact geodesic
+  // =====================================================================
+  //
+  // In proper time τ, with L the angular momentum and E the energy per unit
+  // mass:  d²r/dτ² = −M/r² + L²/r³ − 3ML²/r⁴,  dφ/dτ = L/r²,  dt/dτ = E/(1 − r_s/r).
+  // Dropping the last term of the first line gives Newton.
+
+  type Body = { r: number; pr: number; phi: number; L: number; alive: boolean };
+  const acc = (r: number, L: number, gr: boolean) => -M / (r * r) + (L * L) / (r * r * r) - (gr ? (3 * M * L * L) / (r * r * r * r) : 0);
+  const V2 = (r: number, L: number) => (1 - 1 / r) * (1 + (L * L) / (r * r));
+  const VN2 = (r: number, L: number) => 1 - 1 / r + (L * L) / (r * r);
+
+  function rk4(b: Body, h: number, gr: boolean) {
+    const { L } = b;
+    const r1 = b.r, p1 = b.pr;
+    const a1 = acc(r1, L, gr);
+    const r2 = r1 + 0.5 * h * p1, p2 = p1 + 0.5 * h * a1, a2 = acc(r2, L, gr);
+    const r3 = r1 + 0.5 * h * p2, p3 = p1 + 0.5 * h * a2, a3 = acc(r3, L, gr);
+    const r4 = r1 + h * p3, p4 = p1 + h * a3, a4 = acc(r4, L, gr);
+    b.r += (h / 6) * (p1 + 2 * p2 + 2 * p3 + p4);
+    b.pr += (h / 6) * (a1 + 2 * a2 + 2 * a3 + a4);
+    b.phi += (h / 6) * L * (1 / (r1 * r1) + 2 / (r2 * r2) + 2 / (r3 * r3) + 1 / (r4 * r4));
+  }
+
+  const orb = {
+    p: { r: 14, pr: 0, phi: 0, L: 2.17, alive: true } as Body,
+    n: { r: 14, pr: 0, phi: 0, L: 2.17, alive: true } as Body,
+    E: 0.975,
+    start: { r: 14, pr: 0, phi: 0, L: 2.17 },
+    t: 0,
+    tau: 0,
+    fate: '' as '' | 'frozen' | 'escaped',
+    escapedAt: 0,
+    view: 16,
+    prec: NaN as number,
+    trail: [] as { x: number; y: number; rate: number }[],
+    ntrail: [] as { x: number; y: number }[],
+    preset: 'rosette',
+  };
+
+  const rate = (r: number) => Math.max(0, (1 - 1 / r) / orb.E);
+
+  function launch(r: number, pr: number, phi: number, L: number) {
+    orb.start = { r, pr, phi, L };
+    orb.E = Math.sqrt(pr * pr + V2(r, L));
+    orb.p = { r, pr, phi, L, alive: true };
+    orb.n = { r, pr, phi, L, alive: true };
+    orb.t = 0;
+    orb.tau = 0;
+    orb.fate = '';
+    orb.trail = [];
+    orb.ntrail = [];
+    orb.prec = precession(L, orb.E);
+    pushTrail();
+  }
+
+  /** Advance the far-away clock by Δt; the particle's own clock gets Δτ = Δt (1 − r_s/r)/E. */
+  function advance(Dt: number) {
+    const b = orb.p;
+    if (b.alive) {
+      let rem = Dt, guard = 0;
+      let lastX = b.r * Math.cos(b.phi), lastY = b.r * Math.sin(b.phi);
+      while (rem > 1e-9 && guard++ < 4000) {
+        const f = 1 - 1 / b.r;
+        let h = Math.min(0.015 * Math.pow(b.r, 1.5), (rem * f) / orb.E);
+        h = Math.min(h, (0.2 * (b.r - 1)) / Math.max(Math.abs(b.pr), 1e-6));
+        h = Math.max(h, 1e-7);
+        rk4(b, h, true);
+        orb.tau += h;
+        const used = Math.min(rem, (h * orb.E) / Math.max(1e-9, 0.5 * (f + (1 - 1 / b.r))));
+        rem -= used;
+        orb.t += used;
+        const x = b.r * Math.cos(b.phi), y = b.r * Math.sin(b.phi);
+        if (Math.hypot(x - lastX, y - lastY) > 0.1 * Math.max(1, orb.view / 14)) {
+          pushTrail();
+          lastX = x;
+          lastY = y;
+        }
+        if (b.r < 1.0015) {
+          // to a far observer it never crosses: Δτ per Δt has gone to zero
+          b.alive = false;
+          orb.fate = 'frozen';
+          break;
+        }
+        if (b.r > 70 && b.pr > 0) {
+          b.alive = false;
+          orb.fate = 'escaped';
+          orb.escapedAt = performance.now();
+          break;
+        }
+      }
+      pushTrail();
+    }
+    const n = orb.n;
+    if (n.alive) {
+      let rem = Dt, guard = 0;
+      while (rem > 1e-9 && guard++ < 4000) {
+        const h = Math.min(0.015 * Math.pow(n.r, 1.5), rem);
+        rk4(n, h, false);
+        rem -= h;
+        if (n.r < 1 || n.r > 70) { n.alive = false; break; }
+      }
+      orb.ntrail.push({ x: n.r * Math.cos(n.phi), y: n.r * Math.sin(n.phi) });
+      if (orb.ntrail.length > 1800) orb.ntrail.shift();
+    }
+  }
+
+  function pushTrail() {
+    const b = orb.p;
+    orb.trail.push({ x: b.r * Math.cos(b.phi), y: b.r * Math.sin(b.phi), rate: rate(b.r) });
+    if (orb.trail.length > 3200) orb.trail.shift();
+  }
+
+  /** Angle the closest approach moves on per radial period, from u'' + u = M/L² + 3Mu². */
+  function precession(L: number, E: number) {
+    const { rp, ra } = turning(L, E);
+    if (!(rp > 1) || !(ra > rp + 0.3) || E >= 1) return NaN;
+    const ff = (u: number) => -u + M / (L * L) + 3 * M * u * u;
+    let u = 1 / ra, w = 0, phi = 0;
+    const h = 2e-3;
+    for (let i = 0; i < 40000; i++) {
+      const k1u = w, k1w = ff(u);
+      const k2u = w + 0.5 * h * k1w, k2w = ff(u + 0.5 * h * k1u);
+      const k3u = w + 0.5 * h * k2w, k3w = ff(u + 0.5 * h * k2u);
+      const k4u = w + h * k3w, k4w = ff(u + h * k3u);
+      const wn = w + (h / 6) * (k1w + 2 * k2w + 2 * k3w + k4w);
+      u += (h / 6) * (k1u + 2 * k2u + 2 * k3u + k4u);
+      phi += h;
+      if (i > 2 && w > 0 && wn <= 0) return 2 * (phi - (h * wn) / (wn - w)) - 2 * Math.PI;
+      w = wn;
+      if (u > 1) return NaN;
+    }
+    return NaN;
+  }
+
+  /** Inner and outer turning points of the radial motion that contains the start. */
+  function turning(L: number, E: number) {
+    const E2 = E * E;
+    // outer: walk out from the start radius until V > E
+    let ra = NaN, rp = NaN;
+    const r0 = orb.start.r;
+    for (let r = r0; r < 400; r += 0.01) if (V2(r, L) > E2) { ra = r; break; }
+    for (let r = r0; r > 1; r -= 0.002) if (V2(r, L) > E2) { rp = r; break; }
+    return { rp, ra };
+  }
+
+  /** Extrema of V(r): the barrier top (inner) and the well bottom (outer), if L allows them. */
+  function extrema(L: number) {
+    const L2 = L * L;
+    // dV²/dr = 0  ⇔  r² − 2L² r + 3L² = 0 (with r_s = 1)
+    const disc = L2 * L2 - 3 * L2;
+    if (disc <= 0) return null;
+    const s = Math.sqrt(disc);
+    return { top: L2 - s, well: L2 + s };
+  }
+
+  /** Start on the given (L, E): at the outer turning point, or far out and falling in if unbound. */
+  function launchLE(L: number, E: number) {
+    const E2 = E * E;
+    let r0 = NaN;
+    const ex = extrema(L);
+    const floor = ex ? ex.top : 1.01;
+    if (E < 1) {
+      for (let r = 120; r > floor; r -= 0.01) if (V2(r, L) <= E2) { r0 = r; break; }
+    } else r0 = 30;
+    if (!(r0 > 1)) {
+      // no room at this energy: sit at the bottom of the well instead
+      const r = ex ? ex.well : 12;
+      launch(r, 0, 0, L);
+      return;
+    }
+    const pr = -Math.sqrt(Math.max(0, E2 - V2(r0, L)));
+    launch(r0, pr, 0, L);
+  }
+
+  const PRESETS: Record<string, { r: number; L: number; E?: number }> = {
+    rosette: { r: 14, L: 2.1717 },
+    circle: { r: 6, L: 2 },
+    whirl: { r: 16.387, L: 1.9 },
+    flyby: { r: 30, L: 2.05, E: 1.002 },
+    plunge: { r: 12, L: 1.6 },
+  };
+  function presetLaunch(name: string) {
+    const p = PRESETS[name];
+    orb.preset = name;
+    const pr = p.E ? -Math.sqrt(Math.max(0, p.E * p.E - V2(p.r, p.L))) : 0;
+    launch(p.r, pr, 0, p.L);
+    syncOrbitSliders();
+  }
+
+  // --- drawing the orbit view --------------------------------------------
+  const OC = { x: 330, y: 300 }; // the hole on screen
+  let pxPerRs = 18;
+
+  function rateColour(q: number, a: number) {
+    // slow clocks warm, normal clocks cool
+    const t = Math.max(0, Math.min(1, (q - 0.45) / 0.55));
+    const stops = [[251, 113, 133], [192, 132, 252], [96, 165, 250]];
+    const s = t * 2, i = Math.min(1, Math.floor(s)), f = s - i;
+    const c = stops[i].map((v, k) => v + (stops[i + 1][k] - v) * f);
+    if (light()) c.forEach((v, k) => (c[k] = v * 0.78));
+    return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+  }
+
+  const sx = (x: number) => OC.x + x * pxPerRs;
+  const sy = (y: number) => OC.y - y * pxPerRs;
+
+  function label(s: string, x: number, y: number, colour: string, align: CanvasTextAlign = 'left', size = 11) {
+    ctx.font = `${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = align;
+    ctx.fillStyle = colour;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  function drawOrbitView() {
+    readTheme();
+    const lt = light();
+    ctx.clearRect(0, 0, W, H);
+    // zoom smoothly to fit the orbit
+    let far = 6;
+    for (let i = Math.max(0, orb.trail.length - 900); i < orb.trail.length; i++) far = Math.max(far, Math.hypot(orb.trail[i].x, orb.trail[i].y));
+    if (dragging) far = Math.max(far, orb.view * 0.9);
+    const target = Math.min(32, Math.max(6.5, far * 1.12));
+    orb.view += (target - orb.view) * 0.08;
+    pxPerRs = 270 / orb.view;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, 640, H);
+    ctx.clip();
+    // rings of constant r
+    ctx.lineWidth = 1;
+    const step = orb.view > 20 ? 10 : 5;
+    for (let r = step; r < orb.view * 1.6; r += step) {
+      ctx.strokeStyle = ink(0.07);
+      ctx.beginPath();
+      ctx.arc(OC.x, OC.y, r * pxPerRs, 0, Math.PI * 2);
+      ctx.stroke();
+      label(`${r} rₛ`, OC.x + r * pxPerRs * 0.7071 + 4, OC.y + r * pxPerRs * 0.7071 + 12, ink(0.3), 'left', 10);
+    }
+    // the hole
+    const hr = pxPerRs;
+    if (!lt) {
+      const g = ctx.createRadialGradient(OC.x, OC.y, hr * 0.9, OC.x, OC.y, hr * 2.4);
+      g.addColorStop(0, 'rgba(245,158,11,0.22)');
+      g.addColorStop(1, 'rgba(245,158,11,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(OC.x, OC.y, hr * 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(OC.x, OC.y, hr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = lt ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.28)';
+    ctx.stroke();
+    // photon sphere and ISCO
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = AMBER;
+    ctx.beginPath();
+    ctx.arc(OC.x, OC.y, 1.5 * pxPerRs, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = TEAL;
+    ctx.beginPath();
+    ctx.arc(OC.x, OC.y, 3 * pxPerRs, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (pxPerRs > 14) {
+      label('ISCO', OC.x, OC.y - 3 * pxPerRs - 5, TEAL, 'center', 10);
+    }
+
+    // Newton's orbit for the same start
+    if (state.newton && orb.ntrail.length > 1) {
+      ctx.strokeStyle = lt ? 'rgba(90,96,110,0.7)' : 'rgba(170,175,190,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      orb.ntrail.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const n = orb.n;
+      if (n.alive) {
+        ctx.fillStyle = lt ? 'rgba(90,96,110,0.9)' : 'rgba(200,204,214,0.9)';
+        ctx.beginPath();
+        ctx.arc(sx(n.r * Math.cos(n.phi)), sy(n.r * Math.sin(n.phi)), 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // the trail, fading with age and coloured by the clock rate
+    const T = orb.trail, N = T.length;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = 1; i < N; i += 10) {
+      const age = (N - i) / N;
+      const a = Math.pow(1 - age, 1.3) * 0.82 + 0.18;
+      ctx.strokeStyle = rateColour(T[i].rate, a);
+      ctx.lineWidth = 1.2 + 1.6 * (1 - age);
+      ctx.beginPath();
+      ctx.moveTo(sx(T[i - 1].x), sy(T[i - 1].y));
+      for (let j = i; j < Math.min(N, i + 11); j++) ctx.lineTo(sx(T[j].x), sy(T[j].y));
+      ctx.stroke();
+    }
+    // the particle
+    const b = orb.p;
+    const px = sx(b.r * Math.cos(b.phi)), py = sy(b.r * Math.sin(b.phi));
+    const q = rate(b.r);
+    if (!lt) {
+      const g = ctx.createRadialGradient(px, py, 0, px, py, 18);
+      g.addColorStop(0, rateColour(q, 0.6));
+      g.addColorStop(1, rateColour(q, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(px, py, 18, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = rateColour(q, 1);
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (orb.fate === 'frozen') label('frozen at the horizon, as seen from far away', px + 12, py - 10, ink(0.8), 'left', 11);
+
+    // the launch arrow and the path it would take
+    if (dragging && drag) {
+      if (preview.length > 1) {
+        ctx.strokeStyle = ink(0.35);
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        preview.forEach((p, i) => (i ? ctx.lineTo(sx(p[0]), sy(p[1])) : ctx.moveTo(sx(p[0]), sy(p[1]))));
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      const { x0, y0, x1, y1 } = drag;
+      ctx.strokeStyle = ink(0.9);
+      ctx.fillStyle = ink(0.9);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+      const ang = Math.atan2(y1 - y0, x1 - x0);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - 10 * Math.cos(ang - 0.4), y1 - 10 * Math.sin(ang - 0.4));
+      ctx.lineTo(x1 - 10 * Math.cos(ang + 0.4), y1 - 10 * Math.sin(ang + 0.4));
+      ctx.fill();
+      const v = Math.min(0.98, Math.hypot(x1 - x0, y1 - y0) / VPX);
+      label(`v = ${v.toFixed(2)}c`, x1 + 8, y1 - 8, ink(0.85), 'left', 11);
+    }
+    ctx.restore();
+
+    drawPotential();
+    drawClocks();
+  }
+
+  // --- the effective potential inset ----------------------------------------
+  const PB = { x: 676, y: 46, w: 262, h: 236 };
+  function drawPotential() {
+    const lt = light();
+    const L = Math.abs(orb.p.L), E = orb.E;
+    ctx.fillStyle = ink(0.03);
+    ctx.fillRect(PB.x - 12, PB.y - 34, PB.w + 22, PB.h + 70);
+    label('Effective potential V(r)', PB.x - 2, PB.y - 16, ink(0.7), 'left', 11.5);
+    const rMax = Math.min(40, Math.max(14, orb.view * 1.1));
+    const ex = extrema(L);
+    let lo = E, hi = Math.max(E, 1);
+    if (ex) {
+      lo = Math.min(lo, Math.sqrt(V2(ex.well, L)));
+      hi = Math.max(hi, Math.min(1.08, Math.sqrt(V2(ex.top, L))));
+    }
+    lo -= 0.03;
+    hi += 0.02;
+    if (hi - lo < 0.06) lo = hi - 0.06;
+    const X = (r: number) => PB.x + ((r - 1) / (rMax - 1)) * PB.w;
+    const Y = (v: number) => PB.y + PB.h - ((v - lo) / (hi - lo)) * PB.h;
+    // axes
+    ctx.strokeStyle = ink(0.22);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PB.x, PB.y);
+    ctx.lineTo(PB.x, PB.y + PB.h);
+    ctx.lineTo(PB.x + PB.w, PB.y + PB.h);
+    ctx.stroke();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PB.x, PB.y - 2, PB.w + 2, PB.h + 2);
+    ctx.clip();
+    // forbidden region (V above E) shaded
+    ctx.fillStyle = ink(0.06);
+    ctx.beginPath();
+    ctx.moveTo(X(1), Y(E));
+    for (let i = 0; i <= 220; i++) {
+      const r = 1 + ((rMax - 1) * i) / 220;
+      ctx.lineTo(X(r), Y(Math.max(E, Math.sqrt(V2(r, L)))));
+    }
+    ctx.lineTo(X(rMax), Y(E));
+    ctx.fill();
+    const curve = (f: (r: number) => number, colour: string, width: number, dash: number[] = []) => {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      for (let i = 0; i <= 260; i++) {
+        const r = 1.001 + ((rMax - 1.001) * i) / 260;
+        const y = Y(Math.sqrt(Math.max(0, f(r))));
+        i ? ctx.lineTo(X(r), y) : ctx.moveTo(X(r), y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    if (state.newton) curve((r) => VN2(r, L), lt ? 'rgba(90,96,110,0.8)' : 'rgba(170,175,190,0.75)', 1.4, [4, 4]);
+    curve((r) => V2(r, L), lt ? '#7c3aed' : '#c084fc', 2.2);
+    // the energy level
+    ctx.strokeStyle = CLOCK;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(PB.x, Y(E));
+    ctx.lineTo(PB.x + PB.w, Y(E));
+    ctx.stroke();
+    ctx.restore();
+    label(`E = ${E.toFixed(4)}`, PB.x + PB.w, Y(E) - 5, CLOCK, 'right', 10.5);
+    if (1 > lo && 1 < hi) {
+      ctx.strokeStyle = ink(0.15);
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(PB.x, Y(1));
+      ctx.lineTo(PB.x + PB.w, Y(1));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label('E = 1: at rest far away', PB.x + PB.w - 2, Y(1) - 4, ink(0.4), 'right', 9.5);
+    }
+    // the particle on its energy line
+    const r = orb.p.r;
+    if (r <= rMax) {
+      ctx.fillStyle = rateColour(rate(r), 1);
+      ctx.beginPath();
+      ctx.arc(X(r), Y(E), 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // r axis ticks: photon sphere, ISCO
+    for (const [rv, c, t] of [[1.5, AMBER, '1.5'], [3, TEAL, '3']] as [number, string, string][]) {
+      ctx.strokeStyle = c;
+      ctx.beginPath();
+      ctx.moveTo(X(rv), PB.y + PB.h);
+      ctx.lineTo(X(rv), PB.y + PB.h + 5);
+      ctx.stroke();
+      label(t, X(rv), PB.y + PB.h + 16, c, 'center', 9.5);
+    }
+    label(`${rMax.toFixed(0)} rₛ`, PB.x + PB.w, PB.y + PB.h + 16, ink(0.4), 'right', 9.5);
+    label('r', PB.x + PB.w / 2 + 30, PB.y + PB.h + 16, ink(0.4), 'center', 10);
+    if (ex) label('barrier top', X(ex.top) + 9, Y(Math.min(hi - 0.006, Math.sqrt(V2(ex.top, L)))) + 4, ink(0.5), 'left', 9.5);
+    else label('no barrier, no stable orbit', PB.x + PB.w - 4, PB.y + 14, ink(0.55), 'right', 10);
+  }
+
+  // --- the two clocks ------------------------------------------------------
+  function dial(x: number, y: number, R: number, time: number, colour: string, name: string, value: string) {
+    ctx.strokeStyle = ink(0.3);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      ctx.strokeStyle = ink(k % 3 ? 0.18 : 0.4);
+      ctx.beginPath();
+      ctx.moveTo(x + Math.sin(a) * R * 0.82, y - Math.cos(a) * R * 0.82);
+      ctx.lineTo(x + Math.sin(a) * R * 0.95, y - Math.cos(a) * R * 0.95);
+      ctx.stroke();
+    }
+    const a = ((time / 200) % 1) * Math.PI * 2;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.sin(a) * R * 0.78, y - Math.cos(a) * R * 0.78);
+    ctx.stroke();
+    ctx.fillStyle = colour;
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    label(name, x, y + R + 16, ink(0.65), 'center', 10.5);
+    label(value, x, y + R + 30, colour, 'center', 11);
   }
 
   function drawClocks() {
-    const items = CLOCK_FR.map((fr, i) => {
-      const r = state.rs + (RMAX - state.rs) * fr;
-      const p = projRP(r, CLOCK_PHI);
-      return { p, r, tau: clockTau[i] };
-    }).sort((a, b) => b.p.zc - a.p.zc);
-    for (const it of items) {
-      if (it.p.zc <= 0.1) continue;
-      billboardClock(it.p.sx, it.p.sy, Math.max(9, 15 * it.p.s), it.tau, it.r);
-    }
-  }
-
-  const RULER_A = '#7c8cff';
-  const RULER_B = '#2dd4bf';
-
-  function drawRuler() {
-    // identical proper-length rods laid along the funnel (real space)
-    for (let i = 0; i < rulerTicks.length - 1; i++) {
-      const rA = rulerTicks[i], rB = rulerTicks[i + 1];
-      ctx.beginPath();
-      const seg = 8;
-      for (let j = 0; j <= seg; j++) {
-        const r = rA + ((rB - rA) * j) / seg;
-        const p = projRP(r, RULER_PHI);
-        j === 0 ? ctx.moveTo(p.sx, p.sy) : ctx.lineTo(p.sx, p.sy);
-      }
-      ctx.strokeStyle = i % 2 === 0 ? RULER_A : RULER_B;
-      ctx.lineWidth = 5;
-      ctx.lineCap = 'butt';
-      ctx.stroke();
-    }
-    drawRulerInset();
-  }
-
-  // Flat "coordinate map": the SAME identical 1-metre rods, but placed by their
-  // r coordinate. Near the horizon a real metre spans little r, so the blocks
-  // pile up there: that crowding is the radial stretching, made explicit.
-  function drawRulerInset() {
-    const x0 = 44, x1 = W - 26, yB = H - 40;
-    const rA = state.rs, rB = RMAX;
-    const xOf = (r: number) => x0 + ((r - rA) / (rB - rA)) * (x1 - x0);
-
-    ctx.fillStyle = isLight() ? 'rgba(255,255,255,0.82)' : 'rgba(8,9,13,0.72)';
-    ctx.fillRect(x0 - 16, yB - 40, x1 - x0 + 34, 66);
-
-    ctx.fillStyle = css('--text-faint') || '#8b93a5';
-    ctx.font = "11px 'JetBrains Mono', monospace";
-    ctx.fillText('each block = 1 real metre · they crowd into little r near the mass', x0, yB - 26);
-
-    // metre blocks (equal real length, unequal r footprint)
-    for (let i = 0; i < rulerTicks.length - 1; i++) {
-      const a = xOf(rulerTicks[i]);
-      const b = xOf(rulerTicks[i + 1]);
-      ctx.fillStyle = i % 2 === 0 ? RULER_A : RULER_B;
-      ctx.fillRect(a, yB - 16, Math.max(0.7, b - a - 0.7), 15);
-    }
-
-    // coordinate axis + even integer ticks
-    ctx.strokeStyle = `rgba(${ink()},0.45)`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x0, yB);
-    ctx.lineTo(x1, yB);
-    ctx.stroke();
-    ctx.fillStyle = css('--text-faint') || '#8b93a5';
-    ctx.font = "10px 'JetBrains Mono', monospace";
+    const y0 = 380;
+    ctx.fillStyle = ink(0.03);
+    ctx.fillRect(PB.x - 12, y0 - 34, PB.w + 22, 240);
+    label('Clocks', PB.x - 2, y0 - 16, ink(0.7), 'left', 11.5);
+    const q = rate(orb.p.r);
+    dial(PB.x + 58, y0 + 50, 44, orb.t, ink(0.85), 'far away', `t = ${orb.t.toFixed(0)}`);
+    dial(PB.x + PB.w - 58, y0 + 50, 44, orb.tau, rateColour(q, 1), 'on the particle', `τ = ${orb.tau.toFixed(0)}`);
+    label('dτ/dt now', PB.x + PB.w / 2, y0 + 150, ink(0.5), 'center', 10.5);
+    ctx.font = '600 22px ui-monospace, SFMono-Regular, Menlo, monospace';
     ctx.textAlign = 'center';
-    for (let r = Math.ceil(rA + 1e-6); r <= rB; r++) {
-      const x = xOf(r);
-      ctx.beginPath();
-      ctx.moveTo(x, yB);
-      ctx.lineTo(x, yB + 5);
-      ctx.stroke();
-      ctx.fillText(String(r), x, yB + 16);
-    }
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillText('rₛ', xOf(rA), yB + 16);
+    ctx.fillStyle = rateColour(q, 1);
+    ctx.fillText(q.toFixed(3), PB.x + PB.w / 2, y0 + 176);
     ctx.textAlign = 'left';
-
-    // probe marker
-    const px = Math.max(x0, Math.min(x1, xOf(state.probe)));
-    ctx.strokeStyle = `rgba(${ink()},0.95)`;
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(px, yB - 20);
-    ctx.lineTo(px, yB + 3);
-    ctx.stroke();
   }
 
-  function drawProbe() {
-    ringPath(state.probe);
-    ctx.strokeStyle = `rgba(${ink()},0.95)`;
-    ctx.lineWidth = 2.4;
-    ctx.stroke();
-    const p = projRP(state.probe, CLOCK_PHI);
-    if (p.zc > 0.1) billboardClock(p.sx, p.sy, Math.max(13, 22 * p.s), probeTau, state.probe, `r/rₛ = ${(state.probe / state.rs).toFixed(2)}`);
+  // --- the words and numbers -------------------------------------------------
+  function orbitKind() {
+    if (orb.fate === 'frozen') return 'plunged';
+    if (orb.fate === 'escaped') return 'escaped';
+    const L = Math.abs(orb.p.L), E = orb.E;
+    const ex = extrema(L);
+    if (ex && E < Math.sqrt(V2(ex.top, L)) && orb.p.r > ex.top) return E < 1 ? 'bound' : 'fly-by';
+    return 'plunging';
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    drawFunnel();
-    if (state.show !== 'clocks') drawRuler();
-    if (state.show !== 'ruler') drawClocks();
-    drawProbe();
+  const deg = (a: number) => `${((a * 180) / Math.PI).toFixed(1)}°`;
 
-    const d = dil(state.probe);
-    const k = 1 / Math.max(1e-3, d);
-    const real = properDist(state.probe);
-    setRows({
-      ratioOut: (state.probe / state.rs).toFixed(2),
-      dilOut: d.toFixed(3),
-      stretchOut: k.toFixed(3),
-      farOut: `${k.toFixed(2)} s`,
-      realOut: `${real.toFixed(2)} m`,
-      coordOut: (state.probe - state.rs).toFixed(2),
-    });
+  function updateSeeText() {
+    const D = state.D, clock = Math.sqrt(1 - 1 / D);
+    const ang = 2 * shadowAngle();
+    const b = state.flat ? 1 : BC;
+    if (state.flat)
+      setEq({
+        rule: ['\\frac{d^2u}{d\\phi^2}+u = 0', '\\quad u = 1/r', '\\quad\\text{(straight lines)}'],
+        live: [`b_c = r_s`, `\\quad r_{cam} = ${D.toFixed(1)}\\,r_s`],
+      });
+    else
+      setEq({
+        rule: ['\\frac{d^2u}{d\\phi^2}+u =', ['\\tfrac{3}{2}\\,r_s\\,u^2', AMBER], '\\quad u = 1/r'],
+        live: [
+          [`b_c = \\tfrac{3\\sqrt3}{2}\\,r_s = ${BC.toFixed(2)}\\,r_s`, AMBER],
+          `\\quad r_{cam} = ${D.toFixed(1)}\\,r_s`,
+          [`\\quad d\\tau/dt = \\sqrt{1-r_s/r} = ${clock.toFixed(3)}`, CLOCK],
+        ],
+      });
+    el('result-label').textContent = 'Shadow radius';
     setResult({
-      value: d.toFixed(3),
-      colour: dilColor(d),
-      status: `r = ${(state.probe / state.rs).toFixed(2)} rₛ · 1 s here is ${k.toFixed(2)} s far away · ${real.toFixed(2)} m to the horizon covers ${(state.probe - state.rs).toFixed(2)} in r`,
-      note: 'Both effects come from one factor, √(1 − rₛ/r). At the horizon it goes to zero, so clocks there stop and the ruler blows up, yet nothing local goes wrong.',
+      value: `${b.toFixed(2)} rₛ`,
+      colour: state.flat ? '' : AMBER,
+      status: `${deg(ang)} across your sky from r = ${D.toFixed(1)} rₛ, where your clock runs at ${clock.toFixed(3)}`,
+      note: state.flat
+        ? 'With straight rays the hole is just a black ball the size of its horizon, and the disk is a plain flat ring.'
+        : 'Light that comes closer than 2.6 rₛ spirals in, so the hole casts a shadow 2.6 times its horizon; light just outside it can circle the hole and come back.',
     });
+    setRows({
+      'r-cam': D.toFixed(1),
+      'r-camclock': clock.toFixed(4),
+      'r-bc': `${b.toFixed(3)} rₛ`,
+      'r-ang': deg(ang),
+      'r-res': glv ? `${Math.round(LEVELS[level] * 100)}%` : 'no WebGL2',
+    });
+  }
+
+  function updateOrbitText() {
+    const b = orb.p, r = b.r;
+    const grav = Math.sqrt(Math.max(0, 1 - 1 / r));
+    const gamma = grav > 0 ? orb.E / grav : Infinity;
+    const q = rate(r);
     setEq({
       rule: [
-        ['\\dfrac{d\\tau}{dt} = \\sqrt{1-\\dfrac{r_s}{r}}', '#fbbf24'],
+        '\\frac{d^2u}{d\\phi^2}+u=\\frac{r_s}{2L^2}+',
+        ['\\tfrac32\\,r_s u^2', AMBER],
         '\\qquad',
-        ['d\\ell = \\dfrac{dr}{\\sqrt{1-r_s/r}}', RULER_B],
+        ['\\frac{d\\tau}{dt}=\\frac{\\sqrt{1-r_s/r}}{\\gamma}', CLOCK],
       ],
       live: [
-        `r/r_s = ${(state.probe / state.rs).toFixed(2)}`,
-        [`\\quad d\\tau/dt = ${d.toFixed(3)}`, '#fbbf24'],
-        [`\\quad d\\ell/dr = ${k.toFixed(3)}`, RULER_B],
+        `r = ${r.toFixed(2)}\\,r_s`,
+        `\\quad \\sqrt{1-r_s/r} = ${grav.toFixed(3)}`,
+        `\\quad \\gamma = ${isFinite(gamma) ? gamma.toFixed(3) : '\\infty'}`,
+        [`\\quad d\\tau/dt = ${q.toFixed(3)}`, CLOCK],
       ],
+    });
+    const kind = orbitKind();
+    el('result-label').textContent = 'Particle clock rate dτ/dt';
+    const precTxt = !isFinite(orb.prec)
+      ? ''
+      : orb.prec < 2 * Math.PI
+        ? `the closest point moves on ${deg(orb.prec)} per orbit`
+        : `it whirls ${(orb.prec / (2 * Math.PI)).toFixed(1)} extra turns at each close pass`;
+    const status = [`r = ${r.toFixed(2)} rₛ`, kind, precTxt].filter(Boolean).join(' · ');
+    const notes: Record<string, string> = {
+      bound: 'An orbit in GR does not close: the extra pull near the hole swings each closest approach a little further round.',
+      'fly-by': 'Coming from far away, it swings round the hole and leaves again.',
+      escaping: 'It has more than enough energy to leave and heads back out to infinity.',
+      escaped: 'Gone: it had enough energy to climb out of the well.',
+      plunging: 'Nothing holds it up: V(r) has no barrier at this L, or the energy clears its top, so it falls towards the horizon.',
+      plunged: 'Seen from far away the particle never crosses the horizon. Its clock runs slower and slower and its fall freezes.',
+    };
+    setResult({ value: q.toFixed(3), colour: CLOCK, status, note: notes[kind] ?? '' });
+    setRows({
+      'r-r': r.toFixed(3),
+      'r-rate': q.toFixed(4),
+      'r-prec': isFinite(orb.prec) ? deg(orb.prec) : '—',
+      'r-kind': kind,
+      'r-t': orb.t.toFixed(1),
+      'r-tau': orb.tau.toFixed(1),
     });
   }
 
-  let last = 0;
-  function loop(ts: number) {
-    if (!last) last = ts;
-    const dt = Math.min(0.05, (ts - last) / 1000);
-    last = ts;
-    if (state.running) {
-      T += dt * state.speed;
-      CLOCK_FR.forEach((fr, i) => {
-        const r = state.rs + (RMAX - state.rs) * fr;
-        clockTau[i] += dt * state.speed * dil(r);
-      });
-      probeTau += dt * state.speed * dil(state.probe);
-    }
-    draw();
-    requestAnimationFrame(loop);
-  }
+  // --- input: the camera ----------------------------------------------------
+  let dragging = false;
+  let drag: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  let preview: [number, number][] = [];
+  const VPX = 300; // pixels of arrow per c
+  let lastPX = 0, lastPY = 0;
 
-  // ---- controls ----
-  const probeLo = () => state.rs * 1.02;
-  const probeOf = (v: number) => probeLo() + (v / 1000) * (RMAX - probeLo());
-  const setRsSlider = slider('rs', (v) => {
-    state.rs = v / 10;
-    if (state.probe < probeLo()) state.probe = probeLo();
-    computeRulerTicks();
-    syncProbeSlider();
-  }, (v) => (v / 10).toFixed(1));
-  const setProbeSlider = slider('probe', (v) => { state.probe = probeOf(v); }, (v) => probeOf(v).toFixed(1));
-  function syncProbeSlider() {
-    const frac = (state.probe - probeLo()) / (RMAX - probeLo());
-    setProbeSlider(Math.round(Math.max(0, Math.min(1, frac)) * 1000));
-  }
-  const setSpeedSlider = slider('speed', (v) => { state.speed = v / 10; }, (v) => (v / 10).toFixed(1) + '×');
-  const shows = segmented('show', (v) => { state.show = v as typeof state.show; });
-  const tp = transport({
-    onRun: (on) => { state.running = on; },
-    onReset: () => {
-      T = 0;
-      probeTau = 0;
-      for (let i = 0; i < clockTau.length; i++) clockTau[i] = 0;
-    },
-  });
+  const local = (e: PointerEvent | WheelEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
 
-  function setup(o: { show: typeof state.show; rs: number; probeR: number; run?: boolean }) {
-    state.show = o.show;
-    shows.select(o.show);
-    state.rs = o.rs;
-    setRsSlider(Math.round(o.rs * 10));
-    computeRulerTicks();
-    state.probe = Math.max(probeLo(), Math.min(RMAX, o.probeR));
-    syncProbeSlider();
-    if (o.run && !tp.running()) el('run').click();
-  }
-  tries({
-    clocks: () => {
-      setup({ show: 'clocks', rs: 2, probeR: 6 });
-      if (state.speed < 0.5) { state.speed = 1; setSpeedSlider(10); }
-      if (!tp.running()) el('run').click();
-    },
-    ruler: () => setup({ show: 'ruler', rs: 2, probeR: 2.6 }),
-    horizon: () => setup({ show: 'both', rs: 2, probeR: 2.04, run: true }),
-    mass: () => setup({ show: 'both', rs: 4, probeR: 6 }),
-  });
-
-  // orbit + zoom
-  let dragging = false, lx = 0, ly = 0;
   canvas.addEventListener('pointerdown', (e) => {
-    dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId);
+    canvas.setPointerCapture(e.pointerId);
+    dragging = true;
+    lastPX = e.clientX;
+    lastPY = e.clientY;
+    if (state.view === 'orbits') {
+      const p = local(e);
+      if (p.x > 640) { dragging = false; return; }
+      drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+      preview = [];
+    }
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!dragging) return;
-    state.yaw += (e.clientX - lx) * 0.01;
-    state.pitch = Math.max(-1.4, Math.min(0.2, state.pitch + (e.clientY - ly) * 0.01));
-    lx = e.clientX; ly = e.clientY;
+    if (state.view === 'see') {
+      const r = canvas.getBoundingClientRect();
+      const k = 2.2 / r.width;
+      state.yaw -= (e.clientX - lastPX) * k * 1.4;
+      state.tilt = Math.max(-1.48, Math.min(1.48, state.tilt + (e.clientY - lastPY) * k));
+      lastPX = e.clientX;
+      lastPY = e.clientY;
+      setTilt(Math.round((state.tilt * 180) / Math.PI));
+      moved();
+    } else if (drag) {
+      const p = local(e);
+      drag.x1 = p.x;
+      drag.y1 = p.y;
+      const s = dragStart();
+      if (s) preview = predict(s);
+    }
   });
-  const stop = () => (dragging = false);
-  canvas.addEventListener('pointerup', stop);
-  canvas.addEventListener('pointercancel', stop);
-  canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    state.zoom *= e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    state.zoom = Math.max(0.4, Math.min(4, state.zoom));
-  }, { passive: false });
+  const release = () => {
+    if (state.view === 'orbits' && drag) {
+      const s = dragStart();
+      if (s && Math.hypot(drag.x1 - drag.x0, drag.y1 - drag.y0) > 5) {
+        launch(s.r, s.pr, s.phi, s.L);
+            orb.preset = '';
+        presets.clear();
+        syncOrbitSliders();
+      }
+      drag = null;
+      preview = [];
+    }
+    dragging = false;
+  };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      if (state.view !== 'see') return;
+      e.preventDefault();
+      state.D = Math.max(6, Math.min(60, state.D * (e.deltaY < 0 ? 1 / 1.08 : 1.08)));
+      setDist(Math.round(state.D * 2) / 2);
+      moved();
+    },
+    { passive: false }
+  );
 
-  computeRulerTicks();
-  syncProbeSlider();
-  requestAnimationFrame(loop);
+  /** The launch the arrow describes: speed |arrow| / VPX in c, measured by a hovering observer. */
+  function dragStart() {
+    if (!drag) return null;
+    const x = (drag.x0 - OC.x) / pxPerRs, y = (OC.y - drag.y0) / pxPerRs;
+    const r = Math.hypot(x, y);
+    if (r < 1.05) return null;
+    let vx = (drag.x1 - drag.x0) / VPX, vy = -(drag.y1 - drag.y0) / VPX;
+    const v = Math.hypot(vx, vy);
+    if (v > 0.98) { vx *= 0.98 / v; vy *= 0.98 / v; }
+    const v2 = vx * vx + vy * vy;
+    const gam = 1 / Math.sqrt(1 - v2);
+    const rx = x / r, ry = y / r;
+    const vr = vx * rx + vy * ry, vt = rx * vy - ry * vx;
+    const f = Math.sqrt(1 - 1 / r);
+    return { r, pr: gam * vr * f, phi: Math.atan2(y, x), L: gam * r * vt };
+  }
+
+  function predict(s: { r: number; pr: number; phi: number; L: number }) {
+    const b: Body = { ...s, alive: true };
+    const out: [number, number][] = [[b.r * Math.cos(b.phi), b.r * Math.sin(b.phi)]];
+    let total = 0;
+    for (let i = 0; i < 12000 && total < 3000; i++) {
+      const h = Math.min(0.03 * Math.pow(b.r, 1.5), (0.2 * (b.r - 1)) / Math.max(Math.abs(b.pr), 1e-6));
+      rk4(b, Math.max(h, 1e-5), true);
+      total += h;
+      if (i % 4 === 0) out.push([b.r * Math.cos(b.phi), b.r * Math.sin(b.phi)]);
+      if (b.r < 1.01 || b.r > 80) break;
+    }
+    return out;
+  }
+
+  function moved() {
+    dirty = true;
+    refined = false;
+    lastMove = performance.now();
+  }
+
+  // --- the panel --------------------------------------------------------------
+  const tp = transport({
+    onRun: (on) => { state.running = on; moved(); },
+    onReset: () => {
+      if (state.view === 'see') {
+        state.yaw = 0.35;
+        state.D = 22;
+        state.tilt = (8 * Math.PI) / 180;
+        setDist(22);
+        setTilt(8);
+        moved();
+      } else if (orb.preset) presetLaunch(orb.preset);
+      else {
+        const s = orb.start;
+        launch(s.r, s.pr, s.phi, s.L);
+          }
+    },
+  });
+
+  const setDist = slider('dist', (v) => { state.D = v; moved(); }, (v) => `${v} rₛ`);
+  const setTilt = slider('tilt', (v) => { state.tilt = (v * Math.PI) / 180; moved(); }, (v) => `${v}°`);
+  const setDisk = check('disk', (on) => { state.disk = on; moved(); });
+  const setGrid = check('grid', (on) => { state.grid = on; moved(); });
+  const setFlat = check('flat', (on) => { state.flat = on; moved(); });
+  const setGuides = check('guides', (on) => { state.guides = on; moved(); });
+  const setNewton = check('newton', (on) => { state.newton = on; });
+  const setSpeed = slider('speed', (v) => { state.speed = v; }, (v) => `${v}×`);
+
+  const setL = slider('L', (v) => {
+    const sgn = orb.p.L < 0 ? -1 : 1;
+    orb.preset = '';
+    presets.clear();
+    launchLE(sgn * v, orb.E);
+    syncOrbitSliders(false);
+  }, (v) => `${v.toFixed(2)} rₛc`);
+  const setE = slider('E', (v) => {
+    orb.preset = '';
+    presets.clear();
+    launchLE(orb.p.L, v);
+    syncOrbitSliders(false);
+  }, (v) => v.toFixed(4));
+  function syncOrbitSliders(both = true) {
+    if (both) setL(Math.abs(orb.p.L));
+    setE(orb.E);
+  }
+
+  const presets = segmented('preset', (p) => presetLaunch(p));
+
+  const legend = (id: string, on: boolean) => { el(id).hidden = !on; };
+  const views = segmented('view', (v) => setView(v as 'see' | 'orbits'));
+  function setView(v: 'see' | 'orbits') {
+    state.view = v;
+    views.select(v);
+    el('see-ctl').hidden = v !== 'see';
+    el('orb-ctl').hidden = v !== 'orbits';
+    wrap.classList.toggle('orbits', v === 'orbits');
+    for (const id of ['lg-blue', 'lg-red']) legend(id, v === 'see');
+    for (const id of ['lg-orbit', 'lg-newton', 'lg-ps', 'lg-isco']) legend(id, v === 'orbits');
+    el('scene-hint').textContent =
+      v === 'see'
+        ? 'Drag to orbit the camera, scroll to move closer or farther'
+        : 'Drag from any point to launch the particle from there: the arrow sets its speed and direction, and the dashed line shows where it will go';
+    moved();
+  }
+
+  // --- the loop -------------------------------------------------------------
+  let prev = performance.now(), lastText = 0;
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - prev) / 1000);
+    prev = now;
+    if (state.view === 'see') {
+      if (state.running) { state.anim += dt * 9; dirty = true; }
+      if (dirty) {
+        adapt(now);
+        renderGL();
+        drawSeeOverlay();
+        dirty = false;
+      } else if (!refined && glv && now - lastMove > 350 && LEVELS[level] < 1) {
+        // holding still: one sharp frame
+        renderGL(1);
+        refined = true;
+        lastT = 0;
+      }
+      updateSeeText();
+    } else {
+      if (state.running && !dragging) {
+        advance(state.speed * dt * 60 * 0.9);
+        if (orb.fate === 'escaped' && now - orb.escapedAt > 1500) {
+          const s = orb.start;
+          launch(s.r, s.pr, s.phi, s.L);
+        }
+      }
+      drawOrbitView();
+      // the typeset numbers are costly to rebuild: a few times a second is plenty
+      if (now - lastText > 120) { updateOrbitText(); lastText = now; }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('themechange', () => moved());
+
+  // --- show me ----------------------------------------------------------------
+  function seeScene(o: { D?: number; tilt?: number; yaw?: number; disk?: boolean; grid?: boolean; flat?: boolean; guides?: boolean }) {
+    setView('see');
+    state.D = o.D ?? 22;
+    setDist(state.D);
+    state.tilt = ((o.tilt ?? 8) * Math.PI) / 180;
+    setTilt(o.tilt ?? 8);
+    state.yaw = o.yaw ?? 0.35;
+    state.disk = o.disk ?? true;
+    setDisk(state.disk);
+    state.grid = !!o.grid;
+    setGrid(state.grid);
+    state.flat = !!o.flat;
+    setFlat(state.flat);
+    state.guides = !!o.guides;
+    setGuides(state.guides);
+    moved();
+  }
+  function orbitScene(name: string, newton: boolean) {
+    setView('orbits');
+    presets.select(name);
+    presetLaunch(name);
+    state.newton = newton;
+    setNewton(newton);
+    state.running = true;
+    tp.setRunning(true);
+  }
+  tries({
+    lens: () => seeScene({ D: 22, tilt: 6, guides: true }),
+    ring: () => seeScene({ D: 22, tilt: 8, disk: false, grid: true, guides: true }),
+    rosette: () => orbitScene('rosette', true),
+    plunge: () => orbitScene('plunge', false),
+  });
+
+  presetLaunch('rosette');
+  setView('see');
+  requestAnimationFrame(frame);
 </script>
 
 <style>
-  .gr-canvas {
+  .gr-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 960 / 600;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: #020306;
+  }
+  .gr-wrap.orbits {
+    background: var(--stage-bg);
+  }
+  .gr-wrap canvas {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border-radius: 0;
+  }
+  #grgl {
+    pointer-events: none;
+    background: #020306;
+  }
+  .gr-wrap.orbits #grgl {
+    display: none;
+  }
+  #gr {
+    background: transparent !important;
     cursor: grab;
     touch-action: none;
   }
-  .gr-canvas:active {
+  #gr:active {
     cursor: grabbing;
+  }
+  .gr-wrap.orbits #gr {
+    cursor: crosshair;
+  }
+  :global(.sim:fullscreen) .gr-wrap {
+    width: min(100%, calc((100vh - 150px) * 1.6));
+    margin: 0 auto;
   }
 </style>

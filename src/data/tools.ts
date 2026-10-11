@@ -711,7 +711,7 @@ export const AREAS: Area[] = [
         slug: 'schwarzschild',
         title: 'General Relativity',
         description:
-          'Fall down the curved-space funnel of a black hole. Clocks run slow deep in the well and a proper meter swallows less coordinate distance near the horizon.',
+          'See a black hole the way its light does: every pixel is a photon traced through curved spacetime, so the disk wraps over the top and the sky folds round a shadow 2.6 times the horizon. Then put a particle in orbit and watch it trace rosettes, plunge inside 3 rₛ, and its clock run slow.',
         href: '/simulations/physics/schwarzschild',
         status: 'live',
       },
