@@ -612,7 +612,7 @@ export const AREAS: Area[] = [
         slug: 'ideal-gas',
         title: 'Ideal Gas',
         description:
-          'A few hundred molecules bouncing in a box. Pressure is the drumming of their impacts, temperature is how fast they are, and PV = NkT is what that adds up to.',
+          'A few hundred atoms in a glass cylinder under a piston. Pressure is the drumming of their impacts, temperature is how fast they fly, and PV = NkT is what that adds up to: squeeze, heat or insulate and watch it hold.',
         href: '/simulations/physics/ideal-gas',
         status: 'live',
       },
