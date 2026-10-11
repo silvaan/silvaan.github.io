@@ -719,7 +719,7 @@ export const AREAS: Area[] = [
         slug: 'schwarzschild',
         title: 'General Relativity',
         description:
-          'See a black hole the way its light does: every pixel is a photon traced through curved spacetime, so the disk wraps over the top and the sky folds round a shadow 2.6 times the horizon. Then put a particle in orbit and watch it trace rosettes, plunge inside 3 rₛ, and its clock run slow.',
+          'Hang two clocks above a black hole, a neutron star or the Earth: the low one runs slow, so its light flashes arrive stretched, and a clock carried down comes back younger. Then lay a ruler between two circles and it needs more rungs than their circumferences allow: space is curved too, not just time.',
         href: '/simulations/physics/schwarzschild',
         status: 'live',
       },
