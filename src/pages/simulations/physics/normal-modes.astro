@@ -1,0 +1,1416 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Normal Modes"
+  description="Every object has a few shapes it can hold while it vibrates, each ringing at its own note. Pluck it and the motion splits into those notes: whole multiples on a string, an untuned jumble on a drum."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="nm"
+          width="900"
+          height="640"
+          role="img"
+          aria-label="A vibrating object (a string, a chain of beads, or a square or round drum skin drawn as a lit 3D surface) above a spectrum of bars, one per normal mode, placed at the mode's frequency and as tall as its amplitude."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'above rest', color: '#2dd4bf' },
+          { label: 'below rest', color: '#ff7a5c' },
+          { label: 'nodes', color: '#8b909c' },
+          { label: 'sand', color: '#d6b46a', id: 'leg-sand' },
+        ]}
+        hint="Drag the string to pull it and let go to pluck. In the spectrum, drag a bar up or down to mix that mode in; click a bar to play it alone."
+      />
+      <Result label="Mode n = 1: f / f₁" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running />
+      <Seg
+        id="obj"
+        label="Object"
+        attr="o"
+        options={[
+          { value: 'string', label: 'String' },
+          { value: 'beads', label: 'Beads' },
+          { value: 'square', label: 'Square drum' },
+          { value: 'round', label: 'Round drum' },
+        ]}
+      />
+      <Slider id="mode" label="Play one mode" min={1} max={8} step={1} value={1} display="n = 1" />
+      <Slider id="speed" label="Playback speed" min={0.1} max={1} step={0.05} value={0.5} display="f₁ = 0.50 Hz" hint={['slow', 'fast']} />
+      <Actions>
+        <button type="button" class="btn ghost" id="silence">Silence</button>
+        <button type="button" class="btn ghost" id="scatter">Scatter sand</button>
+      </Actions>
+      <Checks
+        items={[
+          { id: 'nodes', label: 'Nodes and nodal lines', checked: true },
+          { id: 'sand', label: 'Sand on the skin (Chladni)', checked: true },
+          { id: 'sound', label: 'Sound (196 Hz fundamental)' },
+        ]}
+      />
+      <Readout
+        title="Numbers"
+        rows={[
+          { id: 'r-count', label: 'Modes playing' },
+          { id: 'r-sel', label: 'Selected mode' },
+          { id: 'r-amp', label: 'Its amplitude' },
+          { id: 'r-nodes', label: 'Its nodes' },
+          { id: 'r-rep', label: 'Whole shape repeats' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Mix a few <b>string</b> modes. Each runs exactly n times as fast as the fundamental, so every
+      bar sits on a whole number and the whole shape repeats once per fundamental period.
+      <Try id="harm" />
+    </li>
+    <li>
+      <b>Pluck the string at its middle</b> and every even bar stays at zero: each even mode has a
+      node there, so the pluck cannot reach it. <Try id="middle" />
+    </li>
+    <li>
+      A single <b>drum mode</b> stands still, and the sand is shaken off wherever the skin moves and
+      piles up on the nodal lines. Two modes with the same note, (1,3) and (3,1), draw a figure of
+      their own. <Try id="sand" />
+    </li>
+    <li>
+      Poke the <b>round drum</b>: its overtones land at 1.59, 2.14, 2.30 times the fundamental,
+      between the whole-number lines. Turn on Sound and compare it with the string. <Try id="round" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import type { Part } from '../../../lib/equation';
+  import { Camera3D, orbitControls, drawBackdrop, V } from '../../../lib/scene3d';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+
+  type Obj = 'string' | 'beads' | 'square' | 'round';
+  type Mode = { label: string; sub: string; ratio: number; m: number; n: number; off: number };
+
+  const NS = 8; // string modes shown
+  const NB = 9; // beads on the chain, and so its number of modes
+  const NV = 97; // drum grid, vertices from edge to edge
+  const NN = NV * NV;
+  const gx = (i: number) => -1 + (2 * i) / (NV - 1);
+  const F1 = 196; // Hz of the fundamental when the sound is on
+
+  // zeros of J_m: the round drum's (m, n) mode has k = j_mn
+  const JZ: [number, number, number][] = [
+    [0, 1, 2.404826], [1, 1, 3.831706], [2, 1, 5.135622], [0, 2, 5.520078], [3, 1, 6.380162],
+    [1, 2, 7.015587], [4, 1, 7.588342], [2, 2, 8.417244], [0, 3, 8.653728],
+  ];
+
+  function buildModes(obj: Obj): Mode[] {
+    if (obj === 'string')
+      return Array.from({ length: NS }, (_, i) => ({ label: `n = ${i + 1}`, sub: `${i + 1}`, ratio: i + 1, m: i + 1, n: 0, off: 0 }));
+    if (obj === 'beads') {
+      const s1 = Math.sin(Math.PI / (2 * (NB + 1)));
+      return Array.from({ length: NB }, (_, i) => ({
+        label: `k = ${i + 1}`, sub: `${i + 1}`, ratio: Math.sin(((i + 1) * Math.PI) / (2 * (NB + 1))) / s1, m: i + 1, n: 0, off: 0,
+      }));
+    }
+    if (obj === 'square') {
+      const out: Mode[] = [];
+      for (let m = 1; m <= 4; m++)
+        for (let n = 1; n <= 4; n++)
+          out.push({ label: `(${m},${n})`, sub: `${m}${n}`, ratio: Math.sqrt((m * m + n * n) / 2), m, n, off: m === n ? 0 : m < n ? -5.5 : 5.5 });
+      return out.sort((a, b) => a.ratio - b.ratio || a.off - b.off);
+    }
+    return JZ.map(([m, n, j]) => ({ label: `(${m},${n})`, sub: `${m}${n}`, ratio: j / JZ[0][2], m, n, off: 0 }));
+  }
+
+  const state = {
+    obj: 'string' as Obj,
+    running: true,
+    t: 0,
+    speed: 0.5,
+    sel: 0,
+    nodes: true,
+    sand: true,
+    sound: false,
+  };
+  let modes: Mode[] = buildModes('string');
+  let A = new Float64Array(16); // amplitude of each mode
+  let TH = new Float64Array(16); // orientation of a round-drum mode, cos m(θ − θ_k)
+  let pull: { x: number; h: number } | null = null; // the string held in a corner
+
+  const is2D = () => state.obj === 'square' || state.obj === 'round';
+
+  // --- colours ---------------------------------------------------------------
+  const canvas = el('nm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  let ink = '232,233,236', light = false;
+  const readTheme = () => {
+    ink = css('--stage-ink') || '232,233,236';
+    light = css('--stage-light') === '1';
+  };
+  readTheme();
+  window.addEventListener('themechange', () => { readTheme(); draw(); });
+  const inkA = (a: number) => `rgba(${ink},${a})`;
+  const UP = () => (light ? '13,148,136' : '45,212,191');
+  const DOWN = () => (light ? '234,88,12' : '255,122,92');
+
+  function hsl2hex(h: number, s: number, l: number) {
+    const f = (n: number) => {
+      const k = (n + h / 30) % 12;
+      const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return Math.round(255 * c).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  }
+  /** One colour per mode, warm for the fundamental, cool for the highest. */
+  const modeColour = (k: number) => {
+    const K = modes.length;
+    // blue → violet → pink, then gold → green: never the teal and orange
+    // that mean above and below rest
+    const t = K > 1 ? k / (K - 1) : 0;
+    const hue = t <= 0.55 ? 205 + (t / 0.55) * 130 : 48 + ((t - 0.55) / 0.45) * 82;
+    return hsl2hex(hue, light ? 0.78 : 0.85, light ? 0.43 : 0.64);
+  };
+
+  // --- drum mode shapes on the grid -------------------------------------------
+  function besselJ(m: number, x: number) {
+    const S = 64;
+    let s = 0;
+    for (let q = 0; q <= S; q++) {
+      const t = (q / S) * Math.PI;
+      s += (q === 0 || q === S ? 0.5 : 1) * Math.cos(m * t - x * Math.sin(t));
+    }
+    return s / S;
+  }
+  const inside = new Uint8Array(NN);
+  let phi: Float32Array[] = []; // each mode's shape, peak 1
+  let phiC: Float32Array[] = [], phiS: Float32Array[] = []; // round: J cos mθ and J sin mθ
+  let norm: number[] = [], normS: number[] = [];
+
+  function buildDrum() {
+    phi = []; phiC = []; phiS = []; norm = []; normS = [];
+    if (!is2D()) return;
+    const round = state.obj === 'round';
+    for (let j = 0; j < NV; j++)
+      for (let i = 0; i < NV; i++) inside[j * NV + i] = !round || Math.hypot(gx(i), gx(j)) <= 1 ? 1 : 0;
+    for (const md of modes) {
+      const c = new Float32Array(NN), s = new Float32Array(NN);
+      if (!round) {
+        for (let j = 0; j < NV; j++)
+          for (let i = 0; i < NV; i++)
+            c[j * NV + i] = Math.sin((md.m * Math.PI * i) / (NV - 1)) * Math.sin((md.n * Math.PI * j) / (NV - 1));
+      } else {
+        const k = JZ.find((z) => z[0] === md.m && z[1] === md.n)![2];
+        let jmax = 0;
+        for (let q = 0; q <= 200; q++) jmax = Math.max(jmax, Math.abs(besselJ(md.m, (k * q) / 200)));
+        for (let j = 0; j < NV; j++)
+          for (let i = 0; i < NV; i++) {
+            const x = gx(i), z = gx(j), r = Math.hypot(x, z);
+            if (r > 1) continue;
+            const J = besselJ(md.m, k * r) / jmax, th = Math.atan2(z, x);
+            c[j * NV + i] = J * Math.cos(md.m * th);
+            s[j * NV + i] = md.m ? J * Math.sin(md.m * th) : 0;
+          }
+      }
+      let mx = 0;
+      for (let q = 0; q < NN; q++) mx = Math.max(mx, Math.abs(c[q]));
+      if (!round) for (let q = 0; q < NN; q++) c[q] /= mx || 1;
+      let nc = 0, ns = 0;
+      for (let q = 0; q < NN; q++) { nc += c[q] * c[q]; ns += s[q] * s[q]; }
+      phiC.push(c); phiS.push(s); norm.push(nc); normS.push(ns);
+      phi.push(new Float32Array(c));
+    }
+  }
+  /** A round-drum mode turned to its orientation θ_k. */
+  function orient(k: number) {
+    if (state.obj !== 'round') return;
+    const m = modes[k].m, c = Math.cos(m * TH[k]), s = Math.sin(m * TH[k]);
+    const f = phi[k], a = phiC[k], b = phiS[k];
+    for (let q = 0; q < NN; q++) f[q] = c * a[q] + s * b[q];
+  }
+
+  // --- the shape and what follows from the amplitudes --------------------------
+  const STR_PTS = 361;
+  const strX = (q: number) => q / (STR_PTS - 1);
+  const shape1D = (k: number, x: number) =>
+    Math.sin(modes[k].m * Math.PI * x); // x in [0, 1]; the beads sit at x = j/(N+1)
+  let bound = 1; // largest |u| the current mix can reach
+  let scale = 1; // display scale, so a loud mix still fits
+  let groups = 0; // how many distinct frequencies are playing
+  let still: Float32Array | null = null; // the standing shape when only one note plays (2D)
+  const env = new Float32Array(NN); // time-averaged size of the motion, for the sand
+  let envMax = 0;
+  const active = () => modes.map((_, k) => k).filter((k) => Math.abs(A[k]) > 1e-4);
+
+  function derive() {
+    const act = active();
+    const freqs: number[] = [];
+    for (const k of act) if (!freqs.some((f) => Math.abs(f - modes[k].ratio) < 1e-9)) freqs.push(modes[k].ratio);
+    groups = freqs.length;
+    bound = 0;
+    if (is2D()) {
+      env.fill(0);
+      const tmp = new Float32Array(NN);
+      for (const f of freqs) {
+        tmp.fill(0);
+        for (const k of act) if (Math.abs(modes[k].ratio - f) < 1e-9) {
+          const p = phi[k], a = A[k];
+          for (let q = 0; q < NN; q++) tmp[q] += a * p[q];
+        }
+        for (let q = 0; q < NN; q++) env[q] += 0.5 * tmp[q] * tmp[q];
+        if (groups === 1) still = new Float32Array(tmp);
+      }
+      envMax = 0;
+      for (let q = 0; q < NN; q++) {
+        env[q] = Math.sqrt(env[q]);
+        if (env[q] > envMax) envMax = env[q];
+        let b = 0;
+        for (const k of act) b += Math.abs(A[k] * phi[k][q]);
+        if (b > bound) bound = b;
+      }
+      if (groups !== 1) still = null;
+    } else {
+      still = null;
+      const n = state.obj === 'string' ? STR_PTS : NB;
+      for (let q = 0; q < n; q++) {
+        const x = state.obj === 'string' ? strX(q) : (q + 1) / (NB + 1);
+        let b = 0;
+        for (const k of act) b += Math.abs(A[k] * shape1D(k, x));
+        bound = Math.max(bound, b);
+      }
+    }
+    scale = bound > 1.25 ? 1.25 / bound : 1;
+    voiceGains();
+  }
+
+  // --- plucks and pokes: projecting a shape onto the modes ----------------------
+  function pluckAt(x0: number, h: number) {
+    x0 = Math.max(0.03, Math.min(0.97, x0));
+    if (state.obj === 'beads') x0 = Math.max(1, Math.min(NB, Math.round(x0 * (NB + 1)))) / (NB + 1);
+    pull = { x: x0, h };
+    A.fill(0);
+    if (state.obj === 'string') {
+      // a triangle with its corner at x₀: A_n = 2h sin(nπx₀) / (n²π² x₀(1 − x₀))
+      for (let k = 0; k < NS; k++) {
+        const n = k + 1, s = Math.sin(n * Math.PI * x0);
+        A[k] = Math.abs(s) < 1e-9 ? 0 : (2 * h * s) / (n * n * Math.PI * Math.PI * x0 * (1 - x0));
+      }
+    } else {
+      // the same triangle sampled at the beads: N beads have exactly N modes, so this is exact
+      const u = Array.from({ length: NB }, (_, j) => {
+        const x = (j + 1) / (NB + 1);
+        return x <= x0 ? (h * x) / x0 : (h * (1 - x)) / (1 - x0);
+      });
+      for (let k = 0; k < NB; k++) {
+        let s = 0;
+        for (let j = 0; j < NB; j++) s += u[j] * Math.sin(((j + 1) * (k + 1) * Math.PI) / (NB + 1));
+        A[k] = Math.abs(s) < 1e-9 ? 0 : (2 / (NB + 1)) * s;
+      }
+    }
+    state.t = 0;
+    derive();
+  }
+
+  let pokeMark: { x: number; z: number; at: number } | null = null;
+  function poke(px: number, pz: number) {
+    const sg = 0.3, f = new Float32Array(NN);
+    for (let j = 0; j < NV; j++)
+      for (let i = 0; i < NV; i++) {
+        const q = j * NV + i;
+        if (inside[q]) f[q] = -Math.exp(-((gx(i) - px) ** 2 + (gx(j) - pz) ** 2) / (sg * sg));
+      }
+    let mx = 0;
+    modes.forEach((md, k) => {
+      let a = 0, b = 0;
+      const c = phiC[k], s = phiS[k];
+      for (let q = 0; q < NN; q++) { a += f[q] * c[q]; b += f[q] * s[q]; }
+      a /= norm[k] || 1;
+      b = normS[k] ? b / normS[k] : 0;
+      if (state.obj === 'round' && md.m > 0) {
+        A[k] = Math.hypot(a, b);
+        TH[k] = Math.atan2(b, a) / md.m;
+        orient(k);
+      } else A[k] = a;
+      mx = Math.max(mx, Math.abs(A[k]));
+    });
+    // the poke's depth is arbitrary: scale it so the loudest mode reads 0.9, and
+    // drop the crumbs a centred poke leaves in modes it cannot reach
+    for (let k = 0; k < modes.length; k++) {
+      A[k] = (0.9 * A[k]) / (mx || 1);
+      if (Math.abs(A[k]) < 0.01) A[k] = 0;
+    }
+    pokeMark = { x: px, z: pz, at: performance.now() };
+    state.t = 0;
+    derive();
+    ping();
+  }
+
+  function solo(k: number) {
+    const sign = A[k] < 0 ? -1 : 1;
+    A.fill(0);
+    A[k] = sign;
+    select(k);
+    derive();
+    ping();
+  }
+  function setAmp(k: number, v: number) {
+    v = Math.max(-1, Math.min(1, v));
+    if (state.obj === 'round' && modes[k].m > 0) v = Math.max(0, v); // its sign is its orientation
+    if (Math.abs(v) < 0.04) v = 0;
+    A[k] = v;
+    select(k);
+    derive();
+  }
+
+  // --- the frame: string and beads ----------------------------------------------
+  const VH = 420; // the object; the spectrum lives below
+  const X0 = 90, X1 = 810, MID = 118, AMP = 86;
+  const LANES = { top: 266, bot: VH - 6 }; // the decomposition under a string or chain
+  const sxs = (x: number) => X0 + x * (X1 - X0);
+  const phase = (k: number) => Math.cos(2 * Math.PI * modes[k].ratio * state.t);
+
+  function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 11, colour?: string) {
+    ctx.fillStyle = colour ?? inkA(alpha);
+    ctx.font = `${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  function uString(x: number, ks: number[]) {
+    let u = 0;
+    for (const k of ks) u += A[k] * phase(k) * shape1D(k, x);
+    return u * scale;
+  }
+
+  function drawString() {
+    const act = active();
+    // rest line and the pegs
+    ctx.strokeStyle = inkA(0.14);
+    ctx.setLineDash([4, 6]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(X0, MID);
+    ctx.lineTo(X1, MID);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const ys: number[] = [];
+    for (let q = 0; q < STR_PTS; q++) ys.push(MID - AMP * uString(strX(q), act));
+
+    // one note: the envelope it swings inside, and its nodes
+    const solo1 = groups === 1 && act.length === 1 && !pull;
+    if (solo1 && state.nodes) {
+      const k = act[0];
+      ctx.beginPath();
+      for (let q = 0; q < STR_PTS; q++) ctx.lineTo(sxs(strX(q)), MID - AMP * scale * Math.abs(A[k] * shape1D(k, strX(q))));
+      for (let q = STR_PTS - 1; q >= 0; q--) ctx.lineTo(sxs(strX(q)), MID + AMP * scale * Math.abs(A[k] * shape1D(k, strX(q))));
+      ctx.closePath();
+      ctx.fillStyle = inkA(light ? 0.05 : 0.045);
+      ctx.fill();
+      ctx.strokeStyle = inkA(0.2);
+      ctx.setLineDash([3, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // the area between string and rest, teal above and orange below
+    for (const [sign, rgb] of [[1, UP()], [-1, DOWN()]] as [number, string][]) {
+      ctx.save();
+      ctx.beginPath();
+      if (sign > 0) ctx.rect(0, 0, W, MID);
+      else ctx.rect(0, MID, W, VH - MID);
+      ctx.clip();
+      ctx.beginPath();
+      ctx.moveTo(X0, MID);
+      for (let q = 0; q < STR_PTS; q++) ctx.lineTo(sxs(strX(q)), ys[q]);
+      ctx.lineTo(X1, MID);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${rgb},${light ? 0.2 : 0.22})`;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (pull) {
+      ctx.strokeStyle = inkA(0.5);
+      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(X0, MID);
+      ctx.lineTo(sxs(pull.x), MID - AMP * pull.h);
+      ctx.lineTo(X1, MID);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(`your pluck · the line is the sum of ${NS} modes`, sxs(pull.x), MID - AMP * pull.h + (pull.h >= 0 ? -14 : 24), 0.6, 'center');
+    }
+
+    ctx.strokeStyle = inkA(0.92);
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let q = 0; q < STR_PTS; q++) ctx.lineTo(sxs(strX(q)), ys[q]);
+    ctx.stroke();
+
+    if (solo1 && state.nodes) {
+      const n = modes[act[0]].m;
+      for (let j = 1; j < n; j++) nodeDot(sxs(j / n), MID);
+      if (n > 1) label('node', sxs(1 / n), MID + 24, 0.55, 'center');
+    }
+    for (const x of [X0, X1]) peg(x, MID);
+    drawLanes();
+  }
+
+  function nodeDot(x: number, y: number) {
+    ctx.fillStyle = light ? '#ffffff' : '#0d0e12';
+    ctx.strokeStyle = inkA(0.8);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  function peg(x: number, y: number) {
+    ctx.fillStyle = inkA(0.6);
+    ctx.fillRect(x - 3, y - 26, 6, 52);
+    ctx.fillStyle = inkA(0.85);
+    ctx.beginPath();
+    ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawBeads() {
+    const act = active();
+    const bx = (j: number) => sxs(j / (NB + 1));
+    const ub = (j: number, ks: number[]) => {
+      let u = 0;
+      for (const k of ks) u += A[k] * phase(k) * shape1D(k, j / (NB + 1));
+      return u * scale;
+    };
+    ctx.strokeStyle = inkA(0.14);
+    ctx.setLineDash([4, 6]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(X0, MID);
+    ctx.lineTo(X1, MID);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // a single mode: the smooth wave it samples, which the beads only see at nine points
+    const solo1 = groups === 1 && act.length === 1 && !pull;
+    if (solo1 && state.nodes) {
+      const k = act[0];
+      ctx.strokeStyle = inkA(0.25);
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (let q = 0; q < STR_PTS; q++) ctx.lineTo(sxs(strX(q)), MID - AMP * scale * A[k] * phase(k) * shape1D(k, strX(q)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (pull) {
+      ctx.strokeStyle = inkA(0.5);
+      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(X0, MID);
+      ctx.lineTo(sxs(pull.x), MID - AMP * pull.h);
+      ctx.lineTo(X1, MID);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // the light springs between beads
+    ctx.strokeStyle = inkA(0.55);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    for (let j = 0; j <= NB + 1; j++) ctx.lineTo(bx(j), MID - AMP * ub(j, act));
+    ctx.stroke();
+    const top = Math.max(1e-6, bound * scale);
+    for (let j = 1; j <= NB; j++) {
+      const u = ub(j, act), m = Math.min(1, Math.abs(u) / top) ** 0.7;
+      const rgb = (u >= 0 ? UP() : DOWN()).split(',').map(Number);
+      const base = light ? [236, 238, 243] : [40, 44, 58];
+      const c = base.map((b, i) => Math.round(b + (rgb[i] - b) * m));
+      ctx.fillStyle = `rgb(${c.join(',')})`;
+      ctx.strokeStyle = inkA(0.85);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(bx(j), MID - AMP * u, 8.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    for (const x of [X0, X1]) peg(x, MID);
+    drawLanes();
+  }
+
+  /**
+   * Under the string, one lane per mode: its own term A_k sin(kπx/L) cos(ω_k t),
+   * swinging at its own rate. Added up, the lanes are the string above.
+   */
+  function drawLanes() {
+    const K = modes.length, beads = state.obj === 'beads';
+    const lh = (LANES.bot - LANES.top) / K;
+    let amax = 0.25;
+    for (let k = 0; k < K; k++) amax = Math.max(amax, Math.abs(A[k]));
+    const gain = (0.95 * lh) / amax; // the loudest swings into its neighbours' lanes
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(40, LANES.top - 39.5);
+    ctx.lineTo(W - 40, LANES.top - 39.5);
+    ctx.stroke();
+    label(`each mode on its own, at its own rate: add the ${K} lanes and you get the ${beads ? 'chain' : 'string'} above`, X0, LANES.top - 22, 0.5);
+    for (let k = 0; k < K; k++) {
+      const y0 = LANES.top + (k + 0.5) * lh, col = modeColour(k), on = Math.abs(A[k]) > 1e-4;
+      ctx.strokeStyle = inkA(0.09);
+      ctx.beginPath();
+      ctx.moveTo(X0, Math.round(y0) + 0.5);
+      ctx.lineTo(X1, Math.round(y0) + 0.5);
+      ctx.stroke();
+      label(modes[k].label.replace(/ /g, ''), X0 - 12, y0 + 4, 1, 'right', 10.5, on ? col : inkA(0.3));
+      label(`${modes[k].ratio.toFixed(2)}×`, X1 + 12, y0 + 4, on ? 0.6 : 0.25, 'left', 10.5);
+      if (!on) continue;
+      const a = A[k] * phase(k) * gain;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = k === state.sel ? 2.4 : 1.6;
+      ctx.beginPath();
+      if (beads) for (let j = 0; j <= NB + 1; j++) ctx.lineTo(sxs(j / (NB + 1)), y0 - a * shape1D(k, j / (NB + 1)));
+      else for (let q = 0; q < STR_PTS; q += 2) ctx.lineTo(sxs(strX(q)), y0 - a * shape1D(k, strX(q)));
+      ctx.stroke();
+      if (beads) {
+        ctx.fillStyle = col;
+        for (let j = 1; j <= NB; j++) {
+          ctx.beginPath();
+          ctx.arc(sxs(j / (NB + 1)), y0 - a * shape1D(k, j / (NB + 1)), 2.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // --- the frame: drums in 3D ------------------------------------------------------
+  const cam = new Camera3D(W, VH, { dist: 5.4, yaw: 0.62, pitch: -0.7, zoom: 1.32 });
+  const HA = 0.32; // world height of u = 1
+  const ug = new Float32Array(NN);
+  function fillDrum() {
+    ug.fill(0);
+    for (const k of active()) {
+      const a = A[k] * phase(k) * scale, p = phi[k];
+      for (let q = 0; q < NN; q++) ug[q] += a * p[q];
+    }
+  }
+
+  const VS_SURF = `#version 300 es
+  precision highp float;
+  in vec2 aG;
+  uniform sampler2D uF;
+  uniform float uN, uA;
+  uniform vec4 uCam;
+  uniform vec2 uHalf;
+  out vec2 vUV;
+  out vec3 vW;
+  vec4 project(vec3 p) {
+    float cy = cos(uCam.x), sy = sin(uCam.x), cp = cos(uCam.y), sp = sin(uCam.y);
+    float x1 = p.x * cy + p.z * sy, z1 = -p.x * sy + p.z * cy;
+    float y2 = p.y * cp - z1 * sp, z2 = p.y * sp + z1 * cp;
+    float zc = z2 + uCam.z;
+    return vec4(x1 * uCam.w / uHalf.x, y2 * uCam.w / uHalf.y, ((zc - 0.3) / 30.0 * 2.0 - 1.0) * zc, zc);
+  }
+  void main() {
+    vUV = (aG + 0.5) / uN;
+    float y = texelFetch(uF, ivec2(aG), 0).r * uA;
+    vW = vec3(aG.x / (uN - 1.0) * 2.0 - 1.0, y, aG.y / (uN - 1.0) * 2.0 - 1.0);
+    gl_Position = project(vW);
+  }`;
+
+  const FS_SURF = `#version 300 es
+  precision highp float;
+  in vec2 vUV;
+  in vec3 vW;
+  uniform sampler2D uF;
+  uniform float uN, uA, uGain, uNodes, uRound, uLight;
+  uniform vec3 uL, uEye, uBase, uUp, uDown, uInk, uSky;
+  out vec4 o;
+  void main() {
+    float r = length(vW.xz);
+    if (uRound > 0.5 && r > 1.0) discard;
+    float e = 1.0 / uN;
+    vec4 f = texture(uF, vUV);
+    float hx = texture(uF, vUV + vec2(e, 0.0)).r - texture(uF, vUV - vec2(e, 0.0)).r;
+    float hz = texture(uF, vUV + vec2(0.0, e)).r - texture(uF, vUV - vec2(0.0, e)).r;
+    float span = 4.0 / (uN - 1.0);
+    vec3 n = normalize(vec3(-hx * uA / span, 1.0, -hz * uA / span));
+    vec3 v = normalize(uEye - vW);
+    if (dot(n, v) < 0.0) n = -n;
+    float val = f.r * uGain;
+    float m = pow(clamp(abs(val), 0.0, 1.0), 0.75);
+    vec3 tint = val >= 0.0 ? uUp : uDown;
+    vec3 col = mix(uBase, tint, m * (uLight > 0.5 ? 0.92 : 0.85));
+    vec2 g = abs(fract(vW.xz * 6.0 - 0.5) - 0.5) / fwidth(vW.xz * 6.0);
+    float weave = 1.0 - smoothstep(0.0, 1.2, min(g.x, g.y));
+    col = mix(col, uInk, weave * (uLight > 0.5 ? 0.07 : 0.06));
+    float diff = max(dot(n, uL), 0.0);
+    vec3 hv = normalize(uL + v);
+    float spec = pow(max(dot(n, hv), 0.0), 70.0);
+    float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+    vec3 lit = col * (uLight > 0.5 ? 0.5 + 0.55 * diff : 0.42 + 0.68 * diff);
+    if (uLight > 0.5) {
+      lit += vec3(1.0) * spec * 0.3;
+    } else {
+      lit += tint * m * 0.28 + uSky * fres * 0.35 + vec3(0.9, 0.95, 1.0) * spec * 0.6;
+    }
+    if (uNodes > 0.5) {
+      float w = abs(f.a) / max(fwidth(f.a), 1e-5);
+      float line = 1.0 - smoothstep(0.6, 1.8, w);
+      lit = mix(lit, uInk, line * 0.8);
+    }
+    o = vec4(lit, 1.0);
+  }`;
+
+  const VS_SHELL = `#version 300 es
+  precision highp float;
+  in vec3 aP;
+  in vec3 aN;
+  uniform vec4 uCam;
+  uniform vec2 uHalf;
+  out vec3 vN;
+  out vec3 vW;
+  vec4 project(vec3 p) {
+    float cy = cos(uCam.x), sy = sin(uCam.x), cp = cos(uCam.y), sp = sin(uCam.y);
+    float x1 = p.x * cy + p.z * sy, z1 = -p.x * sy + p.z * cy;
+    float y2 = p.y * cp - z1 * sp, z2 = p.y * sp + z1 * cp;
+    float zc = z2 + uCam.z;
+    return vec4(x1 * uCam.w / uHalf.x, y2 * uCam.w / uHalf.y, ((zc - 0.3) / 30.0 * 2.0 - 1.0) * zc, zc);
+  }
+  void main() { vN = aN; vW = aP; gl_Position = project(aP); }`;
+
+  const FS_SHELL = `#version 300 es
+  precision highp float;
+  in vec3 vN;
+  in vec3 vW;
+  uniform vec3 uL, uEye, uCol;
+  out vec4 o;
+  void main() {
+    vec3 n = normalize(vN);
+    vec3 v = normalize(uEye - vW);
+    float diff = max(dot(n, uL), 0.0);
+    float spec = pow(max(dot(n, normalize(uL + v)), 0.0), 40.0);
+    o = vec4(uCol * (0.45 + 0.6 * diff) + vec3(spec * 0.25), 1.0);
+  }`;
+
+  type Gl = {
+    gl: WebGL2RenderingContext;
+    glc: HTMLCanvasElement;
+    surf: WebGLProgram;
+    shell: WebGLProgram;
+    vaoSurf: WebGLVertexArrayObject;
+    nIdx: number;
+    vaoShell: WebGLVertexArrayObject;
+    shellBuf: WebGLBuffer;
+    nShell: number;
+    tex: WebGLTexture;
+    U: Record<string, WebGLUniformLocation | null>;
+  };
+
+  function compile(gl: WebGL2RenderingContext, vs: string, fs: string) {
+    const sh = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+      return s;
+    };
+    const p = gl.createProgram()!;
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'link');
+    return p;
+  }
+
+  let G: Gl | null | undefined; // made the first time a drum is shown
+  function makeGl(): Gl | null {
+    const glc = document.createElement('canvas');
+    const gl = glc.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true });
+    if (!gl) return null;
+    try {
+      const surf = compile(gl, VS_SURF, FS_SURF);
+      const shell = compile(gl, VS_SHELL, FS_SHELL);
+      const U: Record<string, WebGLUniformLocation | null> = {};
+      for (const n of ['uF', 'uN', 'uA', 'uCam', 'uHalf', 'uGain', 'uNodes', 'uRound', 'uLight', 'uL', 'uEye', 'uBase', 'uUp', 'uDown', 'uInk', 'uSky'])
+        U['s.' + n] = gl.getUniformLocation(surf, n);
+      for (const n of ['uCam', 'uHalf', 'uL', 'uEye', 'uCol']) U['h.' + n] = gl.getUniformLocation(shell, n);
+
+      const vaoSurf = gl.createVertexArray()!;
+      gl.bindVertexArray(vaoSurf);
+      const g = new Float32Array(2 * NN);
+      for (let j = 0; j < NV; j++) for (let i = 0; i < NV; i++) { g[2 * (j * NV + i)] = i; g[2 * (j * NV + i) + 1] = j; }
+      const vb = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+      gl.bufferData(gl.ARRAY_BUFFER, g, gl.STATIC_DRAW);
+      const la = gl.getAttribLocation(surf, 'aG');
+      gl.enableVertexAttribArray(la);
+      gl.vertexAttribPointer(la, 2, gl.FLOAT, false, 0, 0);
+      const idx = new Uint32Array(6 * (NV - 1) * (NV - 1));
+      let q = 0;
+      for (let j = 0; j < NV - 1; j++)
+        for (let i = 0; i < NV - 1; i++) {
+          const a = j * NV + i;
+          idx.set([a, a + 1, a + NV, a + 1, a + NV + 1, a + NV], q);
+          q += 6;
+        }
+      const ib = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+
+      const vaoShell = gl.createVertexArray()!;
+      gl.bindVertexArray(vaoShell);
+      const shellBuf = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, shellBuf);
+      const lp = gl.getAttribLocation(shell, 'aP'), ln = gl.getAttribLocation(shell, 'aN');
+      gl.enableVertexAttribArray(lp);
+      gl.vertexAttribPointer(lp, 3, gl.FLOAT, false, 24, 0);
+      gl.enableVertexAttribArray(ln);
+      gl.vertexAttribPointer(ln, 3, gl.FLOAT, false, 24, 12);
+      gl.bindVertexArray(null);
+
+      const tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, NV, NV, 0, gl.RGBA, gl.FLOAT, null);
+      return { gl, glc, surf, shell, vaoSurf, nIdx: idx.length, vaoShell, shellBuf, nShell: 0, tex, U };
+    } catch (err) {
+      console.warn('normal-modes: WebGL2 setup failed', err);
+      return null;
+    }
+  }
+
+  /** The drum frame: a lit rim with a short wall, square or round. */
+  function buildShell() {
+    if (!G) return;
+    const out: number[] = [];
+    const quad = (p: number[][], n: number[][]) => {
+      for (const k of [0, 1, 2, 0, 2, 3]) out.push(...p[k], ...n[k]);
+    };
+    const yt = 0.02, yb = -0.2, yi = -0.05;
+    if (state.obj === 'square') {
+      const s0 = 1.005, s1 = s0 + 0.07;
+      for (const [nx, nz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+        const tx = -nz, tz = nx;
+        const P = (s: number, sign: number, y: number) => [nx * s + tx * s * sign, y, nz * s + tz * s * sign];
+        const up = [0, 1, 0], outN = [nx, 0, nz], inN = [-nx, 0, -nz], dn = [0, -1, 0];
+        quad([P(s0, -1, yt), P(s0, 1, yt), P(s1, 1, yt), P(s1, -1, yt)], [up, up, up, up]);
+        quad([P(s1, -1, yt), P(s1, 1, yt), P(s1, 1, yb), P(s1, -1, yb)], [outN, outN, outN, outN]);
+        quad([P(s0, -1, yi), P(s0, 1, yi), P(s0, 1, yt), P(s0, -1, yt)], [inN, inN, inN, inN]);
+        quad([P(s0, -1, yb), P(s1, -1, yb), P(s1, 1, yb), P(s0, 1, yb)], [dn, dn, dn, dn]);
+      }
+    } else {
+      const S = 120, r0 = 1.005, r1 = r0 + 0.06;
+      for (let q = 0; q < S; q++) {
+        const a = (q / S) * 2 * Math.PI, b = ((q + 1) / S) * 2 * Math.PI;
+        const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+        const up = [0, 1, 0], dn = [0, -1, 0];
+        quad([[ca * r0, yt, sa * r0], [cb * r0, yt, sb * r0], [cb * r1, yt, sb * r1], [ca * r1, yt, sa * r1]], [up, up, up, up]);
+        quad([[ca * r1, yt, sa * r1], [cb * r1, yt, sb * r1], [cb * r1, yb, sb * r1], [ca * r1, yb, sa * r1]],
+          [[ca, 0, sa], [cb, 0, sb], [cb, 0, sb], [ca, 0, sa]]);
+        quad([[ca * r0, yi, sa * r0], [cb * r0, yi, sb * r0], [cb * r0, yt, sb * r0], [ca * r0, yt, sa * r0]],
+          [[-ca, 0, -sa], [-cb, 0, -sb], [-cb, 0, -sb], [-ca, 0, -sa]]);
+        quad([[ca * r0, yb, sa * r0], [ca * r1, yb, sa * r1], [cb * r1, yb, sb * r1], [cb * r0, yb, sb * r0]], [dn, dn, dn, dn]);
+      }
+    }
+    const gl = G.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, G.shellBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STATIC_DRAW);
+    G.nShell = out.length / 6;
+  }
+
+  const pack = new Float32Array(4 * NN);
+  const hex3 = (c: string) => [1, 3, 5].map((o) => parseInt(c.slice(o, o + 2), 16) / 255);
+  let glScale = 1;
+  function renderGl(g: Gl) {
+    const gl = g.gl, U = g.U;
+    const showNodes = !!still && state.nodes;
+    for (let q = 0; q < NN; q++) {
+      pack[4 * q] = ug[q];
+      pack[4 * q + 3] = showNodes ? still![q] : 0;
+    }
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(W * dpr * glScale), hh = Math.round(VH * dpr * glScale);
+    if (g.glc.width !== w || g.glc.height !== hh) { g.glc.width = w; g.glc.height = hh; }
+    gl.viewport(0, 0, w, hh);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    const L = V.unit(V.add(V.add(V.mul(cam.right(), -0.45), V.mul(cam.up(), 0.75)), V.mul(cam.forward(), -0.55)));
+    const Lw = V.unit({ x: L.x, y: Math.abs(L.y) + 0.6, z: L.z });
+    const eye = cam.eye();
+    const camv = [cam.yaw, cam.pitch, cam.dist, cam.k] as const;
+
+    if (g.nShell) {
+      gl.useProgram(g.shell);
+      gl.bindVertexArray(g.vaoShell);
+      gl.uniform4f(U['h.uCam'], ...camv);
+      gl.uniform2f(U['h.uHalf'], W / 2, VH / 2);
+      gl.uniform3f(U['h.uL'], Lw.x, Lw.y, Lw.z);
+      gl.uniform3f(U['h.uEye'], eye.x, eye.y, eye.z);
+      const col = light ? [0.78, 0.8, 0.85] : [0.22, 0.24, 0.31];
+      gl.uniform3f(U['h.uCol'], col[0], col[1], col[2]);
+      gl.drawArrays(gl.TRIANGLES, 0, g.nShell);
+    }
+
+    gl.useProgram(g.surf);
+    gl.bindVertexArray(g.vaoSurf);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, g.tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, NV, NV, gl.RGBA, gl.FLOAT, pack);
+    gl.uniform1i(U['s.uF'], 0);
+    gl.uniform1f(U['s.uN'], NV);
+    gl.uniform1f(U['s.uA'], HA);
+    gl.uniform4f(U['s.uCam'], ...camv);
+    gl.uniform2f(U['s.uHalf'], W / 2, VH / 2);
+    gl.uniform1f(U['s.uGain'], 1 / Math.max(1e-3, bound * scale));
+    gl.uniform1f(U['s.uNodes'], showNodes ? 1 : 0);
+    gl.uniform1f(U['s.uRound'], state.obj === 'round' ? 1 : 0);
+    gl.uniform1f(U['s.uLight'], light ? 1 : 0);
+    gl.uniform3f(U['s.uL'], Lw.x, Lw.y, Lw.z);
+    gl.uniform3f(U['s.uEye'], eye.x, eye.y, eye.z);
+    const [base, up, down, inkC, sky] = light
+      ? [[0.82, 0.86, 0.92], hex3('#0d9488'), hex3('#ea580c'), [0.1, 0.11, 0.14], [1, 1, 1]]
+      : [[0.13, 0.15, 0.21], hex3('#2dd4bf'), hex3('#ff7a5c'), [0.93, 0.94, 0.96], [0.45, 0.5, 0.95]];
+    gl.uniform3f(U['s.uBase'], base[0], base[1], base[2]);
+    gl.uniform3f(U['s.uUp'], up[0], up[1], up[2]);
+    gl.uniform3f(U['s.uDown'], down[0], down[1], down[2]);
+    gl.uniform3f(U['s.uInk'], inkC[0], inkC[1], inkC[2]);
+    gl.uniform3f(U['s.uSky'], sky[0], sky[1], sky[2]);
+    gl.drawElements(gl.TRIANGLES, g.nIdx, gl.UNSIGNED_INT, 0);
+    gl.bindVertexArray(null);
+    ctx.drawImage(g.glc, 0, 0, W, VH);
+  }
+
+  // without WebGL2: the same skin seen from straight above
+  const flat = document.createElement('canvas');
+  flat.width = flat.height = NV;
+  const fctx = flat.getContext('2d')!;
+  const fimg = fctx.createImageData(NV, NV);
+  const FLAT = { x: (W - (VH - 60)) / 2, y: 40, s: VH - 60 };
+  function renderFlat() {
+    const up = UP().split(',').map(Number), dn = DOWN().split(',').map(Number);
+    const base = light ? [240, 242, 246] : [30, 34, 46];
+    const d = fimg.data, gain = 1 / Math.max(1e-3, bound * scale);
+    for (let q = 0; q < NN; q++) {
+      const v = ug[q] * gain;
+      const m = Math.min(1, Math.abs(v)) ** 0.75, t = v >= 0 ? up : dn;
+      for (let c = 0; c < 3; c++) d[4 * q + c] = base[c] + (t[c] - base[c]) * m;
+      d[4 * q + 3] = inside[q] ? 255 : 0;
+    }
+    fctx.putImageData(fimg, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(flat, FLAT.x, FLAT.y, FLAT.s, FLAT.s);
+    label('WebGL2 is not available here, so the skin is shown from above, flat.', W / 2, 24, 0.6, 'center', 12);
+  }
+  /** Where a point of the skin lands on screen. */
+  function skinXY(x: number, y: number, z: number) {
+    if (G) {
+      const p = cam.project({ x, y, z });
+      return [p.sx, p.sy];
+    }
+    return [FLAT.x + ((x + 1) / 2) * FLAT.s, FLAT.y + ((z + 1) / 2) * FLAT.s];
+  }
+
+  // --- sand ------------------------------------------------------------------------
+  const NSAND = 3200;
+  const sand = new Float32Array(2 * NSAND);
+  function scatter() {
+    for (let i = 0; i < NSAND; i++) {
+      let x = 0, z = 0;
+      do { x = Math.random() * 2 - 1; z = Math.random() * 2 - 1; } while (state.obj === 'round' && x * x + z * z > 1);
+      sand[2 * i] = x; sand[2 * i + 1] = z;
+    }
+  }
+  function bilerp(f: Float32Array, x: number, z: number) {
+    const fx = Math.max(0, Math.min(NV - 1.001, ((x + 1) / 2) * (NV - 1)));
+    const fz = Math.max(0, Math.min(NV - 1.001, ((z + 1) / 2) * (NV - 1)));
+    const i = fx | 0, j = fz | 0, a = fx - i, b = fz - j, q = j * NV + i;
+    return (f[q] * (1 - a) + f[q + 1] * a) * (1 - b) + (f[q + NV] * (1 - a) + f[q + NV + 1] * a) * b;
+  }
+  /** Grains hop by an amount set by how hard the skin moves under them, so they drain to where it doesn't. */
+  function sandStep(dt: number) {
+    if (envMax < 1e-6) return;
+    const k = 0.2 * Math.sqrt(dt * 60) * Math.min(1, state.speed * 2);
+    const rnd = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.4;
+    for (let i = 0; i < NSAND; i++) {
+      let x = sand[2 * i], z = sand[2 * i + 1];
+      const e = bilerp(env, x, z) / envMax;
+      if (e < 0.003) continue;
+      x += rnd() * k * e;
+      z += rnd() * k * e;
+      if (state.obj === 'round') {
+        const r = Math.hypot(x, z);
+        if (r > 0.995) { x *= 0.995 / r; z *= 0.995 / r; }
+      } else {
+        x = Math.max(-0.995, Math.min(0.995, x));
+        z = Math.max(-0.995, Math.min(0.995, z));
+      }
+      sand[2 * i] = x; sand[2 * i + 1] = z;
+    }
+  }
+  function drawSand() {
+    ctx.fillStyle = light ? 'rgba(120,84,30,0.85)' : 'rgba(232,206,150,0.85)';
+    for (let i = 0; i < NSAND; i++) {
+      const x = sand[2 * i], z = sand[2 * i + 1];
+      const [sx, sy] = skinXY(x, bilerp(ug, x, z) * HA + 0.004, z);
+      ctx.fillRect(sx - 0.8, sy - 0.8, 1.7, 1.7);
+    }
+  }
+
+  function drawDrum() {
+    drawBackdrop(ctx, W, VH, light);
+    fillDrum();
+    if (G === undefined) { G = makeGl(); buildShell(); }
+    if (G) renderGl(G);
+    else renderFlat();
+    if (state.sand) drawSand();
+    if (pokeMark) {
+      const age = (performance.now() - pokeMark.at) / 900;
+      if (age < 1) {
+        ctx.strokeStyle = inkA(0.7 * (1 - age));
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let q = 0; q <= 48; q++) {
+          const a = (q / 48) * 2 * Math.PI, r = 0.06 + 0.2 * age;
+          const [sx, sy] = skinXY(pokeMark.x + r * Math.cos(a), 0.01, pokeMark.z + r * Math.sin(a));
+          q ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy);
+        }
+        ctx.stroke();
+      } else pokeMark = null;
+    }
+  }
+
+  // --- the spectrum -------------------------------------------------------------------
+  const SP = { x: 64, y: VH + 40, w: W - 104, h: H - VH - 70 };
+  const BASE = SP.y + SP.h / 2, HB = SP.h / 2 - 16;
+  const xMax = () => Math.max(...modes.map((m) => m.ratio)) + 0.45;
+  const fx = (r: number) => SP.x + (r / xMax()) * SP.w;
+  const barX = (k: number) => fx(modes[k].ratio) + modes[k].off;
+  const barW = () => (is2D() ? 9 : 22);
+  let hover = -1;
+
+  function drawSpectrum() {
+    ctx.strokeStyle = inkA(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(14, VH + 8.5);
+    ctx.lineTo(W - 14, VH + 8.5);
+    ctx.stroke();
+    label('spectrum: each mode at its frequency f / f₁, as tall as its amplitude', SP.x, VH + 26, 0.55);
+    label('drag a bar to mix · click it to play it alone', SP.x + SP.w, VH + 26, 0.4, 'right');
+
+    // whole multiples of the fundamental: a string's notes land exactly on these
+    const top = Math.floor(xMax());
+    for (let i = 1; i <= top; i++) {
+      const x = Math.round(fx(i)) + 0.5;
+      ctx.strokeStyle = inkA(i === 1 ? 0.2 : 0.1);
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, SP.y);
+      ctx.lineTo(x, SP.y + SP.h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(`${i}×`, x, SP.y + SP.h + 16, 0.45, 'center');
+    }
+    ctx.strokeStyle = inkA(0.3);
+    ctx.beginPath();
+    ctx.moveTo(SP.x, BASE + 0.5);
+    ctx.lineTo(SP.x + SP.w, BASE + 0.5);
+    ctx.stroke();
+    label('+', SP.x - 12, BASE - HB + 8, 0.35, 'center');
+    label('−', SP.x - 12, BASE + HB, 0.35, 'center');
+
+    const bw = barW();
+    modes.forEach((md, k) => {
+      const x = barX(k), a = A[k], col = modeColour(k);
+      const on = k === state.sel;
+      ctx.globalAlpha = on || k === hover ? 1 : 0.82;
+      ctx.fillStyle = col;
+      if (Math.abs(a) > 1e-4) {
+        const y = BASE - a * HB;
+        ctx.fillRect(x - bw / 2, Math.min(y, BASE), bw, Math.abs(BASE - y));
+      }
+      ctx.globalAlpha = 1;
+      // the slot, so a silent mode still shows where it would ring
+      ctx.beginPath();
+      ctx.arc(x, BASE + 0.5, 3, 0, Math.PI * 2);
+      ctx.fillStyle = col;
+      ctx.fill();
+      if (on) {
+        const y = BASE - a * HB;
+        ctx.strokeStyle = inkA(0.85);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x - bw / 2 - 2.5, Math.min(y, BASE) - 2.5, bw + 5, Math.abs(BASE - y) + 5);
+      }
+      if (on || k === hover) {
+        const y = BASE - a * HB;
+        const txt = `${md.label} · ${md.ratio.toFixed(2)}×`;
+        const ly = a >= 0 ? Math.min(y, BASE) - 8 : Math.max(y, BASE) + 18;
+        label(txt, x, ly, 1, 'center', 11.5, col);
+      }
+    });
+  }
+  function barAt(x: number, y: number) {
+    if (y < SP.y - 14 || y > SP.y + SP.h + 6) return -1;
+    let best = -1, bd = 1e9;
+    modes.forEach((_, k) => {
+      const d = Math.abs(barX(k) - x);
+      if (d < bd) { bd = d; best = k; }
+    });
+    return bd <= Math.max(barW() / 2 + 3, 7) ? best : -1;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, W, VH);
+    ctx.clip();
+    if (state.obj === 'string') drawString();
+    else if (state.obj === 'beads') drawBeads();
+    else drawDrum();
+    ctx.restore();
+    drawSpectrum();
+  }
+
+  // --- words and numbers ------------------------------------------------------------------
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const RULE: Record<Obj, Part[]> = {
+    string: ['u(x,t) = \\sum_{n} A_n \\sin\\tfrac{n\\pi x}{L}\\,\\cos\\omega_n t', '\\qquad', '\\omega_n = n\\,\\tfrac{\\pi c}{L}'],
+    beads: ['u_j(t) = \\sum_{k=1}^{N} A_k \\sin\\tfrac{jk\\pi}{N+1}\\,\\cos\\omega_k t', '\\quad', '\\omega_k = 2\\omega_0 \\sin\\tfrac{k\\pi}{2(N+1)}'],
+    square: ['u = \\sum A_{mn} \\sin\\tfrac{m\\pi x}{L}\\sin\\tfrac{n\\pi y}{L}\\cos\\omega_{mn} t', '\\quad', '\\omega_{mn} \\propto \\sqrt{m^2+n^2}'],
+    round: ['u = \\sum A_{mn} J_m\\!\\big(j_{mn}\\tfrac{r}{a}\\big)\\cos m\\theta\\,\\cos\\omega_{mn} t', '\\quad', '\\omega_{mn} = j_{mn}\\tfrac{c}{a}'],
+  };
+  const fmtR = (r: number) => (Math.abs(r - Math.round(r)) < 1e-9 ? `${Math.round(r)}` : r.toFixed(3));
+  function liveLine(k: number): Part[] {
+    const md = modes[k], col = modeColour(k), r = fmtR(md.ratio), a = A[k].toFixed(2).replace('-', '−');
+    if (state.obj === 'string') return [[`n = ${md.m}:\\;\\; \\omega_{${md.m}}/\\omega_1 = ${r}`, col], `\\quad A_{${md.m}} = ${a}`];
+    if (state.obj === 'beads')
+      return [[`k = ${md.m}:\\;\\; \\omega_{${md.m}}/\\omega_1 = ${r}`, col], `\\quad N = ${NB},\\; A_{${md.m}} = ${a}`];
+    if (state.obj === 'square')
+      return [[`(${md.m},${md.n}):\\;\\; \\omega/\\omega_{11} = \\sqrt{${md.m * md.m + md.n * md.n}}/\\sqrt{2} = ${r}`, col], `\\quad A = ${a}`];
+    const j = JZ.find((z) => z[0] === md.m && z[1] === md.n)![2];
+    return [[`(${md.m},${md.n}):\\;\\; \\omega/\\omega_{01} = ${j.toFixed(3)}/${JZ[0][2].toFixed(3)} = ${r}`, col], `\\quad A = ${a}`];
+  }
+  function nodesText(k: number) {
+    const md = modes[k];
+    if (state.obj === 'string') return md.m === 1 ? 'only the ends' : `${md.m - 1} between the ends`;
+    if (state.obj === 'beads') return md.m === 1 ? 'only the walls' : `${md.m - 1} sign changes along the chain`;
+    if (state.obj === 'square') return `${md.m - 1} vertical, ${md.n - 1} horizontal lines`;
+    return `${md.m} diameter${md.m === 1 ? '' : 's'}, ${md.n - 1} circle${md.n === 2 ? '' : 's'} + rim`;
+  }
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  function repeats() {
+    const act = active();
+    if (!act.length) return 'nothing is moving';
+    const f1 = state.speed;
+    if (groups === 1) return `every ${(1 / (f1 * modes[act[0]].ratio)).toFixed(2)} s (it stands still)`;
+    if (act.every((k) => Math.abs(modes[k].ratio - Math.round(modes[k].ratio)) < 1e-9)) {
+      const g = act.reduce((acc, k) => gcd(acc, Math.round(modes[k].ratio)), 0);
+      return `every ${(1 / (f1 * g)).toFixed(2)} s`;
+    }
+    return 'never exactly';
+  }
+  function note() {
+    const act = active();
+    if (pull)
+      return 'Held in a corner. Each bar is how much of that mode the shape contains; let go and every mode swings on its own clock.';
+    if (!act.length) return 'Silent. Drag a bar up, pluck the string or poke the skin.';
+    if (state.obj === 'string') {
+      const evens = act.filter((k) => modes[k].m % 2 === 0).length;
+      if (evens === 0 && act.length > 1)
+        return 'No even harmonics: every even mode has a node at the middle, so a pluck there cannot set it moving.';
+      return 'A string’s overtones are whole multiples of the fundamental, so they all line up again every period: the ear hears one pitch.';
+    }
+    if (state.obj === 'beads')
+      return `${NB} beads have exactly ${NB} modes. Their frequencies bend over and bunch up below 2ω₀: the top mode is a zigzag, and nothing shorter exists.`;
+    if (groups === 1)
+      return state.sand
+        ? 'One note, so the shape stands still: the sand is shaken off wherever the skin moves and piles up on the nodal lines.'
+        : 'One note, so the shape stands still and only breathes; the nodal lines never move.';
+    if (state.obj === 'square')
+      return 'A square drum’s overtones go as √(m² + n²): 1.58, 2, 2.24 times the fundamental. Some coincide, none fall on a harmonic series.';
+    return 'The overtones sit at zeros of Bessel functions, 1.59, 2.14, 2.30 times the fundamental. They never line up, which is why a drum thuds instead of singing a note.';
+  }
+  function updateText() {
+    const k = state.sel, md = modes[k];
+    setEq({ rule: RULE[state.obj], live: liveLine(k) });
+    const r = md.ratio, whole = Math.abs(r - Math.round(r)) < 1e-9;
+    const lo = Math.floor(r), off = (100 * (r - Math.round(r))) / Math.round(r);
+    el('result-label').textContent = `Mode ${md.label}: f / f₁`;
+    setResult({
+      value: `${r.toFixed(2)} ×`,
+      colour: modeColour(k),
+      status: whole
+        ? `${r === 1 ? 'the fundamental itself' : `exactly ${Math.round(r)} × the fundamental: a harmonic`} · ${Math.round(F1 * r)} Hz when f₁ = ${F1} Hz`
+        : `between ${lo} and ${lo + 1}, ${off >= 0 ? '+' : '−'}${Math.abs(off).toFixed(1)}% off the nearest whole multiple · ${Math.round(F1 * r)} Hz when f₁ = ${F1} Hz`,
+      note: note(),
+    });
+    const act = active();
+    setRows({
+      'r-count': `${act.length} of ${modes.length}${groups > 1 ? `, ${groups} notes` : ''}`,
+      'r-sel': `${md.label} at ${r.toFixed(3)} f₁`,
+      'r-amp': A[k].toFixed(2).replace('-', '−'),
+      'r-nodes': nodesText(k),
+      'r-rep': repeats(),
+    });
+  }
+
+  // --- sound -------------------------------------------------------------------------------
+  let ac: AudioContext | null = null, master: GainNode | null = null;
+  let voices: { o: OscillatorNode; g: GainNode }[] = [];
+  function buildVoices() {
+    voices.forEach((v) => { try { v.o.stop(); } catch { /* already stopped */ } v.o.disconnect(); });
+    voices = [];
+    if (!ac || !master) return;
+    for (const md of modes) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = F1 * md.ratio;
+      g.gain.value = 0;
+      o.connect(g).connect(master);
+      o.start();
+      voices.push({ o, g });
+    }
+    voiceGains();
+  }
+  function voiceGains() {
+    if (!ac || !voices.length) return;
+    let sum = 0;
+    for (let k = 0; k < modes.length; k++) sum += Math.abs(A[k]);
+    voices.forEach((v, k) => v.g.gain.setTargetAtTime((0.22 * Math.abs(A[k])) / Math.max(sum, 1), ac!.currentTime, 0.03));
+  }
+  function ping() {
+    if (!ac || !master || !state.sound) return;
+    const now = ac.currentTime;
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(1, now);
+    master.gain.setTargetAtTime(0.35, now + 0.02, 0.5);
+  }
+  function setSound(on: boolean) {
+    state.sound = on;
+    if (on) {
+      try {
+        if (!ac) {
+          const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          ac = new AC();
+          master = ac.createGain();
+          master.gain.value = 0.35;
+          master.connect(ac.destination);
+          buildVoices();
+        }
+        ac.resume();
+        ping();
+      } catch (err) {
+        console.warn('normal-modes: no audio', err);
+      }
+    } else if (ac && master) {
+      master.gain.cancelScheduledValues(ac.currentTime);
+      master.gain.setTargetAtTime(0, ac.currentTime, 0.03);
+      setTimeout(() => { if (!state.sound) ac?.suspend(); }, 200);
+    }
+  }
+
+  // --- loop ------------------------------------------------------------------------------------
+  let last = performance.now(), slowAvg = 16;
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (state.running && !pull) {
+      state.t += dt * state.speed;
+      if (is2D() && state.sand) sandStep(dt);
+    }
+    const t0 = performance.now();
+    draw();
+    updateText();
+    if (is2D() && G) {
+      slowAvg = slowAvg * 0.9 + (performance.now() - t0) * 0.1;
+      if (slowAvg > 34 && glScale > 0.55) { glScale = Math.max(0.55, glScale - 0.15); slowAvg = 20; }
+      else if (slowAvg < 10 && glScale < 1) { glScale = Math.min(1, glScale + 0.15); slowAvg = 20; }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // --- pointer ---------------------------------------------------------------------------------
+  let bar: { k: number; x: number; y: number; moved: boolean } | null = null;
+  const toLocal = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  function pullTo(x: number, y: number) {
+    pluckAt((x - X0) / (X1 - X0), Math.max(-1, Math.min(1, (MID - y) / AMP)));
+  }
+  orbitControls(canvas, cam, W, H, {
+    changed: () => { if (!state.running) draw(); },
+    grab: (x, y) => {
+      if (y > VH) {
+        const k = barAt(x, y);
+        bar = k >= 0 ? { k, x, y, moved: false } : null;
+        return true;
+      }
+      if (!is2D()) { pullTo(x, y); return true; }
+      const p = G ? cam.hitPlane(x, y, { x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }) : { x: ((x - FLAT.x) / FLAT.s) * 2 - 1, y: 0, z: ((y - FLAT.y) / FLAT.s) * 2 - 1 };
+      if (!p) return false;
+      const d = state.obj === 'round' ? Math.hypot(p.x, p.z) : Math.max(Math.abs(p.x), Math.abs(p.z));
+      if (d > 0.97) return false;
+      poke(p.x, p.z);
+      return true;
+    },
+    drag: (x, y) => {
+      if (bar) {
+        if (!bar.moved && Math.hypot(x - bar.x, y - bar.y) < 4) return;
+        bar.moved = true;
+        setAmp(bar.k, (BASE - y) / HB);
+      } else if (pull) pullTo(x, y);
+    },
+    release: () => {
+      if (bar && !bar.moved) solo(bar.k);
+      bar = null;
+      if (pull) { pull = null; state.t = 0; ping(); }
+    },
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = toLocal(e);
+    hover = p.y > VH ? barAt(p.x, p.y) : -1;
+    canvas.style.cursor = hover >= 0 ? 'ns-resize' : p.y > VH ? 'default' : is2D() ? 'crosshair' : 'grab';
+  });
+  canvas.addEventListener('pointerleave', () => { hover = -1; });
+
+  // --- controls ----------------------------------------------------------------------------------
+  const tp = transport({
+    onRun: (on) => { state.running = on; },
+    onReset: () => { state.t = 0; solo(0); scatter(); },
+  });
+  const modeIn = el('mode') as HTMLInputElement;
+  const fmtMode = (v: number) => {
+    const md = modes[v - 1];
+    return md ? `${md.label} · ${md.ratio.toFixed(2)}×` : '';
+  };
+  const setModeSlider = slider('mode', (v) => solo(v - 1), fmtMode);
+  function select(k: number) {
+    state.sel = k;
+    setModeSlider(k + 1);
+  }
+  const setSpeedSlider = slider('speed', (v) => { state.speed = v; }, (v) => `f₁ = ${v.toFixed(2)} Hz`);
+  const setSpeed = (v: number) => { state.speed = v; setSpeedSlider(v); };
+
+  const showCheck = (id: string, on: boolean) => {
+    const lab = el(id).closest('label') as HTMLElement | null;
+    if (lab) lab.style.display = on ? '' : 'none';
+  };
+  function setObj(o: Obj) {
+    state.obj = o;
+    objSeg.select(o);
+    modes = buildModes(o);
+    A = new Float64Array(modes.length);
+    TH = new Float64Array(modes.length);
+    pull = null;
+    buildDrum();
+    if (G) buildShell();
+    modeIn.max = String(modes.length);
+    showCheck('sand', is2D());
+    (el('scatter') as HTMLButtonElement).hidden = !is2D();
+    el('leg-sand').style.display = is2D() ? '' : 'none';
+    el('scene-hint').textContent = is2D()
+      ? 'Click the skin to poke it. Drag off the drum to orbit, scroll to zoom. In the spectrum, drag a bar to mix that mode in; click a bar to play it alone.'
+      : `Drag the ${o === 'string' ? 'string' : 'chain'} to pull it and let go to pluck. In the spectrum, drag a bar up or down to mix that mode in; click a bar to play it alone.`;
+    scatter();
+    buildVoices();
+    state.t = 0;
+    A[0] = 1;
+    select(0);
+    derive();
+  }
+  const objSeg = segmented('obj', (v) => setObj(v as Obj));
+  const setNodes = check('nodes', (on) => { state.nodes = on; });
+  const setSand = check('sand', (on) => { state.sand = on; });
+  check('sound', (on) => setSound(on));
+  el('silence').addEventListener('click', () => { A.fill(0); derive(); });
+  el('scatter').addEventListener('click', scatter);
+
+  /** A known starting point for every Try. */
+  function scene(o: Obj) {
+    setObj(o);
+    state.running = true;
+    tp.setRunning(true);
+    state.nodes = true; setNodes(true);
+    state.sand = true; setSand(true);
+    setSpeed(0.5);
+    cam.yaw = 0.62; cam.pitch = -0.7; cam.zoom = 1.32;
+  }
+  const kOf = (m: number, n: number) => modes.findIndex((md) => md.m === m && md.n === n);
+  tries({
+    harm: () => {
+      scene('string');
+      A.fill(0);
+      A[0] = 0.75; A[1] = 0.45; A[2] = 0.3;
+      select(1);
+      derive();
+    },
+    middle: () => {
+      scene('string');
+      pluckAt(0.5, 0.85);
+      pull = null;
+      select(1);
+      derive();
+    },
+    sand: () => {
+      scene('square');
+      A.fill(0);
+      A[kOf(1, 3)] = 0.8;
+      A[kOf(3, 1)] = 0.8;
+      select(kOf(1, 3));
+      derive();
+      cam.yaw = 0; cam.pitch = -1.45; cam.zoom = 1.2;
+    },
+    round: () => {
+      scene('round');
+      poke(0.42, 0.18);
+      select(1);
+    },
+  });
+
+  setObj('string');
+  pluckAt(0.25, 0.8);
+  pull = null;
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  #nm {
+    touch-action: none;
+  }
+</style>

@@ -593,6 +593,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'normal-modes',
+        title: 'Normal Modes',
+        description:
+          'Every object has a few shapes it can hold while it vibrates, each ringing at its own note. Pluck it and the motion splits into those notes: whole multiples on a string, an untuned jumble on a drum.',
+        href: '/simulations/physics/normal-modes',
+        status: 'live',
+      },
+      {
         slug: 'phonons',
         title: 'Phonons',
         description:
