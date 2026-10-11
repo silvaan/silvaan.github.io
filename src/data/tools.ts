@@ -572,7 +572,7 @@ export const AREAS: Area[] = [
         slug: 'entropy',
         title: 'Entropy',
         description:
-          'Count the arrangements behind what you can see. Entropy is a census, S = k ln Ω, and that counting alone is enough to make time run one way.',
+          'Lift the wall and a gas fills its box. Flip every velocity and it flows home; nudge one particle by a billionth and it never does. Entropy counts arrangements, and chaos makes the count win.',
         href: '/simulations/physics/entropy',
         status: 'live',
       },
