@@ -715,6 +715,14 @@ export const AREAS: Area[] = [
         href: '/simulations/physics/schwarzschild',
         status: 'live',
       },
+      {
+        slug: 'black-hole',
+        title: 'Black Hole',
+        description:
+          'See a black hole the way its light does: every pixel is a photon traced through curved spacetime, so the disk wraps over the top and the sky folds round a shadow 2.6 times the horizon. Then put a particle in orbit and watch it trace rosettes, plunge inside 3 rₛ, and its clock run slow.',
+        href: '/simulations/physics/black-hole',
+        status: 'live',
+      },
     ],
   },
   {
