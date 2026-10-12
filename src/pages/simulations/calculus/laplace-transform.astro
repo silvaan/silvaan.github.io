@@ -18,11 +18,11 @@ import Try from '../../../components/sim/Try.astro';
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="lp" class="lp-canvas" width="640" height="600" role="img" aria-label="The magnitude of F(s) drawn as a surface over the complex plane, with pins at the poles, the region of convergence shaded and the slice above the imaginary axis highlighted."></canvas>
+        <canvas id="lp" class="lp-canvas" width="760" height="580" role="img" aria-label="The magnitude of F(s) drawn as a lit solid landscape over the complex plane, with the poles marked on the flat-topped peaks they raise, the region of convergence tinted, and the slice above the imaginary axis drawn as an amber curve on the surface."></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the poles', color: '#ef4444' }, { label: 'the slice at σ = 0, the Fourier transform', color: '#f59e0b' }]}
-        hint="Drag the background to orbit · height is |F(s)|, clipped so the poles do not run off to infinity"
+        legend={[{ label: 'the poles', color: '#ef4444' }, { label: 'the slice at σ = 0, the Fourier transform', color: '#f59e0b' }, { label: 'region of convergence', color: '#38bdf8' }]}
+        hint="Drag to orbit · scroll to zoom · height is |F(s)|, rounded off smoothly near the poles so they do not run off to infinity"
       />
       <Result label="Poles" />
     </div>
@@ -69,6 +69,8 @@ import Try from '../../../components/sim/Try.astro';
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
+  import { Camera3D, orbitControls, V } from '../../../lib/scene3d';
+  import type { Vec } from '../../../lib/scene3d';
 
   // --- complex helpers -----------------------------------------------------
   type C = { re: number; im: number };
@@ -83,7 +85,7 @@ import Try from '../../../components/sim/Try.astro';
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const state = { sig: 'exp', a: 0.6, w: 2.5, roc: true, slice: true, yaw: 0.72, pitch: -0.62 };
+  const state = { sig: 'exp', a: 0.6, w: 2.5, roc: true, slice: true };
 
   // F(s) for each signal, plus the time-domain formula and a pretty label.
   function transform(s: C): C {
@@ -101,12 +103,14 @@ import Try from '../../../components/sim/Try.astro';
     if (state.sig === 'ramp') return t * e;
     return state.sig === 'sin' ? e * Math.sin(w * t) : e * Math.cos(w * t);
   }
+  /** "s + 0.60" or "s − 0.50", never "s + −0.50". */
+  const sPlus = (sp = ' ', minus = '−') => `s${sp}${state.a < 0 ? minus : '+'}${sp}${Math.abs(state.a).toFixed(2)}`;
   const formula = () => {
-    const a = state.a.toFixed(2), w = state.w.toFixed(1);
-    if (state.sig === 'exp') return `1 / (s + ${a})`;
-    if (state.sig === 'ramp') return `1 / (s + ${a})²`;
-    const d = `(s + ${a})² + ${w}²`;
-    return state.sig === 'sin' ? `${w} / [${d}]` : `(s + ${a}) / [${d}]`;
+    const sa = sPlus(), w = state.w.toFixed(1);
+    if (state.sig === 'exp') return `1 / (${sa})`;
+    if (state.sig === 'ramp') return `1 / (${sa})²`;
+    const d = `(${sa})² + ${w}²`;
+    return state.sig === 'sin' ? `${w} / [${d}]` : `(${sa}) / [${d}]`;
   };
   // Pole locations, and whether they are repeated.
   const poles = (): { re: number; im: number }[] => {
@@ -115,172 +119,451 @@ import Try from '../../../components/sim/Try.astro';
     return [{ re: p, im: state.w }, { re: p, im: -state.w }];
   };
 
-  const SIG = 3, OM = 5, CAP = 4; // s-plane extent and the height clip
-  const height = (sigma: number, omega: number) =>
-    Math.min(cabs(transform({ re: sigma, im: omega })), CAP) / CAP;
+  // --- the landscape -------------------------------------------------------
+  const SIG = 3, OM = 5.5, CAP = 3; // s-plane extent, and where the height starts to round off
+  const XS = 1.1, ZS = 1.35, HS = 1.15, BASE = -0.3; // world size of the plane and the height
+  /** |F| rounded off smoothly: linear for small values, levelling out at 1 near a pole. */
+  const height = (sigma: number, omega: number) => {
+    const t = cabs(transform({ re: sigma, im: omega })) / CAP;
+    if (!(t < 1e3)) return 1; // at or next to a pole
+    return t / Math.pow(1 + t * t * t * t, 0.25);
+  };
+  /** (σ, ω, rounded height) to world: σ right, ω away from the viewer, height up. */
+  const P = (sigma: number, omega: number, h: number): Vec => ({ x: (sigma / SIG) * XS, y: BASE + h * HS, z: (omega / OM) * ZS });
+  const onSurf = (sigma: number, omega: number, lift = 0.012) => P(sigma, omega, height(sigma, omega) + lift / HS);
 
-  // --- projection ----------------------------------------------------------
+  // --- canvas, camera, theme -----------------------------------------------
   const canvas = el('lp') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d')!;
+  const applyDpr = () => {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  applyDpr();
+  const cam = new Camera3D(W, H, { dist: 5.6, yaw: 0.62, pitch: -0.58, zoom: 1.22 });
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
-  const isLight = () => css('--stage-light') === '1';
-  const CX = W / 2, CY = H / 2 + 40, CAM = 3.3, FOCAL = 2.7, SCALE = 245;
-  const BASE = -0.65;
+  let ink = '232,233,236', light = false;
+  const readTheme = () => {
+    ink = css('--stage-ink') || '232,233,236';
+    light = css('--stage-light') === '1';
+  };
+  readTheme();
+  const inkA = (a: number) => `rgba(${ink},${a})`;
+  const fontK = () => Math.max(1, Math.min(1.7, (W / (canvas.clientWidth || W)) * 0.72));
+  const ROC = '#38bdf8', SLICE = '#f59e0b', POLE = '#ef4444';
 
-  function project(x: number, y: number, z: number) {
-    const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
-    const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-    const x1 = x * cy + z * sy;
-    const z1 = -x * sy + z * cy;
-    const y2 = y * cp - z1 * sp;
-    const z2 = y * sp + z1 * cp;
-    const zc = z2 + CAM;
-    const s = FOCAL / Math.max(0.05, zc);
-    return { sx: CX + x1 * s * SCALE, sy: CY - y2 * s * SCALE, zc };
+  // --- WebGL2: the lit landscape and its skirt ------------------------------
+  const VS = `#version 300 es
+  precision highp float;
+  in vec3 aP;
+  in vec3 aN;
+  in vec4 aC;
+  in float aS;
+  uniform vec4 uCam;   // yaw, pitch, dist, k
+  uniform vec2 uHalf;  // half the view in logical pixels
+  out vec3 vW;
+  out vec3 vN;
+  out vec4 vC;
+  out float vS;
+  vec4 project(vec3 p) {
+    float cy = cos(uCam.x), sy = sin(uCam.x), cp = cos(uCam.y), sp = sin(uCam.y);
+    float x1 = p.x * cy + p.z * sy, z1 = -p.x * sy + p.z * cy;
+    float y2 = p.y * cp - z1 * sp, z2 = p.y * sp + z1 * cp;
+    float zc = z2 + uCam.z;
+    return vec4(x1 * uCam.w / uHalf.x, y2 * uCam.w / uHalf.y, ((zc - 0.3) / 30.0 * 2.0 - 1.0) * zc, zc);
   }
-  /** Map (σ, ω, normalised height) into screen space. */
-  const at = (sigma: number, omega: number, h: number) =>
-    project(sigma / SIG, BASE + h * 1.3, omega / OM);
+  void main() { vW = aP; vN = aN; vC = aC; vS = aS; gl_Position = project(aP); }`;
 
-  function turbo(t: number) {
-    t = Math.max(0, Math.min(1, t));
-    const stops = [[40, 60, 150], [30, 150, 200], [50, 200, 120], [240, 200, 70], [235, 80, 70]];
-    const seg = t * 4;
-    const i = Math.min(3, Math.floor(seg));
-    const f = seg - i;
+  const FS = `#version 300 es
+  precision highp float;
+  in vec3 vW;
+  in vec3 vN;
+  in vec4 vC;
+  in float vS;
+  uniform vec3 uL, uEye, uInk;
+  uniform float uLight, uStep, uCont;
+  out vec4 o;
+  void main() {
+    vec3 col = vC.rgb;
+    if (uCont > 0.0) {
+      float s = vS / uStep;
+      float d = abs(fract(s - 0.5) - 0.5) / max(fwidth(s), 1e-5);
+      col = mix(col, uInk, (1.0 - smoothstep(0.35, 1.35, d)) * uCont);
+    }
+    vec3 n = normalize(vN);
+    vec3 v = normalize(uEye - vW);
+    if (dot(n, v) < 0.0) n = -n;
+    float diff = max(dot(n, uL), 0.0);
+    float spec = pow(max(dot(n, normalize(uL + v)), 0.0), 60.0);
+    float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+    if (uLight > 0.5) col = col * (0.6 + 0.45 * diff) + vec3(spec * 0.2);
+    else col = col * (0.36 + 0.66 * diff) + vec3(0.9, 0.95, 1.0) * spec * 0.22 + vec3(0.45, 0.5, 0.95) * fres * 0.14;
+    o = vec4(col * vC.a, vC.a);
+  }`;
+
+  type Mesh = { vao: WebGLVertexArrayObject; vbo: WebGLBuffer; ibo: WebGLBuffer; n: number };
+  type Gl = {
+    gl: WebGL2RenderingContext;
+    glc: HTMLCanvasElement;
+    prog: WebGLProgram;
+    U: Record<string, WebGLUniformLocation | null>;
+    surf: Mesh;
+    skirt: Mesh;
+  };
+
+  function compile(gl: WebGL2RenderingContext, vs: string, fs: string) {
+    const sh = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+      return s;
+    };
+    const p = gl.createProgram()!;
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'link');
+    return p;
+  }
+
+  const STRIDE = 11; // position 3, normal 3, colour 4, contour scalar 1
+  function makeMesh(gl: WebGL2RenderingContext, prog: WebGLProgram): Mesh {
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
+    const vbo = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    const at = (name: string, size: number, off: number) => {
+      const l = gl.getAttribLocation(prog, name);
+      if (l < 0) return;
+      gl.enableVertexAttribArray(l);
+      gl.vertexAttribPointer(l, size, gl.FLOAT, false, STRIDE * 4, off * 4);
+    };
+    at('aP', 3, 0);
+    at('aN', 3, 3);
+    at('aC', 4, 6);
+    at('aS', 1, 10);
+    const ibo = gl.createBuffer()!;
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+    gl.bindVertexArray(null);
+    return { vao, vbo, ibo, n: 0 };
+  }
+  function upload(g: Gl, m: Mesh, v: Float32Array, idx: Uint32Array) {
+    const gl = g.gl;
+    gl.bindVertexArray(m.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.ibo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(null);
+    m.n = idx.length;
+  }
+
+  function makeGl(): Gl | null {
+    const glc = document.createElement('canvas');
+    const gl = glc.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true });
+    if (!gl) return null;
+    try {
+      const prog = compile(gl, VS, FS);
+      const U: Record<string, WebGLUniformLocation | null> = {};
+      for (const n of ['uCam', 'uHalf', 'uL', 'uEye', 'uInk', 'uLight', 'uStep', 'uCont']) U[n] = gl.getUniformLocation(prog, n);
+      return { gl, glc, prog, U, surf: makeMesh(gl, prog), skirt: makeMesh(gl, prog) };
+    } catch (err) {
+      console.warn('laplace-transform: WebGL2 setup failed', err);
+      return null;
+    }
+  }
+  const G = makeGl();
+
+  /** Low ground slate, rising through violet to rose where |F| is large. */
+  function heightColour(t: number): number[] {
+    const stops = light
+      ? [[0.8, 0.83, 0.92], [0.6, 0.52, 0.9], [0.9, 0.3, 0.45]]
+      : [[0.09, 0.11, 0.21], [0.36, 0.25, 0.68], [0.95, 0.34, 0.46]];
+    t = Math.max(0, Math.min(1, t)) * 2;
+    const i = Math.min(1, Math.floor(t)), u = t - i;
     const a = stops[i], b = stops[i + 1];
-    let r = (a[0] + (b[0] - a[0]) * f) | 0, g = (a[1] + (b[1] - a[1]) * f) | 0, bl = (a[2] + (b[2] - a[2]) * f) | 0;
-    if (isLight()) { r = (r * 0.6) | 0; g = (g * 0.6) | 0; bl = (bl * 0.6) | 0; }
-    return `rgb(${r},${g},${bl})`;
+    return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+  }
+  const SKY = [0.22, 0.74, 0.97];
+  /** The colour of the ground at σ: tinted sky blue inside the region of convergence. */
+  function groundColour(sigma: number, h: number) {
+    const c = heightColour(Math.pow(h, 0.8));
+    if (state.roc && sigma > -state.a) {
+      const k = (light ? 0.34 : 0.3) * (1 - h * 0.7);
+      return c.map((v, i) => v + (SKY[i] - v) * k);
+    }
+    return c;
   }
 
-  // --- drawing -------------------------------------------------------------
-  function drawBase(ink: string) {
-    const line = (s0: number, o0: number, s1: number, o1: number, style: string, w: number, dash: number[] = []) => {
-      const p = at(s0, o0, 0), q = at(s1, o1, 0);
-      if (p.zc <= 0.1 || q.zc <= 0.1) return;
-      ctx.setLineDash(dash);
-      ctx.strokeStyle = style;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      ctx.moveTo(p.sx, p.sy);
-      ctx.lineTo(q.sx, q.sy);
+  const NX = 150, NZ = 220;
+  const hgrid = new Float32Array((NX + 1) * (NZ + 1));
+  function buildMeshes(g: Gl) {
+    const sx = (i: number) => -SIG + (2 * SIG * i) / NX;
+    const sz = (j: number) => -OM + (2 * OM * j) / NZ;
+    for (let j = 0; j <= NZ; j++) for (let i = 0; i <= NX; i++) hgrid[j * (NX + 1) + i] = height(sx(i), sz(j));
+    const hy = (i: number, j: number) => BASE + hgrid[Math.max(0, Math.min(NZ, j)) * (NX + 1) + Math.max(0, Math.min(NX, i))] * HS;
+    const dx = (2 * XS) / NX, dz = (2 * ZS) / NZ;
+    const v = new Float32Array((NX + 1) * (NZ + 1) * STRIDE);
+    let q = 0;
+    for (let j = 0; j <= NZ; j++)
+      for (let i = 0; i <= NX; i++) {
+        const h = hgrid[j * (NX + 1) + i];
+        const gx = (hy(i + 1, j) - hy(i - 1, j)) / ((Math.min(NX, i + 1) - Math.max(0, i - 1)) * dx);
+        const gz = (hy(i, j + 1) - hy(i, j - 1)) / ((Math.min(NZ, j + 1) - Math.max(0, j - 1)) * dz);
+        const n = V.unit({ x: -gx, y: 1, z: -gz });
+        const c = groundColour(sx(i), h);
+        const p = P(sx(i), sz(j), h);
+        v.set([p.x, p.y, p.z, n.x, n.y, n.z, c[0], c[1], c[2], 1, h], q);
+        q += STRIDE;
+      }
+    const idx = new Uint32Array(NX * NZ * 6);
+    let k = 0;
+    for (let j = 0; j < NZ; j++)
+      for (let i = 0; i < NX; i++) {
+        const a = j * (NX + 1) + i, b = a + 1, c = a + NX + 1, d = c + 1;
+        idx.set([a, b, c, b, d, c], k);
+        k += 6;
+      }
+    upload(g, g.surf, v, idx);
+
+    // the skirt: the four sides of the block, down to the base
+    const sv: number[] = [], si: number[] = [];
+    const side = (pts: { s: number; o: number; h: number }[], n: Vec) => {
+      const base = sv.length / STRIDE;
+      const col = light ? [0.72, 0.75, 0.84] : [0.14, 0.16, 0.24];
+      for (const p of pts) {
+        const top = P(p.s, p.o, p.h), bot = P(p.s, p.o, 0);
+        sv.push(top.x, top.y, top.z, n.x, n.y, n.z, ...col, 1, 0);
+        sv.push(bot.x, BASE - 0.06, bot.z, n.x, n.y, n.z, ...col, 1, 0);
+      }
+      for (let m = 0; m < pts.length - 1; m++) {
+        const a = base + 2 * m;
+        si.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
+    };
+    const row = (j: number) => Array.from({ length: NX + 1 }, (_, i) => ({ s: sx(i), o: sz(j), h: hgrid[j * (NX + 1) + i] }));
+    const col = (i: number) => Array.from({ length: NZ + 1 }, (_, j) => ({ s: sx(i), o: sz(j), h: hgrid[j * (NX + 1) + i] }));
+    side(row(0), { x: 0, y: 0, z: -1 });
+    side(row(NZ), { x: 0, y: 0, z: 1 });
+    side(col(0), { x: -1, y: 0, z: 0 });
+    side(col(NX), { x: 1, y: 0, z: 0 });
+    upload(g, g.skirt, new Float32Array(sv), new Uint32Array(si));
+  }
+
+  let meshDirty = true;
+  function renderGl(g: Gl) {
+    const gl = g.gl, U = g.U;
+    if (meshDirty) { buildMeshes(g); meshDirty = false; }
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(W * dpr), hh = Math.round(H * dpr);
+    if (g.glc.width !== w || g.glc.height !== hh) { g.glc.width = w; g.glc.height = hh; }
+    gl.viewport(0, 0, w, hh);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(g.prog);
+    // light from over the viewer's left shoulder, so the ground is always lit
+    const L = V.unit(V.add(V.add(V.mul(cam.right(), -0.45), V.mul(cam.up(), 0.75)), V.mul(cam.forward(), -0.55)));
+    const Lw = V.unit({ x: L.x, y: Math.abs(L.y) + 0.6, z: L.z });
+    const eye = cam.eye();
+    gl.uniform4f(U.uCam, cam.yaw, cam.pitch, cam.dist, cam.k);
+    gl.uniform2f(U.uHalf, W / 2, H / 2);
+    gl.uniform3f(U.uL, Lw.x, Lw.y, Lw.z);
+    gl.uniform3f(U.uEye, eye.x, eye.y, eye.z);
+    gl.uniform1f(U.uLight, light ? 1 : 0);
+    const inkC = light ? [0.1, 0.12, 0.2] : [0.92, 0.94, 1.0];
+    gl.uniform3f(U.uInk, inkC[0], inkC[1], inkC[2]);
+    gl.uniform1f(U.uStep, 0.1);
+    gl.uniform1f(U.uCont, light ? 0.22 : 0.18);
+    gl.bindVertexArray(g.surf.vao);
+    gl.drawElements(gl.TRIANGLES, g.surf.n, gl.UNSIGNED_INT, 0);
+    gl.uniform1f(U.uCont, 0);
+    gl.bindVertexArray(g.skirt.vao);
+    gl.drawElements(gl.TRIANGLES, g.skirt.n, gl.UNSIGNED_INT, 0);
+    gl.bindVertexArray(null);
+    ctx.drawImage(g.glc, 0, 0, W, H);
+  }
+
+  // --- overlay: curves on the landscape, depth-tested by marching the view ray --
+  /** Is world point p hidden behind the landscape, seen from the camera? */
+  function hidden(p: Vec) {
+    const e = cam.eye();
+    const d = V.sub(e, p);
+    const len = V.norm(d);
+    const lo = BASE - 0.07, hi = BASE + HS + 0.01;
+    let t0 = 0.03 / len, t1 = 1;
+    if (Math.abs(d.y) > 1e-6) {
+      const ta = (lo - p.y) / d.y, tb = (hi - p.y) / d.y;
+      t1 = Math.min(1, Math.max(ta, tb));
+      t0 = Math.max(t0, Math.min(ta, tb));
+    }
+    if (t1 <= t0) return false;
+    const N = 56;
+    for (let i = 0; i <= N; i++) {
+      const t = t0 + ((t1 - t0) * i) / N;
+      const x = p.x + d.x * t, y = p.y + d.y * t, z = p.z + d.z * t;
+      if (Math.abs(x) > XS || Math.abs(z) > ZS) continue;
+      if (BASE + height((x / XS) * SIG, (z / ZS) * OM) * HS > y + 0.012) return true;
+    }
+    return false;
+  }
+
+  /** A polyline in world space: solid where seen, faint and dashed where the landscape hides it. */
+  function curve(pts: Vec[], col: string, width: number, o: { halo?: boolean; dash?: number[]; hiddenAlpha?: number } = {}) {
+    if (pts.length < 2) return;
+    const pr = pts.map((p) => ({ ...cam.project(p), h: hidden(p) }));
+    const runs: { h: boolean; pts: { sx: number; sy: number }[] }[] = [];
+    for (const p of pr) {
+      const last = runs[runs.length - 1];
+      if (!last || last.h !== p.h) runs.push({ h: p.h, pts: last ? [last.pts[last.pts.length - 1], p] : [p] });
+      else last.pts.push(p);
+    }
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (const run of runs) {
+      if (run.pts.length < 2) continue;
+      const path = () => {
+        ctx.beginPath();
+        run.pts.forEach((p, i) => (i ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy)));
+      };
+      if (run.h) {
+        const ha = o.hiddenAlpha ?? 0.3;
+        if (ha <= 0) continue;
+        ctx.globalAlpha = ha;
+        ctx.setLineDash([4, 5]);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = Math.max(1, width * 0.6);
+        path();
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.setLineDash([]);
+        continue;
+      }
+      if (o.halo) {
+        ctx.strokeStyle = light ? 'rgba(255,255,255,0.85)' : 'rgba(8,9,14,0.7)';
+        ctx.lineWidth = width + 3.5;
+        path();
+        ctx.stroke();
+      }
+      ctx.setLineDash(o.dash ?? []);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = width;
+      path();
       ctx.stroke();
       ctx.setLineDash([]);
-    };
-
-    // region of convergence: the half-plane to the right of the rightmost pole
-    if (state.roc) {
-      const edge = Math.max(-SIG, Math.min(SIG, -state.a));
-      const quad = [at(edge, -OM, 0), at(SIG, -OM, 0), at(SIG, OM, 0), at(edge, OM, 0)];
-      if (quad.every((p) => p.zc > 0.1)) {
-        ctx.beginPath();
-        ctx.moveTo(quad[0].sx, quad[0].sy);
-        for (let i = 1; i < 4; i++) ctx.lineTo(quad[i].sx, quad[i].sy);
-        ctx.closePath();
-        ctx.fillStyle = `rgba(124,140,255,${isLight() ? 0.16 : 0.13})`;
-        ctx.fill();
-      }
-      line(edge, -OM, edge, OM, 'rgba(124,140,255,0.75)', 1.6, [5, 4]);
     }
-
-    // the σ and jω axes on the floor
-    line(-SIG, 0, SIG, 0, `rgba(${ink},0.35)`, 1.2);
-    line(0, -OM, 0, OM, `rgba(${ink},0.35)`, 1.2);
-
-    // floor outline
-    const box = [at(-SIG, -OM, 0), at(SIG, -OM, 0), at(SIG, OM, 0), at(-SIG, OM, 0)];
-    if (box.every((p) => p.zc > 0.1)) {
-      ctx.strokeStyle = `rgba(${ink},0.2)`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(box[0].sx, box[0].sy);
-      for (let i = 1; i < 4; i++) ctx.lineTo(box[i].sx, box[i].sy);
-      ctx.closePath();
-      ctx.stroke();
-    }
-
-    // axis labels
-    ctx.fillStyle = `rgba(${ink},0.6)`;
-    ctx.font = '13px ui-monospace, monospace';
-    ctx.textAlign = 'center';
-    const sl = at(SIG + 0.45, 0, 0), ol = at(0, OM + 0.7, 0);
-    if (sl.zc > 0.1) ctx.fillText('σ', sl.sx, sl.sy);
-    if (ol.zc > 0.1) ctx.fillText('jω', ol.sx, ol.sy);
   }
 
-  function drawSurface() {
-    const M = 44;
-    ctx.globalAlpha = isLight() ? 0.75 : 0.6;
-    ctx.lineWidth = 1;
-    for (const axis of [0, 1])
-      for (let i = 0; i <= M; i++) {
-        let prev: { sx: number; sy: number; zc: number; h: number } | null = null;
-        for (let j = 0; j <= M; j++) {
-          const u = -SIG + (2 * SIG * (axis === 0 ? j : i)) / M;
-          const v = -OM + (2 * OM * (axis === 0 ? i : j)) / M;
-          const h = height(u, v);
-          const p = at(u, v, h);
-          if (prev && prev.zc > 0.1 && p.zc > 0.1) {
-            ctx.strokeStyle = turbo((prev.h + h) / 2);
-            ctx.beginPath();
-            ctx.moveTo(prev.sx, prev.sy);
-            ctx.lineTo(p.sx, p.sy);
-            ctx.stroke();
-          }
-          prev = { ...p, h };
-        }
-      }
-    ctx.globalAlpha = 1;
+  function label(text: string, p: Vec, col: string, align: CanvasTextAlign = 'center', size = 14, dy = 0, dx = 0) {
+    const s = cam.project(p);
+    if (s.zc <= 0.1) return;
+    ctx.font = `600 ${Math.round(size * fontK())}px 'JetBrains Mono', ui-monospace, monospace`;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = light ? 'rgba(255,255,255,0.9)' : 'rgba(8,9,14,0.75)';
+    // keep the whole label inside the canvas
+    const tw = ctx.measureText(text).width;
+    const left = align === 'left' ? 0 : align === 'right' ? tw : tw / 2;
+    const x = Math.max(6 + left, Math.min(W - 6 - (tw - left), s.sx + dx));
+    ctx.strokeText(text, x, s.sy + dy);
+    ctx.fillStyle = col;
+    ctx.fillText(text, x, s.sy + dy);
   }
 
-  function drawPoles(ink: string) {
-    ctx.strokeStyle = '#ef4444';
-    ctx.fillStyle = '#ef4444';
+  const lineSigma = (o: number, n = 160) => Array.from({ length: n + 1 }, (_, i) => onSurf(-SIG + (2 * SIG * i) / n, o));
+  const lineOmega = (s: number, n = 320) => Array.from({ length: n + 1 }, (_, i) => onSurf(s, -OM + (2 * OM * i) / n));
+
+  function overlay() {
+    // the axes, lying on the ground
+    curve(lineSigma(0), inkA(light ? 0.55 : 0.5), 1.3, { hiddenAlpha: 0.25 });
+    if (!state.slice) curve(lineOmega(0), inkA(light ? 0.55 : 0.5), 1.3, { hiddenAlpha: 0.25 });
+    label('σ', P(SIG * 1.1, 0, height(SIG, 0)), inkA(0.75), 'center', 16);
+    label('jω', P(0, OM * 1.1, 0), inkA(0.75), 'center', 16);
+
+    // the edge of the region of convergence
+    const edge = -state.a;
+    if (state.roc && Math.abs(edge) < SIG) {
+      curve(lineOmega(edge, 240), light ? '#0ea5e9' : ROC, 2, { dash: [7, 5], hiddenAlpha: 0.25 });
+    }
+
+    // the Fourier transform: the slice above the imaginary axis
+    if (state.slice) {
+      curve(lineOmega(0, 420), SLICE, 3.6, { halo: true, hiddenAlpha: 0.4 });
+      label('|F(jω)|', P(0, -OM * 1.1, 0), light ? '#d97706' : SLICE, 'left', 13, 0, 6);
+    }
+
+    // the poles, on the flat tops they raise
+    const rep = state.sig === 'ramp';
     for (const p of poles()) {
       if (Math.abs(p.re) > SIG || Math.abs(p.im) > OM) continue;
-      const foot = at(p.re, p.im, 0), tip = at(p.re, p.im, 1.06);
-      if (foot.zc <= 0.1 || tip.zc <= 0.1) continue;
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = 2;
+      const top = P(p.re, p.im, 1 + 0.01);
+      const s = cam.project(top);
+      ctx.globalAlpha = hidden(top) ? 0.45 : 1;
+      ctx.strokeStyle = light ? '#fff' : 'rgba(8,9,14,0.8)';
+      ctx.lineWidth = 5;
       ctx.beginPath();
-      ctx.moveTo(foot.sx, foot.sy);
-      ctx.lineTo(tip.sx, tip.sy);
+      ctx.arc(s.sx, s.sy, 7, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.strokeStyle = POLE;
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(foot.sx, foot.sy, 4, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(s.sx, s.sy, 7, 0, Math.PI * 2);
+      ctx.moveTo(s.sx - 4, s.sy - 4);
+      ctx.lineTo(s.sx + 4, s.sy + 4);
+      ctx.moveTo(s.sx + 4, s.sy - 4);
+      ctx.lineTo(s.sx - 4, s.sy + 4);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      label(rep ? 'double pole' : 'pole', top, POLE, 'center', 13, -20);
     }
-    void ink;
-  }
 
-  function drawSlice() {
-    if (!state.slice) return;
-    const N = 260;
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 2.6;
-    ctx.beginPath();
-    let started = false;
-    for (let i = 0; i <= N; i++) {
-      const omega = -OM + (2 * OM * i) / N;
-      const p = at(0, omega, height(0, omega));
-      if (p.zc <= 0.1) { started = false; continue; }
-      started ? ctx.lineTo(p.sx, p.sy) : ((ctx.moveTo(p.sx, p.sy)), (started = true));
+    // a quiet key in the corner
+    const fk = fontK();
+    ctx.font = `500 ${Math.round(13 * fk)}px 'JetBrains Mono', ui-monospace, monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = inkA(0.6);
+    ctx.fillText(`height |F(s)| over σ ∈ [−${SIG}, ${SIG}], ω ∈ [−${OM}, ${OM}]`, 16, 18 + 10 * fk);
+    if (state.roc) {
+      ctx.fillStyle = light ? '#0284c7' : ROC;
+      ctx.fillText(`region of convergence: Re s > ${(-state.a).toFixed(2)} (dashed edge)`, 16, 18 + 30 * fk);
     }
-    ctx.stroke();
   }
 
   function draw() {
-    const ink = css('--stage-ink') || '232,233,236';
     ctx.clearRect(0, 0, W, H);
-    drawBase(ink);
-    drawSurface();
-    drawPoles(ink);
-    drawSlice();
+    if (G) renderGl(G);
+    else {
+      ctx.font = "12px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.textAlign = 'center';
+      ctx.fillStyle = inkA(0.6);
+      ctx.fillText('WebGL2 is not available here, so only the curves on the landscape are drawn.', W / 2, H - 16);
+    }
+    overlay();
     drawTime();
     updateReadout();
   }
+  let pending = false;
+  const redraw = () => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      draw();
+    });
+  };
+  const rebuild = () => {
+    meshDirty = true;
+    redraw();
+  };
 
   // --- time-domain inset ---------------------------------------------------
   const ftCanvas = el('ft') as HTMLCanvasElement;
@@ -330,11 +613,11 @@ import Try from '../../../components/sim/Try.astro';
     };
     /** F(s) again, typeset. */
     const texF = () => {
-      const a = state.a.toFixed(2), w = state.w.toFixed(1);
-      if (state.sig === 'exp') return `\\frac{1}{s+${a}}`;
-      if (state.sig === 'ramp') return `\\frac{1}{(s+${a})^2}`;
-      const d = `(s+${a})^2+${w}^2`;
-      return state.sig === 'sin' ? `\\frac{${w}}{${d}}` : `\\frac{s+${a}}{${d}}`;
+      const a = sPlus('', '-'), w = state.w.toFixed(1);
+      if (state.sig === 'exp') return `\\frac{1}{${a}}`;
+      if (state.sig === 'ramp') return `\\frac{1}{(${a})^2}`;
+      const d = `(${a})^2+${w}^2`;
+      return state.sig === 'sin' ? `\\frac{${w}}{${d}}` : `\\frac{${a}}{${d}}`;
     };
     const polesText = p.length === 1 ? `s = ${p[0].re.toFixed(2)}${rep ? ' (double)' : ''}` : `s = ${p[0].re.toFixed(2)} ± ${state.w.toFixed(1)}j`;
     const fourierOk = -state.a < 0;
@@ -347,24 +630,18 @@ import Try from '../../../components/sim/Try.astro';
       colour: '#ef4444',
       status: `converges for Re(s) > ${(-state.a).toFixed(2)} · the Fourier transform ${fourierOk ? 'exists: the imaginary axis is inside that half-plane' : 'does not converge: the axis lies outside it'}`,
       note: fourierOk
-        ? 'The pins are the poles, where |F(s)| blows up. The amber slice down σ = 0 is the Fourier transform, and it only exists because the poles sit to the left of the axis.'
-        : 'With a < 0 the signal grows, the poles sit to the right of the axis, and the Fourier transform does not exist. The Laplace transform still does, further right.',
+        ? 'The red marks are the poles, where |F(s)| blows up. The amber slice down σ = 0 is the Fourier transform, and it only exists because the poles sit to the left of the axis.'
+        : Math.abs(state.a) < 1e-9
+          ? 'With a = 0 the signal never dies out: the poles sit right on the axis and the Fourier integral does not converge. The Laplace transform still does, for Re(s) > 0.'
+          : 'With a < 0 the signal grows, the poles sit to the right of the axis, and the Fourier transform does not exist. The Laplace transform still does, further right.',
     });
   }
 
   // --- interaction ---------------------------------------------------------
-  let dragging = false, lx = 0, ly = 0;
-  canvas.addEventListener('pointerdown', (e) => { dragging = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    state.yaw += (e.clientX - lx) * 0.01;
-    state.pitch = Math.max(-1.45, Math.min(-0.05, state.pitch + (e.clientY - ly) * 0.01));
-    lx = e.clientX; ly = e.clientY;
-    draw();
-  });
-  const stop = () => (dragging = false);
-  canvas.addEventListener('pointerup', stop);
-  canvas.addEventListener('pointercancel', stop);
+  orbitControls(canvas, cam, W, H, { changed: redraw });
+  window.addEventListener('themechange', () => { readTheme(); rebuild(); });
+  document.addEventListener('fullscreenchange', () => { applyDpr(); redraw(); });
+  new ResizeObserver(redraw).observe(canvas);
 
   const wctl = el('wctl');
   function syncFreqControl() {
@@ -375,12 +652,12 @@ import Try from '../../../components/sim/Try.astro';
   const sigSeg = segmented('sig', (s) => {
     state.sig = s;
     syncFreqControl();
-    draw();
+    rebuild();
   });
-  const setA = slider('a', (v) => { state.a = v; draw(); }, (v) => v.toFixed(2));
-  const setW = slider('w', (v) => { state.w = v; draw(); }, (v) => v.toFixed(2));
-  check('roc', (on) => { state.roc = on; draw(); });
-  check('slice', (on) => { state.slice = on; draw(); });
+  const setA = slider('a', (v) => { state.a = v; rebuild(); }, (v) => v.toFixed(2));
+  const setW = slider('w', (v) => { state.w = v; rebuild(); }, (v) => v.toFixed(2));
+  check('roc', (on) => { state.roc = on; rebuild(); });
+  check('slice', (on) => { state.slice = on; redraw(); });
 
   function show(sig: string, a: number, w = state.w) {
     state.sig = sig;
@@ -390,7 +667,7 @@ import Try from '../../../components/sim/Try.astro';
     state.w = w;
     setW(w);
     syncFreqControl();
-    draw();
+    rebuild();
   }
   tries({
     edge: () => show('exp', 0),
