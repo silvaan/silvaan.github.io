@@ -18,7 +18,7 @@ import Try from '../../../components/sim/Try.astro';
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="pd" class="pd-canvas" width="900" height="540" role="img" aria-label="A surface cut by vertical planes through a point, each leaving one curve with its tangent line, the gradient arrow and level curves on the floor, and a card that flattens the chosen slice into an ordinary graph."></canvas>
+        <canvas id="pd" class="pd-canvas" width="900" height="540" role="img" aria-label="A lit 3D surface with level curves, cut by see-through vertical planes through a draggable point, each leaving one coloured curve on the surface with its tangent line, the gradient arrow laid on the surface pointing uphill, and a card that flattens the chosen slice into an ordinary graph."></canvas>
       </div>
       <Caption
         legend={[
@@ -27,7 +27,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'direction u: D<sub>u</sub>f', color: 'rgb(167,139,250)' },
           { label: 'gradient ∇f', color: 'rgb(52,211,153)' },
         ]}
-        hint="Drag to orbit · scroll to zoom · click a slice to select it"
+        hint="Drag the point to move it · drag elsewhere to orbit · scroll to zoom · click a slice to select it"
       />
       <Result label="∂f/∂x at your point" />
     </div>
@@ -66,7 +66,7 @@ import Try from '../../../components/sim/Try.astro';
     </li>
     <li>
       Turn u a quarter turn, along the <b>level curve</b> through the point
-      (the bold contour on the floor): the slice is flat there and D<sub>u</sub>f = 0. <Try id="level" />
+      (the bold contour through it, on the surface and on the floor): the slice is flat there and D<sub>u</sub>f = 0. <Try id="level" />
     </li>
   </Fragment>
 </SimLayout>
@@ -75,20 +75,9 @@ import Try from '../../../components/sim/Try.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
-  import {
-    V3,
-    v3,
-    sub,
-    cross,
-    unit,
-    dot,
-    project,
-    orbit,
-    inside,
-    roundRect,
-    type Cam,
-    type Proj,
-  } from '../../../lib/theorem';
+  import { inside, roundRect } from '../../../lib/theorem';
+  import { Camera3D, orbitControls, drawBackdrop, V } from '../../../lib/scene3d';
+  import type { Vec, Projected } from '../../../lib/scene3d';
 
   type Which = 'x' | 'y' | 'u';
   type Surf = {
@@ -100,6 +89,7 @@ import Try from '../../../components/sim/Try.astro';
     ey: string;
   };
 
+  // the same four surfaces are written once more in GLSL below (fz / gz), by index
   const SURF: Record<string, Surf> = {
     bowl: {
       f: (x, y) => 0.5 * x * x + 0.5 * y * y,
@@ -134,6 +124,7 @@ import Try from '../../../components/sim/Try.astro';
       ey: '∂f/∂y = −y · f(x, y)',
     },
   };
+  const SURF_ID: Record<string, number> = { bowl: 0, saddle: 1, twist: 2, hill: 3 };
 
   const state = {
     surf: 'bowl',
@@ -146,9 +137,12 @@ import Try from '../../../components/sim/Try.astro';
 
   // amber holds y still, blue holds x still, violet walks along u
   const RGB = { x: '245,158,11', y: '56,189,248', u: '167,139,250' };
-  const col = (w: Which, alpha: number) => `rgba(${RGB[w]},${alpha})`;
+  const RGB_LIGHT = { x: '217,119,6', y: '2,132,199', u: '124,58,237' };
+  const rgbOf = (w: Which) => (light ? RGB_LIGHT : RGB)[w];
+  const col = (w: Which, alpha: number) => `rgba(${rgbOf(w)},${alpha})`;
   const other = (w: Which): Which => (w === 'x' ? 'y' : 'x');
-  const GRAD = (alpha: number) => `rgba(52,211,153,${alpha})`;
+  const GRAD = (alpha: number) => `rgba(${light ? '5,150,105' : '52,211,153'},${alpha})`;
+  const unit3 = (s: string) => s.split(',').map((v) => +v / 255) as [number, number, number];
 
   /** The horizontal direction each slice walks in. */
   const dirOf = (w: Which): [number, number] => {
@@ -218,7 +212,12 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   const zw = (x: number, y: number) => (cur().f(x, y) - mid) * K;
-  const world = (x: number, y: number): V3 => v3(x, y, zw(x, y));
+
+  // Points are kept in the maths frame [x, y, drawn height]; the 3D camera is
+  // y-up, so x stays x, the height becomes its y and the maths y its z.
+  type M = [number, number, number];
+  const onSurf = (x: number, y: number, lift = 0): M => [x, y, zw(x, y) + lift];
+  const toV = (m: M): Vec => ({ x: m[0], y: m[2], z: m[1] });
 
   // --- canvas ---------------------------------------------------------------
   const setEq = equation();
@@ -228,6 +227,10 @@ import Try from '../../../components/sim/Try.astro';
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (n: string, f = '') =>
     getComputedStyle(canvas).getPropertyValue(n).trim() || f;
+  let light = false;
+  const readTheme = () => { light = css('--stage-light') === '1'; };
+  readTheme();
+  window.addEventListener('themechange', () => { readTheme(); draw(); });
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
   const inv = (a: number) =>
     `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
@@ -236,40 +239,537 @@ import Try from '../../../components/sim/Try.astro';
     (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3).replace('-', '−');
   const signed = (v: number) => (v >= 0 ? '+' : '') + fmt(v);
 
-  const cam: Cam = {
-    yaw: -0.62,
-    pitch: -0.46,
-    dist: 7.6,
-    f: 660,
-    cx: 300,
-    cy: 262,
-  };
+  const VW = 608; // the 3D view; the card sits to its right
+  // the camera looks at a point LIFT px above the middle of the view, so the
+  // floor's near corner clears the bottom; the GL view is that much taller and
+  // drawn that much higher, so both agree on the same centre
+  const LIFT = 22;
+  const VH = H + 2 * LIFT;
+  const cam = new Camera3D(VW, H - 2 * LIFT, { dist: 8, yaw: 0.6, pitch: -0.82, zoom: 0.86 });
   const CARD = { x: 616, y: 26, w: 262, h: 486 };
   const GR = { x: 634, y: 64, w: 226, h: 132 };
-  const px = (p: V3) => project(cam, p);
-  const LIGHT = unit(v3(-0.42, -0.55, 0.72));
+  const P = (m: M) => cam.project(toV(m));
+  const front = (q: Projected) => q.zc > 0.3;
 
-  // --- the two slices -------------------------------------------------------
-  /** The curve the plane cuts out of the surface, in world coordinates. */
-  function trace(w: Which, n = 120): V3[] {
+  // --- WebGL2: the lit surface, the floor and the see-through planes --------
+  const PROJECT = `
+  uniform vec4 uCam;   // yaw, pitch, dist, k
+  uniform vec2 uHalf;  // half the view in logical pixels
+  vec4 project(vec3 p) {
+    float cy = cos(uCam.x), sy = sin(uCam.x), cp = cos(uCam.y), sp = sin(uCam.y);
+    float x1 = p.x * cy + p.z * sy, z1 = -p.x * sy + p.z * cy;
+    float y2 = p.y * cp - z1 * sp, z2 = p.y * sp + z1 * cp;
+    float zc = z2 + uCam.z;
+    return vec4(x1 * uCam.w / uHalf.x, y2 * uCam.w / uHalf.y, ((zc - 0.3) / 30.0 * 2.0 - 1.0) * zc, zc);
+  }`;
+  const FN = `
+  uniform highp int uS;
+  float fz(vec2 p) {
+    if (uS == 0) return 0.5 * dot(p, p);
+    if (uS == 1) return 0.5 * (p.x * p.x - p.y * p.y);
+    if (uS == 2) return 0.8 * p.x * p.y;
+    return 1.7 * exp(-0.5 * dot(p, p));
+  }
+  vec2 gz(vec2 p) {
+    if (uS == 0) return p;
+    if (uS == 1) return vec2(p.x, -p.y);
+    if (uS == 2) return 0.8 * vec2(p.y, p.x);
+    return -p * 1.7 * exp(-0.5 * dot(p, p));
+  }`;
+  const LINES = `
+  // a line of width w pixels where q = 0, and one at every whole q
+  float band(float q, float w) {
+    float d = abs(q) / max(fwidth(q), 1e-6);
+    return 1.0 - smoothstep(w * 0.5 - 0.6, w * 0.5 + 0.6, d);
+  }
+  float iso(float q, float w) {
+    float d = abs(fract(q + 0.5) - 0.5) / max(fwidth(q), 1e-6);
+    return 1.0 - smoothstep(w * 0.5 - 0.6, w * 0.5 + 0.6, d);
+  }`;
+
+  const VS_SURF = `#version 300 es
+  precision highp float;
+  in vec2 aG;
+  uniform float uD, uMid, uK, uFloor, uMode;
+  ${PROJECT}
+  ${FN}
+  out vec2 vXY;
+  out float vF;
+  out vec3 vW;
+  void main() {
+    vec2 p = (aG * 2.0 - 1.0) * uD;
+    vXY = p;
+    vF = fz(p);
+    float h = uMode > 0.5 ? uFloor : (vF - uMid) * uK;
+    vW = vec3(p.x, h, p.y);
+    gl_Position = project(vW);
+  }`;
+
+  const FS_SURF = `#version 300 es
+  precision highp float;
+  ${FN}
+  ${LINES}
+  in vec2 vXY;
+  in float vF;
+  in vec3 vW;
+  uniform float uMode, uK, uD, uLight, uFlo, uFhi, uStep, uLevel;
+  uniform vec2 uP;
+  uniform vec4 uS0, uS1;   // slice direction xy, width in px, strength
+  uniform vec3 uC0, uC1;   // slice colours
+  uniform vec3 uL, uEye, uLo, uHi, uInk;
+  out vec4 o;
+  vec3 slice(vec3 c, vec4 s, vec3 k) {
+    if (s.w <= 0.0) return c;
+    float q = s.x * (vXY.y - uP.y) - s.y * (vXY.x - uP.x);
+    c = mix(c, k, band(q, s.z * 3.4) * s.w * 0.22);
+    return mix(c, k, band(q, s.z) * s.w);
+  }
+  void main() {
+    float t = clamp((vF - uFlo) / max(uFhi - uFlo, 1e-5), 0.0, 1.0);
+    float c = iso((vF - uFlo) / uStep, 1.0);
+    float lv = band(vF - uLevel, 2.4);
+    if (uMode > 0.5) {
+      // the floor: its grid, the level curves, the bold one through the point
+      vec2 e = uD - abs(vXY);
+      float edge = band(min(e.x, e.y), 1.2);
+      float grid = max(iso(vXY.x / 0.4, 1.0), iso(vXY.y / 0.4, 1.0));
+      float a = (uLight > 0.5 ? 0.045 : 0.05) + 0.05 * grid + 0.2 * c + 0.6 * lv + 0.2 * edge;
+      a = min(a, 0.85);
+      o = vec4(uInk * a, a);
+      return;
+    }
+    vec2 g = gz(vXY) * uK;
+    vec3 n = normalize(vec3(-g.x, 1.0, -g.y));
+    vec3 v = normalize(uEye - vW);
+    if (dot(n, v) < 0.0) n = -n;
+    vec3 base = mix(uLo, uHi, smoothstep(0.0, 1.0, t));
+    base = mix(base, uInk, c * (uLight > 0.5 ? 0.2 : 0.16));
+    float diff = max(dot(n, uL), 0.0);
+    float spec = pow(max(dot(n, normalize(uL + v)), 0.0), 60.0);
+    float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+    vec3 lit = base * (uLight > 0.5 ? 0.66 + 0.4 * diff : 0.42 + 0.7 * diff);
+    lit += vec3(1.0) * spec * (uLight > 0.5 ? 0.16 : 0.3);
+    if (uLight < 0.5) lit += uHi * fres * 0.22;
+    lit = mix(lit, uInk, lv * (uLight > 0.5 ? 0.6 : 0.7));
+    lit = slice(lit, uS0, uC0);
+    lit = slice(lit, uS1, uC1);
+    o = vec4(lit, 1.0);
+  }`;
+
+  const VS_FLAT = `#version 300 es
+  precision highp float;
+  in vec3 aP;
+  in vec4 aC;
+  in vec3 aQ;
+  ${PROJECT}
+  out vec4 vC;
+  out vec3 vQ;
+  void main() { vC = aC; vQ = aQ; gl_Position = project(aP); }`;
+
+  const FS_FLAT = `#version 300 es
+  precision highp float;
+  ${LINES}
+  in vec4 vC;
+  in vec3 vQ;
+  uniform float uGhost;
+  out vec4 o;
+  void main() {
+    vec4 c = vC;
+    if (vQ.z > 0.5) c *= 1.0 + 1.6 * max(iso(vQ.x / 0.2, 1.0), iso(vQ.y / 0.2, 1.0));
+    o = c * uGhost;
+  }`;
+
+  type Gl = {
+    gl: WebGL2RenderingContext;
+    glc: HTMLCanvasElement;
+    surf: WebGLProgram;
+    flat: WebGLProgram;
+    vaoSurf: WebGLVertexArrayObject;
+    nIdx: number;
+    vaoFlat: WebGLVertexArrayObject;
+    flatBuf: WebGLBuffer;
+    U: Record<string, WebGLUniformLocation | null>;
+  };
+
+  function compile(gl: WebGL2RenderingContext, vs: string, fs: string) {
+    const sh = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+      return s;
+    };
+    const p = gl.createProgram()!;
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'link');
+    return p;
+  }
+
+  const N = 161; // vertices per side of the surface mesh
+  function makeGl(): Gl | null {
+    const glc = document.createElement('canvas');
+    const gl = glc.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true });
+    if (!gl) return null;
+    try {
+      const surf = compile(gl, VS_SURF, FS_SURF);
+      const flat = compile(gl, VS_FLAT, FS_FLAT);
+      const U: Record<string, WebGLUniformLocation | null> = {};
+      for (const n of ['uCam', 'uHalf', 'uS', 'uD', 'uMid', 'uK', 'uFloor', 'uMode', 'uLight', 'uFlo', 'uFhi', 'uStep',
+        'uLevel', 'uP', 'uS0', 'uS1', 'uC0', 'uC1', 'uL', 'uEye', 'uLo', 'uHi', 'uInk']) U['s.' + n] = gl.getUniformLocation(surf, n);
+      for (const n of ['uCam', 'uHalf', 'uGhost']) U['f.' + n] = gl.getUniformLocation(flat, n);
+
+      const vaoSurf = gl.createVertexArray()!;
+      gl.bindVertexArray(vaoSurf);
+      const g = new Float32Array(2 * N * N);
+      for (let j = 0; j < N; j++)
+        for (let i = 0; i < N; i++) {
+          g[2 * (j * N + i)] = i / (N - 1);
+          g[2 * (j * N + i) + 1] = j / (N - 1);
+        }
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, g, gl.STATIC_DRAW);
+      const la = gl.getAttribLocation(surf, 'aG');
+      gl.enableVertexAttribArray(la);
+      gl.vertexAttribPointer(la, 2, gl.FLOAT, false, 0, 0);
+      const idx = new Uint32Array(6 * (N - 1) * (N - 1));
+      let q = 0;
+      for (let j = 0; j < N - 1; j++)
+        for (let i = 0; i < N - 1; i++) {
+          const a = j * N + i;
+          idx.set([a, a + 1, a + N, a + 1, a + N + 1, a + N], q);
+          q += 6;
+        }
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+
+      const vaoFlat = gl.createVertexArray()!;
+      gl.bindVertexArray(vaoFlat);
+      const flatBuf = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, flatBuf);
+      const attr = (name: string, size: number, off: number) => {
+        const l = gl.getAttribLocation(flat, name);
+        gl.enableVertexAttribArray(l);
+        gl.vertexAttribPointer(l, size, gl.FLOAT, false, 40, off);
+      };
+      attr('aP', 3, 0);
+      attr('aC', 4, 12);
+      attr('aQ', 3, 28);
+      gl.bindVertexArray(null);
+      return { gl, glc, surf, flat, vaoSurf, nIdx: idx.length, vaoFlat, flatBuf, U };
+    } catch (err) {
+      console.warn('partial-derivatives: WebGL2 setup failed', err);
+      return null;
+    }
+  }
+  const G = makeGl();
+
+  // --- the see-through sheets: cutting planes and the tangent plane ---------
+  /** Four corners of a cutting plane, anticlockwise, floor to ceiling. */
+  function planeCorners(w: Which): M[] {
     const [dx, dy] = dirOf(w);
     const [lo, hi] = span(w);
-    const out: V3[] = [];
+    const x0 = state.a + lo * dx, y0 = state.b + lo * dy;
+    const x1 = state.a + hi * dx, y1 = state.b + hi * dy;
+    return [[x0, y0, -ZH], [x1, y1, -ZH], [x1, y1, ZH], [x0, y0, ZH]];
+  }
+  const TL = 0.8; // half-width of the tangent-plane patch
+  /** The tangent plane over (a + s, b + t), lifted a hair so it wins its touch point. */
+  function tangentAt(s: number, t: number, lift = 0): M {
+    const { a, b } = state;
+    return [a + s, b + t, zw(a, b) + K * (cur().fx(a, b) * s + cur().fy(a, b) * t) + lift];
+  }
+
+  type Cell = { p: M[]; c: [number, number, number, number]; q: [number, number][]; grid: number; d: number };
+  function sheets(): { main: Cell[]; ghost: Cell[] } {
+    const main: Cell[] = [], ghost: Cell[] = [];
+    const add = (list: Cell[], p: M[], c: Cell['c'], q: Cell['q'], grid: number) => {
+      const d = p.reduce((s, m) => s + cam.toCam(toV(m)).zc, 0) / p.length;
+      list.push({ p, c, q, grid, d });
+    };
+    for (const w of shown()) {
+      const on = state.which === w;
+      const [c0, c1, , c3] = planeCorners(w);
+      const [r, g, b] = unit3(rgbOf(w));
+      const al = on ? (light ? 0.13 : 0.12) : (light ? 0.06 : 0.05);
+      const C = 16, R = 8;
+      const at = (s: number, t: number): M => [
+        c0[0] + (c1[0] - c0[0]) * s,
+        c0[1] + (c1[1] - c0[1]) * s,
+        c0[2] + (c3[2] - c0[2]) * t,
+      ];
+      for (let i = 0; i < C; i++)
+        for (let j = 0; j < R; j++) {
+          const s0 = i / C, s1 = (i + 1) / C, t0 = j / R, t1 = (j + 1) / R;
+          add(main, [at(s0, t0), at(s1, t0), at(s1, t1), at(s0, t1)], [r * al, g * al, b * al, al], [[0, 0], [0, 0], [0, 0], [0, 0]], 0);
+        }
+    }
+    if (state.tplane) {
+      const M6 = 8;
+      const ic = light ? [0.16, 0.18, 0.36] : [0.9, 0.92, 1];
+      const al = light ? 0.11 : 0.17;
+      const c: Cell['c'] = [ic[0] * al, ic[1] * al, ic[2] * al, al];
+      for (let i = 0; i < M6; i++)
+        for (let j = 0; j < M6; j++) {
+          const s0 = -TL + (2 * TL * i) / M6, s1 = -TL + (2 * TL * (i + 1)) / M6;
+          const t0 = -TL + (2 * TL * j) / M6, t1 = -TL + (2 * TL * (j + 1)) / M6;
+          const q: Cell['q'] = [[s0, t0], [s1, t0], [s1, t1], [s0, t1]];
+          const p = q.map(([s, t]) => tangentAt(s, t, 0.006));
+          add(main, p, c, q, 1);
+          add(ghost, p, c, q, 1);
+        }
+    }
+    main.sort((u, v) => v.d - u.d);
+    return { main, ghost };
+  }
+
+  function packCells(cells: Cell[], out: number[]) {
+    for (const cell of cells)
+      for (const k of [0, 1, 2, 0, 2, 3]) {
+        const v = toV(cell.p[k]);
+        out.push(v.x, v.y, v.z, ...cell.c, cell.q[k][0], cell.q[k][1], cell.grid);
+      }
+  }
+
+  let glScale = 1;
+  function renderGl(g: Gl) {
+    const gl = g.gl, U = g.U;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(VW * dpr * glScale), hh = Math.round(VH * dpr * glScale);
+    if (g.glc.width !== w || g.glc.height !== hh) { g.glc.width = w; g.glc.height = hh; }
+    gl.viewport(0, 0, w, hh);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    gl.depthMask(true);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+    // light from over the viewer's left shoulder, so the side we see is lit
+    const L = V.unit(V.add(V.add(V.mul(cam.right(), -0.45), V.mul(cam.up(), 0.75)), V.mul(cam.forward(), -0.55)));
+    const Lw = V.unit({ x: L.x, y: Math.abs(L.y) + 0.6, z: L.z });
+    const eye = cam.eye();
+    const camv = [cam.yaw, cam.pitch, cam.dist, cam.k] as const;
+
+    gl.useProgram(g.surf);
+    gl.bindVertexArray(g.vaoSurf);
+    const u1 = (n: string, v: number) => gl.uniform1f(U['s.' + n], v);
+    const u3 = (n: string, v: number[]) => gl.uniform3f(U['s.' + n], v[0], v[1], v[2]);
+    gl.uniform4f(U['s.uCam'], ...camv);
+    gl.uniform2f(U['s.uHalf'], VW / 2, VH / 2);
+    gl.uniform1i(U['s.uS'], SURF_ID[state.surf]);
+    u1('uD', D);
+    u1('uMid', mid);
+    u1('uK', K);
+    u1('uFloor', -ZH);
+    u1('uLight', light ? 1 : 0);
+    u1('uFlo', flo);
+    u1('uFhi', fhi);
+    u1('uStep', (fhi - flo) / 8);
+    u1('uLevel', cur().f(state.a, state.b));
+    gl.uniform2f(U['s.uP'], state.a, state.b);
+    const sl = shown();
+    const sliceU = (k: number) => {
+      const w = sl[k];
+      if (!w) return gl.uniform4f(U['s.uS' + k], 1, 0, 0, 0);
+      const [dx, dy] = dirOf(w);
+      const on = state.which === w;
+      gl.uniform4f(U['s.uS' + k], dx, dy, on ? 3.4 : 2, on ? 1 : 0.6);
+      u3('uC' + k, unit3(rgbOf(w)));
+    };
+    sliceU(0);
+    sliceU(1);
+    u3('uL', [Lw.x, Lw.y, Lw.z]);
+    u3('uEye', [eye.x, eye.y, eye.z]);
+    if (light) {
+      u3('uLo', [0.5, 0.56, 0.82]);
+      u3('uHi', [0.96, 0.95, 0.93]);
+      u3('uInk', [0.11, 0.12, 0.16]);
+    } else {
+      u3('uLo', [0.2, 0.22, 0.46]);
+      u3('uHi', [0.66, 0.68, 0.8]);
+      u3('uInk', [0.93, 0.94, 0.97]);
+    }
+    u1('uMode', 0);
+    gl.drawElements(gl.TRIANGLES, g.nIdx, gl.UNSIGNED_INT, 0);
+    u1('uMode', 1);
+    gl.depthMask(false);
+    gl.drawElements(gl.TRIANGLES, g.nIdx, gl.UNSIGNED_INT, 0);
+
+    // the sheets: see-through, sorted far to near, never writing depth
+    const { main, ghost } = sheets();
+    const data: number[] = [];
+    packCells(main, data);
+    const nMain = data.length / 10;
+    packCells(ghost, data);
+    const nGhost = data.length / 10 - nMain;
+    if (data.length) {
+      gl.useProgram(g.flat);
+      gl.bindVertexArray(g.vaoFlat);
+      gl.bindBuffer(gl.ARRAY_BUFFER, g.flatBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
+      gl.uniform4f(U['f.uCam'], ...camv);
+      gl.uniform2f(U['f.uHalf'], VW / 2, VH / 2);
+      gl.uniform1f(U['f.uGhost'], 1);
+      gl.drawArrays(gl.TRIANGLES, 0, nMain);
+      if (nGhost) {
+        // the tangent plane where the surface hides it, faint, so it still reads as one sheet
+        gl.depthFunc(gl.GREATER);
+        gl.uniform1f(U['f.uGhost'], 0.7);
+        gl.drawArrays(gl.TRIANGLES, nMain, nGhost);
+        gl.depthFunc(gl.LESS);
+      }
+    }
+    gl.depthMask(true);
+    gl.bindVertexArray(null);
+    ctx.drawImage(g.glc, 0, -2 * LIFT, VW, VH);
+  }
+
+  // ---- 2D fallback: the same surface as flat-shaded quads, painter-sorted ----
+  function renderFlat() {
+    const Mq = 26;
+    const at = (i: number) => -D + (2 * D * i) / Mq;
+    const quads: { q: Projected[]; d: number; shade: number; t: number }[] = [];
+    const Ld = V.unit({ x: -0.4, y: 0.8, z: -0.45 });
+    for (let i = 0; i < Mq; i++)
+      for (let j = 0; j < Mq; j++) {
+        const p = [onSurf(at(i), at(j)), onSurf(at(i + 1), at(j)), onSurf(at(i + 1), at(j + 1)), onSurf(at(i), at(j + 1))];
+        const q = p.map(P);
+        if (!q.every(front)) continue;
+        const n = V.unit(V.cross(V.sub(toV(p[3]), toV(p[0])), V.sub(toV(p[1]), toV(p[0]))));
+        const t = (cur().f((at(i) + at(i + 1)) / 2, (at(j) + at(j + 1)) / 2) - flo) / (fhi - flo || 1);
+        quads.push({ q, d: q.reduce((s, r) => s + r.zc, 0) / 4, shade: Math.abs(V.dot(n, Ld)), t });
+      }
+    quads.sort((u, v) => v.d - u.d);
+    for (const f of quads) {
+      ctx.beginPath();
+      f.q.forEach((p, i) => (i ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy)));
+      ctx.closePath();
+      const k = (light ? 0.6 : 0.45) + 0.5 * f.shade;
+      const base = light ? [150 + 85 * f.t, 165 + 72 * f.t, 205 + 38 * f.t] : [31 + 81 * f.t, 36 + 86 * f.t, 69 + 94 * f.t];
+      ctx.fillStyle = `rgb(${base.map((c) => Math.min(255, Math.round(c * k))).join(',')})`;
+      ctx.fill();
+      ctx.strokeStyle = ink(0.08);
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    }
+    label('No WebGL2 here: the surface is drawn flat-shaded.', VW / 2, 22, 0.55, 'center', 11);
+  }
+
+  // --- what the surface hides -------------------------------------------------
+  /** True when the surface lies between the eye and the point m. */
+  function hidden(m: M): boolean {
+    if (!G) return false;
+    const e = cam.eye();
+    const ex = e.x, ey = e.z, eh = e.y;
+    const dx = m[0] - ex, dy = m[1] - ey, dh = m[2] - eh;
+    const len = Math.hypot(dx, dy, dh);
+    // only the part of the sight line over the square can meet the surface
+    let t0 = 0, t1 = 1 - 0.035 / len;
+    for (const [o, d] of [[ex, dx], [ey, dy]]) {
+      if (Math.abs(d) < 1e-9) { if (Math.abs(o) > D) return false; continue; }
+      const a = (-D - o) / d, b = (D - o) / d;
+      t0 = Math.max(t0, Math.min(a, b));
+      t1 = Math.min(t1, Math.max(a, b));
+    }
+    if (t1 <= t0) return false;
+    const S = 56;
+    for (let i = 0; i <= S; i++) {
+      const t = t0 + ((t1 - t0) * i) / S;
+      const x = ex + dx * t, y = ey + dy * t;
+      if (eh + dh * t < zw(x, y) - 2e-3) return true;
+    }
+    return false;
+  }
+
+  /** Where the pointer ray first meets the surface, or null. */
+  function pick(sx: number, sy: number): [number, number] | null {
+    const r = cam.ray(sx, sy);
+    const o: M = [r.o.x, r.o.z, r.o.y], d: M = [r.d.x, r.d.z, r.d.y];
+    const S = 300, far = cam.dist + 4 * D;
+    const below = (t: number) => {
+      const x = o[0] + d[0] * t, y = o[1] + d[1] * t;
+      if (Math.abs(x) > D || Math.abs(y) > D) return false;
+      return o[2] + d[2] * t < zw(x, y);
+    };
+    let prev = 0;
+    for (let i = 1; i <= S; i++) {
+      const t = (far * i) / S;
+      if (below(t)) {
+        let lo = prev, hi = t;
+        for (let k = 0; k < 24; k++) {
+          const m = (lo + hi) / 2;
+          if (below(m)) hi = m;
+          else lo = m;
+        }
+        return [o[0] + d[0] * hi, o[1] + d[1] * hi];
+      }
+      prev = t;
+    }
+    return null;
+  }
+
+  // --- the overlay: lines in front solid, behind the surface dashed and faint --
+  function strokeSplit(pts: M[], colour: (a: number) => string, lw: number, ghost = 0.4, halo = 0) {
+    const q = pts.map(P);
+    if (!q.every(front)) return;
+    const hid = pts.map(hidden);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    const run = (h: boolean) => {
+      ctx.beginPath();
+      let open = false;
+      for (let i = 0; i < q.length - 1; i++) {
+        // a segment is hidden only when both of its ends are
+        const segHidden = hid[i] && hid[i + 1];
+        const isHidden = h ? segHidden : !segHidden;
+        if (!isHidden) { open = false; continue; }
+        if (!open) ctx.moveTo(q[i].sx, q[i].sy);
+        ctx.lineTo(q[i + 1].sx, q[i + 1].sy);
+        open = true;
+      }
+    };
+    if (ghost > 0) {
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = colour(ghost);
+      ctx.lineWidth = Math.max(1, lw * 0.6);
+      run(true);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (halo > 0) {
+      ctx.strokeStyle = colour(halo);
+      ctx.lineWidth = lw + 6;
+      run(false);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = colour(1);
+    ctx.lineWidth = lw;
+    run(false);
+    ctx.stroke();
+  }
+
+  /** The curve the plane cuts out of the surface. */
+  function trace(w: Which, n = 120): M[] {
+    const [dx, dy] = dirOf(w);
+    const [lo, hi] = span(w);
+    const out: M[] = [];
     for (let i = 0; i <= n; i++) {
       const t = lo + ((hi - lo) * i) / n;
-      out.push(world(state.a + t * dx, state.b + t * dy));
+      out.push(onSurf(state.a + t * dx, state.b + t * dy));
     }
     return out;
   }
 
-  /** Two ends of the tangent line, kept inside the plane's rectangle. */
-  function tangent(w: Which): [V3, V3] {
+  /** The tangent line, kept inside the plane's rectangle, as many short pieces. */
+  function tangent(w: Which, n = 48): M[] {
     const { a, b } = state;
     const [dx, dy] = dirOf(w);
     const s = K * slope(w);
     const z0 = zw(a, b);
     const [rlo, rhi] = span(w);
-    // clip to the box so the line never escapes its own plane
     let lo = Math.max(-0.95, rlo),
       hi = Math.min(0.95, rhi);
     if (Math.abs(s) > 1e-6) {
@@ -278,297 +778,177 @@ import Try from '../../../components/sim/Try.astro';
       lo = Math.max(lo, Math.min(t1, t2));
       hi = Math.min(hi, Math.max(t1, t2));
     }
-    const at = (t: number): V3 => v3(a + t * dx, b + t * dy, z0 + s * t);
-    return [at(lo), at(hi)];
-  }
-
-  /** The four corners of a cutting plane, anticlockwise. */
-  function planeCorners(w: Which): V3[] {
-    const [dx, dy] = dirOf(w);
-    const [lo, hi] = span(w);
-    const x0 = state.a + lo * dx, y0 = state.b + lo * dy;
-    const x1 = state.a + hi * dx, y1 = state.b + hi * dy;
-    return [v3(x0, y0, -ZH), v3(x1, y1, -ZH), v3(x1, y1, ZH), v3(x0, y0, ZH)];
-  }
-
-  // --- painter's list -------------------------------------------------------
-  type Face = { q: Proj[]; d: number; fill: string; stroke: string };
-  const faces: Face[] = [];
-
-  function pushQuad(pts: V3[], fill: string, stroke: string) {
-    const q = pts.map(px);
-    if (q.some((p) => p.d < 0.4)) return;
-    faces.push({ q, d: q.reduce((s, p) => s + p.d, 0) / q.length, fill, stroke });
-  }
-
-  function surfaceFaces() {
-    const M = 30;
-    const at = (i: number) => -D + (2 * D * i) / M;
-    for (let i = 0; i < M; i++)
-      for (let j = 0; j < M; j++) {
-        const p = [
-          world(at(i), at(j)),
-          world(at(i + 1), at(j)),
-          world(at(i + 1), at(j + 1)),
-          world(at(i), at(j + 1)),
-        ];
-        const n = unit(cross(sub(p[1], p[0]), sub(p[3], p[0])));
-        const lam = Math.abs(dot(n, LIGHT));
-        pushQuad(p, ink(0.07 + 0.3 * lam), ink(0.08));
-      }
-  }
-
-  function planeFaces(w: Which) {
-    const on = state.which === w;
-    const C = 22,
-      R = 10;
-    const [c0, c1, , c3] = planeCorners(w);
-    const u = sub(c1, c0),
-      v = sub(c3, c0);
-    const P = (s: number, t: number): V3 =>
-      v3(c0.x + u.x * s + v.x * t, c0.y + u.y * s + v.y * t, c0.z + u.z * s + v.z * t);
-    for (let i = 0; i < C; i++)
-      for (let j = 0; j < R; j++) {
-        const s0 = i / C,
-          s1 = (i + 1) / C,
-          t0 = j / R,
-          t1 = (j + 1) / R;
-        pushQuad(
-          [P(s0, t0), P(s1, t0), P(s1, t1), P(s0, t1)],
-          col(w, on ? 0.075 : 0.028),
-          'transparent'
-        );
-      }
-  }
-
-  function tangentPlaneFaces() {
-    const { a, b } = state;
-    const z0 = zw(a, b);
-    const sx = K * cur().fx(a, b),
-      sy = K * cur().fy(a, b);
-    const L = 0.8,
-      M = 6;
-    const P = (s: number, t: number): V3 =>
-      v3(a + s, b + t, z0 + sx * s + sy * t);
-    for (let i = 0; i < M; i++)
-      for (let j = 0; j < M; j++) {
-        const s0 = -L + (2 * L * i) / M,
-          s1 = -L + (2 * L * (i + 1)) / M,
-          t0 = -L + (2 * L * j) / M,
-          t1 = -L + (2 * L * (j + 1)) / M;
-        pushQuad([P(s0, t0), P(s1, t0), P(s1, t1), P(s0, t1)], ink(0.14), ink(0.05));
-      }
-  }
-
-  /** The outline of that patch, so it reads as one flat sheet through the point. */
-  function tangentPlaneEdge() {
-    const { a, b } = state;
-    const z0 = zw(a, b);
-    const sx = K * cur().fx(a, b),
-      sy = K * cur().fy(a, b);
-    const L = 0.8;
-    const P = (s: number, t: number): V3 =>
-      v3(a + s, b + t, z0 + sx * s + sy * t);
-    const c = [P(-L, -L), P(L, -L), P(L, L), P(-L, L)];
-    stroke3([...c, c[0]], ink(0.5), 1.4, [6, 5]);
-  }
-
-  function floorFaces() {
-    // one flat tile under everything, so the box has a floor to cast the point onto
-    pushQuad(
-      [v3(-D, -D, -ZH), v3(D, -D, -ZH), v3(D, D, -ZH), v3(-D, D, -ZH)],
-      ink(0.035),
-      'transparent'
-    );
-  }
-
-  // --- scene ----------------------------------------------------------------
-  function stroke3(pts: V3[], colour: string, lw: number, dash: number[] = []) {
-    const q = pts.map(px);
-    if (q.some((p) => p.d < 0.4)) return;
-    ctx.setLineDash(dash);
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = lw;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  function floorGrid() {
-    for (let i = 0; i <= 8; i++) {
-      const t = -D + (2 * D * i) / 8;
-      const edge = i === 0 || i === 8;
-      stroke3([v3(t, -D, -ZH), v3(t, D, -ZH)], ink(edge ? 0.16 : 0.06), 1);
-      stroke3([v3(-D, t, -ZH), v3(D, t, -ZH)], ink(edge ? 0.16 : 0.06), 1);
+    const out: M[] = [];
+    for (let i = 0; i <= n; i++) {
+      const t = lo + ((hi - lo) * i) / n;
+      out.push([a + t * dx, b + t * dy, z0 + s * t]);
     }
-    const ex = px(v3(D + 0.18, -D, -ZH)),
-      ey = px(v3(-D, D + 0.18, -ZH));
-    label('x', ex.x, ex.y + 4, 0.4, 'center', 12);
-    label('y', ey.x, ey.y + 4, 0.4, 'center', 12);
+    return out;
   }
 
   function drawSlice(w: Which) {
     const on = state.which === w;
-    const tr = trace(w);
-    const [t0, t1] = tangent(w);
-
-    // the plane's own outline, so its extent reads even where it is behind
     const c = planeCorners(w);
-    stroke3([...c, c[0]], col(w, on ? 0.32 : 0.13), 1);
-
-    // the surface, cut down to a single curve
-    stroke3(tr, col(w, on ? 0.95 : 0.34), on ? 3 : 1.8);
-
+    const edge = (p: M, q: M, n = 24): M[] =>
+      Array.from({ length: n + 1 }, (_, i) => [0, 1, 2].map((k) => p[k] + ((q[k] - p[k]) * i) / n) as M);
+    // the plane's outline, so its extent reads even where it dips behind the surface
+    for (let k = 0; k < 4; k++)
+      strokeSplit(edge(c[k], c[(k + 1) % 4]), (a) => col(w, a * (on ? 0.5 : 0.22)), 1, 0.45);
+    // the slice curve itself is painted on the surface; here only where it is hidden
+    const tr = trace(w);
+    if (!G) strokeSplit(tr, (a) => col(w, a * (on ? 0.95 : 0.4)), on ? 3 : 1.8, 0);
+    const hid = tr.map(hidden);
+    const q = tr.map(P);
+    if (q.every(front)) {
+      ctx.setLineDash([3, 5]);
+      ctx.strokeStyle = col(w, on ? 0.55 : 0.25);
+      ctx.lineWidth = on ? 1.6 : 1.1;
+      ctx.beginPath();
+      for (let i = 0; i < q.length - 1; i++) {
+        if (!(hid[i] && hid[i + 1])) continue;
+        ctx.moveTo(q[i].sx, q[i].sy);
+        ctx.lineTo(q[i + 1].sx, q[i + 1].sy);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     // the tangent line to that curve: the partial derivative itself
-    if (on) stroke3([t0, t1], col(w, 0.2), 10);
-    stroke3([t0, t1], col(w, on ? 1 : 0.32), on ? 2.8 : 1.4, on ? [] : [5, 5]);
+    strokeSplit(tangent(w), (a) => col(w, a * (on ? 1 : 0.45)), on ? 2.8 : 1.5, on ? 0.6 : 0.35, on ? 0.18 : 0);
 
     // a name for the frozen variable, floating at the top of the plane on a
     // chip of background colour so it stays readable over the surface
-    const q = px(c[2]);
-    if (q.d > 0.4) {
+    const top = P(c[2]);
+    if (front(top)) {
       const txt = w === 'x' ? `y = ${fmt(state.b)}` : w === 'y' ? `x = ${fmt(state.a)}` : `θ = ${Math.round(state.theta)}°`;
       const tw = textWidth(txt, 11);
-      ctx.fillStyle = inv(0.72);
-      roundRect(ctx, q.x - tw / 2 - 7, q.y - 21, tw + 14, 19, 5);
+      const x = Math.max(tw / 2 + 10, Math.min(VW - tw / 2 - 10, top.sx));
+      const y = Math.max(26, top.sy);
+      ctx.fillStyle = inv(0.78);
+      roundRect(ctx, x - tw / 2 - 7, y - 21, tw + 14, 19, 5);
       ctx.fill();
-      label(txt, q.x, q.y - 8, 1, 'center', 11, col(w, on ? 1 : 0.5));
+      label(txt, x, y - 8, 1, 'center', 11, col(w, on ? 1 : 0.6));
     }
   }
 
-  function drawPoint() {
+  function tangentPlaneEdge() {
+    const n = 20;
+    const side = (s0: number, t0: number, s1: number, t1: number): M[] =>
+      Array.from({ length: n + 1 }, (_, i) => tangentAt(s0 + ((s1 - s0) * i) / n, t0 + ((t1 - t0) * i) / n, 0.006));
+    const L = TL;
+    for (const [s0, t0, s1, t1] of [[-L, -L, L, -L], [L, -L, L, L], [L, L, -L, L], [-L, L, -L, -L]])
+      strokeSplit(side(s0, t0, s1, t1), (a) => ink(0.6 * a), 1.3, 0.5);
+  }
+
+  /** An arrow laid on the surface from the point, along (dx, dy), length len. */
+  function drapedArrow(dx: number, dy: number, len: number, colour: (a: number) => string, lw: number, name = '') {
     const { a, b } = state;
-    const p = world(a, b);
-    const q = px(p);
-    if (q.d < 0.4) return;
-    stroke3([v3(a, b, -ZH), p], ink(0.22), 1, [3, 4]);
-    const foot = px(v3(a, b, -ZH));
-    ctx.fillStyle = ink(0.25);
+    // stop at the square's edge
+    let L = len;
+    for (const [p, d] of [[a, dx], [b, dy]]) if (Math.abs(d) > 1e-9) L = Math.min(L, ((d > 0 ? D : -D) - p) / d);
+    if (L < 0.05) return;
+    const n = 28;
+    const pts: M[] = Array.from({ length: n + 1 }, (_, i) => onSurf(a + (dx * L * i) / n, b + (dy * L * i) / n, 0.012));
+    const head = pts[n], neck = pts[n - 3];
+    strokeSplit(pts.slice(0, n - 2), colour, lw, 0.5, 0.16);
+    const p = P(head), q = P(neck);
+    if (!front(p) || !front(q)) return;
+    const hid = hidden(head);
+    const ang = Math.atan2(p.sy - q.sy, p.sx - q.sx);
+    ctx.fillStyle = colour(hid ? 0.5 : 1);
     ctx.beginPath();
-    ctx.arc(foot.x, foot.y, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = ink(1);
-    ctx.strokeStyle = inv(0.75);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  /** Marching squares: the segments of the level set f = L over the square. */
-  function contour(L: number, N = 40): [number, number, number, number][] {
-    const { f } = cur();
-    const at = (i: number) => -D + (2 * D * i) / N;
-    const segs: [number, number, number, number][] = [];
-    for (let i = 0; i < N; i++)
-      for (let j = 0; j < N; j++) {
-        const c = [
-          [at(i), at(j)],
-          [at(i + 1), at(j)],
-          [at(i + 1), at(j + 1)],
-          [at(i), at(j + 1)],
-        ];
-        const v = c.map(([x, y]) => f(x, y) - L);
-        const hits: [number, number][] = [];
-        for (let k = 0; k < 4; k++) {
-          const m = (k + 1) % 4;
-          if ((v[k] < 0) !== (v[m] < 0)) {
-            const t = v[k] / (v[k] - v[m]);
-            hits.push([c[k][0] + (c[m][0] - c[k][0]) * t, c[k][1] + (c[m][1] - c[k][1]) * t]);
-          }
-        }
-        if (hits.length >= 2) segs.push([...hits[0], ...hits[1]]);
-        if (hits.length === 4) segs.push([...hits[2], ...hits[3]]);
-      }
-    return segs;
-  }
-
-  function strokeSegs(segs: [number, number, number, number][], z: number, colour: string, lw: number) {
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = lw;
-    ctx.beginPath();
-    for (const [x0, y0, x1, y1] of segs) {
-      const p = px(v3(x0, y0, z)), q = px(v3(x1, y1, z));
-      if (p.d < 0.4 || q.d < 0.4) continue;
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(q.x, q.y);
-    }
-    ctx.stroke();
-  }
-
-  /** Level curves on the floor, the one through your point in bold. */
-  function floorContours() {
-    for (let k = 1; k < 8; k++) strokeSegs(contour(flo + ((fhi - flo) * k) / 8), -ZH, ink(0.1), 1);
-    strokeSegs(contour(cur().f(state.a, state.b)), -ZH, ink(0.6), 1.8);
-  }
-
-  /** A flat arrow on the floor from (x, y), d already scaled to its length. */
-  function floorArrow(x: number, y: number, dx: number, dy: number, colour: string, lw: number) {
-    const p = px(v3(x, y, -ZH)), q = px(v3(x + dx, y + dy, -ZH));
-    if (p.d < 0.4 || q.d < 0.4) return;
-    const ang = Math.atan2(q.y - p.y, q.x - p.x);
-    ctx.strokeStyle = colour;
-    ctx.fillStyle = colour;
-    ctx.lineWidth = lw;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(q.x - 6 * Math.cos(ang), q.y - 6 * Math.sin(ang));
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(q.x, q.y);
-    ctx.lineTo(q.x - 11 * Math.cos(ang - 0.4), q.y - 11 * Math.sin(ang - 0.4));
-    ctx.lineTo(q.x - 11 * Math.cos(ang + 0.4), q.y - 11 * Math.sin(ang + 0.4));
+    ctx.moveTo(p.sx, p.sy);
+    ctx.lineTo(p.sx - 12 * Math.cos(ang - 0.42), p.sy - 12 * Math.sin(ang - 0.42));
+    ctx.lineTo(p.sx - 12 * Math.cos(ang + 0.42), p.sy - 12 * Math.sin(ang + 0.42));
     ctx.closePath();
     ctx.fill();
+    if (name) {
+      const tw = textWidth(name, 12);
+      const lx = p.sx + 13 * Math.cos(ang), ly = p.sy + 13 * Math.sin(ang);
+      ctx.fillStyle = inv(0.7);
+      roundRect(ctx, lx - tw / 2 - 5, ly - 10, tw + 10, 18, 5);
+      ctx.fill();
+      label(name, lx, ly + 4, 1, 'center', 12, colour(1));
+    }
   }
 
-  /** ∇f at the foot of the point, and u when a direction is being walked. */
-  function floorArrows() {
+  /** ∇f laid on the surface (pointing uphill), and u when a direction is being walked. */
+  function arrows() {
     const { a, b } = state;
     const gx = cur().fx(a, b), gy = cur().fy(a, b);
     const g = Math.hypot(gx, gy);
     if (state.which === 'u') {
       const [dx, dy] = dirOf('u');
-      floorArrow(a, b, dx * 0.75, dy * 0.75, col('u', 0.95), 2.4);
+      // named only when it points away from ∇f, so the two names never pile up
+      const apart = g < 1e-4 || (dx * gx + dy * gy) / g < 0.9;
+      drapedArrow(dx, dy, 0.6, (al) => col('u', al), 2.4, apart ? 'u' : '');
     }
     if (g > 1e-4) {
-      const L = 0.2 + 0.85 * Math.min(1, g / gref);
-      floorArrow(a, b, (gx / g) * L, (gy / g) * L, GRAD(1), 3);
-      const tip = px(v3(a + (gx / g) * (L + 0.14), b + (gy / g) * (L + 0.14), -ZH));
-      if (tip.d > 0.4) label('∇f', tip.x, tip.y + 4, 1, 'center', 12, GRAD(1));
+      const L = 0.25 + 0.75 * Math.min(1, g / gref);
+      drapedArrow(gx / g, gy / g, L, GRAD, 3, '∇f');
     }
   }
 
-  function drawScene() {
-    faces.length = 0;
-    floorFaces();
-    surfaceFaces();
-    for (const w of shown()) planeFaces(w);
-    if (state.tplane) tangentPlaneFaces();
-    faces.sort((a, b) => b.d - a.d);
-    for (const f of faces) {
+  let pointScreen = { x: -99, y: -99 };
+  let dragging = false;
+  function drawPoint() {
+    const { a, b } = state;
+    const p = onSurf(a, b);
+    const q = P(p);
+    if (!front(q)) return;
+    pointScreen = { x: q.sx, y: q.sy };
+    const n = 20;
+    const drop: M[] = Array.from({ length: n + 1 }, (_, i) => [a, b, -ZH + ((p[2] + ZH) * i) / n]);
+    strokeSplit(drop, (al) => ink(0.35 * al), 1, 0.6);
+    const foot = P([a, b, -ZH]);
+    if (!hidden([a, b, -ZH])) {
+      ctx.fillStyle = ink(0.35);
       ctx.beginPath();
-      f.q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-      ctx.closePath();
-      ctx.fillStyle = f.fill;
+      ctx.arc(foot.sx, foot.sy, 3, 0, Math.PI * 2);
       ctx.fill();
-      if (f.stroke !== 'transparent') {
-        ctx.strokeStyle = f.stroke;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
     }
-    floorGrid();
-    floorContours();
+    const hid = hidden(p);
+    // a soft ring says "grab me"
+    ctx.strokeStyle = ink(dragging ? 0.55 : 0.28);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(q.sx, q.sy, 12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = ink(hid ? 0.45 : 1);
+    ctx.strokeStyle = inv(0.8);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(q.sx, q.sy, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function axisLabels() {
+    const ex = P([D + 0.22, -D, -ZH]),
+      ey = P([-D, D + 0.22, -ZH]);
+    if (front(ex) && !hidden([D + 0.22, -D, -ZH])) label('x', ex.sx, ex.sy + 4, 0.5, 'center', 12);
+    if (front(ey) && !hidden([-D, D + 0.22, -ZH])) label('y', ey.sx, ey.sy + 4, 0.5, 'center', 12);
+  }
+
+  /** The rim of the surface, so its silhouette reads against the stage. */
+  function rim() {
+    const n = 40;
+    for (const [x0, y0, x1, y1] of [[-D, -D, D, -D], [D, -D, D, D], [D, D, -D, D], [-D, D, -D, -D]])
+      strokeSplit(
+        Array.from({ length: n + 1 }, (_, i) => onSurf(x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n)),
+        (a) => ink((light ? 0.4 : 0.3) * a),
+        1.1,
+        0
+      );
+  }
+
+  function drawScene() {
+    if (G) renderGl(G);
+    else renderFlat();
+    rim();
+    axisLabels();
     if (state.tplane) tangentPlaneEdge();
     for (const w of shown()) drawSlice(w);
-    floorArrows();
+    arrows();
     drawPoint();
   }
 
@@ -701,7 +1081,7 @@ import Try from '../../../components/sim/Try.astro';
       GR.y + GR.h + 38,
       0.5,
       'left',
-      11.5
+      11
     );
     label(
       'one curve, one slope',
@@ -709,7 +1089,7 @@ import Try from '../../../components/sim/Try.astro';
       GR.y + GR.h + 56,
       0.5,
       'left',
-      11.5
+      11
     );
 
     // the equations, the chosen one lit
@@ -742,6 +1122,16 @@ import Try from '../../../components/sim/Try.astro';
 
     y += w === 'u' ? 14 : 22;
     label('at your point', CARD.x + 16, y, 0.42, 'left', 11.5);
+    // uphill / downhill sits up here, clear of the big number below
+    label(
+      Math.abs(s) < 5e-4 ? 'flat' : s > 0 ? 'uphill' : 'downhill',
+      CARD.x + CARD.w - 16,
+      y,
+      1,
+      'right',
+      11.5,
+      col(w, 0.85)
+    );
     y += 26;
     label(
       w === 'u'
@@ -755,27 +1145,34 @@ import Try from '../../../components/sim/Try.astro';
     );
     y += 32;
     label(`= ${signed(s)}`, CARD.x + 16, y, 1, 'left', 22, col(w, 1));
-    label(
-      Math.abs(s) < 5e-4 ? 'flat' : s > 0 ? 'uphill' : 'downhill',
-      CARD.x + CARD.w - 16,
-      y,
-      0.45,
-      'right',
-      11.5
-    );
     ctx.restore();
   }
 
+  let slowAvg = 16;
   function draw() {
+    const t0 = performance.now();
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 8, 600, 512);
+    ctx.rect(0, 0, VW, H);
     ctx.clip();
+    drawBackdrop(ctx, VW, H, light);
     drawScene();
     ctx.restore();
     drawCard();
     sync();
+    // software GL: render the 3D view at a lower resolution while it is slow
+    slowAvg = slowAvg * 0.8 + (performance.now() - t0) * 0.2;
+    if (slowAvg > 40 && glScale > 0.6) { glScale = Math.max(0.6, glScale - 0.2); slowAvg = 20; }
+    else if (slowAvg < 12 && glScale < 1) { glScale = Math.min(1, glScale + 0.2); slowAvg = 20; }
+  }
+
+  // redraws come in bursts while dragging: draw once per frame
+  let queued = false;
+  function redraw() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; draw(); });
   }
 
   function sync() {
@@ -849,25 +1246,68 @@ import Try from '../../../components/sim/Try.astro';
 
   // click a slice to select it: its curve first, then anywhere on its plane
   function tap(x: number, y: number) {
+    if (x > VW) return;
     let best: { w: Which; d: number } | null = null;
     for (const w of shown())
-      for (const p of trace(w, 60).map(px)) {
-        if (p.d < 0.4) continue;
-        const d = Math.hypot(p.x - x, p.y - y);
+      for (const p of trace(w, 60).map(P)) {
+        if (!front(p)) continue;
+        const d = Math.hypot(p.sx - x, p.sy - y);
         if (!best || d < best.d) best = { w, d };
       }
     if (best && best.d < 44) return select(best.w);
 
     let near: { w: Which; d: number } | null = null;
     for (const w of shown()) {
-      const q = planeCorners(w).map(px);
-      if (q.some((p) => p.d < 0.4)) continue;
-      if (!inside(q, x, y)) continue;
-      const d = q.reduce((s, p) => s + p.d, 0) / 4;
+      const q = planeCorners(w).map(P);
+      if (!q.every(front)) continue;
+      if (!inside(q.map((p) => ({ x: p.sx, y: p.sy })), x, y)) continue;
+      const d = q.reduce((s, p) => s + p.zc, 0) / 4;
       if (!near || d < near.d) near = { w, d };
     }
     if (near) select(near.w);
   }
+
+  // drag the point over the surface; the sliders follow
+  const R = 1.5;
+  function movePoint(x: number, y: number) {
+    let hit = pick(x, y);
+    if (!hit) {
+      // off the surface: slide in the level plane through the point instead
+      const p = cam.hitPlane(x, y, toV(onSurf(state.a, state.b)), { x: 0, y: 1, z: 0 });
+      if (p) hit = [p.x, p.z];
+    }
+    if (!hit) return;
+    const r2 = (v: number) => Math.round(Math.max(-R, Math.min(R, v)) * 100) / 100;
+    state.a = r2(hit[0]);
+    state.b = r2(hit[1]);
+    setA(state.a);
+    setB(state.b);
+    el('aval').textContent = two(state.a);
+    el('bval').textContent = two(state.b);
+    redraw();
+  }
+  const nearPoint = (x: number, y: number) => Math.hypot(x - pointScreen.x, y - pointScreen.y) < 18;
+
+  orbitControls(canvas, cam, W, H, {
+    changed: redraw,
+    grab: (x, y) => {
+      if (x > VW) return true; // the card is not the scene: swallow the press
+      if (!nearPoint(x, y)) return false;
+      dragging = true;
+      canvas.style.cursor = 'grabbing';
+      redraw();
+      return true;
+    },
+    drag: (x, y) => { if (dragging) movePoint(x, y); },
+    release: () => { dragging = false; canvas.style.cursor = ''; redraw(); },
+    click: tap,
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.buttons) return;
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    canvas.style.cursor = nearPoint(x, y) ? 'grab' : x > VW ? 'default' : '';
+  });
 
   function show(surf: string, a: number, b: number, w: Which, theta = state.theta) {
     state.surf = surf;
@@ -889,8 +1329,6 @@ import Try from '../../../components/sim/Try.astro';
     peak: () => show('hill', 0.6, -0.6, 'u', 135),
     level: () => show('hill', 0.6, -0.6, 'u', 45),
   });
-
-  orbit(canvas, cam, draw, { onTap: tap });
 
   calibrate();
   draw();
