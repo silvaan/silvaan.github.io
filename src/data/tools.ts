@@ -169,6 +169,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'matrix-multiplication',
+        title: 'Matrix Multiplication',
+        description:
+          'Multiplying two matrices chains their maps: AB means apply B, then A. Run both orders side by side and watch the letter F end up in two different places.',
+        href: '/simulations/linear-algebra/matrix-multiplication',
+        status: 'live',
+      },
+      {
         slug: 'determinant',
         title: 'The Determinant',
         description:
