@@ -11,6 +11,7 @@ export default defineConfig({
   // Simulators that were folded into a single richer page. The old slugs were
   // public, so they keep working and land on the mode that replaced them.
   redirects: {
+    '/simulations/calculus/riemann-sum': '/simulations/calculus/fundamental-theorem',
     '/simulations/statistics/marginal-distribution':
       '/simulations/statistics/joint-distribution',
     '/simulations/deep-learning/optimizers-3d': '/simulations/deep-learning/optimizers',

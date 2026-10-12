@@ -1,0 +1,847 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const UP = '#7c8cff', DOWN = '#f472b6', SLOPE = '#f59e0b', TOTAL = '#34d399';
+---
+
+<SimLayout
+  areaSlug="calculus"
+  title="The Fundamental Theorem"
+  description="Sweep a point across a curve and watch the area behind it grow into a new function, whose slope at every point is the height of the curve."
+  shortcuts={['animate', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ftc"
+          width="1000"
+          height="720"
+          role="img"
+          aria-label="Top: a curve f with the area from a to a moving point x shaded. Bottom, on the same x axis: the accumulated area A(x), with its tangent at x, whose slope equals the height of f at x."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'f &gt; 0: A climbs', color: UP },
+          { label: 'f &lt; 0: A falls', color: DOWN },
+          { label: 'height f(x) = slope of A', color: SLOPE },
+          { label: 'A(b) − A(a)', color: TOTAL },
+        ]}
+        hint="Drag across either plot to move x"
+      />
+      <Result label="Area so far, A(x)" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="fn"
+        label="Function"
+        attr="fn"
+        options={[
+          { value: 'quad', label: 'x²' },
+          { value: 'sine', label: 'sin x + 1.5' },
+          { value: 'gauss', label: 'e^(−x²)' },
+          { value: 'cubic', label: 'x³ − x' },
+        ]}
+      />
+      <Slider id="x" label="Point x" min={0} max={3} step={0.01} value={1.8} display="1.80" />
+      <Slider id="a" label="Start a" min={0} max={2.7} step={0.01} value={0} display="0.00" />
+      <Transport animate="Sweep x" reset={false} />
+      <Checks items={[{ id: 'pieces', label: 'Riemann pieces' }]} />
+      <Seg
+        id="method"
+        label="Method"
+        attr="method"
+        active="mid"
+        options={[
+          { value: 'left', label: 'Left' },
+          { value: 'mid', label: 'Midpoint' },
+          { value: 'right', label: 'Right' },
+          { value: 'trap', label: 'Trapezoid' },
+        ]}
+      />
+      <Slider id="n" label="Pieces" min={1} max={120} value={12} />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-fx', label: 'f(x)' },
+          { id: 'r-ax', label: 'A(x)' },
+          { id: 'r-total', label: '∫<sub>a</sub><sup>b</sup> f = A(b) − A(a)' },
+          { id: 'r-sum', label: 'Riemann sum' },
+          { id: 'r-err', label: 'error of the sum' },
+        ]}
+      />
+      <div class="control">
+        <span class="section-label">Error against pieces, log–log</span>
+        <canvas id="sweep" class="mini-canvas" width="300" height="190" role="img" aria-label="Error of each method against the number of pieces, on log axes, with guide lines of slope −1 and −2"></canvas>
+        <div class="sweep-legend">
+          <span style="--c:#f87171">left</span>
+          <span style="--c:#fbbf24">right</span>
+          <span style="--c:#60a5fa">mid</span>
+          <span style="--c:#34d399">trap</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      <b>Sweep</b> x: A climbs fastest where f is tallest. The amber bar (the
+      height f(x)) and the amber tangent on A (its slope) are the same number.
+      <Try id="sweep" label="Animate" />
+    </li>
+    <li>
+      On <b>x³ − x</b> the slivers below the axis count as negative, so A runs
+      downhill there, and A is flat exactly where f crosses zero. <Try id="signed" />
+    </li>
+    <li>
+      Move the <b>start a</b>: A drops by a constant C but keeps its shape, so
+      both curves rise by the same amount from a to b. Any antiderivative F gives
+      ∫ₐᵇ f = F(b) − F(a). <Try id="shift" />
+    </li>
+    <li>
+      With <b>Left</b> pieces, doubling n only halves the error, while Midpoint
+      quarters it: in the log–log plot Left and Right fall with slope −1,
+      Midpoint and Trapezoid with slope −2. <Try id="rates" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect, fixed, arrow } from '../../../lib/draw';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
+
+  type Fn = { f: (x: number) => number; lo: number; hi: number };
+  const FNS: Record<string, Fn> = {
+    quad: { f: (x) => x * x, lo: 0, hi: 3 },
+    // No preset is a whole period or symmetric about a point where f is odd:
+    // those make some rules exact and flatten the error plot.
+    sine: { f: (x) => Math.sin(x) + 1.5, lo: 0, hi: 1.5 * Math.PI },
+    gauss: { f: (x) => Math.exp(-x * x), lo: -1, hi: 2 },
+    cubic: { f: (x) => x * x * x - x, lo: -1.2, hi: 1.5 },
+  };
+
+  const UP = '#7c8cff', DOWN = '#f472b6', SLOPE = '#f59e0b', TOTAL = '#34d399';
+  const UP_RGB = '124,140,255', DOWN_RGB = '244,114,182', SLOPE_RGB = '245,158,11', TOTAL_RGB = '52,211,153';
+
+  const state = { fn: 'quad', a: 0, x: 1.8, pieces: false, method: 'mid', n: 12 };
+  const cur = () => FNS[state.fn];
+
+  const canvas = el('ftc') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  // Labels are sized in canvas units; on a phone the canvas is drawn at well
+  // under half size, so the text is set larger there to stay readable.
+  const TEXT = { wide: makeText(ctx, ink), narrow: makeText(ctx, ink, 2.7) };
+  const narrow = () => canvas.clientWidth > 0 && canvas.clientWidth < 640;
+  const label: typeof TEXT.wide.label = (...args) => (narrow() ? TEXT.narrow : TEXT.wide).label(...args);
+  const textWidth = (t: string, size: number) => (narrow() ? TEXT.narrow : TEXT.wide).textWidth(t, size);
+  const scaleNow = () => (narrow() ? 2.7 : 1.42);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const sweepCanvas = el('sweep') as HTMLCanvasElement;
+  const sw = setupCanvas(sweepCanvas, () => drawSweep());
+
+  const L = 74, R = 26;
+  const BF = { x: L, y: 26, w: W - L - R, h: 300 }; // f
+  const BA = { x: L, y: 380, w: W - L - R, h: 270 }; // A
+
+  // --- the numbers -------------------------------------------------------------
+
+  /** Composite Simpson: to ~1e-12 on these curves with the default panels. */
+  function integ(fn: Fn, a: number, b: number, N = 600) {
+    if (a === b) return 0;
+    const h = (b - a) / N;
+    let s = fn.f(a) + fn.f(b);
+    for (let i = 1; i < N; i++) s += (i % 2 ? 4 : 2) * fn.f(a + i * h);
+    return (s * h) / 3;
+  }
+
+  function riemann(fn: Fn, a: number, b: number, n: number, method: string) {
+    const h = (b - a) / n;
+    let s = 0;
+    for (let i = 0; i < n; i++) s += piece(fn, a + i * h, h, method);
+    return s;
+  }
+  /** Signed area of one piece of width h starting at xl. */
+  function piece(fn: Fn, xl: number, h: number, method: string) {
+    if (method === 'left') return fn.f(xl) * h;
+    if (method === 'right') return fn.f(xl + h) * h;
+    if (method === 'mid') return fn.f(xl + h / 2) * h;
+    return ((fn.f(xl) + fn.f(xl + h)) / 2) * h;
+  }
+
+  // P(x) = ∫_lo^x f on a fine grid, for drawing; and fixed y windows per
+  // function, so moving a shows up as a shift rather than a rescale.
+  const GRID = 600;
+  type Pre = { xs: number[]; P: number[]; fLo: number; fHi: number; aLo: number; aHi: number };
+  const pre: Record<string, Pre> = {};
+  function prepare(key: string): Pre {
+    if (pre[key]) return pre[key];
+    const fn = FNS[key];
+    const xs: number[] = [], P: number[] = [0];
+    for (let i = 0; i <= GRID; i++) xs.push(fn.lo + ((fn.hi - fn.lo) * i) / GRID);
+    for (let i = 1; i <= GRID; i++) P.push(P[i - 1] + integ(fn, xs[i - 1], xs[i], 4));
+    let fLo = 0, fHi = 0;
+    for (const x of xs) { fLo = Math.min(fLo, fn.f(x)); fHi = Math.max(fHi, fn.f(x)); }
+    // every value P(x) − P(a) with a ≤ x, and P itself (the other start)
+    let lo = Math.min(0, ...P), hi = Math.max(0, ...P), runMin = P[0], runMax = P[0];
+    for (let j = 0; j <= GRID; j++) {
+      runMin = Math.min(runMin, P[j]); runMax = Math.max(runMax, P[j]);
+      hi = Math.max(hi, P[j] - runMin); lo = Math.min(lo, P[j] - runMax);
+    }
+    const fp = (fHi - fLo) * 0.12, ap = (hi - lo) * 0.1;
+    return (pre[key] = { xs, P, fLo: fLo - fp, fHi: fHi + fp, aLo: lo - ap, aHi: hi + ap });
+  }
+
+  // --- coordinates ---------------------------------------------------------------
+
+  const sx = (x: number) => BF.x + ((x - cur().lo) / (cur().hi - cur().lo)) * BF.w;
+  const fy = (y: number) => { const p = prepare(state.fn); return BF.y + BF.h - ((y - p.fLo) / (p.fHi - p.fLo)) * BF.h; };
+  const ay = (y: number) => { const p = prepare(state.fn); return BA.y + BA.h - ((y - p.aLo) / (p.aHi - p.aLo)) * BA.h; };
+  /** Visual width of the sliver and the run of the slope triangle. */
+  const dX = () => (cur().hi - cur().lo) * 0.07;
+  /** The sliver runs right of x, or left of it once x is too close to b. */
+  const sliver = () => {
+    const d = dX();
+    return state.x + d <= cur().hi + 1e-9 ? { x0: state.x, x1: state.x + d, d } : { x0: state.x - d, x1: state.x, d };
+  };
+
+  function clip(b: typeof BF) {
+    ctx.beginPath();
+    ctx.rect(b.x, b.y, b.w, b.h);
+    ctx.clip();
+  }
+
+  function pill(text: string, x: number, y: number, colour: string, align: CanvasTextAlign = 'center', size = 11) {
+    const tw = textWidth(text, size);
+    const left = align === 'right' ? x - tw : align === 'center' ? x - tw / 2 : x;
+    ctx.fillStyle = inv(0.78);
+    const px = size * scaleNow();
+    roundRect(ctx, left - 6, y - px + 1, tw + 12, px + 7, 5);
+    ctx.fill();
+    label(text, x, y, 1, align, size, colour);
+  }
+
+  // --- drawing ---------------------------------------------------------------------
+
+  function frame() {
+    const fn = cur();
+    ctx.strokeStyle = ink(0.06);
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 6; i++) {
+      const xv = fn.lo + ((fn.hi - fn.lo) * i) / 6;
+      for (const b of [BF, BA]) {
+        ctx.beginPath();
+        ctx.moveTo(sx(xv), b.y);
+        ctx.lineTo(sx(xv), b.y + b.h);
+        ctx.stroke();
+      }
+      const step = (fn.hi - fn.lo) / 6;
+      const digits = Math.abs(step * 10 - Math.round(step * 10)) < 1e-9 ? 1 : 2;
+      if (!narrow() || i % 2 === 0) label(fixed(xv, digits), sx(xv), BA.y + BA.h + 20, 0.32, 'center', 10.5);
+    }
+    ctx.strokeStyle = ink(0.22);
+    for (const [b, y] of [[BF, fy(0)], [BA, ay(0)]] as [typeof BF, number][]) {
+      ctx.beginPath();
+      ctx.moveTo(b.x, y);
+      ctx.lineTo(b.x + b.w, y);
+      ctx.stroke();
+      label('0', b.x - 10, y + 5, 0.32, 'right', 10.5);
+    }
+    label('f(x)', BF.x + 8, BF.y + 18, 0.75, 'left', 12);
+    label('A(x) = ∫ₐˣ f(t) dt', BA.x + 8, BA.y + 18, 1, 'left', 12, UP);
+  }
+
+  /** Signed area under f from a to x: indigo above the axis, pink below. */
+  function shade() {
+    const fn = cur();
+    const { a, x } = state;
+    if (x <= a) return;
+    const N = 240;
+    const path = new Path2D();
+    path.moveTo(sx(a), fy(0));
+    for (let i = 0; i <= N; i++) {
+      const t = a + ((x - a) * i) / N;
+      path.lineTo(sx(t), fy(fn.f(t)));
+    }
+    path.lineTo(sx(x), fy(0));
+    path.closePath();
+    const alpha = state.pieces ? 0.16 : 0.3;
+    for (const [rgb, top] of [[UP_RGB, true], [DOWN_RGB, false]] as [string, boolean][]) {
+      ctx.save();
+      ctx.beginPath();
+      if (top) ctx.rect(BF.x, BF.y, BF.w, fy(0) - BF.y);
+      else ctx.rect(BF.x, fy(0), BF.w, BF.y + BF.h - fy(0));
+      ctx.clip();
+      ctx.fillStyle = `rgba(${rgb},${alpha})`;
+      ctx.fill(path);
+      ctx.restore();
+    }
+  }
+
+  function drawPieces() {
+    if (!state.pieces) return;
+    const fn = cur();
+    const b = fn.hi, { a, x, n, method } = state;
+    const h = (b - a) / n;
+    ctx.save();
+    clip(BF);
+    ctx.lineWidth = 1;
+    for (let i = 0; i < n; i++) {
+      const xl = a + i * h, xr = xl + h;
+      const done = xl < x - 1e-9;
+      ctx.beginPath();
+      if (method === 'trap') {
+        ctx.moveTo(sx(xl), fy(0));
+        ctx.lineTo(sx(xl), fy(fn.f(xl)));
+        ctx.lineTo(sx(xr), fy(fn.f(xr)));
+        ctx.lineTo(sx(xr), fy(0));
+        ctx.closePath();
+      } else {
+        const xs = method === 'left' ? xl : method === 'right' ? xr : xl + h / 2;
+        ctx.rect(sx(xl), fy(0), sx(xr) - sx(xl), fy(fn.f(xs)) - fy(0));
+      }
+      ctx.fillStyle = ink(done ? 0.1 : 0.03);
+      ctx.fill();
+      ctx.strokeStyle = ink(done ? 0.5 : 0.18);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawF() {
+    const fn = cur();
+    ctx.save();
+    clip(BF);
+    ctx.strokeStyle = ink(0.78);
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= 500; i++) {
+      const t = fn.lo + ((fn.hi - fn.lo) * i) / 500;
+      i ? ctx.lineTo(sx(t), fy(fn.f(t))) : ctx.moveTo(sx(t), fy(fn.f(t)));
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** The sliver [x, x + dx] and the height bar at x. */
+  function drawSliver() {
+    const fn = cur();
+    const { x } = state;
+    const fx = fn.f(x), { x0, d } = sliver();
+    ctx.save();
+    clip(BF);
+    ctx.beginPath();
+    ctx.moveTo(sx(x0), fy(0));
+    for (let i = 0; i <= 20; i++) ctx.lineTo(sx(x0 + (d * i) / 20), fy(fn.f(x0 + (d * i) / 20)));
+    ctx.lineTo(sx(x0 + d), fy(0));
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${SLOPE_RGB},0.22)`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${SLOPE_RGB},0.5)`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.strokeStyle = SLOPE;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx(x), fy(0));
+    ctx.lineTo(sx(x), fy(fx));
+    ctx.stroke();
+    ctx.restore();
+    dot(sx(x), fy(fx), SLOPE);
+    const ly = fx >= 0 ? fy(fx) - 14 : fy(fx) + 14 + 11 * scaleNow();
+    pill(`f(x) = ${fixed(fx, 2)}`, sx(x) - 10, Math.max(BF.y + 20, Math.min(BF.y + BF.h - 6, ly)), SLOPE, 'right');
+  }
+
+  function dot(px: number, py: number, colour: string, r = 6) {
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = inv(0.8);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  /** P(t) by linear interpolation on the grid. */
+  function Pat(t: number) {
+    const p = prepare(state.fn), fn = cur();
+    const u = ((t - fn.lo) / (fn.hi - fn.lo)) * GRID;
+    const i = Math.max(0, Math.min(GRID - 1, Math.floor(u)));
+    return p.P[i] + (p.P[i + 1] - p.P[i]) * (u - i);
+  }
+
+  /** A curve between t0 and t1, shifted down by `c`, coloured by the sign of f. */
+  function trace(t0: number, t1: number, c: number, alpha: number, width: number, dash: number[] = []) {
+    if (t1 <= t0) return;
+    const fn = cur();
+    const N = Math.max(2, Math.ceil(((t1 - t0) / (fn.hi - fn.lo)) * 400));
+    ctx.lineWidth = width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.setLineDash(dash);
+    let sign = 0;
+    let prev = { x: sx(t0), y: ay(Pat(t0) - c) };
+    for (let i = 1; i <= N; i++) {
+      const t = t0 + ((t1 - t0) * i) / N;
+      const s = fn.f(t - (t1 - t0) / N / 2) >= 0 ? 1 : -1;
+      if (s !== sign) {
+        if (sign) ctx.stroke();
+        sign = s;
+        ctx.strokeStyle = `rgba(${s > 0 ? UP_RGB : DOWN_RGB},${alpha})`;
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+      }
+      prev = { x: sx(t), y: ay(Pat(t) - c) };
+      ctx.lineTo(prev.x, prev.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawA() {
+    const fn = cur();
+    const { a, x } = state;
+    const Pa = Pat(a);
+    const other = Math.abs(a - fn.lo) > 1e-6;
+    ctx.save();
+    clip(BA);
+    // the antiderivative that starts at the left end: A shifted by a constant
+    if (other) trace(fn.lo, fn.hi, 0, 0.32, 1.6, [6, 5]);
+    // where A is still going, faintly; then the part already drawn
+    trace(a, fn.hi, Pa, 0.14, 1.6, [2, 5]);
+    trace(a, x, Pa, 1, 3);
+    // the Riemann sums at the piece boundaries
+    if (state.pieces) {
+      const h = (fn.hi - a) / state.n;
+      let s = 0;
+      for (let k = 0; k <= state.n; k++) {
+        const xk = a + k * h;
+        if (k > 0) s += piece(fn, xk - h, h, state.method);
+        const done = xk <= x + 1e-9;
+        if (state.n <= 60) {
+          ctx.fillStyle = ink(done ? 0.85 : 0.3);
+          ctx.beginPath();
+          ctx.arc(sx(xk), ay(s), state.n <= 24 ? 3.2 : 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+
+    if (other) {
+      label(`start at ${fixed(fn.lo, 2)}`, sx(fn.lo) + 8, ay(Pat(fn.lo)) + (Pat(fn.lo) > Pat(fn.lo + dX()) ? 20 : -10), 0.5, 'left', 10.5);
+      // the constant between the two
+      const y0 = ay(0), y1 = ay(Pa);
+      if (Math.abs(y1 - y0) > 18) {
+        ctx.strokeStyle = ink(0.6);
+        ctx.fillStyle = ink(0.6);
+        ctx.lineWidth = 1.4;
+        const px = sx(a) - 12;
+        arrow(ctx, px, y0, px, y1 + (y1 < y0 ? 2 : -2), 6);
+        label('C', px - 8, (y0 + y1) / 2 + 5, 0.85, 'right', 12);
+      }
+    }
+    dot(sx(a), ay(0), ink(0.85), 4.5);
+  }
+
+  /** Tangent to A at x, with the rise/run triangle: run dx, rise f(x)·dx. */
+  function drawTangent() {
+    const fn = cur();
+    const { a, x } = state;
+    const fx = fn.f(x), Ax = Pat(x) - Pat(a);
+    const { x0: r0, x1: r1, d } = sliver();
+    // the triangle's corner on the tangent line at either end of the run
+    const t0 = Ax + fx * (r0 - x), t1 = Ax + fx * (r1 - x);
+    const span = (fn.hi - fn.lo) * 0.14;
+    ctx.save();
+    clip(BA);
+    ctx.strokeStyle = `rgba(${SLOPE_RGB},0.85)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx(x - span), ay(Ax - fx * span));
+    ctx.lineTo(sx(x + span), ay(Ax + fx * span));
+    ctx.stroke();
+    // run
+    ctx.strokeStyle = `rgba(${SLOPE_RGB},0.55)`;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sx(r0), ay(t0));
+    ctx.lineTo(sx(r1), ay(t0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = `rgba(${SLOPE_RGB},0.14)`;
+    ctx.beginPath();
+    ctx.moveTo(sx(r0), ay(t0));
+    ctx.lineTo(sx(r1), ay(t0));
+    ctx.lineTo(sx(r1), ay(t1));
+    ctx.closePath();
+    ctx.fill();
+    // rise: the same amber bar as the height of f, scaled by dx
+    ctx.strokeStyle = SLOPE;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx(r1), ay(t0));
+    ctx.lineTo(sx(r1), ay(t1));
+    ctx.stroke();
+    ctx.restore();
+
+    const rise = Math.abs(ay(t1) - ay(t0));
+    const midY = (ay(t0) + ay(t1)) / 2;
+    const fwd = r0 === x;
+    const ry = Math.max(BA.y + 20, Math.min(BA.y + BA.h - 6, midY + (rise > 18 ? 6 : fx >= 0 ? -10 : 22)));
+    if (fwd) pill('f(x)·dx', sx(r1) + 10, ry, SLOPE, 'left', 10.5);
+    else pill('f(x)·dx', sx(r0) - 10, ry, SLOPE, 'right', 10.5);
+    label('dx', (sx(r0) + sx(r1)) / 2, ay(t0) + (fx >= 0 ? 18 : -9), 0.9, 'center', 10.5, SLOPE);
+    dot(sx(x), ay(Ax), fx >= 0 ? UP : DOWN);
+  }
+
+  /** At x = b: the total is the rise of A (and of any shifted copy) from a to b. */
+  function drawTotal() {
+    const fn = cur();
+    const b = fn.hi, { a } = state;
+    if (state.x < b - 1e-6) return;
+    const Pa = Pat(a), Pb = Pat(b);
+    const other = Math.abs(a - fn.lo) > 1e-6;
+    const brackets: [number, number, number][] = [[0, Pb - Pa, sx(b) - 8]];
+    if (other) brackets.push([Pa, Pb, sx(b) - 24]);
+    ctx.lineWidth = 1.2;
+    for (const [y0, y1, px] of brackets) {
+      ctx.strokeStyle = `rgba(${TOTAL_RGB},0.45)`;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(sx(a), ay(y0));
+      ctx.lineTo(px, ay(y0));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = TOTAL;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(px - 5, ay(y0));
+      ctx.lineTo(px, ay(y0));
+      ctx.lineTo(px, ay(y1));
+      ctx.lineTo(px - 5, ay(y1));
+      ctx.stroke();
+      ctx.lineWidth = 1.2;
+    }
+    // just off the baseline, on the side the bracket rises to
+    const ly = Math.max(BA.y + 44, Math.min(BA.y + BA.h - 10, Pb - Pa >= 0 ? ay(0) - 14 : ay(0) + 14 + 11 * scaleNow()));
+    pill(`A(b) − A(a) = ${fixed(Pb - Pa, 3)}`, brackets[brackets.length - 1][2] - 14, ly, TOTAL, 'right', 11);
+  }
+
+  /** The shared x: a guide through both plots, and a, x, b under the axis. */
+  function drawMarkers() {
+    const fn = cur();
+    const { a, x } = state;
+    ctx.strokeStyle = `rgba(${SLOPE_RGB},0.35)`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(sx(x), BF.y);
+    ctx.lineTo(sx(x), BA.y + BA.h);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.2);
+    ctx.beginPath();
+    ctx.moveTo(sx(a), BF.y);
+    ctx.lineTo(sx(a), BA.y + BA.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const y = BA.y + BA.h + 44;
+    const near = (p: number, q: number) => Math.abs(sx(p) - sx(q)) < 26;
+    label('a', sx(a), y, 0.85, 'center', 12);
+    if (!near(fn.hi, a) && !near(fn.hi, x)) label('b', sx(fn.hi), y, 0.85, 'center', 12);
+    if (!near(x, a)) label('x', sx(x), y, 1, 'center', 12, SLOPE);
+    // a handle on the guide, to show it can be dragged
+    ctx.fillStyle = SLOPE;
+    ctx.beginPath();
+    ctx.moveTo(sx(x), BF.y + BF.h + 12);
+    ctx.lineTo(sx(x) - 7, BF.y + BF.h + 24);
+    ctx.lineTo(sx(x) + 7, BF.y + BF.h + 24);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    frame();
+    shade();
+    drawPieces();
+    drawF();
+    drawSliver();
+    drawMarkers();
+    drawA();
+    drawTotal();
+    drawTangent();
+    sync();
+  }
+
+  // --- the words and numbers ------------------------------------------------------
+
+  function sync() {
+    const fn = cur();
+    const { a, x } = state;
+    const fx = fn.f(x), Ax = integ(fn, a, x), total = integ(fn, a, fn.hi);
+    const sum = riemann(fn, a, fn.hi, state.n, state.method);
+    const Acol = fx >= 0 ? UP : DOWN;
+
+    const small = window.innerWidth < 640;
+    setEq(small
+      ? {
+          rule: [["A'(x)", UP], '=', ['f(x)', SLOPE], '\\qquad', ['\\int_a^b f = F(b) - F(a)', TOTAL]],
+          live: [[`A = ${fixed(Ax, 3)}`, UP], [`f(x) = ${fixed(fx, 3)}`, SLOPE], [`\\int_a^b f = ${fixed(total, 3)}`, TOTAL]],
+        }
+      : {
+          rule: [
+            '\\frac{d}{dx}', ['\\int_a^x f(t)\\,dt', UP], '=', ['f(x)', SLOPE],
+            '\\qquad', ['\\int_a^b f(x)\\,dx = F(b) - F(a)', TOTAL],
+          ],
+          live: [
+            [`A(${fixed(x, 2)}) = ${fixed(Ax, 3)}`, UP], '\\quad',
+            [`f(${fixed(x, 2)}) = ${fixed(fx, 3)}`, SLOPE], '\\quad',
+            [`\\int_a^b f = ${fixed(total, 4)}`, TOTAL],
+            state.pieces ? `\\approx ${fixed(sum, 4)}` : '',
+          ],
+        });
+
+    const atB = x >= fn.hi - 1e-6;
+    const flat = Math.abs(fx) < 0.03 * (prepare(state.fn).fHi - prepare(state.fn).fLo);
+    setResult({
+      value: fixed(Ax, 3),
+      colour: Acol,
+      status: `x = ${fixed(x, 2)} · A is growing at f(x) = ${fixed(fx, 3)} per unit of x`,
+      note: atB
+        ? `At b the area is the whole integral: A(b) − A(a) = ${fixed(total, 4)}, and any start for F gives the same difference.`
+        : flat
+          ? 'f crosses zero here, so the slivers add nothing and A is flat: a peak or a valley of A.'
+          : fx > 0
+            ? 'f is positive here, so each sliver adds area and A climbs, as steeply as f is tall.'
+            : 'f is negative here, so each sliver takes area away and A runs downhill.',
+    });
+
+    setRows({
+      'r-fx': fixed(fx, 4),
+      'r-ax': fixed(Ax, 4),
+      'r-total': fixed(total, 5),
+      'r-sum': `${fixed(sum, 5)} (${state.n})`,
+      'r-err': Math.abs(sum - total).toExponential(2),
+    });
+  }
+
+  // --- error against pieces, log–log ------------------------------------------------
+
+  const METHOD_COLORS: Record<string, string> = {
+    left: '#f87171', right: '#fbbf24', mid: '#60a5fa', trap: '#34d399',
+  };
+  const sweepInk = stageInk(sweepCanvas);
+  function drawSweep() {
+    const fn = cur();
+    const a = state.a, b = fn.hi;
+    const exact = integ(fn, a, b, 4000);
+    const c = sw.ctx, Ws = sw.W, Hs = sw.H;
+    const pad = { l: 40, r: 8, t: 10, b: 20 };
+    const nMax = 128;
+    const xMin = 0, xMax = Math.log10(nMax);
+    const yMin = -6, yMax = 1;
+    const px = (lx: number) => pad.l + ((lx - xMin) / (xMax - xMin)) * (Ws - pad.l - pad.r);
+    const py = (ly: number) => pad.t + (1 - (ly - yMin) / (yMax - yMin)) * (Hs - pad.t - pad.b);
+
+    c.clearRect(0, 0, Ws, Hs);
+    c.strokeStyle = sweepInk.ink(0.14);
+    c.fillStyle = sweepInk.ink(0.5);
+    c.lineWidth = 1;
+    c.font = "10px 'JetBrains Mono', monospace";
+    for (let e = -6; e <= 0; e += 2) {
+      c.beginPath();
+      c.moveTo(pad.l, py(e));
+      c.lineTo(Ws - pad.r, py(e));
+      c.stroke();
+      c.fillText('1e' + e, 2, py(e) + 3);
+    }
+    for (const n of [1, 10, 100]) c.fillText(String(n), px(Math.log10(n)) - 4, Hs - 6);
+
+    // guide slopes −1 and −2, a decade wide
+    c.strokeStyle = sweepInk.ink(0.45);
+    c.fillStyle = sweepInk.ink(0.6);
+    c.setLineDash([3, 3]);
+    for (const [k, y0] of [[1, -3.1], [2, -3.5]] as [number, number][]) {
+      c.beginPath();
+      c.moveTo(px(0.1), py(y0));
+      c.lineTo(px(1.1), py(y0 - k));
+      c.stroke();
+      c.fillText(k === 1 ? 'slope −1' : 'slope −2', px(1.1) + 4, py(y0 - k) + 3);
+    }
+    c.setLineDash([]);
+
+    // the current n
+    if (state.pieces) {
+      c.strokeStyle = sweepInk.ink(0.3);
+      c.beginPath();
+      c.moveTo(px(Math.log10(state.n)), pad.t);
+      c.lineTo(px(Math.log10(state.n)), Hs - pad.b);
+      c.stroke();
+    }
+
+    for (const m of ['left', 'right', 'mid', 'trap'] as const) {
+      c.strokeStyle = METHOD_COLORS[m];
+      c.lineWidth = m === state.method && state.pieces ? 2.4 : 1.4;
+      c.beginPath();
+      for (let n = 1; n <= nMax; n++) {
+        const err = Math.abs(riemann(fn, a, b, n, m) - exact);
+        const ly = Math.max(yMin, Math.min(yMax, Math.log10(Math.max(err, 1e-12))));
+        n === 1 ? c.moveTo(px(0), py(ly)) : c.lineTo(px(Math.log10(n)), py(ly));
+      }
+      c.stroke();
+    }
+    if (state.pieces) {
+      const err = Math.abs(riemann(fn, a, b, state.n, state.method) - exact);
+      const ly = Math.max(yMin, Math.min(yMax, Math.log10(Math.max(err, 1e-12))));
+      c.fillStyle = METHOD_COLORS[state.method];
+      c.beginPath();
+      c.arc(px(Math.log10(state.n)), py(ly), 3.5, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+
+  // --- controls ---------------------------------------------------------------------
+
+  let raf = 0;
+  const stop = () => { cancelAnimationFrame(raf); raf = 0; };
+  const xEl = el('x') as HTMLInputElement, aEl = el('a') as HTMLInputElement;
+  const f2 = (v: number) => fixed(v, 2);
+
+  const setX = slider('x', (v) => { stop(); state.x = Math.max(state.a, v); if (v < state.a) setX(state.x); draw(); }, f2);
+  const setA = slider('a', (v) => {
+    state.a = v;
+    if (state.x < v) { state.x = v; setX(v); }
+    draw();
+    drawSweep();
+  }, f2);
+
+  /** Slider ranges follow the function's domain. */
+  function ranges() {
+    const fn = cur();
+    xEl.min = aEl.min = String(fn.lo);
+    xEl.max = String(+fn.hi.toFixed(2));
+    aEl.max = String(+(fn.hi - 0.2 * (fn.hi - fn.lo)).toFixed(2));
+  }
+  function moveX(v: number) {
+    const fn = cur();
+    state.x = Math.max(state.a, Math.min(fn.hi, v));
+    setX(+state.x.toFixed(2));
+    draw();
+  }
+
+  const fns = segmented('fn', (v) => { stop(); show(v, FNS[v].lo, (FNS[v].lo + FNS[v].hi) / 2); });
+  const methods = segmented('method', (v) => { state.method = v; setPieces(true); state.pieces = true; draw(); drawSweep(); });
+  const setN = slider('n', (v) => { state.n = v; setPieces(true); state.pieces = true; draw(); drawSweep(); });
+  const setPieces = check('pieces', (on) => { state.pieces = on; draw(); drawSweep(); });
+
+  function show(fn: string, a: number, x: number, extra?: { pieces?: boolean; method?: string; n?: number }) {
+    stop();
+    state.fn = fn; fns.select(fn);
+    ranges();
+    state.a = a; setA(a);
+    state.x = Math.max(a, x); setX(+state.x.toFixed(2));
+    if (extra?.method) { state.method = extra.method; methods.select(extra.method); }
+    if (extra?.n) { state.n = extra.n; setN(extra.n); }
+    if (extra?.pieces !== undefined) { state.pieces = extra.pieces; setPieces(extra.pieces); }
+    draw();
+    drawSweep();
+  }
+
+  el('run').addEventListener('click', () => {
+    stop();
+    const fn = cur();
+    const from = state.a, to = fn.hi;
+    const ms = 4200;
+    let t0 = 0;
+    const tick = (now: number) => {
+      if (!t0) t0 = now;
+      const u = Math.min(1, (now - t0) / ms);
+      state.x = from + (to - from) * u;
+      setX(+state.x.toFixed(2));
+      if (u >= 1) state.x = to;
+      draw();
+      raf = u < 1 ? requestAnimationFrame(tick) : 0;
+    };
+    raf = requestAnimationFrame(tick);
+  });
+
+  // drag anywhere over the plots to move x
+  let dragging = false;
+  const toX = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const fn = cur();
+    return fn.lo + ((px - BF.x) / BF.w) * (fn.hi - fn.lo);
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    stop();
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    moveX(toX(e));
+  });
+  canvas.addEventListener('pointermove', (e) => { if (dragging) moveX(toX(e)); });
+  const end = () => { dragging = false; };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+
+  tries({
+    sweep: () => { show('sine', 0, 0, { pieces: false }); el('run').click(); },
+    signed: () => show('cubic', -1.2, 0.5, { pieces: true, method: 'mid', n: 12 }),
+    shift: () => show('quad', 1.5, 3, { pieces: false }),
+    rates: () => show('quad', 0, 3, { pieces: true, method: 'left', n: 16 }),
+  });
+
+  let resizeT = 0;
+  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = window.setTimeout(draw, 80); });
+
+  ranges();
+  draw();
+  drawSweep();
+</script>
+
+<style>
+  #ftc {
+    cursor: ew-resize;
+    touch-action: pan-y;
+  }
+  .sweep-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+  }
+  .sweep-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .sweep-legend span::before {
+    content: '';
+    width: 12px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--c);
+  }
+</style>

@@ -41,11 +41,11 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'riemann-sum',
-        title: 'Riemann Sums',
+        slug: 'fundamental-theorem',
+        title: 'The Fundamental Theorem',
         description:
-          'Approximate the area under a curve with rectangles, then add more and thinner ones and watch the staircase converge onto the integral.',
-        href: '/simulations/calculus/riemann-sum',
+          'Sweep a point across a curve and watch the area behind it grow into a new function, whose slope at every point is the height of the curve. Riemann sums, signed area and the +C included.',
+        href: '/simulations/calculus/fundamental-theorem',
         status: 'live',
       },
       {
