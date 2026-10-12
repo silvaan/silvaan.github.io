@@ -193,6 +193,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'column-null-space',
+        title: 'Column Space & Null Space',
+        description:
+          'A matrix squeezes its input space onto its column space and crushes its null space to zero. Drag a point along the null line and its image never moves; pull a column into the plane of the others and watch rank fall as nullity rises.',
+        href: '/simulations/linear-algebra/column-null-space',
+        status: 'live',
+      },
+      {
         slug: 'change-of-basis',
         title: 'Change of Basis',
         description:
