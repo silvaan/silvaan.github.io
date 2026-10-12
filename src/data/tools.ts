@@ -185,6 +185,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'systems-of-equations',
+        title: 'Systems of Equations',
+        description:
+          'Two equations in two unknowns, seen two ways at once: as lines that cross, and as columns that add up to b. Elimination turns the lines about the answer without ever moving it.',
+        href: '/simulations/linear-algebra/systems-of-equations',
+        status: 'live',
+      },
+      {
         slug: 'change-of-basis',
         title: 'Change of Basis',
         description:

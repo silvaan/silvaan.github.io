@@ -1,0 +1,1237 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Matrix from '../../../components/sim/Matrix.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="Systems of Equations"
+  description="Two equations in two unknowns, seen two ways at once: as lines that cross, and as columns that add up to b. Elimination turns the lines about the answer without ever moving it."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <div class="pictures">
+          <canvas
+            id="rows"
+            width="560"
+            height="540"
+            role="img"
+            aria-label="Row picture: each equation drawn as a line in the xy plane; the solution is where the two lines cross."
+          ></canvas>
+          <canvas
+            id="cols"
+            width="560"
+            height="540"
+            role="img"
+            aria-label="Column picture: the two columns of A scaled by x and y and placed head to tail, landing on the vector b."
+          ></canvas>
+        </div>
+        <div class="elim" aria-live="polite">
+          <div class="aug" id="aug"></div>
+          <div class="elim-side">
+            <div class="elim-now" id="elim-now"></div>
+            <ol class="elim-ops" id="elim-ops"></ol>
+          </div>
+        </div>
+      </div>
+      <Caption
+        legend={[
+          { label: 'x and x·a₁', color: '#7c8cff' },
+          { label: 'y and y·a₂', color: '#5eead4' },
+          { label: 'b', color: '#fbbf24' },
+          { label: 'equation 1', color: '#f472b6' },
+          { label: 'equation 2', color: '#a3e635' },
+        ]}
+        hint="Drag b, a₁ or a₂ in the column picture, or the crossing in the row picture"
+      />
+      <Result label="Solutions" />
+    </div>
+
+    <div class="sim-panel">
+      <Matrix
+        label="Coefficients A"
+        entries={[
+          { id: 'a11', label: 'a₁₁', value: 2 },
+          { id: 'a12', label: 'a₁₂', value: -1 },
+          { id: 'a21', label: 'a₂₁', value: 0.5 },
+          { id: 'a22', label: 'a₂₂', value: 1.5 },
+        ]}
+      />
+      <Matrix
+        label="Right-hand side b"
+        min={-6}
+        max={6}
+        entries={[
+          { id: 'b1', label: 'b₁', value: 2 },
+          { id: 'b2', label: 'b₂', value: 2.25 },
+        ]}
+      />
+      <Seg
+        id="presets"
+        label="Presets"
+        attr="p"
+        options={[
+          { value: 'unique', label: 'One solution' },
+          { value: 'none', label: 'No solution' },
+          { value: 'many', label: 'Infinitely many' },
+          { value: 'close', label: 'Nearly parallel' },
+          { value: 'pivot', label: 'Zero pivot' },
+        ]}
+      />
+      <span class="section-label">Gaussian elimination</span>
+      <Transport step />
+      <Readout
+        rows={[
+          { id: 'r-det', label: 'det A' },
+          { id: 'r-sol', label: '(x, y)' },
+          { id: 'r-rank', label: 'rank A, rank [A | b]' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Drag the amber tip of <b>b</b>. Both lines slide without turning, and the crossing's
+      coordinates are exactly how many a₁ and a₂ it takes to reach b. <Try id="unique" />
+    </li>
+    <li>
+      <b>No solution</b>: the lines are parallel, and the columns lie on one line with b off
+      it. No mix of a₁ and a₂ ever leaves that line, and det A = 0. <Try id="none" />
+    </li>
+    <li>
+      <b>Infinitely many</b>: b sits on the columns' line (drag b near it and it snaps), the two
+      equations become one line, and every point on it solves both. Each one is a different
+      recipe for the same b. <Try id="many" />
+    </li>
+    <li>
+      Run <b>elimination</b>. R₂ − m·R₁ turns line 2 about the crossing until it is flat, then
+      back-substitution turns line 1 upright: the answer never moves, while the columns end up
+      as the axes and b as (x, y). <Try id="elim" label="Eliminate" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import katex from 'katex';
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed } from '../../../lib/draw';
+  import { el, segmented, matrix, transport, result, readout, tries } from '../../../lib/panel';
+
+  // ---------------------------------------------------------------- state
+  type Row = [number, number, number];
+  type Aug = [Row, Row];
+  type Op =
+    | { kind: 'swap'; phase: 'forward' }
+    | { kind: 'sub'; i: 0 | 1; j: 0 | 1; m: number; phase: 'forward' | 'back' }
+    | { kind: 'scale'; i: 0 | 1; k: number; phase: 'forward' | 'back' };
+
+  const A = { a11: 2, a12: -1, a21: 0.5, a22: 1.5 };
+  const B = { b1: 2, b2: 2.25 };
+  const PRESETS: Record<string, [number, number, number, number, number, number]> = {
+    unique: [2, -1, 0.5, 1.5, 2, 2.25],
+    none: [1, 2, 0.5, 1, 2, 2.5],
+    many: [1, 2, 0.5, 1, 3, 1.5],
+    close: [1, 1, 1, 1.1, 2, 2.05],
+    pivot: [0, 1, 2, 1, 1.5, 2.5],
+  };
+
+  const rowsCv = el('rows') as HTMLCanvasElement;
+  const colsCv = el('cols') as HTMLCanvasElement;
+  const R = setupCanvas(rowsCv, () => (dirty = true));
+  const C = setupCanvas(colsCv, () => (dirty = true));
+  const W = R.W, H = R.H;
+  const { ink, css } = stageInk(rowsCv);
+  const bg = () => css('--stage-bg', '#0d0e12');
+  const light = () => css('--stage-light', '0') === '1';
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  /** The palette, a shade darker on the light stage so thin strokes stay visible. */
+  function pal() {
+    return light()
+      ? { X: '#4f5fe0', Y: '#0d9488', B: '#d97706', R1: '#db2777', R2: '#4d7c0f', BAD: '#dc2626' }
+      : { X: '#7c8cff', Y: '#5eead4', B: '#fbbf24', R1: '#f472b6', R2: '#a3e635', BAD: '#f87171' };
+  }
+
+  const aug0 = (): Aug => [
+    [A.a11, A.a12, B.b1],
+    [A.a21, A.a22, B.b2],
+  ];
+  const clone = (M: Aug): Aug => [[...M[0]] as Row, [...M[1]] as Row];
+  const big = (M: Aug) => Math.max(1, ...M[0].map(Math.abs), ...M[1].map(Math.abs));
+
+  // ---------------------------------------------------------------- the maths
+  type Kind = 'unique' | 'none' | 'many' | 'all' | 'empty';
+  type Solution = {
+    kind: Kind;
+    det: number;
+    rankA: number;
+    rankAb: number;
+    x: number;
+    y: number;
+    /** For a line of solutions: the point nearest the origin and the unit direction. */
+    base?: { x: number; y: number };
+    dir?: { x: number; y: number };
+  };
+
+  function solve(M: Aug): Solution {
+    const [[a, b, p], [c, d, q]] = M;
+    const det = a * d - b * c;
+    const s = big(M);
+    const tol = 1e-9 * s * s;
+    if (Math.abs(det) > tol) return { kind: 'unique', det, rankA: 2, rankAb: 2, x: (p * d - b * q) / det, y: (a * q - c * p) / det };
+    const zeroA = [a, b, c, d].every((v) => Math.abs(v) < 1e-9 * s);
+    if (zeroA) {
+      const zeroB = Math.abs(p) < 1e-9 * s && Math.abs(q) < 1e-9 * s;
+      return { kind: zeroB ? 'all' : 'empty', det: 0, rankA: 0, rankAb: zeroB ? 0 : 1, x: 0, y: 0 };
+    }
+    // rank 1: consistent when b is a multiple of the nonzero column (every 2x2 minor of [A|b] vanishes)
+    const consistent = Math.abs(a * q - c * p) < tol && Math.abs(b * q - d * p) < tol;
+    if (!consistent) return { kind: 'none', det: 0, rankA: 1, rankAb: 2, x: NaN, y: NaN };
+    // the nonzero row is the one equation left
+    const [u, v, r] = Math.hypot(a, b) >= Math.hypot(c, d) ? [a, b, p] : [c, d, q];
+    const n2 = u * u + v * v;
+    const base = { x: (r * u) / n2, y: (r * v) / n2 };
+    const dir = { x: -v / Math.sqrt(n2), y: u / Math.sqrt(n2) };
+    return { kind: 'many', det: 0, rankA: 1, rankAb: 1, x: base.x, y: base.y, base, dir };
+  }
+
+  /** Row operation `op` carried out a fraction s of the way. */
+  function applyOp(M: Aug, op: Op, s: number): Aug {
+    const N = clone(M);
+    if (op.kind === 'swap') {
+      for (let c = 0; c < 3; c++) {
+        N[0][c] = (1 - s) * M[0][c] + s * M[1][c];
+        N[1][c] = (1 - s) * M[1][c] + s * M[0][c];
+      }
+    } else if (op.kind === 'sub') {
+      for (let c = 0; c < 3; c++) N[op.i][c] = M[op.i][c] - s * op.m * M[op.j][c];
+    } else {
+      const f = 1 + s * (op.k - 1);
+      for (let c = 0; c < 3; c++) N[op.i][c] = M[op.i][c] * f;
+    }
+    // what the op is meant to zero is exactly zero once it is done
+    if (s === 1) {
+      const t = 1e-12 * big(M);
+      for (const r of N) for (let c = 0; c < 3; c++) if (Math.abs(r[c]) < t) r[c] = 0;
+    }
+    return N;
+  }
+
+  /** The row operations that take [A | b] to reduced form. */
+  function plan(M0: Aug) {
+    let M = clone(M0);
+    const ops: Op[] = [];
+    const states: Aug[] = [clone(M)];
+    const eps = 1e-9 * big(M0);
+    const push = (op: Op) => {
+      ops.push(op);
+      M = applyOp(M, op, 1);
+      states.push(clone(M));
+    };
+    const pc = Math.abs(M[0][0]) > eps || Math.abs(M[1][0]) > eps ? 0 : 1;
+    if (Math.abs(M[0][pc]) <= eps && Math.abs(M[1][pc]) > eps) push({ kind: 'swap', phase: 'forward' });
+    if (Math.abs(M[0][pc]) > eps) {
+      if (Math.abs(M[1][pc]) > eps) push({ kind: 'sub', i: 1, j: 0, m: M[1][pc] / M[0][pc], phase: 'forward' });
+      if (pc === 0 && Math.abs(M[1][1]) > eps) {
+        if (Math.abs(M[1][1] - 1) > eps) push({ kind: 'scale', i: 1, k: 1 / M[1][1], phase: 'forward' });
+        if (Math.abs(M[0][1]) > eps) push({ kind: 'sub', i: 0, j: 1, m: M[0][1], phase: 'back' });
+        if (Math.abs(M[0][0] - 1) > eps) push({ kind: 'scale', i: 0, k: 1 / M[0][0], phase: 'back' });
+      } else if (Math.abs(M[0][pc] - 1) > eps) {
+        push({ kind: 'scale', i: 0, k: 1 / M[0][pc], phase: 'forward' });
+      }
+    }
+    return { ops, states };
+  }
+
+  // ---------------------------------------------------------------- view state
+  let sol = solve(aug0());
+  let elim = { ...plan(aug0()), k: 0, s: 0, anim: false, playing: false, wait: 0 };
+  /** Where along the line of solutions the shown one sits, and whether it drifts by itself. */
+  const slide = { t: 0, auto: true, phase: 0 };
+  const SWING = 1.6;
+  const view = {
+    rows: { cx: 0, cy: 0, r: 4 },
+    cols: { cx: 0, cy: 0, r: 4 },
+    rowsGoal: { cx: 0, cy: 0, r: 4 },
+    colsGoal: { cx: 0, cy: 0, r: 4 },
+  };
+  let dragging: string | null = null;
+  let dirty = true;
+
+  const ease = (s: number) => s * s * (3 - 2 * s);
+  /** The augmented matrix as it is drawn this frame, and the row each line is drawn from. */
+  function current(): { M: Aug; lines: Aug } {
+    const base = elim.states[elim.k];
+    const op = elim.ops[elim.k];
+    if (!elim.anim || !op) return { M: base, lines: base };
+    const M = applyOp(base, op, ease(elim.s));
+    // scaling a row does not move its line; draw it from the unscaled row so it never flickers through zero
+    return { M, lines: op.kind === 'scale' ? base : M };
+  }
+
+  /** The (x, y) shown: the crossing, or the drifting point on a line of solutions. */
+  function shownXY(): { x: number; y: number } | null {
+    if (sol.kind === 'unique') return { x: sol.x, y: sol.y };
+    if (sol.kind === 'many' && sol.base && sol.dir) return { x: sol.base.x + slide.t * sol.dir.x, y: sol.base.y + slide.t * sol.dir.y };
+    if (sol.kind === 'all') return { x: Math.cos(slide.t) * 1.5, y: Math.sin(slide.t) * 1.5 };
+    return null;
+  }
+
+  // ---------------------------------------------------------------- framing
+  const niceStep = (range: number) => {
+    const raw = range / 4;
+    for (const s of [0.25, 0.5, 1, 2, 5, 10, 20]) if (s >= raw) return s;
+    return 50;
+  };
+  type Frame = { cx: number; cy: number; r: number };
+  /** What each picture has to keep in view: the origin, the answer, the columns and b at every step. */
+  function needs(): { rows: Frame; cols: Frame } {
+    const rp: Pt[] = [{ x: 0, y: 0 }];
+    const cp: Pt[] = [{ x: 0, y: 0 }];
+    const p = shownXY();
+    if (p && sol.kind === 'unique') rp.push(p);
+    if (sol.kind === 'many' && sol.base && sol.dir) {
+      for (const k of [-SWING, SWING]) rp.push({ x: sol.base.x + k * sol.dir.x, y: sol.base.y + k * sol.dir.y });
+    }
+    if (sol.kind === 'none') {
+      for (const r of elim.states[0]) {
+        const n = r[0] * r[0] + r[1] * r[1];
+        if (n > 1e-12) rp.push({ x: (r[2] * r[0]) / n, y: (r[2] * r[1]) / n });
+      }
+    }
+    for (const M of elim.states) {
+      cp.push({ x: M[0][0], y: M[1][0] }, { x: M[0][1], y: M[1][1] }, { x: M[0][2], y: M[1][2] });
+      if (p) cp.push({ x: p.x * M[0][0], y: p.x * M[1][0] }, { x: p.y * M[0][1], y: p.y * M[1][1] });
+    }
+    const fit = (pts: Pt[], min: number): Frame => {
+      const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const r = Math.min(30, Math.max(min, Math.max(x1 - x0, y1 - y0) / 2 * 1.22 + 0.4));
+      return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, r };
+    };
+    return { rows: fit(rp, 2.2), cols: fit(cp, 2) };
+  }
+  /** Refit at once when something would leave the frame; zoom back in only when it has got lost in it. */
+  function reframe(force = false) {
+    const n = needs();
+    for (const k of ['rows', 'cols'] as const) {
+      const g = k === 'rows' ? 'rowsGoal' : 'colsGoal';
+      const cur = view[g], want = n[k];
+      const inside =
+        Math.abs(want.cx - cur.cx) + (want.r - 0.4) / 1.22 <= cur.r * 0.95 &&
+        Math.abs(want.cy - cur.cy) + (want.r - 0.4) / 1.22 <= cur.r * 0.95;
+      if (force || !inside || (!dragging && want.r < cur.r * 0.5)) view[g] = want;
+    }
+  }
+
+  // ---------------------------------------------------------------- drawing kit
+  type Pt = { x: number; y: number };
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+
+  function kit(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, frame: () => Frame) {
+    const unit = () => (Math.min(W, H) / 2 - 18) / frame().r;
+    const S = (p: Pt) => ({ x: W / 2 + (p.x - frame().cx) * unit(), y: H / 2 - (p.y - frame().cy) * unit() });
+    const world = (m: Pt) => ({ x: frame().cx + (m.x - W / 2) / unit(), y: frame().cy - (m.y - H / 2) / unit() });
+    /** Text grows a little when the canvas is drawn small (a phone, stacked pictures). */
+    const fs = () => Math.max(1, Math.min(1.7, (0.95 * W) / Math.max(1, canvas.clientWidth)));
+
+    let boxes: Box[] = [];
+    let segs: [number, number, number, number][] = [];
+    const reset = () => { boxes = []; segs = []; };
+    const block = (b: Box) => boxes.push(b);
+    const seg = (p: Pt, q: Pt) => segs.push([p.x, p.y, q.x, q.y]);
+    const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+    function hitsSeg(b: Box) {
+      for (const [x1, y1, x2, y2] of segs) {
+        const n = Math.max(2, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 4));
+        for (let i = 0; i <= n; i++) {
+          const x = x1 + ((x2 - x1) * i) / n, y = y1 + ((y2 - y1) * i) / n;
+          if (x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1) return true;
+        }
+      }
+      return false;
+    }
+    const free = (b: Box, segsToo = true) =>
+      b.x0 > 4 && b.y0 > 4 && b.x1 < W - 4 && b.y1 < H - 4 && !boxes.some((o) => overlaps(o, b)) && !(segsToo && hitsSeg(b));
+
+    type Run = [string, string];
+    function measure(runs: Run[], size: number) {
+      ctx.font = `${Math.round(size * fs())}px ${FONT}`;
+      let w = 0;
+      for (const [t] of runs) w += ctx.measureText(t).width;
+      return { w, h: size * fs() * 1.15 };
+    }
+    function paint(runs: Run[], cx: number, cy: number, size: number) {
+      const { w } = measure(runs, size);
+      let x = cx - w / 2;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.lineJoin = 'round';
+      for (const [t, col] of runs) {
+        ctx.strokeStyle = bg();
+        ctx.lineWidth = 4;
+        ctx.strokeText(t, x, cy);
+        ctx.fillStyle = col;
+        ctx.fillText(t, x, cy);
+        x += ctx.measureText(t).width;
+      }
+      ctx.textBaseline = 'alphabetic';
+    }
+    /**
+     * Put a label at the first candidate centre where it touches no other label
+     * and no registered stroke; failing that, spiral out from the first one.
+     */
+    function place(runs: Run[], cands: Pt[], size = 13, opts: { soft?: boolean; pad?: number; reach?: number } = {}) {
+      const { w, h } = measure(runs, size);
+      const pad = opts.pad ?? 3;
+      const boxAt = (c: Pt): Box => ({ x0: c.x - w / 2 - pad, y0: c.y - h / 2 - pad, x1: c.x + w / 2 + pad, y1: c.y + h / 2 + pad });
+      let pick: Pt | null = null;
+      // first clear of labels and strokes, then clear of labels only
+      for (const strict of [true, false]) {
+        for (const c of cands) if (free(boxAt(c), strict)) { pick = c; break; }
+        if (pick) break;
+        outer: for (const c0 of cands.slice(0, 3)) {
+          for (let r = 8; r <= (opts.reach ?? 160); r += 8) {
+            for (let k = 0; k < 16; k++) {
+              const c = { x: c0.x + r * Math.cos((k * Math.PI) / 8), y: c0.y + r * Math.sin((k * Math.PI) / 8) };
+              if (free(boxAt(c), strict)) { pick = c; break outer; }
+            }
+          }
+        }
+        if (pick || opts.soft) break;
+      }
+      if (!pick) {
+        if (opts.soft || !cands.length) return null;
+        const c = cands[0];
+        pick = { x: Math.max(w / 2 + 6, Math.min(W - w / 2 - 6, c.x)), y: Math.max(h / 2 + 6, Math.min(H - h / 2 - 6, c.y)) };
+      }
+      boxes.push(boxAt(pick));
+      paint(runs, pick.x, pick.y, size);
+      return pick;
+    }
+    /** Candidate centres beside a screen segment, far enough off it to clear a w×h box. */
+    function beside(p: Pt, q: Pt, runs: Run[], size: number, fracs: number[], gap = 7): Pt[] {
+      const { w, h } = measure(runs, size);
+      const L = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+      const nx = -(q.y - p.y) / L, ny = (q.x - p.x) / L;
+      const off = (w / 2) * Math.abs(nx) + (h / 2) * Math.abs(ny) + gap;
+      const out: Pt[] = [];
+      for (const f of fracs) {
+        const x = p.x + (q.x - p.x) * f, y = p.y + (q.y - p.y) * f;
+        out.push({ x: x + nx * off, y: y + ny * off }, { x: x - nx * off, y: y - ny * off });
+      }
+      return out;
+    }
+
+    function line(p: Pt, q: Pt, col: string, lw: number, dash: number[] = []) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = lw;
+      ctx.setLineDash(dash);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineCap = 'butt';
+    }
+    /** Screen-space arrow, shaft stopping short of a solid head outlined in the background. */
+    function arrow(p: Pt, q: Pt, col: string, lw = 3, head = 13, alpha = 1) {
+      const L = Math.hypot(q.x - p.x, q.y - p.y);
+      if (L < 1) return;
+      const hd = Math.min(head, L * 0.6);
+      const an = Math.atan2(q.y - p.y, q.x - p.x);
+      ctx.globalAlpha = alpha;
+      line(p, { x: q.x - hd * 0.8 * Math.cos(an), y: q.y - hd * 0.8 * Math.sin(an) }, col, lw);
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(q.x, q.y);
+      ctx.lineTo(q.x - hd * Math.cos(an - 0.36), q.y - hd * Math.sin(an - 0.36));
+      ctx.lineTo(q.x - hd * Math.cos(an + 0.36), q.y - hd * Math.sin(an + 0.36));
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = bg();
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      seg(p, q);
+    }
+    function grid(axisX: [string, string], axisY: [string, string]) {
+      const { cx, cy, r } = frame();
+      const step = niceStep(r);
+      const reach = r * 1.25;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = ink(0.06);
+      ctx.beginPath();
+      for (let v = Math.floor((cx - reach) / step) * step; v <= cx + reach; v += step) {
+        if (Math.abs(v) < 1e-9) continue;
+        const a = S({ x: v, y: cy - reach }), b = S({ x: v, y: cy + reach });
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      }
+      for (let v = Math.floor((cy - reach) / step) * step; v <= cy + reach; v += step) {
+        if (Math.abs(v) < 1e-9) continue;
+        const c = S({ x: cx - reach, y: v }), d = S({ x: cx + reach, y: v });
+        ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y);
+      }
+      ctx.stroke();
+      // the two axes, each tinted by what it measures
+      const o = S({ x: 0, y: 0 });
+      ctx.globalAlpha = 0.85;
+      line({ x: 0, y: o.y }, { x: W, y: o.y }, axisX[1], 1.2);
+      line({ x: o.x, y: 0 }, { x: o.x, y: H }, axisY[1], 1.2);
+      ctx.globalAlpha = 1;
+      return step;
+    }
+    /** Tick numbers go in last, only where nothing else wants the space. */
+    function ticks(step: number) {
+      const { cx, cy, r } = frame();
+      const o = S({ x: 0, y: 0 });
+      const f = fs();
+      const ty = Math.max(14 * f, Math.min(H - 14 * f, o.y + 12 * f));
+      const tx = Math.max(16 * f, Math.min(W - 16 * f, o.x - 14 * f));
+      const label = (v: number) => trim(v);
+      for (let k = Math.ceil((cx - r * 1.2) / step); k <= (cx + r * 1.2) / step; k++) {
+        if (!k || k % 2) continue;
+        place([[label(k * step), ink(0.38)]], [{ x: S({ x: k * step, y: 0 }).x, y: ty }], 9.5, { soft: true, pad: 1 });
+      }
+      for (let k = Math.ceil((cy - r * 1.2) / step); k <= (cy + r * 1.2) / step; k++) {
+        if (!k || k % 2) continue;
+        place([[label(k * step), ink(0.38)]], [{ x: tx, y: S({ x: 0, y: k * step }).y }], 9.5, { soft: true, pad: 1 });
+      }
+    }
+    /** The part of the line {p : n·p = r} that is on the canvas, in screen space. */
+    function clipLine(nx: number, ny: number, r: number): [Pt, Pt] | null {
+      const n2 = nx * nx + ny * ny;
+      if (n2 < 1e-14) return null;
+      const p0 = S({ x: (r * nx) / n2, y: (r * ny) / n2 });
+      const dx = -ny, dy = -nx; // direction (−ny, nx) in world, y flipped on screen
+      let t0 = -1e6, t1 = 1e6;
+      const clip = (p: number, d: number, lo: number, hi: number) => {
+        if (Math.abs(d) < 1e-12) return p >= lo && p <= hi;
+        let a = (lo - p) / d, b = (hi - p) / d;
+        if (a > b) [a, b] = [b, a];
+        t0 = Math.max(t0, a);
+        t1 = Math.min(t1, b);
+        return true;
+      };
+      if (!clip(p0.x, dx, 0, W) || !clip(p0.y, dy, 0, H) || t0 >= t1) return null;
+      return [{ x: p0.x + dx * t0, y: p0.y + dy * t0 }, { x: p0.x + dx * t1, y: p0.y + dy * t1 }];
+    }
+    function dot(p: Pt, col: string, r = 6) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    function ring(p: Pt, col: string, r = 8, lw = 2.2) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    function title(name: string, sub: string) {
+      const s = fs();
+      // a plate in the stage colour, so lines passing under the title never run through it
+      ctx.font = `600 ${Math.round(11 * s)}px ${FONT}`;
+      const pw = Math.max(ctx.measureText(name.toUpperCase()).width, (ctx.font = `${Math.round(11 * s)}px ${FONT}`, ctx.measureText(sub).width));
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = bg();
+      ctx.beginPath();
+      ctx.roundRect(8, 7, pw + 14, 32 * s + 8, 5);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.font = `600 ${Math.round(11 * s)}px ${FONT}`;
+      ctx.fillStyle = ink(0.62);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const spaced = name.toUpperCase();
+      ctx.fillText(spaced, 14, 12);
+      const w1 = ctx.measureText(spaced).width;
+      ctx.font = `${Math.round(11 * s)}px ${FONT}`;
+      ctx.fillStyle = ink(0.4);
+      ctx.fillText(sub, 14, 12 + 16 * s);
+      const w2 = ctx.measureText(sub).width;
+      ctx.textBaseline = 'alphabetic';
+      block({ x0: 8, y0: 6, x1: 20 + Math.max(w1, w2), y1: 12 + 32 * s });
+    }
+    /**
+     * A label set along a segment, on the side facing `toward`, reading left to
+     * right. Returns false when the segment is too short to carry it.
+     */
+    function along(runs: Run[], p: Pt, q: Pt, toward: Pt, size: number) {
+      const { w, h } = measure(runs, size);
+      const L = Math.hypot(q.x - p.x, q.y - p.y);
+      if (L < w + 30) return false;
+      let an = Math.atan2(q.y - p.y, q.x - p.x);
+      if (an > Math.PI / 2) an -= Math.PI;
+      if (an < -Math.PI / 2) an += Math.PI;
+      // centred a little toward p, clear of whatever handle sits at q
+      const m = { x: p.x + (q.x - p.x) * 0.45, y: p.y + (q.y - p.y) * 0.45 };
+      let nx = -Math.sin(an), ny = Math.cos(an);
+      if (nx * (toward.x - m.x) + ny * (toward.y - m.y) < 0) { nx = -nx; ny = -ny; }
+      const c = { x: m.x + nx * (h / 2 + 12), y: m.y + ny * (h / 2 + 12) };
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(an);
+      paint(runs, 0, 0, size);
+      ctx.restore();
+      const ex = (Math.abs(Math.cos(an)) * w + Math.abs(Math.sin(an)) * h) / 2;
+      const ey = (Math.abs(Math.sin(an)) * w + Math.abs(Math.cos(an)) * h) / 2;
+      block({ x0: c.x - ex, y0: c.y - ey, x1: c.x + ex, y1: c.y + ey });
+      return true;
+    }
+    return { ctx, S, world, unit, fs, reset, block, seg, place, beside, along, line, arrow, grid, ticks, clipLine, dot, ring, title };
+  }
+
+  const KR = kit(R.ctx, rowsCv, () => view.rows);
+  const KC = kit(C.ctx, colsCv, () => view.cols);
+
+  /** "2x − y" with ones and zeros dropped, the way a person would write the row. */
+  function rowText(a: number, b: number) {
+    const num = (v: number) => {
+      const s = Math.abs(v).toFixed(2).replace(/\.?0+$/, '');
+      return s === '1' ? '' : s;
+    };
+    const parts: string[] = [];
+    if (Math.abs(a) >= 0.005) parts.push(`${a < 0 ? '−' : ''}${num(a)}x`);
+    if (Math.abs(b) >= 0.005) parts.push(parts.length ? `${b < 0 ? '− ' : '+ '}${num(b)}y` : `${b < 0 ? '−' : ''}${num(b)}y`);
+    return parts.length ? parts.join(' ') : '0';
+  }
+  const n2 = (v: number) => fixed(v, 2);
+  const trim = (v: number) => fixed(v, 2).replace(/\.?0+$/, '') || '0';
+
+  // ---------------------------------------------------------------- row picture
+  function drawRows() {
+    const K = KR, ctx = K.ctx, P = pal();
+    ctx.clearRect(0, 0, W, H);
+    K.reset();
+    const step = K.grid(['x', P.X], ['y', P.Y]);
+    const { M, lines } = current();
+    const cols = [P.R1, P.R2];
+    const p = shownXY();
+
+    // a line of solutions glows under the equations
+    if (sol.kind === 'many') {
+      const r0 = elim.states[0];
+      const n = Math.hypot(r0[0][0], r0[0][1]) > 1e-9 ? r0[0] : r0[1];
+      const band = K.clipLine(n[0], n[1], n[2]);
+      if (band) {
+        ctx.globalAlpha = light() ? 0.16 : 0.2;
+        K.line(band[0], band[1], P.B, 16);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // the two equations
+    const segsOnScreen: ([Pt, Pt] | null)[] = [0, 1].map((i) => K.clipLine(lines[i][0], lines[i][1], lines[i][2]));
+    const same = sol.kind === 'many' && segsOnScreen[0] && segsOnScreen[1];
+    segsOnScreen.forEach((s, i) => {
+      if (!s) return;
+      ctx.globalAlpha = 0.18;
+      K.line(s[0], s[1], cols[i], 9);
+      ctx.globalAlpha = 1;
+      // two equations that are one line: dash the second so both stay visible
+      K.line(s[0], s[1], cols[i], 3, same && i === 1 ? [14, 14] : []);
+      K.seg(s[0], s[1]);
+    });
+
+    // x along, then y up, to the solution: the same x and y the columns are scaled by
+    let ptScreen: Pt | null = null;
+    if (p) {
+      const o = K.S({ x: 0, y: 0 }), px = K.S({ x: p.x, y: 0 }), pp = K.S(p);
+      ptScreen = pp;
+      K.line(o, px, P.X, 2.6, [7, 5]);
+      K.line(px, pp, P.Y, 2.6, [7, 5]);
+      K.seg(o, px);
+      K.seg(px, pp);
+      ctx.fillStyle = ink(0.12);
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, 15, 0, Math.PI * 2);
+      ctx.fill();
+      K.dot(pp, ink(0.95), 5.5);
+      K.ring(pp, ink(0.95), 10, 2);
+      K.block({ x0: pp.x - 14, y0: pp.y - 14, x1: pp.x + 14, y1: pp.y + 14 });
+    }
+
+    // the title goes over the strokes and under the labels
+    K.title('Row picture', 'each equation is a line');
+    // labels: the solution first, then the equations, then the legs
+    if (p && ptScreen) {
+      const txt: [string, string][] = sol.kind === 'unique'
+        ? [[`(${n2(p.x)}, ${n2(p.y)})`, ink(0.92)]]
+        : [[`(${n2(p.x)}, ${n2(p.y)})`, ink(0.92)], [' one of ∞', ink(0.55)]];
+      const d = 26 * K.fs();
+      K.place(txt, [
+        { x: ptScreen.x + d * 2.4, y: ptScreen.y - d },
+        { x: ptScreen.x - d * 2.4, y: ptScreen.y - d },
+        { x: ptScreen.x + d * 2.4, y: ptScreen.y + d },
+        { x: ptScreen.x - d * 2.4, y: ptScreen.y + d },
+      ], 12.5);
+    }
+    segsOnScreen.forEach((s, i) => {
+      if (!s) return;
+      const [a, b, r] = M[i];
+      const runs: [string, string][] = [[`${rowText(a, b)} = `, cols[i]], [trim(r), P.B]];
+      const fr = same ? (i ? [0.2, 0.3, 0.12, 0.4] : [0.82, 0.7, 0.9, 0.6]) : i ? [0.16, 0.28, 0.08, 0.4, 0.6, 0.75, 0.88] : [0.84, 0.72, 0.92, 0.6, 0.4, 0.25, 0.12];
+      K.place(runs, K.beside(s[0], s[1], runs, 13, fr, 8), 13);
+    });
+    if (p && ptScreen) {
+      const o = K.S({ x: 0, y: 0 }), px = K.S({ x: p.x, y: 0 });
+      if (Math.abs(px.x - o.x) > 26) {
+        const r: [string, string][] = [[`x = ${n2(p.x)}`, P.X]];
+        K.place(r, K.beside(o, px, r, 11.5, [0.5, 0.3, 0.7], 6), 11.5, { soft: true });
+      }
+      if (Math.abs(ptScreen.y - px.y) > 26) {
+        const r: [string, string][] = [[`y = ${n2(p.y)}`, P.Y]];
+        K.place(r, K.beside(px, ptScreen, r, 11.5, [0.5, 0.3, 0.7], 6), 11.5, { soft: true });
+      }
+    }
+    // what an equation with no line left says
+    const notes: [string, string][] = [];
+    [0, 1].forEach((i) => {
+      if (Math.hypot(M[i][0], M[i][1]) < 1e-9 && !(elim.anim && elim.ops[elim.k]?.kind === 'scale')) {
+        notes.push(Math.abs(M[i][2]) < 1e-9 ? [`row ${i + 1}: 0 = 0, no condition`, cols[i]] : [`row ${i + 1}: 0 = ${n2(M[i][2])}, impossible`, P.BAD]);
+      }
+    });
+    if (sol.kind === 'none' && notes.length === 0) notes.push(['parallel: they never meet', P.BAD]);
+    notes.forEach((n, k) => K.place([n], [{ x: W / 2, y: H - 22 * K.fs() * (k + 1) }, { x: W / 2, y: 60 + 22 * k }], 12));
+    K.ticks(step);
+    K.place([['x', P.X]], [{ x: W - 12, y: K.S({ x: 0, y: 0 }).y - 12 }], 12, { soft: true });
+    K.place([['y', P.Y]], [14, 60, 100].map((y) => ({ x: K.S({ x: 0, y: 0 }).x + 12 * K.fs(), y: y * K.fs() })), 12, { soft: true });
+  }
+
+  // ---------------------------------------------------------------- column picture
+  function drawCols() {
+    const K = KC, ctx = K.ctx, P = pal();
+    ctx.clearRect(0, 0, W, H);
+    K.reset();
+    const step = K.grid(['eq 1', P.R1], ['eq 2', P.R2]);
+    const { M } = current();
+    const a1 = { x: M[0][0], y: M[1][0] }, a2 = { x: M[0][1], y: M[1][1] }, b = { x: M[0][2], y: M[1][2] };
+    const O = K.S({ x: 0, y: 0 });
+    const p = shownXY();
+
+    // columns on one line: draw that line, everything A can reach
+    const big1 = Math.hypot(a1.x, a1.y) >= Math.hypot(a2.x, a2.y) ? a1 : a2;
+    const det = a1.x * a2.y - a1.y * a2.x;
+    const singular = sol.kind !== 'unique' && Math.hypot(big1.x, big1.y) > 1e-9;
+    let spanSeg: [Pt, Pt] | null = null;
+    if (singular) {
+      spanSeg = K.clipLine(-big1.y, big1.x, 0);
+      if (spanSeg) {
+        ctx.globalAlpha = 0.5;
+        K.line(spanSeg[0], spanSeg[1], ink(0.55), 1.6, [3, 6]);
+        ctx.globalAlpha = 1;
+      }
+    }
+    // the parallelogram x·a₁, y·a₂ spans, faint
+    let xa: Pt | null = null;
+    if (p) {
+      const xa1 = { x: p.x * a1.x, y: p.x * a1.y };
+      const ya2 = { x: p.y * a2.x, y: p.y * a2.y };
+      const tip = { x: xa1.x + ya2.x, y: xa1.y + ya2.y };
+      if (Math.abs(det) > 1e-9) {
+        ctx.fillStyle = ink(0.05);
+        ctx.beginPath();
+        [{ x: 0, y: 0 }, xa1, tip, ya2].forEach((q, i) => { const s = K.S(q); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+        ctx.closePath();
+        ctx.fill();
+        K.line(O, K.S(ya2), P.Y, 1.2, [4, 5]);
+        K.line(K.S(ya2), K.S(tip), P.X, 1.2, [4, 5]);
+      }
+      xa = xa1;
+    }
+    // b underneath, so the head-to-tail path is seen landing on it
+    const bs = K.S(b);
+    ctx.globalAlpha = 0.25;
+    K.line(O, bs, P.B, 10);
+    ctx.globalAlpha = 1;
+    K.arrow(O, bs, P.B, 3.4, 15);
+    // the columns themselves, thin, with handles
+    const a1s = K.S(a1), a2s = K.S(a2);
+    K.arrow(O, a1s, P.X, 1.8, 10, 0.75);
+    K.arrow(O, a2s, P.Y, 1.8, 10, 0.75);
+    // x·a₁ then y·a₂, head to tail
+    if (p && xa) {
+      const m = K.S(xa);
+      K.arrow(O, m, P.X, 3.6, 15);
+      K.arrow(m, bs, P.Y, 3.6, 15);
+    }
+    // missing b: the closest the columns get, and the gap
+    let gap: [Pt, Pt] | null = null;
+    if (sol.kind === 'none' || sol.kind === 'empty') {
+      const u = Math.hypot(big1.x, big1.y) > 1e-9 ? { x: big1.x, y: big1.y } : null;
+      const proj = u ? (() => { const k = (b.x * u.x + b.y * u.y) / (u.x * u.x + u.y * u.y); return { x: k * u.x, y: k * u.y }; })() : { x: 0, y: 0 };
+      gap = [K.S(proj), bs];
+      K.line(gap[0], gap[1], P.BAD, 2, [5, 4]);
+      K.dot(gap[0], P.BAD, 3.5);
+      K.seg(gap[0], gap[1]);
+    }
+    // handles
+    for (const [q, col] of [[a1s, P.X], [a2s, P.Y], [bs, P.B]] as [Pt, string][]) {
+      K.ring(q, col, 9, 1.8);
+      K.block({ x0: q.x - 11, y0: q.y - 11, x1: q.x + 11, y1: q.y + 11 });
+    }
+    K.block({ x0: O.x - 6, y0: O.y - 6, x1: O.x + 6, y1: O.y + 6 });
+
+    // labels
+    K.title('Column picture', 'b as a mix of the columns');
+    const fs = K.fs();
+    const tipLabel = (q: Pt, text: [string, string][], size: number) => {
+      const L = Math.hypot(q.x - O.x, q.y - O.y) || 1;
+      const ux = (q.x - O.x) / L, uy = (q.y - O.y) / L;
+      const d = 24 * fs;
+      return K.place(text, [
+        { x: q.x + ux * d, y: q.y + uy * d },
+        { x: q.x + uy * d, y: q.y - ux * d },
+        { x: q.x - uy * d, y: q.y + ux * d },
+        { x: q.x + ux * d * 1.6, y: q.y + uy * d * 1.6 },
+      ], size);
+    };
+    tipLabel(bs, [['b', P.B]], 15);
+    if (gap) {
+      // along the red gap, on the side facing the origin (inside the panel); a short gap gets a placed label
+      const r: [string, string][] = [['b is off the line', P.BAD]];
+      const short: [string, string][] = [['off the line', P.BAD]];
+      if (!K.along(r, gap[0], gap[1], O, 10.5) && !K.along(short, gap[0], gap[1], O, 10))
+        K.place(short, K.beside(gap[0], gap[1], short, 10, [0.5, 0.3, 0.7], 8), 10, { reach: 60 });
+    }
+    tipLabel(a1s, [['a₁', P.X]], 13);
+    tipLabel(a2s, [['a₂', P.Y]], 13);
+    if (p && xa) {
+      const m = K.S(xa);
+      const r1: [string, string][] = [[`${n2(p.x)} a₁`, P.X]];
+      const r2: [string, string][] = [[`${n2(p.y)} a₂`, P.Y]];
+      if (Math.hypot(m.x - O.x, m.y - O.y) > 30) K.place(r1, K.beside(O, m, r1, 12, [0.5, 0.35, 0.65], 7), 12);
+      if (Math.hypot(bs.x - m.x, bs.y - m.y) > 30) K.place(r2, K.beside(m, bs, r2, 12, [0.5, 0.35, 0.65], 7), 12);
+    }
+    if (spanSeg) {
+      const r: [string, string][] = [['all x·a₁ + y·a₂', ink(0.55)]];
+      K.place(r, K.beside(spanSeg[0], spanSeg[1], r, 11, [0.1, 0.9, 0.2, 0.8], 6), 11, { soft: true });
+    }
+    K.ticks(step);
+    const o = K.S({ x: 0, y: 0 });
+    K.place([['eq 1', P.R1]], [{ x: W - 24 * fs, y: o.y - 12 * fs }, { x: W - 24 * fs, y: o.y + 12 * fs }], 11, { soft: true });
+    K.place([['eq 2', P.R2]], [14, 60, 100].flatMap((y) => [{ x: o.x + 24 * fs, y: y * fs }, { x: o.x - 24 * fs, y: y * fs }]), 11, { soft: true });
+  }
+
+  // ---------------------------------------------------------------- the strip under the pictures
+  const augEl = el('aug'), nowEl = el('elim-now'), opsEl = el('elim-ops');
+  let lastAug = '', lastOps = '';
+  const sub = (i: number) => (i ? '₂' : '₁');
+  function opText(op: Op) {
+    if (op.kind === 'swap') return 'R₁ ↔ R₂';
+    if (op.kind === 'scale') return `R${sub(op.i)} ← R${sub(op.i)} ÷ ${trim(1 / op.k)}`;
+    const m = Math.abs(op.m);
+    return `R${sub(op.i)} ← R${sub(op.i)} ${op.m < 0 ? '+' : '−'} ${Math.abs(m - 1) < 5e-3 ? '' : trim(m) + '·'}R${sub(op.j)}`;
+  }
+  function texNum(v: number) {
+    return fixed(v, 2).replace('−', '-');
+  }
+  function drawStrip() {
+    const P = pal();
+    const { M } = current();
+    const rc = [P.R1, P.R2];
+    const row = (i: number) =>
+      `\\textcolor{${rc[i]}}{${texNum(M[i][0])}} & \\textcolor{${rc[i]}}{${texNum(M[i][1])}} & \\textcolor{${P.B}}{${texNum(M[i][2])}}`;
+    const tex = `\\left[\\begin{array}{rr|r} ${row(0)} \\\\ ${row(1)} \\end{array}\\right]`;
+    if (tex !== lastAug) {
+      lastAug = tex;
+      katex.render(tex, augEl, { throwOnError: false, displayMode: false, output: 'html' });
+    }
+    const n = elim.ops.length;
+    const at = elim.anim ? elim.k : elim.k - 1; // the op running now, or the one just done
+    let head: string;
+    if (n === 0) head = 'already reduced';
+    else if (elim.k === 0 && !elim.anim) head = '[A | b]: press Run or Step';
+    else {
+      const op = elim.ops[at];
+      head = `${op.phase === 'back' ? 'back-substitution' : 'forward elimination'}: ${opText(op)}`;
+    }
+    if (elim.k === n && !elim.anim && n > 0) {
+      const last = elim.states[n];
+      const r2 = last[1];
+      head =
+        sol.kind === 'unique' ? `done: x = ${n2(last[0][2])}, y = ${n2(last[1][2])}`
+        : sol.kind === 'none' ? `done: row 2 reads 0 = ${n2(r2[2])}, no solution`
+        : sol.kind === 'many' ? 'done: row 2 reads 0 = 0, one equation left'
+        : 'done';
+    }
+    const ops = elim.ops
+      .map((op, i) => `<li class="${i < elim.k ? 'done' : ''} ${i === at ? 'now' : ''}">${opText(op)}</li>`)
+      .join('');
+    const key = head + '|' + ops;
+    if (key !== lastOps) {
+      lastOps = key;
+      nowEl.textContent = head;
+      opsEl.innerHTML = ops;
+    }
+  }
+
+  // ---------------------------------------------------------------- the bar, result, readout
+  function drawText() {
+    const P = pal();
+    const { M } = current();
+    const p = shownXY();
+    const v = (x: number, y: number) => `(${trim(x)},\\ ${trim(y)})`;
+    const a1 = v(M[0][0], M[1][0]), a2 = v(M[0][1], M[1][1]), b = v(M[0][2], M[1][2]);
+    setEq({
+      rule: ['A\\mathbf{x}=', ['\\mathbf{b}', P.B], '\\quad\\Longleftrightarrow\\quad', ['x\\,\\mathbf{a}_1', P.X], '+', ['y\\,\\mathbf{a}_2', P.Y], '=', ['\\mathbf{b}', P.B]],
+      live: p
+        ? [[`${texNum(p.x)}\\,${a1}`, P.X], '+', [`${texNum(p.y)}\\,${a2}`, P.Y], '=', [b, P.B]]
+        : [['x\\,' + a1, P.X], '+', ['y\\,' + a2, P.Y], '\\neq', [b, P.B], '\\text{ for every } x, y'],
+    });
+    const det = sol.det;
+    const detText = fixed(det, 3);
+    const k = sol.kind;
+    setResult({
+      value: k === 'unique' ? 'exactly one' : k === 'none' || k === 'empty' ? 'none' : 'infinitely many',
+      colour: k === 'unique' ? P.Y : k === 'none' || k === 'empty' ? P.BAD : P.B,
+      status: k === 'unique'
+        ? `(x, y) = (${n2(sol.x)}, ${n2(sol.y)}) · det A = ${detText}`
+        : `det A = ${detText} · ${k === 'many' ? 'a whole line of (x, y)' : k === 'all' ? 'every (x, y)' : 'the lines never meet'}`,
+      note:
+        k === 'unique'
+          ? Math.abs(det) < 0.25
+            ? 'The lines are nearly parallel and the columns nearly in line: a small nudge to b moves the answer a long way.'
+            : 'Two lines that cross meet once; two columns that point different ways can reach any b in one way only.'
+          : k === 'none'
+            ? 'The rows are parallel because the columns are: everything A can reach lies on one line, and b is not on it.'
+            : k === 'many'
+              ? 'b lies on the columns\' line, so the equations agree: one free direction, and every step along it is another recipe for b.'
+              : k === 'all'
+                ? 'A is zero and so is b: every (x, y) works.'
+                : 'A is zero, so it sends everything to 0, and b is not 0.',
+    });
+    setRows({
+      'r-det': detText,
+      'r-sol': k === 'unique' ? `(${n2(sol.x)}, ${n2(sol.y)})` : k === 'many' ? 'a line' : k === 'all' ? 'all' : 'none',
+      'r-rank': `${sol.rankA}, ${sol.rankAb}`,
+    });
+  }
+
+  function draw() {
+    drawRows();
+    drawCols();
+    drawStrip();
+    drawText();
+  }
+
+  // ---------------------------------------------------------------- controls
+  function changed(force = false) {
+    sol = solve(aug0());
+    elim = { ...plan(aug0()), k: 0, s: 0, anim: false, playing: false, wait: 0 };
+    tp.setRunning(false);
+    reframe(force);
+    dirty = true;
+  }
+  const syncA = matrix(A, ['a11', 'a12', 'a21', 'a22'], () => { presets.clear(); changed(); });
+  const syncB = matrix(B, ['b1', 'b2'], () => { presets.clear(); changed(); });
+  /** The sliders sit on a 0.05 grid; a dragged value is printed as it is, not as the slider rounded it. */
+  function syncAll() {
+    syncA();
+    syncB();
+    for (const [k, v] of Object.entries({ ...A, ...B })) el(k + 'val').textContent = v.toFixed(2);
+  }
+  function preset(name: string) {
+    const v = PRESETS[name];
+    if (!v) return;
+    [A.a11, A.a12, A.a21, A.a22, B.b1, B.b2] = v;
+    syncAll();
+    slide.t = 0;
+    slide.auto = true;
+    slide.phase = 0;
+    changed(true);
+  }
+  const presets = segmented('presets', preset);
+
+  const tp = transport({
+    onRun: (on) => {
+      if (on && elim.k >= elim.ops.length && !elim.anim) { elim.k = 0; elim.s = 0; }
+      elim.playing = on;
+      if (on && !elim.anim) elim.wait = performance.now() + 150;
+      if (!elim.ops.length) tp.setRunning((elim.playing = false));
+      dirty = true;
+    },
+    onStep: () => {
+      elim.playing = false;
+      tp.setRunning(false);
+      if (elim.anim) { elim.anim = false; elim.s = 0; elim.k++; }
+      else if (elim.k < elim.ops.length) { elim.anim = true; elim.s = 0; }
+      else { elim.k = 0; }
+      dirty = true;
+    },
+    onReset: () => {
+      elim.k = 0; elim.s = 0; elim.anim = false; elim.playing = false;
+      tp.setRunning(false);
+      dirty = true;
+    },
+  });
+
+  // ---------------------------------------------------------------- dragging
+  const mouseIn = (cv: HTMLCanvasElement, e: PointerEvent) => {
+    const r = cv.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const hitR = (cv: HTMLCanvasElement) => 16 * Math.max(1, W / Math.max(1, cv.clientWidth) * 0.8);
+  const snap = (v: number) => Math.round(v * 20) / 20;
+  const clampV = (v: number, m: number) => Math.max(-m, Math.min(m, v));
+
+  function backToStart() {
+    if (elim.k || elim.anim) { elim.k = 0; elim.s = 0; elim.anim = false; elim.playing = false; tp.setRunning(false); }
+  }
+  function colHit(m: Pt) {
+    const M = elim.states[0];
+    const pts: [string, Pt][] = [
+      ['b', { x: M[0][2], y: M[1][2] }],
+      ['a1', { x: M[0][0], y: M[1][0] }],
+      ['a2', { x: M[0][1], y: M[1][1] }],
+    ];
+    let best: string | null = null, bd = hitR(colsCv);
+    for (const [id, p] of pts) {
+      const s = KC.S(p);
+      const d = Math.hypot(s.x - m.x, s.y - m.y);
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
+  }
+  function rowHit(m: Pt) {
+    const p = shownXY();
+    if (!p || sol.kind === 'none') return null;
+    const s = KR.S(p);
+    return Math.hypot(s.x - m.x, s.y - m.y) < hitR(rowsCv) ? 'pt' : null;
+  }
+
+  function dragCols(id: string, m: Pt) {
+    const w = KC.world(m);
+    const lim = 12;
+    let x = clampV(snap(w.x), lim), y = clampV(snap(w.y), lim);
+    if (id === 'b') {
+      // near the columns' line when A is singular: land exactly on it
+      const u = Math.hypot(A.a11, A.a21) >= Math.hypot(A.a12, A.a22) ? { x: A.a11, y: A.a21 } : { x: A.a12, y: A.a22 };
+      const nu = Math.hypot(u.x, u.y);
+      if (sol.kind !== 'unique' && nu > 1e-9) {
+        const k = (w.x * u.x + w.y * u.y) / (nu * nu);
+        const px = k * u.x, py = k * u.y;
+        if (Math.hypot(px - w.x, py - w.y) * KC.unit() < 12) { x = px; y = py; }
+      }
+      B.b1 = x; B.b2 = y;
+    } else {
+      // near the other column's line: land exactly on it, so det is exactly 0
+      const o = id === 'a1' ? { x: A.a12, y: A.a22 } : { x: A.a11, y: A.a21 };
+      const no = Math.hypot(o.x, o.y);
+      if (no > 1e-9) {
+        const k = (w.x * o.x + w.y * o.y) / (no * no);
+        const px = k * o.x, py = k * o.y;
+        if (Math.hypot(px - w.x, py - w.y) * KC.unit() < 9 && Math.hypot(px, py) > 0.2) { x = px; y = py; }
+      }
+      if (id === 'a1') { A.a11 = x; A.a21 = y; } else { A.a12 = x; A.a22 = y; }
+    }
+  }
+  function dragRows(m: Pt) {
+    const w = KR.world(m);
+    if (sol.kind === 'many' && sol.base && sol.dir) {
+      slide.auto = false;
+      slide.t = (w.x - sol.base.x) * sol.dir.x + (w.y - sol.base.y) * sol.dir.y;
+      dirty = true;
+      return false;
+    }
+    if (sol.kind === 'unique') {
+      const x = snap(w.x), y = snap(w.y);
+      B.b1 = clampV(A.a11 * x + A.a12 * y, 30);
+      B.b2 = clampV(A.a21 * x + A.a22 * y, 30);
+      return true;
+    }
+    return false;
+  }
+
+  for (const cv of [rowsCv, colsCv]) {
+    const isCols = cv === colsCv;
+    cv.addEventListener('pointerdown', (e) => {
+      backToStart();
+      const m = mouseIn(cv, e);
+      const hit = isCols ? colHit(m) : rowHit(m);
+      if (!hit) return;
+      dragging = (isCols ? 'c:' : 'r:') + hit;
+      cv.setPointerCapture(e.pointerId);
+      cv.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+    cv.addEventListener('pointermove', (e) => {
+      const m = mouseIn(cv, e);
+      if (!dragging) {
+        cv.style.cursor = (isCols ? colHit(m) : rowHit(m)) ? 'grab' : 'default';
+        return;
+      }
+      if (dragging.startsWith('c:') && isCols) dragCols(dragging.slice(2), m);
+      else if (dragging.startsWith('r:') && !isCols) { if (!dragRows(m)) return; }
+      else return;
+      presets.clear();
+      syncAll();
+      changed();
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = null;
+      cv.style.cursor = 'default';
+      reframe();
+      dirty = true;
+    };
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+  }
+
+  // ---------------------------------------------------------------- the loop
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const n = elim.ops.length;
+    if (elim.playing && !elim.anim && now >= elim.wait) {
+      if (elim.k < n) { elim.anim = true; elim.s = 0; }
+      else { elim.playing = false; tp.setRunning(false); dirty = true; }
+    }
+    if (elim.anim) {
+      elim.s += dt / 1.25;
+      if (elim.s >= 1) {
+        elim.anim = false;
+        elim.s = 0;
+        elim.k++;
+        elim.wait = now + 550;
+        if (elim.k >= n && elim.playing) { elim.playing = false; tp.setRunning(false); }
+      }
+      dirty = true;
+    }
+    if ((sol.kind === 'many' || sol.kind === 'all') && slide.auto && !dragging) {
+      slide.phase += dt * 0.55;
+      slide.t = sol.kind === 'all' ? slide.phase : Math.sin(slide.phase) * SWING;
+      dirty = true;
+    }
+    for (const [k, g] of [['rows', 'rowsGoal'], ['cols', 'colsGoal']] as const) {
+      const v = view[k], goal = view[g];
+      const d = Math.abs(goal.r - v.r) + Math.abs(goal.cx - v.cx) + Math.abs(goal.cy - v.cy);
+      if (d > 1e-4 * goal.r) {
+        const f = Math.min(1, dt * 7);
+        v.r += (goal.r - v.r) * f;
+        v.cx += (goal.cx - v.cx) * f;
+        v.cy += (goal.cy - v.cy) * f;
+        dirty = true;
+      } else view[k] = { ...goal };
+    }
+    if (dirty) {
+      dirty = false;
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  tries({
+    unique: () => { presets.select('unique'); preset('unique'); },
+    none: () => { presets.select('none'); preset('none'); },
+    many: () => { presets.select('many'); preset('many'); },
+    elim: () => {
+      presets.select('unique');
+      preset('unique');
+      el('run').click();
+    },
+  });
+
+  window.addEventListener('themechange', () => { lastAug = ''; dirty = true; });
+  new ResizeObserver(() => (dirty = true)).observe(rowsCv);
+  changed(true);
+  view.rows = { ...view.rowsGoal };
+  view.cols = { ...view.colsGoal };
+  draw();
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .pictures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .pictures canvas {
+    touch-action: none;
+    border: 1px solid var(--border);
+  }
+  .elim {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px 26px;
+    padding: 14px 6px 4px;
+  }
+  .aug {
+    font-size: 1.15rem;
+    min-width: 11.5em;
+    text-align: center;
+  }
+  .elim-side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .elim-now {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .elim-ops {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: op;
+  }
+  .elim-ops :global(li) {
+    counter-increment: op;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.74rem;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .elim-ops :global(li)::before {
+    content: counter(op) '. ';
+    opacity: 0.6;
+  }
+  .elim-ops :global(li.done) {
+    color: var(--text-muted);
+    border-color: var(--border-strong);
+  }
+  .elim-ops :global(li.now) {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  @media (max-width: 600px) {
+    .pictures {
+      grid-template-columns: 1fr;
+    }
+    .aug {
+      font-size: 1rem;
+    }
+  }
+</style>
