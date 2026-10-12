@@ -28,7 +28,7 @@ export const AREAS: Area[] = [
         slug: 'derivative-limit',
         title: 'Derivative as a Limit',
         description:
-          'Slide the secant line as h shrinks to zero and watch it settle into the tangent and the derivative born from a limit.',
+          'Slide the secant line as h shrinks to zero and watch it settle into the tangent, then zoom in until the curve itself is a straight line, unless there is a corner.',
         href: '/simulations/calculus/derivative-limit',
         status: 'live',
       },
