@@ -19,19 +19,21 @@ import Try from '../../../components/sim/Try.astro';
       <div class="sim-stage">
         <canvas
           id="hs"
+          class="hs-canvas"
           width="1000"
-          height="600"
+          height="630"
           role="img"
-          aria-label="A contour map with a movable point, the gradient and the two eigenvectors of the Hessian drawn on it, the matrix and its eigenvalues, and the surface sliced along each eigenvector."
+          aria-label="A lit 3D surface with a movable point on it. Through the point run two curves traced along the surface in the directions of the Hessian's eigenvectors, teal where the surface bends up and red where it bends down, with the gradient arrow and a translucent violet patch for the quadratic approximation. Beside it, the Hessian matrix, its eigenvalues, and the surface sliced along each eigenvector."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'a direction that curves upward', color: '#5eead4' },
-          { label: 'a direction that curves downward', color: '#f87171' },
+          { label: 'a direction that bends up', color: '#2dd4bf' },
+          { label: 'a direction that bends down', color: '#f87171' },
           { label: 'the gradient, which knows nothing about bending', color: '#f59e0b' },
+          { label: 'the quadratic approximation', color: '#a78bfa' },
         ]}
-        hint="Drag anywhere on the map to move the point"
+        hint="Drag the white point along the surface, or click the surface to put it there. Drag anywhere else to turn the view, scroll to zoom."
       />
       <Result label="Standing on" />
     </div>
@@ -52,7 +54,7 @@ import Try from '../../../components/sim/Try.astro';
       />
       <Checks
         items={[
-          { id: 'eig', label: 'The eigenvectors of the Hessian', checked: true },
+          { id: 'eig', label: 'The eigen-directions of the Hessian', checked: true },
           { id: 'quad', label: 'What the quadratic approximation says', checked: true },
           { id: 'grad', label: 'The gradient', checked: true },
         ]}
@@ -73,38 +75,42 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      At the centre of the <b>Saddle</b> the gradient vanishes, but the axes do
-      not: one eigenvalue is positive, one negative, so one slice curves up and
-      the other down. <Try id="saddle" />
+      At the centre of the <b>Saddle</b> the gradient vanishes, so there is no arrow, but the
+      eigen-directions still disagree: the teal curve bends up and the red one bends down.
+      <Try id="saddle" />
     </li>
     <li>
-      The two slices on the right cut the surface along each eigenvector. Their
-      bending at the point is λ<sub>1</sub> and λ<sub>2</sub>: both positive is
-      a <b>bowl</b>, both negative a dome. <Try id="bowl" />
+      On the <b>Bowl</b> both curves bend up, so both eigenvalues are positive. The violet patch
+      lies on the surface everywhere, because a quadratic surface is its own quadratic
+      approximation. <Try id="bowl" />
     </li>
     <li>
-      On <b>Narrow valley</b> the eigenvalues differ thirtyfold: a thin ellipse
-      and a large condition number, which is what makes
-      <a href="/simulations/deep-learning/optimizers">gradient descent</a>
-      zigzag. <Try id="valley" />
+      On <b>Ripples</b> the patch hugs the surface only near the point and peels away further out.
+      The Hessian is a new matrix at every point: drag the point and the two curves turn with it.
+      <Try id="ripples" />
     </li>
     <li>
-      On <b>Ripples</b> the Hessian is a different matrix at every point: drag
-      the point and the axes turn with it. <Try id="ripples" />
+      In the <b>Narrow valley</b> the eigenvalues differ thirtyfold: one curve runs almost flat
+      along the floor while the other climbs the walls, which is what makes <a href="/simulations/deep-learning/optimizers">gradient descent</a> zigzag.
+      <Try id="valley" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect, arrow } from '../../../lib/draw';
+  import { Camera3D, drawBackdrop, V } from '../../../lib/scene3d';
+  import type { Vec } from '../../../lib/scene3d';
+  import { roundRect, fixed } from '../../../lib/draw';
+  import { makeText } from '../../../lib/sim';
   import { el, segmented, check, result, readout, tries } from '../../../lib/panel';
 
-  const UP = '#5eead4';
-  const DOWN = '#f87171';
-  const GRAD = '#f59e0b';
-  const QUAD = '#a78bfa';
+  // equation colours (fixed); the canvas uses a deeper shade of each on the light stage
+  const UP_EQ = '#2dd4bf', DOWN_EQ = '#f87171', GRAD_EQ = '#f59e0b', QUAD_EQ = '#a78bfa';
+  const PAL = {
+    dark: { up: '#2dd4bf', down: '#f87171', grad: '#fbbf24', quad: '#a78bfa' },
+    light: { up: '#0d9488', down: '#dc2626', grad: '#d97706', quad: '#7c3aed' },
+  };
 
   const FNS: Record<string, (x: number, y: number) => number> = {
     bowl: (x, y) => 0.55 * x * x + 1.35 * y * y,
@@ -115,16 +121,15 @@ import Try from '../../../components/sim/Try.astro';
       1.7 * Math.exp(-((x - 0.85) ** 2 + (y - 0.6) ** 2)) -
       1.4 * Math.exp(-1.2 * ((x + 0.9) ** 2 + (y + 0.7) ** 2)),
   };
+  const START: Record<string, [number, number]> = {
+    bowl: [0.6, 0.5],
+    saddle: [0.6, 0.5],
+    valley: [0.6, 0.5],
+    ripples: [-0.75, 0.35],
+    hills: [-0.2, -0.1],
+  };
 
-  const state = { fn: 'saddle', p: [0.6, 0.5], eig: true, quad: true, grad: true };
-
-  const canvas = el('hs') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
-  const setEq = equation();
-  const setResult = result();
-  const setRows = readout();
+  const state = { fn: 'saddle', p: [0.6, 0.5] as [number, number], eig: true, quad: true, grad: true };
 
   // --- the derivatives, measured rather than differentiated -------------------
   // Every second derivative on this page comes from the same three-height rule
@@ -141,6 +146,7 @@ import Try from '../../../components/sim/Try.astro';
     const fxy = (F(x + h, y + h) - F(x + h, y - h) - F(x - h, y + h) + F(x - h, y - h)) / (4 * h * h);
     return { f0, fx, fy, fxx, fxy, fyy };
   }
+  type D = ReturnType<typeof derivs>;
   /** A symmetric two by two always has two real eigenvalues at right angles. */
   function eigen(a: number, b: number, d: number) {
     const tr = a + d, det = a * d - b * b;
@@ -151,346 +157,921 @@ import Try from '../../../components/sim/Try.astro';
     const e1 = [v1[0] / n, v1[1] / n];
     return { l1, l2, e1, e2: [-e1[1], e1[0]] };
   }
+  type E = ReturnType<typeof eigen>;
 
-  // --- layout ----------------------------------------------------------------
-  const MAP = { x: 44, y: 104, w: 460, h: 460 };
-  const HB = { x: 560, y: 128, w: 400, h: 132 };
-  const CS = [
-    { x: 560, y: 318, w: 400, h: 108 },
-    { x: 560, y: 468, w: 400, h: 108 },
-  ];
+  // --- the world: x, y in [-R, R] map to X, Z in [-1, 1]; height to Y ---------
   const R = 2.4;
-  const px = (x: number) => MAP.x + ((x + R) / (2 * R)) * MAP.w;
-  const py = (y: number) => MAP.y + MAP.h - ((y + R) / (2 * R)) * MAP.h;
-  const PPU = MAP.w / (2 * R);
-  const toW = (sx: number, sy: number) => [
-    ((sx - MAP.x) / MAP.w) * 2 * R - R,
-    ((MAP.y + MAP.h - sy) / MAP.h) * 2 * R - R,
-  ];
+  const MARGIN = 0.1;
+  let lo = 0, hi = 1, mid = 0, A = 0.1; // f range over the square, and world height per unit of f
+  const FLOOR = -0.62;
+  function measure() {
+    lo = Infinity; hi = -Infinity;
+    for (let j = 0; j <= 80; j++)
+      for (let i = 0; i <= 80; i++) {
+        const v = F(-R + (i / 80) * 2 * R, -R + (j / 80) * 2 * R);
+        lo = Math.min(lo, v); hi = Math.max(hi, v);
+      }
+    mid = (lo + hi) / 2;
+    A = 0.84 / Math.max(1e-6, hi - lo);
+  }
+  const W3 = (x: number, y: number, f = F(x, y)): Vec => ({ x: x / R, y: (f - mid) * A, z: y / R });
+  const inside = (x: number, y: number) => Math.abs(x) <= R && Math.abs(y) <= R;
 
-  function panel(b: { x: number; y: number; w: number; h: number }) {
-    ctx.fillStyle = inv(0.45);
+  // --- canvas and layout -------------------------------------------------------
+  const canvas = el('hs') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  type Box = { x: number; y: number; w: number; h: number };
+  type Layout = { narrow: boolean; W: number; H: number; scene: Box; mat: Box; s1: Box; s2: Box; zoom: number };
+  const WIDE: Layout = {
+    narrow: false, W: 1000, H: 630, zoom: 1.55,
+    scene: { x: 0, y: 0, w: 738, h: 630 },
+    mat: { x: 748, y: 14, w: 240, h: 206 },
+    s1: { x: 748, y: 232, w: 240, h: 186 },
+    s2: { x: 748, y: 430, w: 240, h: 186 },
+  };
+  const NARROW: Layout = {
+    narrow: true, W: 520, H: 828, zoom: 1.24,
+    scene: { x: 0, y: 0, w: 520, h: 470 },
+    mat: { x: 8, y: 478, w: 504, h: 150 },
+    s1: { x: 8, y: 638, w: 249, h: 182 },
+    s2: { x: 263, y: 638, w: 249, h: 182 },
+  };
+  let L = WIDE;
+  let W = L.W, H = L.H;
+  let userZoom = 1;
+  let cam = new Camera3D(L.scene.w, L.scene.h, { dist: 5.4, yaw: -0.5, pitch: -0.6, zoom: L.zoom });
+
+  function applyDPR() {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function pickLayout() {
+    const host = canvas.parentElement as HTMLElement;
+    const avail = host.clientWidth || 1000;
+    const next = avail < 600 && !document.fullscreenElement ? NARROW : WIDE;
+    if (next === L && canvas.width === Math.round(W * Math.min(3, window.devicePixelRatio || 1))) return false;
+    const changed = next !== L;
+    L = next;
+    W = L.W;
+    H = L.H;
+    if (changed) cam = new Camera3D(L.scene.w, L.scene.h, { dist: 5.4, yaw: cam.yaw, pitch: cam.pitch, zoom: L.zoom * userZoom });
+    applyDPR();
+    return true;
+  }
+
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  let inkRGB = '232,233,236', invRGB = '13,14,18', light = false;
+  const readTheme = () => {
+    inkRGB = css('--stage-ink') || '232,233,236';
+    invRGB = css('--stage-ink-inv') || '13,14,18';
+    light = css('--stage-light') === '1';
+  };
+  readTheme();
+  const ink = (a: number) => `rgba(${inkRGB},${a})`;
+  const inv = (a: number) => `rgba(${invRGB},${a})`;
+  const { label } = makeText(ctx, ink);
+  const pal = () => (light ? PAL.light : PAL.dark);
+
+  // --- WebGL2 surface and quadratic patch ----------------------------------------
+  const PROJECT = `
+  uniform vec4 uCam;   // yaw, pitch, dist, k
+  uniform vec2 uHalf;  // half the view in logical pixels
+  vec4 project(vec3 p) {
+    float cy = cos(uCam.x), sy = sin(uCam.x), cp = cos(uCam.y), sp = sin(uCam.y);
+    float x1 = p.x * cy + p.z * sy, z1 = -p.x * sy + p.z * cy;
+    float y2 = p.y * cp - z1 * sp, z2 = p.y * sp + z1 * cp;
+    float zc = z2 + uCam.z;
+    return vec4(x1 * uCam.w / uHalf.x, y2 * uCam.w / uHalf.y, ((zc - 0.3) / 30.0 * 2.0 - 1.0) * zc, zc);
+  }`;
+  const VS_SURF = `#version 300 es
+  precision highp float;
+  in vec3 aP;
+  in vec3 aN;
+  in vec2 aT;
+  ${PROJECT}
+  out vec3 vN;
+  out vec3 vW;
+  out vec2 vT;
+  void main() { vN = aN; vW = aP; vT = aT; gl_Position = project(aP); }`;
+
+  // the surface: coloured by height, with contour lines painted on it
+  const FS_SURF = `#version 300 es
+  precision highp float;
+  in vec3 vN;
+  in vec3 vW;
+  in vec2 vT;
+  uniform vec3 uL, uEye, uLo, uHi, uInk, uSky;
+  uniform float uLight;
+  out vec4 o;
+  void main() {
+    vec3 n = normalize(vN);
+    vec3 v = normalize(uEye - vW);
+    if (dot(n, v) < 0.0) n = -n;
+    float t = vT.x;
+    vec3 col = mix(uLo, uHi, smoothstep(0.0, 1.0, t));
+    float c = t * 14.0;
+    float d = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), 1e-4);
+    float line = 1.0 - smoothstep(0.0, 1.1, d);
+    col = mix(col, uInk, line * (uLight > 0.5 ? 0.16 : 0.2));
+    float diff = max(dot(n, uL), 0.0);
+    float spec = pow(max(dot(n, normalize(uL + v)), 0.0), 36.0);
+    float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+    vec3 lit = col * (uLight > 0.5 ? 0.55 + 0.5 * diff : 0.4 + 0.7 * diff);
+    lit += vec3(1.0) * spec * (uLight > 0.5 ? 0.08 : 0.14) + uSky * fres * (uLight > 0.5 ? 0.0 : 0.25);
+    o = vec4(lit, 1.0);
+  }`;
+
+  // the patch: translucent, fading to nothing at its rim, with a grid along the eigen-directions
+  const FS_PATCH = `#version 300 es
+  precision highp float;
+  in vec3 vN;
+  in vec3 vW;
+  in vec2 vT;
+  uniform vec3 uL, uEye, uQ;
+  uniform float uLight, uFade;
+  out vec4 o;
+  void main() {
+    float r = length(vT);
+    float a = uFade * (uLight > 0.5 ? 0.36 : 0.46) * (1.0 - smoothstep(0.72, 1.0, r));
+    // above or below the box the surface lives in, the patch just fades out
+    a *= 1.0 - smoothstep(0.42, 0.52, abs(vW.y));
+    vec2 g = abs(fract(vT * 4.0 - 0.5) - 0.5) / max(fwidth(vT * 4.0), vec2(1e-4));
+    float grid = 1.0 - smoothstep(0.0, 1.0, min(g.x, g.y));
+    a = a * (1.0 + 1.1 * grid);
+    if (a < 0.004) discard;
+    vec3 n = normalize(vN);
+    vec3 v = normalize(uEye - vW);
+    if (dot(n, v) < 0.0) n = -n;
+    float diff = max(dot(n, uL), 0.0);
+    float spec = pow(max(dot(n, normalize(uL + v)), 0.0), 40.0);
+    vec3 lit = uQ * (0.6 + 0.5 * diff) + vec3(spec * 0.3);
+    o = vec4(lit * a, a);
+  }`;
+
+  type Gl = {
+    gl: WebGL2RenderingContext;
+    glc: HTMLCanvasElement;
+    surf: WebGLProgram;
+    patch: WebGLProgram;
+    vaoS: WebGLVertexArrayObject;
+    bufS: WebGLBuffer;
+    nS: number;
+    vaoP: WebGLVertexArrayObject;
+    bufP: WebGLBuffer;
+    nP: number;
+    U: Record<string, WebGLUniformLocation | null>;
+  };
+
+  function compile(gl: WebGL2RenderingContext, vs: string, fs: string) {
+    const sh = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+      return s;
+    };
+    const p = gl.createProgram()!;
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'link');
+    return p;
+  }
+
+  // both meshes are (n+1)² vertices of position, normal and a 2-vector, indexed the same way
+  const NS = 150, NP = 48;
+  function gridIndex(n: number) {
+    const idx = new Uint32Array(6 * n * n);
+    let q = 0;
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const a = j * (n + 1) + i;
+        idx.set([a, a + 1, a + n + 1, a + 1, a + n + 2, a + n + 1], q);
+        q += 6;
+      }
+    return idx;
+  }
+
+  function makeGl(): Gl | null {
+    const glc = document.createElement('canvas');
+    const gl = glc.getContext('webgl2', { premultipliedAlpha: true, alpha: true, antialias: true });
+    if (!gl) return null;
+    try {
+      const surf = compile(gl, VS_SURF, FS_SURF);
+      const patch = compile(gl, VS_SURF, FS_PATCH);
+      const U: Record<string, WebGLUniformLocation | null> = {};
+      for (const n of ['uCam', 'uHalf', 'uL', 'uEye', 'uLo', 'uHi', 'uInk', 'uSky', 'uLight']) U['s.' + n] = gl.getUniformLocation(surf, n);
+      for (const n of ['uCam', 'uHalf', 'uL', 'uEye', 'uQ', 'uLight', 'uFade']) U['p.' + n] = gl.getUniformLocation(patch, n);
+      const mesh = (prog: WebGLProgram, n: number) => {
+        const vao = gl.createVertexArray()!;
+        gl.bindVertexArray(vao);
+        const buf = gl.createBuffer()!;
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, 32 * (n + 1) * (n + 1), gl.DYNAMIC_DRAW);
+        const at = (name: string, size: number, off: number) => {
+          const loc = gl.getAttribLocation(prog, name);
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 32, off);
+        };
+        at('aP', 3, 0);
+        at('aN', 3, 12);
+        at('aT', 2, 24);
+        const ib = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+        const idx = gridIndex(n);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+        gl.bindVertexArray(null);
+        return { vao, buf, count: idx.length };
+      };
+      const s = mesh(surf, NS), p = mesh(patch, NP);
+      return { gl, glc, surf, patch, vaoS: s.vao, bufS: s.buf, nS: s.count, vaoP: p.vao, bufP: p.buf, nP: p.count, U };
+    } catch (err) {
+      console.warn('hessian: WebGL2 setup failed', err);
+      return null;
+    }
+  }
+  const G = makeGl();
+
+  /** World normal of a height field Y(x, y) with slopes fx, fy (in units of f per unit of x). */
+  const normal = (fx: number, fy: number) => V.unit({ x: -fx * A * R, y: 1, z: -fy * A * R });
+
+  const surfData = new Float32Array(8 * (NS + 1) * (NS + 1));
+  function buildSurface() {
+    measure();
+    const h = (2 * R) / NS;
+    const f = new Float64Array((NS + 1) * (NS + 1));
+    for (let j = 0; j <= NS; j++) for (let i = 0; i <= NS; i++) f[j * (NS + 1) + i] = F(-R + i * h, -R + j * h);
+    const e = 1e-3;
+    for (let j = 0; j <= NS; j++)
+      for (let i = 0; i <= NS; i++) {
+        const x = -R + i * h, y = -R + j * h, v = f[j * (NS + 1) + i];
+        const fx = (F(x + e, y) - F(x - e, y)) / (2 * e), fy = (F(x, y + e) - F(x, y - e)) / (2 * e);
+        const P = W3(x, y, v), n = normal(fx, fy), k = 8 * (j * (NS + 1) + i);
+        surfData.set([P.x, P.y, P.z, n.x, n.y, n.z, (v - lo) / Math.max(1e-9, hi - lo), 0], k);
+      }
+    if (G) {
+      G.gl.bindBuffer(G.gl.ARRAY_BUFFER, G.bufS);
+      G.gl.bufferSubData(G.gl.ARRAY_BUFFER, 0, surfData);
+    }
+  }
+
+  // the quadratic model q(d) = f(p) + ∇f·d + ½dᵀHd on a square in the eigen frame, faded to a disc
+  const PATCH_R = 1.15;
+  const patchData = new Float32Array(8 * (NP + 1) * (NP + 1));
+  function quadModel(D: D, Eg: E) {
+    const q = (dx: number, dy: number) =>
+      D.f0 + D.fx * dx + D.fy * dy + 0.5 * (D.fxx * dx * dx + 2 * D.fxy * dx * dy + D.fyy * dy * dy);
+    const qg = (dx: number, dy: number) => [D.fx + D.fxx * dx + D.fxy * dy, D.fy + D.fxy * dx + D.fyy * dy];
+    return { q, qg, e1: Eg.e1, e2: Eg.e2 };
+  }
+  function buildPatch(D: D, Eg: E) {
+    if (!G) return;
+    const M = quadModel(D, Eg);
+    const [x0, y0] = state.p;
+    for (let j = 0; j <= NP; j++)
+      for (let i = 0; i <= NP; i++) {
+        const u = (i / NP) * 2 - 1, v = (j / NP) * 2 - 1;
+        let dx = (u * M.e1[0] + v * M.e2[0]) * PATCH_R, dy = (u * M.e1[1] + v * M.e2[1]) * PATCH_R;
+        // keep the patch over the square, squashing it at the edge (the fade hides the seam)
+        dx = Math.max(-R - x0, Math.min(R - x0, dx));
+        dy = Math.max(-R - y0, Math.min(R - y0, dy));
+        const fq = M.q(dx, dy), g = M.qg(dx, dy);
+        const P = W3(x0 + dx, y0 + dy, fq), n = normal(g[0], g[1]);
+        const k = 8 * (j * (NP + 1) + i);
+        patchData.set([P.x, P.y, P.z, n.x, n.y, n.z, u, v], k);
+      }
+    G.gl.bindBuffer(G.gl.ARRAY_BUFFER, G.bufP);
+    G.gl.bufferSubData(G.gl.ARRAY_BUFFER, 0, patchData);
+  }
+
+  const hex3 = (c: string) => [1, 3, 5].map((o) => parseInt(c.slice(o, o + 2), 16) / 255);
+  function lightDir() {
+    const Ld = V.unit(V.add(V.add(V.mul(cam.right(), -0.45), V.mul(cam.up(), 0.75)), V.mul(cam.forward(), -0.55)));
+    return V.unit({ x: Ld.x, y: Math.abs(Ld.y) + 0.6, z: Ld.z });
+  }
+  function renderGl(g: Gl) {
+    const gl = g.gl, U = g.U, S = L.scene;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(S.w * dpr), hh = Math.round(S.h * dpr);
+    if (g.glc.width !== w || g.glc.height !== hh) { g.glc.width = w; g.glc.height = hh; }
+    gl.viewport(0, 0, w, hh);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    const Lw = lightDir(), eye = cam.eye();
+    const camv = [cam.yaw, cam.pitch, cam.dist, cam.k] as const;
+
+    gl.useProgram(g.surf);
+    gl.uniform4f(U['s.uCam'], ...camv);
+    gl.uniform2f(U['s.uHalf'], S.w / 2, S.h / 2);
+    gl.uniform3f(U['s.uL'], Lw.x, Lw.y, Lw.z);
+    gl.uniform3f(U['s.uEye'], eye.x, eye.y, eye.z);
+    const [lo3, hi3, ink3, sky] = light
+      ? [[0.64, 0.68, 0.78], [0.91, 0.92, 0.95], [0.12, 0.13, 0.2], [1, 1, 1]]
+      : [[0.11, 0.13, 0.19], [0.56, 0.6, 0.71], [0.92, 0.94, 1.0], [0.4, 0.46, 0.7]];
+    gl.uniform3f(U['s.uLo'], lo3[0], lo3[1], lo3[2]);
+    gl.uniform3f(U['s.uHi'], hi3[0], hi3[1], hi3[2]);
+    gl.uniform3f(U['s.uInk'], ink3[0], ink3[1], ink3[2]);
+    gl.uniform3f(U['s.uSky'], sky[0], sky[1], sky[2]);
+    gl.uniform1f(U['s.uLight'], light ? 1 : 0);
+    gl.bindVertexArray(g.vaoS);
+    gl.drawElements(gl.TRIANGLES, g.nS, gl.UNSIGNED_INT, 0);
+
+    if (state.quad) {
+      gl.useProgram(g.patch);
+      gl.uniform4f(U['p.uCam'], ...camv);
+      gl.uniform2f(U['p.uHalf'], S.w / 2, S.h / 2);
+      gl.uniform3f(U['p.uL'], Lw.x, Lw.y, Lw.z);
+      gl.uniform3f(U['p.uEye'], eye.x, eye.y, eye.z);
+      const q = hex3(pal().quad);
+      gl.uniform3f(U['p.uQ'], q[0], q[1], q[2]);
+      gl.uniform1f(U['p.uLight'], light ? 1 : 0);
+      // where the patch touches the surface it must win the depth test, not flicker against it
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(-2, -4);
+      gl.depthMask(false);
+      gl.bindVertexArray(g.vaoP);
+      // first the parts the surface hides, as a ghost, so the whole patch reads; then the rest
+      gl.depthFunc(gl.GREATER);
+      gl.uniform1f(U['p.uFade'], 0.45);
+      gl.drawElements(gl.TRIANGLES, g.nP, gl.UNSIGNED_INT, 0);
+      gl.depthFunc(gl.LEQUAL);
+      gl.uniform1f(U['p.uFade'], 1);
+      gl.drawElements(gl.TRIANGLES, g.nP, gl.UNSIGNED_INT, 0);
+      gl.depthFunc(gl.LESS);
+      gl.depthMask(true);
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+    }
+    gl.bindVertexArray(null);
+    ctx.drawImage(g.glc, S.x, S.y, S.w, S.h);
+  }
+
+  // ---- 2D fallback: the same surface as sorted, flat-shaded quads ----
+  function renderFlat() {
+    const n = 44, h = (2 * R) / n;
+    const Lw = lightDir();
+    const quads: { pts: { sx: number; sy: number }[]; z: number; c: string }[] = [];
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const xs = [-R + i * h, -R + (i + 1) * h], ys = [-R + j * h, -R + (j + 1) * h];
+        const P = [W3(xs[0], ys[0]), W3(xs[1], ys[0]), W3(xs[1], ys[1]), W3(xs[0], ys[1])];
+        const nn = V.unit(V.cross(V.sub(P[3], P[0]), V.sub(P[1], P[0])));
+        const up = nn.y < 0 ? V.mul(nn, -1) : nn;
+        const t = (F(xs[0] + h / 2, ys[0] + h / 2) - lo) / Math.max(1e-9, hi - lo);
+        const b = light ? [168 + 74 * t, 179 + 66 * t, 201 + 49 * t] : [28 + 115 * t, 33 + 120 * t, 48 + 133 * t];
+        const s = (light ? 0.55 : 0.4) + (light ? 0.5 : 0.7) * Math.max(0, V.dot(up, Lw));
+        const pr = P.map((p) => cam.project(p));
+        quads.push({
+          pts: pr,
+          z: pr.reduce((a, p) => a + p.zc, 0) / 4,
+          c: `rgb(${b.map((v) => Math.min(255, Math.round(v * s))).join(',')})`,
+        });
+      }
+    quads.sort((a, b) => b.z - a.z);
+    for (const q of quads) {
+      ctx.fillStyle = q.c;
+      ctx.strokeStyle = q.c;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      q.pts.forEach((p, k) => (k ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy)));
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    label('WebGL2 is not available here, so the surface is drawn coarser.', L.scene.w / 2, 22, 0.5, 'center', 8.5);
+  }
+
+  // --- picking and visibility, against the true surface -----------------------------
+  const surfY = (X: number, Z: number) => (F(X * R, Z * R) - mid) * A;
+  /** Where a screen point's ray first meets the surface, in (x, y) of the function. */
+  function pick(sx: number, sy: number): [number, number] | null {
+    const r = cam.ray(sx, sy);
+    const T0 = cam.dist - 3, T1 = cam.dist + 3, STEPS = 260;
+    const gap = (t: number) => {
+      const P = V.add(r.o, V.mul(r.d, t));
+      if (Math.abs(P.x) > 1 || Math.abs(P.z) > 1) return NaN;
+      return P.y - surfY(P.x, P.z);
+    };
+    let tp = T0, gp = gap(T0);
+    for (let s = 1; s <= STEPS; s++) {
+      const t = T0 + ((T1 - T0) * s) / STEPS, g = gap(t);
+      if (!Number.isNaN(gp) && !Number.isNaN(g) && gp > 0 && g <= 0) {
+        let a = tp, b = t;
+        for (let k = 0; k < 24; k++) {
+          const m = (a + b) / 2;
+          if (gap(m) > 0) a = m; else b = m;
+        }
+        const P = V.add(r.o, V.mul(r.d, (a + b) / 2));
+        return [P.x * R, P.z * R];
+      }
+      tp = t; gp = g;
+    }
+    return null;
+  }
+  /** True when nothing of the surface stands between the eye and P. */
+  function visible(P: Vec) {
+    const eye = cam.eye();
+    const K = 56;
+    for (let s = 2; s < K; s++) {
+      const Q = V.mix(P, eye, s / K);
+      if (Math.abs(Q.x) > 1 || Math.abs(Q.z) > 1) continue;
+      if (Q.y < surfY(Q.x, Q.z) - 0.004) return false;
+    }
+    return true;
+  }
+
+  // --- the overlay -------------------------------------------------------------------
+  const LIFT = 0.006;
+  function floor() {
+    const c = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, z]) => cam.project({ x, y: FLOOR, z }));
+    ctx.fillStyle = ink(light ? 0.035 : 0.04);
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    c.forEach((p, k) => (k ? ctx.lineTo(p.sx, p.sy) : ctx.moveTo(p.sx, p.sy)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.07);
+    ctx.beginPath();
+    for (let k = -3; k <= 3; k++) {
+      const a = cam.project({ x: k / 4, y: FLOOR, z: -1 }), b = cam.project({ x: k / 4, y: FLOOR, z: 1 });
+      const c2 = cam.project({ x: -1, y: FLOOR, z: k / 4 }), d = cam.project({ x: 1, y: FLOOR, z: k / 4 });
+      ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy);
+      ctx.moveTo(c2.sx, c2.sy); ctx.lineTo(d.sx, d.sy);
+    }
+    ctx.stroke();
+    const ax = cam.project({ x: 1.14, y: FLOOR, z: 0 }), ay = cam.project({ x: 0, y: FLOOR, z: 1.14 });
+    label('x', ax.sx, ax.sy + 4, 0.45, 'center', 9);
+    label('y', ay.sx, ay.sy + 4, 0.45, 'center', 9);
+    // the point's footprint, so its place on the map reads at any angle
+    const f = cam.project({ x: state.p[0] / R, y: FLOOR, z: state.p[1] / R });
+    ctx.fillStyle = ink(0.3);
+    ctx.beginPath();
+    ctx.ellipse(f.sx, f.sy, 5, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /** A polyline in world space: solid where it can be seen, faint where the surface hides it. */
+  function trace(pts: Vec[], colour: string, width: number) {
+    const pr = pts.map((p) => cam.project(p));
+    const vis = pts.map((p, k) => (k ? visible(V.mix(p, pts[k - 1], 0.5)) : true));
+    for (const pass of [0, 1, 2]) {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (let k = 1; k < pts.length; k++) {
+        const on = vis[k];
+        if (pass === 0 && !on) continue; // halo only under the visible part
+        if (pass > 0 && (pass === 1) !== on) continue;
+        ctx.strokeStyle = pass === 0 ? inv(light ? 0.7 : 0.6) : colour;
+        ctx.globalAlpha = pass === 2 ? 0.28 : 1;
+        ctx.lineWidth = pass === 0 ? width + 3 : pass === 2 ? width * 0.6 : width;
+        ctx.setLineDash(pass === 2 ? [3, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(pr[k - 1].sx, pr[k - 1].sy);
+        ctx.lineTo(pr[k].sx, pr[k].sy);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+    return pr;
+  }
+
+  function tag(text: string, x: number, y: number, colour: string) {
+    ctx.font = `${Math.round(10 * 1.42)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    const w = ctx.measureText(text).width + 12;
+    ctx.fillStyle = inv(light ? 0.85 : 0.75);
+    roundRect(ctx, x - w / 2, y - 11, w, 20, 6);
+    ctx.fill();
+    label(text, x, y + 4, 1, 'center', 10, colour);
+  }
+
+  const CURVE_T = 1.25;
+  let pointScreen = { sx: -99, sy: -99 };
+  function overlay(D: D, Eg: E) {
+    const [x0, y0] = state.p;
+    const P0 = W3(x0, y0, D.f0);
+    const c = pal();
+    const tags: { text: string; x: number; y: number; colour: string }[] = [];
+
+    const gradArrow = () => {
+      const gm = Math.hypot(D.fx, D.fy);
+      if (gm < 1e-3) return;
+      // uphill: the direction of the gradient, walked along the surface itself
+      const len = Math.min(0.95, 0.4 + 0.2 * gm);
+      const pts: Vec[] = [];
+      for (let k = 0; k <= 24; k++) {
+        const s = (k / 24) * len, x = x0 + (D.fx / gm) * s, y = y0 + (D.fy / gm) * s;
+        if (!inside(x, y)) break;
+        const P = W3(x, y);
+        pts.push({ x: P.x, y: P.y + LIFT, z: P.z });
+      }
+      if (pts.length < 3) return;
+      const pr = trace(pts.slice(0, -1), c.grad, 3);
+      const a = pr[pr.length - 1], b = cam.project(pts[pts.length - 1]);
+      const ang = Math.atan2(b.sy - a.sy, b.sx - a.sx);
+      ctx.globalAlpha = visible(pts[pts.length - 1]) ? 1 : 0.35;
+      ctx.fillStyle = c.grad;
+      ctx.strokeStyle = inv(0.6);
+      ctx.lineWidth = 1.5;
+      const tx = b.sx + 5 * Math.cos(ang), ty = b.sy + 5 * Math.sin(ang);
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx - 14 * Math.cos(ang - 0.42), ty - 14 * Math.sin(ang - 0.42));
+      ctx.lineTo(tx - 14 * Math.cos(ang + 0.42), ty - 14 * Math.sin(ang + 0.42));
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (visible(pts[pts.length - 1])) tags.push({ text: '∇f', x: tx + 18 * Math.cos(ang), y: ty + 14 * Math.sin(ang), colour: c.grad });
+    };
+
+    if (state.eig) {
+      ([[Eg.l1, Eg.e1, '₁'], [Eg.l2, Eg.e2, '₂']] as [number, number[], string][]).forEach(([l, e, sub]) => {
+        const col = l >= 0 ? c.up : c.down;
+        const pts: Vec[] = [];
+        for (let k = -60; k <= 60; k++) {
+          const t = (k / 60) * CURVE_T, x = x0 + e[0] * t, y = y0 + e[1] * t;
+          if (!inside(x, y)) continue;
+          const P = W3(x, y);
+          pts.push({ x: P.x, y: P.y + LIFT, z: P.z });
+        }
+        if (pts.length < 2) return;
+        const pr = trace(pts, col, 3.4);
+        // name the curve at whichever visible end lies furthest from the point on screen
+        const pc = cam.project(P0);
+        let best = -1, bestD = 30;
+        for (let k = 0; k < pts.length; k++) {
+          const d = Math.hypot(pr[k].sx - pc.sx, pr[k].sy - pc.sy);
+          if (d > bestD && (k === 0 || k === pts.length - 1 || k % 6 === 0) && visible(pts[k])) { best = k; bestD = d; }
+        }
+        if (best >= 0) {
+          const pe = pr[best];
+          const dx = pe.sx - pc.sx, dy = pe.sy - pc.sy, m = Math.hypot(dx, dy) || 1;
+          tags.push({ text: `λ${sub} ${fixed(l, 2)}`, x: pe.sx + (dx / m) * 34, y: pe.sy + (dy / m) * 16, colour: col });
+        }
+      });
+    }
+
+    if (state.grad) gradArrow();
+
+    // the point itself
+    const pp = cam.project(V.add(P0, { x: 0, y: LIFT, z: 0 }));
+    pointScreen = pp;
+    const seen = visible(P0);
+    ctx.fillStyle = seen ? (light ? '#ffffff' : '#f4f5f8') : inv(0.4);
+    ctx.strokeStyle = light ? 'rgba(20,22,30,0.85)' : 'rgba(10,11,16,0.9)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(pp.sx, pp.sy, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // labels never sit on one another: a later one steps aside
+    const placed: { x: number; y: number; w: number }[] = [];
+    ctx.font = `${Math.round(10 * 1.42)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    for (const t of tags) {
+      const w = ctx.measureText(t.text).width + 12;
+      let y = t.y;
+      for (let k = 0; k < 6 && placed.some((q) => Math.abs(q.x - t.x) < (q.w + w) / 2 + 4 && Math.abs(q.y - y) < 24); k++)
+        y += t.y >= pp.sy ? 24 : -24;
+      placed.push({ x: t.x, y, w });
+      tag(t.text, t.x, y, t.colour);
+    }
+    if (state.quad && !G) label('(the violet patch needs WebGL2)', L.scene.w / 2, L.scene.h - 14, 0.4, 'center', 8);
+  }
+
+  // --- the side card: the matrix, its eigenvalues and the two slices ----------------
+  function card(b: Box) {
+    ctx.fillStyle = inv(light ? 0.9 : 0.55);
     roundRect(ctx, b.x, b.y, b.w, b.h, 10);
     ctx.fill();
-    ctx.strokeStyle = ink(0.12);
+    ctx.strokeStyle = ink(0.1);
     ctx.lineWidth = 1;
     roundRect(ctx, b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, 10);
     ctx.stroke();
   }
-
-  /** Contours by marching squares, so the map reads as a landscape. */
-  function contours() {
-    const N = 96;
-    const g: number[][] = [];
-    let lo = Infinity, hi = -Infinity;
-    for (let j = 0; j <= N; j++) {
-      const row: number[] = [];
-      for (let i = 0; i <= N; i++) {
-        const v = F(-R + (i / N) * 2 * R, -R + (j / N) * 2 * R);
-        row.push(v);
-        lo = Math.min(lo, v);
-        hi = Math.max(hi, v);
-      }
-      g.push(row);
-    }
-    const gx = (i: number) => MAP.x + (i / N) * MAP.w;
-    const gy = (j: number) => MAP.y + MAP.h - (j / N) * MAP.h;
-    // a wash first, so high and low ground are told apart at a glance
-    for (let j = 0; j < N; j++)
-      for (let i = 0; i < N; i++) {
-        const t = (g[j][i] - lo) / Math.max(1e-9, hi - lo);
-        ctx.fillStyle = `rgba(124,140,255,${0.03 + 0.2 * t})`;
-        ctx.fillRect(gx(i), gy(j + 1), MAP.w / N + 1, MAP.h / N + 1);
-      }
-    ctx.strokeStyle = ink(0.16);
-    ctx.lineWidth = 1;
+  function bracket(x: number, y0: number, y1: number, s: number) {
     ctx.beginPath();
-    for (let k = 1; k < 14; k++) {
-      const lv = lo + ((hi - lo) * k) / 14;
-      for (let j = 0; j < N; j++)
-        for (let i = 0; i < N; i++) {
-          const a = g[j][i], b = g[j][i + 1], c = g[j + 1][i + 1], d = g[j + 1][i];
-          const pts: number[][] = [];
-          const cross = (v0: number, v1: number, x0: number, y0: number, x1: number, y1: number) => {
-            if (v0 === v1 || (v0 < lv) === (v1 < lv)) return;
-            const t = (lv - v0) / (v1 - v0);
-            pts.push([x0 + t * (x1 - x0), y0 + t * (y1 - y0)]);
-          };
-          cross(a, b, gx(i), gy(j), gx(i + 1), gy(j));
-          cross(b, c, gx(i + 1), gy(j), gx(i + 1), gy(j + 1));
-          cross(c, d, gx(i + 1), gy(j + 1), gx(i), gy(j + 1));
-          cross(d, a, gx(i), gy(j + 1), gx(i), gy(j));
-          if (pts.length === 2) {
-            ctx.moveTo(pts[0][0], pts[0][1]);
-            ctx.lineTo(pts[1][0], pts[1][1]);
-          }
-        }
-    }
+    ctx.moveTo(x + s * 6, y0);
+    ctx.lineTo(x, y0);
+    ctx.lineTo(x, y1);
+    ctx.lineTo(x + s * 6, y1);
     ctx.stroke();
   }
-
-  function map() {
-    const [x, y] = state.p;
-    const D = derivs(x, y);
-    const E = eigen(D.fxx, D.fxy, D.fyy);
-    label('the surface, from above', MAP.x, MAP.y - 34, 0.55, 'left', 13);
-    label('contours of equal height', MAP.x, MAP.y - 16, 0.32, 'left', 11);
-    panel(MAP);
-    ctx.save();
-    roundRect(ctx, MAP.x, MAP.y, MAP.w, MAP.h, 10);
-    ctx.clip();
-    contours();
-
-    // what the quadratic says about the neighbourhood
-    if (state.quad) {
-      const s = 0.9;
-      ctx.strokeStyle = QUAD;
-      ctx.lineWidth = 1.6;
-      if (E.l1 * E.l2 > 1e-6) {
-        // definite: level sets of ½dᵀHd are ellipses on the eigenvectors
-        const c = 0.5 * Math.max(Math.abs(E.l1), Math.abs(E.l2)) * s * s;
-        const r1 = Math.sqrt(Math.abs((2 * c) / E.l1)), r2 = Math.sqrt(Math.abs((2 * c) / E.l2));
-        ctx.save();
-        ctx.translate(px(x), py(y));
-        ctx.rotate(-Math.atan2(E.e1[1], E.e1[0]));
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r1 * PPU, r2 * PPU, 0, 0, Math.PI * 2);
-        ctx.restore();
-        ctx.stroke();
-      } else if (E.l1 * E.l2 < -1e-6) {
-        // a saddle: the two directions in which it is flat to second order
-        const t = Math.sqrt(Math.abs(E.l1 / E.l2));
-        for (const sgn of [1, -1]) {
-          const dx = E.e1[0] + sgn * t * E.e2[0], dy = E.e1[1] + sgn * t * E.e2[1];
-          const n = Math.hypot(dx, dy);
-          ctx.setLineDash([5, 5]);
-          ctx.beginPath();
-          ctx.moveTo(px(x - (dx / n) * 1.6), py(y - (dy / n) * 1.6));
-          ctx.lineTo(px(x + (dx / n) * 1.6), py(y + (dy / n) * 1.6));
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
-    }
-
-    if (state.grad) {
-      const gm = Math.hypot(D.fx, D.fy);
-      if (gm > 1e-4) {
-        const L = Math.min(1.4, 0.35 + gm * 0.28);
-        ctx.strokeStyle = GRAD;
-        ctx.fillStyle = GRAD;
-        ctx.lineWidth = 2.4;
-        arrow(ctx, px(x), py(y), px(x + (D.fx / gm) * L), py(y + (D.fy / gm) * L), 8);
-      }
-    }
-
-    if (state.eig) {
-      const big = Math.max(Math.abs(E.l1), Math.abs(E.l2), 1e-6);
-      for (const [l, e] of [[E.l1, E.e1], [E.l2, E.e2]] as [number, number[]][]) {
-        const L = 0.35 + 1.1 * Math.sqrt(Math.abs(l) / big);
-        const c = l >= 0 ? UP : DOWN;
-        ctx.strokeStyle = c;
-        ctx.fillStyle = c;
-        ctx.lineWidth = 2.8;
-        arrow(ctx, px(x), py(y), px(x + e[0] * L), py(y + e[1] * L), 8);
-        arrow(ctx, px(x), py(y), px(x - e[0] * L), py(y - e[1] * L), 8);
-      }
-    }
-
-    ctx.fillStyle = ink(0.95);
-    ctx.strokeStyle = inv(0.85);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(px(x), py(y), 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-    return { D, E };
+  function kindOf(Eg: E) {
+    const flat = Math.max(Math.abs(Eg.l1), Math.abs(Eg.l2)) < 0.02;
+    return flat ? 'flat ground' : Eg.l1 > 0 && Eg.l2 > 0 ? 'a bowl' : Eg.l1 < 0 && Eg.l2 < 0 ? 'a dome' : 'a saddle';
   }
-
-  function board(D: ReturnType<typeof derivs>, E: ReturnType<typeof eigen>) {
-    label('the four numbers, and what they come to', HB.x, HB.y - 34, 0.55, 'left', 13);
-    label('this matrix belongs to this point alone', HB.x, HB.y - 16, 0.32, 'left', 11);
-    panel(HB);
-    const n2 = (v: number) => (Math.abs(v) < 5e-3 ? 0 : v).toFixed(2);
-    const cx = HB.x + 96, cy = HB.y + HB.h / 2;
+  function kindColour(kind: string) {
+    const c = pal();
+    return kind === 'a bowl' ? c.up : kind === 'a dome' ? c.down : kind === 'a saddle' ? c.grad : ink(0.8);
+  }
+  function matrixCard(D: D, Eg: E, kind: string) {
+    const b = L.mat, c = pal();
+    card(b);
+    label('the Hessian here', b.x + 14, b.y + 24, 0.5, 'left', 9);
+    const mx = L.narrow ? b.x + 124 : b.x + b.w / 2 + 12;
+    const my = L.narrow ? b.y + 78 : b.y + 74;
+    label('H =', mx - 82, my + 6, 0.65, 'right', 10.5);
     ctx.strokeStyle = ink(0.45);
-    ctx.lineWidth = 1.6;
-    for (const s of [-1, 1]) {
-      const bx = cx + s * 74;
-      ctx.beginPath();
-      ctx.moveTo(bx - s * 7, cy - 40);
-      ctx.lineTo(bx, cy - 40);
-      ctx.lineTo(bx, cy + 40);
-      ctx.lineTo(bx - s * 7, cy + 40);
-      ctx.stroke();
-    }
-    label(n2(D.fxx), cx - 34, cy - 12, 0.95, 'center', 14);
-    label(n2(D.fxy), cx + 34, cy - 12, 0.95, 'center', 14);
-    label(n2(D.fxy), cx - 34, cy + 22, 0.95, 'center', 14);
-    label(n2(D.fyy), cx + 34, cy + 22, 0.95, 'center', 14);
-    label('H', cx - 96, cy + 6, 0.6, 'center', 15);
-
-    const lx = HB.x + 226;
-    label('its eigenvalues', lx, HB.y + 26, 0.4, 'left', 11);
-    label(`λ₁ = ${n2(E.l1)}`, lx, HB.y + 56, 0.95, 'left', 15, E.l1 >= 0 ? UP : DOWN);
-    label(`λ₂ = ${n2(E.l2)}`, lx, HB.y + 84, 0.95, 'left', 15, E.l2 >= 0 ? UP : DOWN);
-    label(E.l1 * E.l2 > 0 ? 'same sign: a bowl or a dome' : 'opposite signs: a saddle', lx, HB.y + 110, 0.35, 'left', 11);
+    ctx.lineWidth = 1.5;
+    bracket(mx - 72, my - 24, my + 30, 1);
+    bracket(mx + 72, my - 24, my + 30, -1);
+    const n2 = (v: number) => fixed(v, 2);
+    label(n2(D.fxx), mx - 34, my - 2, 0.95, 'center', 10.5);
+    label(n2(D.fxy), mx + 34, my - 2, 0.95, 'center', 10.5);
+    label(n2(D.fxy), mx - 34, my + 22, 0.95, 'center', 10.5);
+    label(n2(D.fyy), mx + 34, my + 22, 0.95, 'center', 10.5);
+    const lx = L.narrow ? b.x + 236 : b.x + 16;
+    const ly = L.narrow ? b.y + 58 : b.y + 132;
+    const row = (k: number, l: number, sub: string) => {
+      const col = l >= 0 ? c.up : c.down;
+      ctx.fillStyle = col;
+      roundRect(ctx, lx, ly + k * 26 - 10, 14, 4, 2);
+      ctx.fill();
+      label(`λ${sub} = ${n2(l)}`, lx + 22, ly + k * 26, 0.95, 'left', 10.5, col);
+      label(l >= 0 ? 'up' : 'down', L.narrow ? lx + 168 : b.x + b.w - 14, ly + k * 26, 0.45, 'right', 9);
+    };
+    row(0, Eg.l1, '₁');
+    row(1, Eg.l2, '₂');
+    const vy = L.narrow ? b.y + 128 : b.y + b.h - 18;
+    const vx = L.narrow ? lx : b.x + 16;
+    label(Eg.l1 * Eg.l2 < 0 ? 'opposite signs:' : 'same signs:', vx, vy, 0.5, 'left', 9);
+    const off = ctx.measureText(Eg.l1 * Eg.l2 < 0 ? 'opposite signs: ' : 'same signs: ').width;
+    label(kind, vx + off, vy, 1, 'left', 10, kindColour(kind));
   }
 
-  /** The surface cut along one eigenvector, with the parabola of that eigenvalue. */
-  function slice(k: 0 | 1, e: number[], l: number, D: ReturnType<typeof derivs>) {
-    const b = CS[k];
-    const [x, y] = state.p;
-    label(`walking along ${k === 0 ? 'the first' : 'the second'} axis`, b.x, b.y - 34, 0.55, 'left', 13);
-    label(`it bends by λ${k === 0 ? '₁' : '₂'} = ${l.toFixed(2)}`, b.x, b.y - 16, 0.32, 'left', 11, l >= 0 ? UP : DOWN);
-    panel(b);
-    const T = 1.5;
+  /** The surface cut along one eigenvector, with the parabola the quadratic model predicts. */
+  /** The height of the surface along one eigen-direction, sampled across the plot. */
+  function sliceVals(e: number[]) {
+    const [x0, y0] = state.p;
     const vals: number[] = [];
     for (let i = 0; i <= 120; i++) {
-      const t = -T + (i / 120) * 2 * T;
-      vals.push(F(x + e[0] * t, y + e[1] * t));
+      const t = -CURVE_T + (i / 120) * 2 * CURVE_T;
+      vals.push(F(x0 + e[0] * t, y0 + e[1] * t));
     }
-    let lo = Infinity, hi = -Infinity;
-    for (const v of vals) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-    const q = (t: number) => D.f0 + 0.5 * l * t * t;
-    for (const t of [-T, T]) { lo = Math.min(lo, q(t)); hi = Math.max(hi, q(t)); }
-    const pad = Math.max(1e-4, (hi - lo) * 0.18);
-    const sx = (t: number) => b.x + 8 + ((t + T) / (2 * T)) * (b.w - 16);
-    const sy = (v: number) => b.y + b.h - 8 - ((v - lo + pad) / (hi - lo + 2 * pad)) * (b.h - 16);
-    ctx.strokeStyle = `${QUAD}aa`;
-    ctx.setLineDash([5, 5]);
-    ctx.lineWidth = 1.8;
+    return vals;
+  }
+  /** Both slices share one vertical scale, so a weak bend really looks weaker than a strong one. */
+  function slice(b: Box, k: 0 | 1, D: D, Eg: E, vals: number[], shared: number) {
+    const c = pal();
+    const e = k ? Eg.e2 : Eg.e1, l = k ? Eg.l2 : Eg.l1, sub = k ? '₂' : '₁';
+    const col = l >= 0 ? c.up : c.down;
+    card(b);
+    label(`along e${sub}`, b.x + 14, b.y + 24, 0.55, 'left', 9);
+    label(`bends ${l >= 0 ? 'up' : 'down'} by λ${sub}`, b.x + b.w - 14, b.y + 24, 1, 'right', 9, col);
+    const P = { x: b.x + 12, y: b.y + 36, w: b.w - 24, h: b.h - 48 };
+    const T = CURVE_T;
+    const ge = D.fx * e[0] + D.fy * e[1];
+    const q = (t: number) => D.f0 + ge * t + 0.5 * l * t * t;
+    const midV = (Math.min(...vals) + Math.max(...vals)) / 2;
+    const span = shared * 1.24;
+    const sx = (t: number) => P.x + ((t + T) / (2 * T)) * P.w;
+    const sy = (v: number) => P.y + P.h / 2 - ((v - midV) / span) * P.h;
+    ctx.save();
     ctx.beginPath();
-    for (let i = 0; i <= 120; i++) {
-      const t = -T + (i / 120) * 2 * T;
-      i ? ctx.lineTo(sx(t), sy(q(t))) : ctx.moveTo(sx(t), sy(q(t)));
-    }
+    ctx.rect(P.x, P.y, P.w, P.h);
+    ctx.clip();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx(0), P.y);
+    ctx.lineTo(sx(0), P.y + P.h);
     ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.strokeStyle = l >= 0 ? UP : DOWN;
-    ctx.lineWidth = 2.4;
+    if (state.quad) {
+      ctx.strokeStyle = c.quad;
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= 120; i++) {
+        const t = -T + (i / 120) * 2 * T;
+        i ? ctx.lineTo(sx(t), sy(q(t))) : ctx.moveTo(sx(t), sy(q(t)));
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
     ctx.beginPath();
     vals.forEach((v, i) => {
       const t = -T + (i / 120) * 2 * T;
       i ? ctx.lineTo(sx(t), sy(v)) : ctx.moveTo(sx(t), sy(v));
     });
     ctx.stroke();
-    ctx.fillStyle = ink(0.95);
+    ctx.restore();
+    ctx.fillStyle = light ? '#ffffff' : '#f4f5f8';
+    ctx.strokeStyle = light ? 'rgba(20,22,30,0.85)' : 'rgba(10,11,16,0.9)';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.arc(sx(0), sy(D.f0), 4.5, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
   }
 
+  // --- one frame -------------------------------------------------------------------
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let patchKey = '';
   function draw() {
-    ctx.clearRect(0, 0, W, H);
-    const { D, E } = map();
-    board(D, E);
-    slice(0, E.e1, E.l1, D);
-    slice(1, E.e2, E.l2, D);
+    const [x, y] = state.p;
+    const D = derivs(x, y);
+    const Eg = eigen(D.fxx, D.fxy, D.fyy);
+    const key = `${state.fn}|${x}|${y}`;
+    if (key !== patchKey) { buildPatch(D, Eg); patchKey = key; }
 
-    const n2 = (v: number) => (Math.abs(v) < 5e-3 ? 0 : v).toFixed(3);
-    const flat = Math.max(Math.abs(E.l1), Math.abs(E.l2)) < 0.02;
-    const kind = flat
-      ? 'flat ground'
-      : E.l1 > 0 && E.l2 > 0
-        ? 'a bowl'
-        : E.l1 < 0 && E.l2 < 0
-          ? 'a dome'
-          : 'a saddle';
-    const big = Math.max(Math.abs(E.l1), Math.abs(E.l2));
-    const small = Math.min(Math.abs(E.l1), Math.abs(E.l2));
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(L.scene.x, L.scene.y, L.scene.w, L.scene.h);
+    ctx.clip();
+    drawBackdrop(ctx, L.scene.w, L.scene.h, light);
+    floor();
+    if (G) renderGl(G);
+    else renderFlat();
+    overlay(D, Eg);
+    ctx.restore();
+
+    const kind = kindOf(Eg);
+    matrixCard(D, Eg, kind);
+    const v1 = sliceVals(Eg.e1), v2 = sliceVals(Eg.e2);
+    const range = (v: number[]) => Math.max(...v) - Math.min(...v);
+    const shared = Math.max(0.05, range(v1), range(v2));
+    slice(L.s1, 0, D, Eg, v1, shared);
+    slice(L.s2, 1, D, Eg, v2, shared);
+    words(D, Eg, kind);
+  }
+
+  function words(D: D, Eg: E, kind: string) {
+    const n3 = (v: number) => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3);
+    const big = Math.max(Math.abs(Eg.l1), Math.abs(Eg.l2));
+    const small = Math.min(Math.abs(Eg.l1), Math.abs(Eg.l2));
     const cond = small > 1e-6 ? big / small : Infinity;
     setEq({
       rule: [
         'f(p + d) \\approx f(p) +',
-        ['\\nabla f^{\\top} d', GRAD],
+        ['\\nabla f^{\\top} d', GRAD_EQ],
         '+',
-        ['\\tfrac12\\, d^{\\top} H d', QUAD],
+        ['\\tfrac12\\, d^{\\top} H d', QUAD_EQ],
         '\\qquad H e_i = \\lambda_i e_i',
       ],
       live: [
-        [`\\lambda_1 = ${n2(E.l1)}`, E.l1 >= 0 ? UP : DOWN],
-        [`\\quad \\lambda_2 = ${n2(E.l2)}`, E.l2 >= 0 ? UP : DOWN],
+        [`\\lambda_1 = ${n3(Eg.l1)}`, Eg.l1 >= 0 ? UP_EQ : DOWN_EQ],
+        [`\\quad \\lambda_2 = ${n3(Eg.l2)}`, Eg.l2 >= 0 ? UP_EQ : DOWN_EQ],
         `\\quad \\text{${kind}}`,
       ],
     });
     setRows({
-      'r-xx': n2(D.fxx),
-      'r-xy': n2(D.fxy),
-      'r-yy': n2(D.fyy),
-      'r-l1': n2(E.l1),
-      'r-l2': n2(E.l2),
+      'r-xx': n3(D.fxx),
+      'r-xy': n3(D.fxy),
+      'r-yy': n3(D.fyy),
+      'r-l1': n3(Eg.l1),
+      'r-l2': n3(Eg.l2),
       'r-cond': Number.isFinite(cond) ? `${cond.toFixed(1)}×` : '∞',
     });
     setResult({
       value: kind,
-      colour: kind === 'a bowl' ? UP : kind === 'a dome' ? DOWN : kind === 'a saddle' ? GRAD : undefined,
-      status: `λ₁ = ${n2(E.l1)}, λ₂ = ${n2(E.l2)} · the strongest bending is ${Number.isFinite(cond) ? `${cond.toFixed(1)} times` : 'infinitely many times'} the weakest · the gradient here is ${Math.hypot(D.fx, D.fy).toFixed(3)} long`,
+      colour: kind === 'a bowl' ? UP_EQ : kind === 'a dome' ? DOWN_EQ : kind === 'a saddle' ? GRAD_EQ : undefined,
+      status: `λ₁ = ${n3(Eg.l1)}, λ₂ = ${n3(Eg.l2)} · the strongest bending is ${Number.isFinite(cond) ? `${cond.toFixed(1)} times` : 'infinitely many times'} the weakest · the gradient here is ${Math.hypot(D.fx, D.fy).toFixed(3)} long`,
       note:
         kind === 'a saddle'
-          ? 'One direction curves up and the other curves down, so this point is a minimum and a maximum at once and neither answer is wrong. The gradient is powerless to tell you this; only the second derivatives can.'
+          ? 'One direction bends up and the other bends down, so along one curve this point is a low and along the other a high. The gradient cannot tell you this; only the second derivatives can.'
           : kind === 'flat ground'
             ? 'Both eigenvalues have gone to nothing, so the surface is flat to second order here and the quadratic approximation is a plane. Whatever happens next is decided by the third derivatives.'
             : cond > 12
-              ? 'The two eigenvalues are wildly different, so the ellipse is a long thin cigar. Any method that takes the same size of step in every direction will cross the narrow way far too fast and crawl along the long way.'
+              ? 'The two eigenvalues are wildly different, so the surface is a long thin trough. Any method that takes the same size of step in every direction will cross the narrow way far too fast and crawl along the long way.'
               : kind === 'a bowl'
-                ? 'Both directions curve upward, so every way you could walk from here goes up, and the point is a genuine minimum. That is the second-derivative test: not one number but the signs of two.'
-                : 'Both directions curve downward, so every way from here goes down and the point is a genuine maximum.',
+                ? 'Both directions bend upward, so the surface curves up every way you walk from here. Where the gradient is also zero, that is a genuine minimum: the second-derivative test is the signs of two numbers, not one.'
+                : 'Both directions bend downward, so the surface curves down every way you walk from here. Where the gradient is also zero, that is a genuine maximum.',
     });
   }
 
-  // --- interaction -----------------------------------------------------------
-  let drag = false;
-  const local = (e: PointerEvent) => {
+  // --- pointer: drag the point, click the surface, orbit everywhere else -------------
+  const local = (e: PointerEvent | WheelEvent) => {
     const r = canvas.getBoundingClientRect();
     return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
   };
-  const put = (p: { x: number; y: number }) => {
-    const w = toW(p.x, p.y);
-    state.p = [Math.max(-R + 0.1, Math.min(R - 0.1, w[0])), Math.max(-R + 0.1, Math.min(R - 0.1, w[1]))];
+  const inScene = (p: { x: number; y: number }) =>
+    p.x >= L.scene.x && p.x <= L.scene.x + L.scene.w && p.y >= L.scene.y && p.y <= L.scene.y + L.scene.h;
+  const nearPoint = (p: { x: number; y: number }) => Math.hypot(p.x - pointScreen.sx, p.y - pointScreen.sy) < (L.narrow ? 26 : 20);
+  const clampP = (x: number, y: number): [number, number] => [
+    Math.max(-R + MARGIN, Math.min(R - MARGIN, x)),
+    Math.max(-R + MARGIN, Math.min(R - MARGIN, y)),
+  ];
+  function movePoint(sx: number, sy: number) {
+    let hit = pick(sx, sy);
+    if (!hit) {
+      // off the surface: slide on the level of the point instead of stopping dead
+      const P = cam.hitPlane(sx, sy, W3(state.p[0], state.p[1]), { x: 0, y: 1, z: 0 });
+      if (P) hit = [P.x * R, P.z * R];
+    }
+    if (!hit) return;
+    state.p = clampP(hit[0], hit[1]);
     draw();
-  };
+  }
+
+  let mode: 'none' | 'point' | 'pending' | 'orbit' = 'none';
+  let lastX = 0, lastY = 0, downX = 0, downY = 0;
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
     const p = local(e);
-    if (p.x < MAP.x || p.x > MAP.x + MAP.w || p.y < MAP.y || p.y > MAP.y + MAP.h) return;
-    drag = true;
+    if (!inScene(p)) return;
+    lastX = downX = e.clientX;
+    lastY = downY = e.clientY;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
-    put(p);
+    if (e.button === 0 && !e.shiftKey && !e.altKey && nearPoint(p)) {
+      mode = 'point';
+      canvas.style.cursor = 'grabbing';
+    } else mode = e.button === 0 && !e.shiftKey && !e.altKey ? 'pending' : 'orbit';
   });
   canvas.addEventListener('pointermove', (e) => {
     const p = local(e);
-    const over = p.x >= MAP.x && p.x <= MAP.x + MAP.w && p.y >= MAP.y && p.y <= MAP.y + MAP.h;
-    canvas.style.cursor = drag || over ? 'crosshair' : 'default';
-    if (drag) put(p);
+    if (mode === 'point') return movePoint(p.x, p.y);
+    if (mode === 'pending' && Math.hypot(e.clientX - downX, e.clientY - downY) > 4) mode = 'orbit';
+    if (mode === 'orbit') {
+      cam.yaw += (e.clientX - lastX) * 0.01;
+      cam.pitch = Math.max(-1.45, Math.min(1.45, cam.pitch + (e.clientY - lastY) * 0.01));
+      lastX = e.clientX;
+      lastY = e.clientY;
+      canvas.style.cursor = 'move';
+      draw();
+      return;
+    }
+    if (mode === 'none') canvas.style.cursor = !inScene(p) ? 'default' : nearPoint(p) ? 'grab' : pick(p.x, p.y) ? 'crosshair' : '';
   });
-  const drop = () => { drag = false; };
-  canvas.addEventListener('pointerup', drop);
-  canvas.addEventListener('pointercancel', drop);
+  canvas.addEventListener('pointerup', (e) => {
+    if (mode === 'pending') {
+      // a click, not a drag: put the point where the surface was clicked
+      const p = local(e);
+      const hit = pick(p.x, p.y);
+      if (hit) { state.p = clampP(hit[0], hit[1]); draw(); }
+    }
+    mode = 'none';
+    canvas.style.cursor = '';
+  });
+  canvas.addEventListener('pointercancel', () => { mode = 'none'; });
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      if (!inScene(local(e))) return;
+      e.preventDefault();
+      userZoom = Math.max(0.5, Math.min(3, userZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      cam.zoom = L.zoom * userZoom;
+      draw();
+    },
+    { passive: false }
+  );
 
-  const fns = segmented('fn', (f) => {
+  // --- controls ----------------------------------------------------------------------
+  function setFn(f: string, p?: [number, number]) {
     state.fn = f;
-    state.p = f === 'ripples' ? [0.5, 0.4] : f === 'hills' ? [-0.2, -0.1] : [0.6, 0.5];
+    state.p = p ?? START[f];
+    buildSurface();
     draw();
-  });
+  }
+  const fns = segmented('fn', (f) => setFn(f));
   const setEig = check('eig', (on) => { state.eig = on; draw(); });
-  function show(fn: string, p: [number, number]) {
-    state.fn = fn;
+  const setQuad = check('quad', (on) => { state.quad = on; draw(); });
+  check('grad', (on) => { state.grad = on; draw(); });
+  function show(fn: string, p: [number, number], quad = false) {
     fns.select(fn);
-    state.p = p;
-    // the items are about the eigen axes, so make sure they are on screen
+    // the items are about the eigen-directions, so make sure they are on screen
     state.eig = true;
     setEig(true);
-    draw();
+    if (quad) { state.quad = true; setQuad(true); }
+    setFn(fn, p);
   }
   tries({
     saddle: () => show('saddle', [0, 0]),
-    bowl: () => show('bowl', [0.6, 0.5]),
+    bowl: () => show('bowl', [0.6, 0.5], true),
+    ripples: () => show('ripples', [-0.75, 0.35], true),
     valley: () => show('valley', [0.6, 0.5]),
-    ripples: () => show('ripples', [0.5, 0.4]),
   });
-  check('quad', (on) => { state.quad = on; draw(); });
-  check('grad', (on) => { state.grad = on; draw(); });
 
+  const relayout = () => { if (pickLayout()) draw(); };
+  window.addEventListener('resize', relayout);
+  document.addEventListener('fullscreenchange', () => { pickLayout(); applyDPR(); draw(); });
+  window.addEventListener('themechange', () => { readTheme(); draw(); });
+
+  // the URL may already have picked a surface before this ran
+  state.fn = fns.value() || 'saddle';
+  state.p = START[state.fn];
+  pickLayout();
+  buildSurface();
   draw();
 </script>
+
+<style>
+  .hs-canvas {
+    touch-action: none;
+    cursor: crosshair;
+  }
+</style>
