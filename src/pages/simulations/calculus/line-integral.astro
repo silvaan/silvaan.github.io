@@ -159,12 +159,20 @@ import Try from '../../../components/sim/Try.astro';
   const css = (n: string, f = '') =>
     getComputedStyle(canvas).getPropertyValue(n).trim() || f;
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
-  const { label } = makeText(ctx, ink);
+  const { label, textWidth } = makeText(ctx, ink);
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  /** The box a label will cover, measured in the font it is drawn in. */
+  function box(text: string, x: number, y: number, align: CanvasTextAlign, size: number): Box {
+    const w = textWidth(text, size), px = Math.round(size * 1.42);
+    const x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+    return { x0, y0: y - px * 0.8, x1: x0 + w, y1: y + px * 0.25 };
+  }
+  const hits = (a: Box, b: Box) => a.x0 < b.x1 + 4 && b.x0 < a.x1 + 4 && a.y0 < b.y1 + 2 && b.y0 < a.y1 + 2;
   const accent = () => css('--accent', '#7c8cff');
   const fmt = (v: number) => (Math.abs(v) < 5e-4 ? '0.000' : v.toFixed(3));
 
   const SC = { cx: 302, cy: 222, s: 150 };
-  const PLOT = { x: 34, y: 442, w: 548, h: 80 };
+  const PLOT = { x: 34, y: 466, w: 548, h: 68 };
   const CARD = { x: 612, y: 64, w: 268, h: 300 };
   const px = (p: V2) => ({ x: SC.cx + p.x * SC.s, y: SC.cy - p.y * SC.s });
   const bead = () => samples[Math.round(state.t * N)];
@@ -269,15 +277,8 @@ import Try from '../../../components/sim/Try.astro';
     const sx = (i: number) => PLOT.x + (PLOT.w * i) / N;
     const sy = (v: number) => y0 - (v / maxPush) * (PLOT.h / 2 - 5);
 
-    label('how much of the field points your way', PLOT.x, PLOT.y - 12, 0.42, 'left', 11);
-    label(
-      'the shaded area is the total',
-      PLOT.x + PLOT.w,
-      PLOT.y - 12,
-      0.3,
-      'right',
-      11.5
-    );
+    label('how much of the field points your way', PLOT.x, PLOT.y - 30, 0.42, 'left', 11);
+    label('the shaded area is the total', PLOT.x, PLOT.y - 13, 0.3, 'left', 11);
 
     const upto = Math.round(state.t * N);
     for (const sign of [1, -1]) {
@@ -344,10 +345,14 @@ import Try from '../../../components/sim/Try.astro';
     const along = f.x * u.x + f.y * u.y;
     const side = -f.x * u.y + f.y * u.x;
 
-    const cx = CARD.x + 74,
-      cy = CARD.y + 130;
+    // the origin sits left of centre so the travel arrow and its label fit to
+    // the right, and a field pointing backwards still has room on the left
+    const cx = CARD.x + 100,
+      cy = CARD.y + 122;
     const K = 62;
+    const inner = { x0: CARD.x + 12, x1: CARD.x + CARD.w - 12 };
     arrow(ctx, cx, cy, cx + K, cy, ink(0.5), 2, 8);
+    const wayBox = box('your way', cx + K + 8, cy + 4, 'left', 11.5);
     label('your way', cx + K + 8, cy + 4, 0.42, 'left', 11.5);
 
     const fx = cx + along * K,
@@ -369,27 +374,37 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(cx + along * K, cy);
     ctx.stroke();
     arrow(ctx, cx, cy, fx, fy, accent(), 2.6, 9);
-    label(
-      'the field',
-      fx + (along >= 0 ? 10 : -10),
-      fy + (side >= 0 ? -10 : 18),
-      0.8,
-      along >= 0 ? 'left' : 'right',
-      11.5,
-      accent()
-    );
-    // keep the caption on the opposite side of the axis from the field arrow
-    label(
-      'what it adds',
-      cx + (along * K) / 2,
-      cy + (side >= 0 ? 22 : -16),
-      0.85,
-      'center',
-      11.5,
-      s.push >= 0 ? HUE.with : HUE.against
-    );
+    // keep the caption on the opposite side of the axis from the field arrow,
+    // centred under the shadow but never past the card's edge
+    const addW = textWidth('what it adds', 11.5);
+    const addX = Math.max(inner.x0 + addW / 2, Math.min(inner.x1 - addW / 2, cx + (along * K) / 2));
+    const addY = cy + (side >= 0 ? 24 : -16);
+    const addBox = box('what it adds', addX, addY, 'center', 11.5);
+    label('what it adds', addX, addY, 0.85, 'center', 11.5, s.push >= 0 ? HUE.with : HUE.against);
 
-    const y = CARD.y + 214;
+    // the field's name goes by its tip, at the first spot that is clear of the
+    // other two labels, the travel arrow and the card's edge
+    const fw = textWidth('the field', 11.5);
+    const axis: Box = { x0: cx, y0: cy - 6, x1: cx + K + 4, y1: cy + 6 };
+    const up = side >= 0 ? -10 : 18, down = side >= 0 ? 18 : -10;
+    const spots: [number, number][] = [
+      [along >= 0 ? fx + 10 : fx - 10 - fw, fy + up],
+      [along >= 0 ? fx - 10 - fw : fx + 10, fy + up],
+      [fx - fw / 2, fy + (side >= 0 ? -14 : 24)],
+      [along >= 0 ? fx + 12 : fx - 12 - fw, fy + 4],
+      [along >= 0 ? fx - 12 - fw : fx + 12, fy + 4],
+      [along >= 0 ? fx + 10 : fx - 10 - fw, fy + down],
+    ];
+    const head = box('at the bead, right now', CARD.x + 16, CARD.y + 24, 'left', 11);
+    const clamp = ([x, y]: [number, number]): [number, number] => [Math.max(inner.x0, Math.min(inner.x1 - fw, x)), y];
+    const clear = ([x, y]: [number, number]) => {
+      const b = box('the field', x, y, 'left', 11.5);
+      return ![wayBox, addBox, axis, head].some((o) => hits(b, o));
+    };
+    const pick = spots.map(clamp).find(clear) ?? clamp(spots[0]);
+    label('the field', pick[0], pick[1], 0.8, 'left', 11.5, accent());
+
+    const y = CARD.y + 228;
     const angle = (Math.atan2(side, along) * 180) / Math.PI;
     label('size of the field', CARD.x + 16, y, 0.4, 'left', 11.5);
     label(Math.hypot(f.x, f.y).toFixed(3), CARD.x + CARD.w - 16, y, 0.7, 'right', 12);
@@ -430,7 +445,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 14, 598, 412);
+    ctx.rect(0, 14, 598, 404);
     ctx.clip();
     drawScene();
     ctx.restore();
@@ -444,7 +459,7 @@ import Try from '../../../components/sim/Try.astro';
     const push = `${s.push >= 0 ? '+' : ''}${fmt(s.push)}`;
     setEq({
       rule: [['\\int_C \\mathbf{F}\\cdot d\\mathbf{r}', accent()], '=\\int_C\\big(', ['\\mathbf{F}\\cdot\\hat{\\mathbf{T}}', s.push >= 0 ? HUE.with : HUE.against], '\\big)\\,ds'],
-      live: [[`${fmt(s.acc)}\\text{ so far}`, accent()], [`\\quad ${fmt(total)}\\text{ ${state.path === 'loop' ? 'once round' : 'for the whole path'}}`, HUE.with], `\\quad\\text{adding }${push}`, state.path === 'detour' ? `\\quad ${fmt(refTotal)}\\text{ straight from A to B}` : ''],
+      live: [[`${fmt(s.acc)}\\text{ so far}`, accent()], [`\\quad ${fmt(total)}\\text{ ${state.path === 'loop' ? 'once round' : 'whole path'}}`, HUE.with], `\\quad\\text{adding }${push}`, state.path === 'detour' ? `\\quad ${fmt(refTotal)}\\text{ straight line}` : ''],
     });
     setRows({ total: fmt(total), ref: fmt(refTotal), rate: push });
     setResult({
@@ -554,5 +569,13 @@ import Try from '../../../components/sim/Try.astro';
   .li-canvas {
     cursor: pointer;
     touch-action: none;
+  }
+  /* on a phone the rule and its numbers wrap between their parts instead of
+     running off the edge */
+  @media (max-width: 760px) {
+    :global(.sim-eq .eq-line) {
+      flex-wrap: wrap;
+      row-gap: 0.2em;
+    }
   }
 </style>
