@@ -22,7 +22,7 @@ import Try from '../../../components/sim/Try.astro';
         <canvas id="ode" width="880" height="620" role="img" aria-label="A slope field with the solution curve through a draggable start point, and optionally the whole family of solutions, isoclines, Euler's steps and particles riding the field."></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the solution through your point', color: '#7c8cff' }, { label: 'the start point', color: '#5eead4' }, { label: "Euler's steps", color: '#f9736a' }]}
+        legend={[{ label: 'the solution through your point', color: '#7c8cff' }, { label: 'particles riding the field', color: '#2dd4bf' }, { label: "Euler's steps", color: '#f9736a' }]}
         hint="Drag the start point anywhere on the plane"
       />
       <Result label="Slope at the start point" />
@@ -33,7 +33,7 @@ import Try from '../../../components/sim/Try.astro';
       <Slider id="x0" label="Start x₀" min={-4.3} max={4.3} step={0.05} value={-4} display="−4.00" />
       <Slider id="y0" label="Start y₀" min={-3.1} max={3.1} step={0.05} value={2.2} display="2.20" />
       <Slider id="h" label="Euler step h" min={5} max={120} value={60} display="0.60" hint={['tiny, faithful', 'huge, wrong']} />
-      <Checks label="Show" items={[{ id: 'field', label: 'Slope field', checked: true }, { id: 'family', label: 'The whole family of solutions' }, { id: 'iso', label: 'Isoclines, where the slope is constant' }, { id: 'euler', label: "Euler's method, step by step" }, { id: 'flow', label: 'Particles riding the field' }]} />
+      <Checks label="Show" items={[{ id: 'field', label: 'Slope field', checked: true }, { id: 'family', label: 'The whole family of solutions' }, { id: 'iso', label: 'Isoclines, where the slope is constant' }, { id: 'euler', label: "Euler's method, step by step" }, { id: 'flow', label: 'Particles flowing along the field' }]} />
       <Readout rows={[{ id: 'stepOut', label: 'Euler steps' }, { id: 'errOut', label: 'Euler error at the end' }, { id: 'liveOut', label: 'solution exists until' }]} />
     </div>
   </div>
@@ -45,13 +45,13 @@ import Try from '../../../components/sim/Try.astro';
       different start, which is the <b>+ C</b>. <Try id="family" />
     </li>
     <li>
-      On <b>x − y</b> every curve, from above or below, is squeezed onto the line
-      y = x − 1. The solutions <b>forget where they started</b>. <Try id="forget" />
+      Let the <b>particles</b> loose on <b>x − y</b>: dots from every height pile
+      onto the line y = x − 1. The solutions <b>forget where they started</b>. <Try id="forget" />
     </li>
     <li>
-      On <b>y(1 − y)</b> both y = 0 and y = 1 are solutions that never move, but
-      curves run away from the first and into the second: an <b>unstable and a
-      stable equilibrium</b>. <Try id="equilibria" />
+      On <b>y(1 − y)</b> the particles empty out of y = 0 and crowd into y = 1.
+      Both lines are solutions that never move: an <b>unstable and a stable
+      equilibrium</b>. <Try id="equilibria" />
     </li>
     <li>
       Turn on <b>Euler's method</b> with a big h: each hop commits to the slope
@@ -164,7 +164,8 @@ import Try from '../../../components/sim/Try.astro';
   const setRows = readout();
 
   const ACC = '#7c8cff'; // the chosen solution
-  const TEAL = '#5eead4'; // the zero isocline and the flow
+  /** The zero isocline and the particles: bright on the dark stage, deeper on paper. */
+  const teal = (a: number) => `rgba(${cssv('--stage-light') === '1' ? '13,148,136' : '94,234,212'},${a})`;
   const HOT = '#f9736a'; // Euler, going wrong
 
   const XMIN = -4.4, XMAX = 4.4, YMIN = -3.2, YMAX = 3.2;
@@ -265,37 +266,68 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // --- particles riding the field --------------------------------------------
+  // Each dot obeys dx/dt = 1, dy/dt = f(x, y), rescaled so that every dot moves
+  // at the same speed on screen: it travels along the segments, never faster
+  // where the field is steep. A short ring of past positions is its trail.
 
   const rndSeed = (() => {
     let s = 987654321;
     return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
   })();
 
-  type Dot = { x: number; y: number; life: number };
+  const NP = 420; // dots
+  const TRAIL = 16; // remembered positions per dot
+  const SPEED = 92; // canvas pixels per second
+  type Dot = { x: number; y: number; age: number; life: number; tx: Float32Array; ty: Float32Array; n: number; head: number };
   let dots: Dot[] = [];
+
+  function place(d: Dot, anywhere: boolean) {
+    // half come in from the left edge, the rest anywhere, so the whole plane
+    // stays populated even where the flow runs out through the top or bottom
+    d.x = anywhere ? XMIN + rndSeed() * (XMAX - XMIN) : XMIN + rndSeed() * 0.25;
+    d.y = YMIN + rndSeed() * (YMAX - YMIN);
+    d.age = 0;
+    d.life = 3.5 + rndSeed() * 4;
+    d.head = 0;
+    d.tx[0] = sx(d.x);
+    d.ty[0] = sy(d.y);
+    d.n = 1;
+  }
   function seedDots() {
     dots = [];
-    for (let k = 0; k < 150; k++)
-      dots.push({
-        x: XMIN + rndSeed() * (XMAX - XMIN),
-        y: YMIN + rndSeed() * (YMAX - YMIN),
-        life: rndSeed(),
-      });
+    for (let k = 0; k < NP; k++) {
+      const d: Dot = { x: 0, y: 0, age: 0, life: 1, tx: new Float32Array(TRAIL), ty: new Float32Array(TRAIL), n: 0, head: 0 };
+      place(d, true);
+      d.age = rndSeed() * d.life * 0.6; // stagger, so they do not all fade at once
+      dots.push(d);
+    }
   }
-  function respawn(d: Dot) {
-    d.x = XMIN + rndSeed() * 0.35;
-    d.y = YMIN + rndSeed() * (YMAX - YMIN);
-    d.life = 0;
+
+  /** World velocity of a dot: along (1, f), at a fixed speed in screen pixels. */
+  const KX = () => P.w / (XMAX - XMIN), KY = () => P.h / (YMAX - YMIN);
+  function vel(x: number, y: number): [number, number] {
+    const m = slope(x, y);
+    const kx = KX(), ky = KY();
+    const len = Math.hypot(kx, m * ky) || 1;
+    return [SPEED / len, (m * SPEED) / len];
   }
+
   function stepDots(dt: number) {
-    const dx = dt * 1.5; // units of x per second
     for (const d of dots) {
-      const ny = rk4(d.x, d.y, dx);
-      d.x += dx;
-      d.y = ny;
-      d.life += dt * 0.28;
-      if (!Number.isFinite(d.y) || Math.abs(d.y) > YMAX + 0.4 || d.x > XMAX || d.life > 1)
-        respawn(d);
+      // midpoint rule on the normalised field
+      const [ax, ay] = vel(d.x, d.y);
+      const [bx, by] = vel(d.x + (ax * dt) / 2, d.y + (ay * dt) / 2);
+      d.x += bx * dt;
+      d.y += by * dt;
+      d.age += dt;
+      if (!Number.isFinite(d.y) || d.y > YMAX || d.y < YMIN || d.x > XMAX || d.age > d.life) {
+        place(d, d.x <= XMAX && rndSeed() < 0.5);
+        continue;
+      }
+      d.head = (d.head + 1) % TRAIL;
+      d.tx[d.head] = sx(d.x);
+      d.ty[d.head] = sy(d.y);
+      d.n = Math.min(TRAIL, d.n + 1);
     }
   }
 
@@ -335,6 +367,12 @@ import Try from '../../../components/sim/Try.astro';
   function drawField() {
     const NX = 30, NY = 21;
     const L = 15;
+    // one neutral colour, a touch stronger where it is steeper; the meaning of
+    // the field is its geometry, not a palette. Under the particles it steps
+    // back a little so the flow reads first.
+    const dim = state.flow ? 0.7 : 1;
+    const BANDS = 4;
+    const paths = Array.from({ length: BANDS }, () => new Path2D());
     ctx.lineWidth = 1.5;
     for (let i = 0; i <= NX; i++) {
       for (let j = 0; j <= NY; j++) {
@@ -350,16 +388,15 @@ import Try from '../../../components/sim/Try.astro';
         ux = (ux / n) * (L / 2);
         uy = (uy / n) * (L / 2);
         const cx = sx(x), cy = sy(y);
-        // one neutral colour, a touch stronger where it is steeper; the
-        // meaning of the field is its geometry, not a palette
-        const steep = Math.min(1, Math.abs(m) / 3);
-        ctx.strokeStyle = inkA(0.22 + 0.16 * steep);
-        ctx.beginPath();
-        ctx.moveTo(cx - ux, cy - uy);
-        ctx.lineTo(cx + ux, cy + uy);
-        ctx.stroke();
+        const band = Math.min(BANDS - 1, Math.floor((Math.min(1, Math.abs(m) / 3)) * BANDS));
+        paths[band].moveTo(cx - ux, cy - uy);
+        paths[band].lineTo(cx + ux, cy + uy);
       }
     }
+    paths.forEach((path, b) => {
+      ctx.strokeStyle = inkA((0.22 + (0.16 * (b + 0.5)) / BANDS) * dim);
+      ctx.stroke(path);
+    });
   }
 
   // The field itself only changes when the equation does, so the two expensive
@@ -370,7 +407,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function drawIsoclines() {
     const levels: [number, string, number][] = [
-      [0, `rgba(94,234,212,0.6)`, 1.8],
+      [0, teal(0.6), 1.8],
       [1, inkA(0.28), 1.1],
       [-1, inkA(0.28), 1.1],
       [2, inkA(0.16), 1],
@@ -390,7 +427,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     });
     ctx.setLineDash([]);
-    label("y′ = 0", P.x + 8, P.y + P.h - 10, 0.7, 'left', 11, TEAL);
+    label("y′ = 0", P.x + 8, P.y + P.h - 10, 0.7, 'left', 11, teal(1));
   }
 
   function stroke(pts: { x: number; y: number }[], col: string, lw: number) {
@@ -415,15 +452,45 @@ import Try from '../../../components/sim/Try.astro';
     for (const c of famCache.curves) stroke(c, 'rgba(124,140,255,0.22)', 1.3);
   }
 
+  /** Fade in after a respawn, fade out before the end of a life. */
+  const dotAlpha = (d: Dot) => Math.min(1, d.age / 0.5, (d.life - d.age) / 0.8);
+
   function drawDots() {
-    for (const d of dots) {
-      const a = Math.sin(Math.min(1, d.life) * Math.PI);
-      if (a <= 0.02) continue;
-      ctx.fillStyle = `rgba(94,234,212,${(a * 0.7).toFixed(3)})`;
+    const strength = cssv('--stage-light') === '1' ? 0.95 : 0.85;
+    // Batch by fade level and by position along the trail, so a few hundred
+    // trails cost a few dozen strokes rather than thousands.
+    const LEVELS = 3;
+    ctx.lineCap = 'round';
+    for (let lv = 1; lv <= LEVELS; lv++) {
+      const lo = (lv - 1) / LEVELS, hi = lv / LEVELS;
+      const group = dots.filter((d) => {
+        const a = dotAlpha(d);
+        return a > lo && a <= hi && d.n > 0;
+      });
+      if (!group.length) continue;
+      for (let k = 1; k < TRAIL; k++) {
+        ctx.beginPath();
+        for (const d of group) {
+          if (k >= d.n) continue;
+          const i0 = (d.head - k + TRAIL) % TRAIL, i1 = (i0 + 1) % TRAIL;
+          ctx.moveTo(d.tx[i0], d.ty[i0]);
+          ctx.lineTo(d.tx[i1], d.ty[i1]);
+        }
+        const t = 1 - k / TRAIL;
+        ctx.strokeStyle = teal(+(strength * hi * t * 0.75).toFixed(3));
+        ctx.lineWidth = 0.8 + 1.4 * t;
+        ctx.stroke();
+      }
+      ctx.fillStyle = teal(+(strength * hi).toFixed(3));
       ctx.beginPath();
-      ctx.arc(sx(d.x), sy(d.y), 2.2, 0, Math.PI * 2);
+      for (const d of group) {
+        const X = d.tx[d.head], Y = d.ty[d.head];
+        ctx.moveTo(X + 2, Y);
+        ctx.arc(X, Y, 2, 0, Math.PI * 2);
+      }
       ctx.fill();
     }
+    ctx.lineCap = 'butt';
   }
 
   function drawEuler(truth: { x: number; y: number }[]) {
@@ -517,7 +584,7 @@ import Try from '../../../components/sim/Try.astro';
       liveOut: truth.length < 2 ? 'nowhere, it is vertical here' : last.x >= XMAX - 0.2 ? 'past the right edge' : `x = ${last.x.toFixed(2)}`,
     });
     setEq({
-      rule: [[state.preset.tex, ACC], '\\quad\\text{with}\\;', [`y(${state.x0.toFixed(2)}) = ${state.y0.toFixed(2)}`, TEAL]],
+      rule: [[state.preset.tex, ACC], '\\quad\\text{with}\\;', `y(${state.x0.toFixed(2)}) = ${state.y0.toFixed(2)}`],
       live: [[`y' = ${Number.isFinite(m) ? m.toFixed(3) : '\\infty'}\\text{ here}`, ACC], state.euler ? [`\\quad y_{n+1} = y_n + ${state.h.toFixed(2)}\\,f(x_n,y_n)`, HOT] : ''],
     });
     setResult({
@@ -554,8 +621,13 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   const setters: Record<string, (on: boolean) => void> = {};
-  for (const key of ['field', 'family', 'iso', 'euler', 'flow'] as const)
+  for (const key of ['field', 'family', 'iso', 'euler'] as const)
     setters[key] = check(key, (on) => ((state as Record<string, unknown>)[key] = on));
+  // particles that stand still say nothing, so turning them on sets them going
+  setters.flow = check('flow', (on) => {
+    state.flow = on;
+    if (on) run(true);
+  });
 
   function pick(k: string) {
     state.preset = PRESETS.find((p) => p.key === k) ?? PRESETS[0];
@@ -563,9 +635,13 @@ import Try from '../../../components/sim/Try.astro';
     seedDots();
   }
   const eqSeg = segmented('eq', pick);
+  function run(on: boolean) {
+    state.running = on;
+    tp.setRunning(on);
+  }
   // Run is what sends the particles down the field, so pressing it turns them
   // on rather than leaving the button doing nothing at all.
-  transport({
+  const tp = transport({
     onRun: (running) => {
       state.running = running;
       if (running && !state.flow) {
@@ -623,8 +699,14 @@ import Try from '../../../components/sim/Try.astro';
   }
   tries({
     family: () => show('wave', ['family']),
-    forget: () => show('linear', ['family']),
-    equilibria: () => show('logistic', ['family']),
+    forget: () => {
+      show('linear', ['flow']);
+      run(true);
+    },
+    equilibria: () => {
+      show('logistic', ['flow']);
+      run(true);
+    },
     euler: () => {
       show('wave', ['euler']);
       state.h = 1;

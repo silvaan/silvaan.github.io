@@ -76,7 +76,7 @@ export const AREAS: Area[] = [
         slug: 'differential-equations',
         title: 'Differential Equations',
         description:
-          'An equation for the slope instead of the value. Draw it everywhere and the plane fills with segments; a solution is any curve that stays tangent to them the whole way.',
+          'An equation for the slope instead of the value. Draw it everywhere and the plane fills with segments; a solution is any curve that stays tangent to them the whole way, and a swarm of particles shows them all at once.',
         href: '/simulations/calculus/differential-equations',
         status: 'live',
       },
