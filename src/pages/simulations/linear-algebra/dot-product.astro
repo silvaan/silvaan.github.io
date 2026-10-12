@@ -115,6 +115,7 @@ import '../../../styles/vector-lab.css';
 </SimLayout>
 
 <script>
+  import { makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { slider, check, result, readout, tries } from '../../../lib/panel';
   import {
@@ -158,6 +159,83 @@ import '../../../styles/vector-lab.css';
     redraw: () => draw(),
   });
 
+  const { label, textWidth } = makeText(scene.ctx, scene.inkA);
+  const P = (v: Vec) => scene.project(v);
+  const seg = (p: Vec, q: Vec) => { const u = P(p), v = P(q); blockLine(u.x, u.y, v.x, v.y); };
+  // --- labels: measured boxes, each one nudged to the nearest free spot --------
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const taken: Box[] = [];
+  const segs: number[][] = [];
+  const fills: { x: number; y: number }[][] = [];
+  const layoutReset = () => { taken.length = 0; segs.length = 0; fills.length = 0; };
+  const blockLine = (x1: number, y1: number, x2: number, y2: number) => { segs.push([x1, y1, x2, y2]); };
+  const blockPoly = (pts: { x: number; y: number }[]) =>
+    pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length]; blockLine(p.x, p.y, q.x, q.y); });
+  /** A filled shape: no label may cross its outline or sit inside it. */
+  const blockFill = (pts: { x: number; y: number }[]) => { blockPoly(pts); fills.push(pts); };
+  const inside = (x: number, y: number, pts: { x: number; y: number }[]) => {
+    let hit = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++)
+      if ((pts[i].y > y) !== (pts[j].y > y) && x < ((pts[j].x - pts[i].x) * (y - pts[i].y)) / (pts[j].y - pts[i].y) + pts[i].x) hit = !hit;
+    return hit;
+  };
+  const blockDot = (x: number, y: number, r: number) => { taken.push({ x0: x - r, y0: y - r, x1: x + r, y1: y + r }); };
+  /** Does the segment cross the box? (Liang–Barsky clipping.) */
+  function crosses(s: number[], b: Box) {
+    const [x1, y1, x2, y2] = s;
+    const dx = x2 - x1, dy = y2 - y1;
+    const p = [-dx, dx, -dy, dy], q = [x1 - b.x0, b.x1 - x1, y1 - b.y0, b.y1 - y1];
+    let t0 = 0, t1 = 1;
+    for (let i = 0; i < 4; i++) {
+      if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+      const r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+    }
+    return true;
+  }
+  const overlap = (a: Box, b: Box) =>
+    Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  /**
+   * Draw `text` next to the point (ax, ay): on it if `onSpot`, otherwise just
+   * beyond it in the direction `prefer` (radians, screen axes), swinging round
+   * and stepping out until the box crosses no line and no other label. With
+   * `onlyIfFree`, only the spot itself and small nudges of it are tried, and
+   * nothing is drawn (false is returned) when none of them is clean.
+   */
+  function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, onSpot = false, gap = 7, onlyIfFree = false) {
+    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const cands: [number, number][] = onSpot || onlyIfFree ? [[ax, ay]] : [];
+    if (onlyIfFree) for (const dy of [0, -6, 6, -12, 12]) for (const dx of [0, -8, 8, -16, 16]) cands.push([ax + dx, ay + dy]);
+    else for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
+      for (let k = 0; k < 12; k++) {
+        const an = prefer + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
+        const c = Math.cos(an), s = Math.sin(an);
+        const edge = Math.min(Math.abs(c) > 1e-6 ? w / 2 / Math.abs(c) : 1e9, Math.abs(s) > 1e-6 ? h / 2 / Math.abs(s) : 1e9);
+        const d = gap + step * 9 + edge;
+        cands.push([ax + c * d, ay + s * d]);
+      }
+    }
+    let best = cands[0], bestCost = Infinity;
+    cands.forEach(([cx, cy], i) => {
+      const b = { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+      let cost = i * 0.6;
+      if (b.x0 < 2 || b.y0 < 2 || b.x1 > W - 2 || b.y1 > H - 2) cost += 1e5;
+      for (const s of segs) if (crosses(s, b)) cost += 1000;
+      for (const t of taken) cost += overlap(b, t) * 30;
+      for (const f of fills) if (inside(cx, cy, f)) cost += 1000;
+      if (cost < bestCost) { bestCost = cost; best = [cx, cy]; }
+    });
+    if (onlyIfFree && bestCost >= 1000) return false;
+    const [cx, cy] = best;
+    taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
+    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    return true;
+  }
+
+  /** The direction a vector points on screen, so its name goes past the tip. */
+  const away = (v: Vec) => { const o = P(O), p = P(v); return Math.hypot(p.x - o.x, p.y - o.y) > 4 ? Math.atan2(p.y - o.y, p.x - o.x) : -Math.PI / 4; };
+
   // --- the geometry the whole sim is about -----------------------------------
 
   function sideways(v: Vec): Vec {
@@ -178,7 +256,10 @@ import '../../../styles/vector-lab.css';
   function draw() {
     const { ctx, inkA } = scene;
     ctx.clearRect(0, 0, W, H);
+    layoutReset();
     scene.grid(is3D());
+    // the axis names the grid writes
+    for (const e of [{ x: LIMIT + 0.25, y: 0, z: 0 }, { x: 0, y: LIMIT + 0.25, z: 0 }, { x: 0, y: 0, z: LIMIT + 0.25 }].slice(0, is3D() ? 3 : 2)) { const q = P(e); blockDot(q.x, q.y - 4, 9); }
 
     const { a, b } = state;
     const g = geom();
@@ -187,21 +268,20 @@ import '../../../styles/vector-lab.css';
 
     // the line the shadow lives on
     scene.line(mul(g.ahat, -LIMIT * 1.5), mul(g.ahat, LIMIT * 1.5), inkA(0.14), 1, [5, 5]);
+    seg(mul(g.ahat, -LIMIT * 1.5), mul(g.ahat, LIMIT * 1.5));
 
-    // the rectangle: |a| by the shadow, hung on the far side from b, with the
-    // shadow named along its top and the product in the middle when there is room
-    if (Math.abs(s) > 1e-6 && g.lengthA > 1e-6) {
-      const down = mul(g.n, -g.lengthA);
-      scene.poly([O, g.foot, add(g.foot, down), down], rgba(SH, 0.12), rgba(SH, 0.45));
-      const roomy = Math.abs(s) > 0.6;
-      if (roomy && g.lengthA > 0.5)
-        scene.tag(`a · b = ${d.toFixed(2)}`, mul(add(g.foot, down), 0.5), 0, 4, SH, 13, 'center');
-      if (roomy && g.lengthA > 0.9)
-        scene.tag(`shadow ${s.toFixed(2)}`, add(mul(g.foot, 0.5), mul(g.n, -0.17)), 0, 4, SH, 12, 'center');
+    // the rectangle: |a| by the shadow, hung on the far side from b
+    const rect = Math.abs(s) > 1e-6 && g.lengthA > 1e-6;
+    const down = mul(g.n, -g.lengthA);
+    if (rect) {
+      const corners = [O, g.foot, add(g.foot, down), down];
+      scene.poly(corners, rgba(SH, 0.12), rgba(SH, 0.45));
+      blockPoly(corners.map(P));
     }
 
     // the perpendicular drop from b, with its right angle
     scene.line(b, g.foot, inkA(0.4), 1.4, [4, 4]);
+    seg(b, g.foot);
     if (Math.abs(s) > 0.12 && len(sub(b, g.foot)) > 0.12) {
       const q = 0.17;
       const c1 = add(g.foot, mul(g.ahat, s > 0 ? -q : q));
@@ -213,10 +293,10 @@ import '../../../styles/vector-lab.css';
     if (Math.abs(s) > 1e-6) scene.arrow(O, g.foot, SH, 6, 16);
     scene.arrow(O, a, COLOR.a);
     scene.arrow(O, b, COLOR.b);
-    scene.tag('a', mul(a, 1.1), 8, 6, COLOR.a, 16);
-    scene.tag('b', mul(b, 1.12), 8, 6, COLOR.b, 16);
+    for (const v of [a, b]) { seg(O, v); const t = P(v); blockDot(t.x, t.y, 8); }
 
     // the angle, as an arc at the origin: b = |b| (cos θ â + sin θ n)
+    let angleAt: Vec | null = null;
     if (g.angle !== null && g.lengthA > 0.3 && g.lengthB > 0.3) {
       const th = (g.angle * Math.PI) / 180;
       const arc = (r: number, t: number): Vec => mul(add(mul(g.ahat, Math.cos(t)), mul(g.n, Math.sin(t))), r);
@@ -224,11 +304,33 @@ import '../../../styles/vector-lab.css';
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let k = 0; k <= 24; k++) {
-        const p = scene.project(arc(0.42, (th * k) / 24));
+        const p = P(arc(0.42, (th * k) / 24));
         k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        if (k) { const q = P(arc(0.42, (th * (k - 1)) / 24)); blockLine(q.x, q.y, p.x, p.y); }
       }
       ctx.stroke();
-      scene.tag(degrees(g.angle), arc(0.74, th / 2), 0, 4, inkA(0.7), 12, 'center');
+      angleAt = arc(0.74, th / 2);
+    }
+
+    // names and numbers last, each in the first free spot near what it names
+    const ta = P(a), tb = P(b);
+    place('a', 16, COLOR.a, ta.x, ta.y, away(a), false, 6);
+    place('b', 16, COLOR.b, tb.x, tb.y, away(b), false, 6);
+    if (angleAt) { const p = P(angleAt); place(degrees(g.angle), 12, inkA(0.7), p.x, p.y, 0, true, 4); }
+    if (rect && Math.abs(s) > 0.3) {
+      // the shadow's length: inside the rectangle just under the shadow if it
+      // fits, otherwise just past the shadow's end, below the line of a
+      const text = `shadow ${s.toFixed(2)}`;
+      const m = P(add(mul(g.foot, 0.5), mul(g.n, -0.26)));
+      const f = P(g.foot), slant = P(add(g.foot, add(mul(g.ahat, s > 0 ? 0.3 : -0.3), mul(g.n, -0.3))));
+      place(text, 12, SH, m.x, m.y, 0, true, 4, true) ||
+        place(text, 12, SH, f.x, f.y, Math.atan2(slant.y - f.y, slant.x - f.x), false, 8);
+    }
+    if (rect && Math.abs(s) > 0.6 && g.lengthA > 0.5) {
+      // the product in the middle of the rectangle, or under its far side
+      const text = `a · b = ${d.toFixed(2)}`;
+      const c = P(mul(add(g.foot, down), 0.5)), e = P(add(mul(g.foot, 0.5), down)), out = P(add(mul(g.foot, 0.5), mul(down, 1.3)));
+      place(text, 13, SH, c.x, c.y, 0, true, 4, true) || place(text, 13, SH, e.x, e.y, Math.atan2(out.y - e.y, out.x - e.x), false, 8);
     }
   }
 
