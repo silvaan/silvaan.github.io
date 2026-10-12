@@ -1,0 +1,1419 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Matrix from '../../../components/sim/Matrix.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const A1 = '#7c8cff', A2 = '#5eead4', A3 = '#f472b6', B = '#fbbf24', P = '#34d399', E = '#f87171', CAND = '#a78bfa';
+---
+
+<SimLayout
+  areaSlug="linear-algebra"
+  title="Projections & Gram–Schmidt"
+  description="The closest point of a line or a plane to a vector is where the error meets it at a right angle. The same picture fits a line to data, and done one direction at a time it straightens any basis into an orthonormal one."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <div class="pj-wrap">
+          <canvas
+            id="pj"
+            class="pj-canvas"
+            width="760"
+            height="640"
+            role="img"
+            aria-label="A 3D scene. In the projection view: a vector b, a line or a translucent plane through the origin, the projection p of b onto it, the error e from p to b meeting the subspace at a right angle, and a draggable candidate point in the subspace. In the Gram–Schmidt view: three vectors turned step by step into an orthonormal frame q1, q2, q3."
+          ></canvas>
+          <canvas id="pj-card" class="pj-card" role="img" aria-label="Side card: in the projection view, the three components of b as data points with the fit p and the residuals e; in the Gram–Schmidt view, the matrix R filling with dot products so that A = QR."></canvas>
+        </div>
+      </div>
+      <Caption
+        legend={[
+          { label: 'b', color: B, id: 'lg-b' },
+          { label: 'a₁, q₁', color: A1, id: 'lg-a1' },
+          { label: 'a₂, q₂', color: A2, id: 'lg-a2' },
+          { label: 'a₃, q₃', color: A3, id: 'lg-a3' },
+          { label: 'p, the projection', color: P, id: 'lg-p' },
+          { label: 'e = b − p, the error', color: E, id: 'lg-e' },
+          { label: 'c, a candidate point', color: CAND, id: 'lg-c' },
+        ]}
+        hint="Drag to orbit · scroll to zoom · drag the arrow tips, or the candidate ring inside the subspace"
+      />
+      <Result label="Distance from b" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="view"
+        label="View"
+        attr="v"
+        options={[
+          { value: 'proj', label: 'Projection' },
+          { value: 'gs', label: 'Gram–Schmidt' },
+        ]}
+      />
+      <div id="pv-ctl">
+        <Seg
+          id="pex"
+          label="Project b onto"
+          attr="p"
+          options={[
+            { value: 'plane', label: 'A plane' },
+            { value: 'line', label: 'A line' },
+            { value: 'fit', label: 'Fit a line to 3 points' },
+            { value: 'mean', label: 'Fit a constant' },
+          ]}
+        />
+        <Matrix
+          label={`<span style="color:${B}">Vector b</span>`}
+          min={-3}
+          max={3}
+          step={0.01}
+          entries={[{ id: 'bx', label: 'x', value: 1 }, { id: 'by', label: 'y', value: 1.2 }, { id: 'bz', label: 'z', value: 2.6 }]}
+        />
+      </div>
+      <div id="gs-ctl" hidden>
+        <Seg
+          id="gex"
+          label="Starting vectors"
+          attr="g"
+          options={[
+            { value: 'skew', label: 'Skewed' },
+            { value: 'near', label: 'Nearly parallel' },
+            { value: 'flat', label: 'a₃ in the plane' },
+          ]}
+        />
+      </div>
+      <Matrix
+        label={`<span style="color:${A1}">a₁</span>`}
+        min={-3}
+        max={3}
+        step={0.01}
+        entries={[{ id: 'a1x', label: 'x', value: 2.2 }, { id: 'a1y', label: 'y', value: 0.6 }, { id: 'a1z', label: 'z', value: 0 }]}
+      />
+      <div id="a2-wrap">
+        <Matrix
+          label={`<span style="color:${A2}">a₂</span>`}
+          min={-3}
+          max={3}
+          step={0.01}
+          entries={[{ id: 'a2x', label: 'x', value: 0.4 }, { id: 'a2y', label: 'y', value: 2 }, { id: 'a2z', label: 'z', value: 0.5 }]}
+        />
+      </div>
+      <div id="a3-wrap" hidden>
+        <Matrix
+          label={`<span style="color:${A3}">a₃</span>`}
+          min={-3}
+          max={3}
+          step={0.01}
+          entries={[{ id: 'a3x', label: 'x', value: 0.9 }, { id: 'a3y', label: 'y', value: 0.8 }, { id: 'a3z', label: 'z', value: 2 }]}
+        />
+      </div>
+      <Transport step>
+        <button type="button" class="btn ghost" id="snap">Snap c to p</button>
+      </Transport>
+      <Checks items={[{ id: 'spin', label: 'Spin the scene' }]} />
+      <div id="pv-read">
+        <Readout
+          title="Values"
+          rows={[
+            { id: 'r-xhat', label: 'x̂ = (AᵀA)⁻¹Aᵀb' },
+            { id: 'r-p', label: 'p = Ax̂' },
+            { id: 'r-e', label: 'e = b − p' },
+            { id: 'r-ate', label: 'Aᵀe' },
+            { id: 'r-pyth', label: '|e|² + |p − c|²' },
+            { id: 'r-bc', label: '|b − c|²' },
+          ]}
+        />
+      </div>
+      <div id="gs-read" hidden>
+        <Readout
+          title="Values"
+          rows={[
+            { id: 'r-q12', label: 'q₁ · q₂' },
+            { id: 'r-q13', label: 'q₁ · q₃' },
+            { id: 'r-q23', label: 'q₂ · q₃' },
+            { id: 'r-qn', label: '|q₁|, |q₂|, |q₃|' },
+            { id: 'r-qr', label: 'largest entry of A − QR' },
+          ]}
+        />
+      </div>
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Press <b>Run</b>: the candidate c sweeps through the plane and its distance to b dips to
+      its lowest exactly as it passes p. There b, p, c form a right triangle, so
+      |b − c|² = |e|² + |p − c|². <Try id="sweep" label="Sweep" />
+    </li>
+    <li>
+      <b>Least squares</b> is the same picture. With columns (1, 1, 1) and the times t, the
+      plane holds every straight line, b holds the data, p the fitted values and e the
+      residuals; Aᵀe = 0 are the normal equations. The
+      <a href="/simulations/machine-learning/linear-models">linear models</a> page fits lines
+      this way. <Try id="fit" />
+    </li>
+    <li>
+      Run <b>Gram–Schmidt</b>: each vector loses its shadow on the q's already made, and what
+      is left is normalised. Every shadow length and leftover length lands in R, so A = QR.
+      <Try id="gs" label="Run" />
+    </li>
+    <li>
+      Put <b>a₃ in the plane</b> of a₁ and a₂: once its two shadows are taken away nothing is
+      left, r₃₃ = 0, and there is no third direction to find. <Try id="flat" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { equation, type Part } from '../../../lib/equation';
+  import { el, segmented, transport, check, result, readout, tries, matrix } from '../../../lib/panel';
+  import { Camera3D, orbitControls, V } from '../../../lib/scene3d';
+  import type { Vec, Projected } from '../../../lib/scene3d';
+
+  // ---------------------------------------------------------------------------
+  // Two views of one idea. Projection: the point of a subspace closest to b is
+  // p = A(AᵀA)⁻¹Aᵀb, and the error e = b − p is perpendicular to every column
+  // (Aᵀe = 0). Gram–Schmidt: take that projection away one direction at a time
+  // and a basis becomes orthonormal, with the removed pieces filling R.
+  // Maths coordinates have z up; the camera's world has y up, so they swap.
+  // ---------------------------------------------------------------------------
+
+  type Key = 'bx' | 'by' | 'bz' | 'a1x' | 'a1y' | 'a1z' | 'a2x' | 'a2y' | 'a2z' | 'a3x' | 'a3y' | 'a3z';
+  type VName = 'b' | 'a1' | 'a2' | 'a3';
+  const KEYS: Key[] = ['bx', 'by', 'bz', 'a1x', 'a1y', 'a1z', 'a2x', 'a2y', 'a2z', 'a3x', 'a3y', 'a3z'];
+  const M = {} as Record<Key, number>;
+  for (const k of KEYS) M[k] = +(el(k) as HTMLInputElement).value;
+  const LIM = 3;
+  const clampC = (v: number) => Math.max(-LIM, Math.min(LIM, v));
+  const vec = (n: VName): Vec => ({ x: M[`${n}x` as Key], y: M[`${n}y` as Key], z: M[`${n}z` as Key] });
+  const putVec = (n: VName, v: Vec) => {
+    M[`${n}x` as Key] = clampC(v.x);
+    M[`${n}y` as Key] = clampC(v.y);
+    M[`${n}z` as Key] = clampC(v.z);
+  };
+  const O: Vec = V.zero();
+
+  const PROJ_PRESETS: Record<string, { sub: 'line' | 'plane'; b: Vec; a1: Vec; a2?: Vec }> = {
+    plane: { sub: 'plane', b: { x: 1, y: 1.2, z: 2.6 }, a1: { x: 2.2, y: 0.6, z: 0 }, a2: { x: 0.4, y: 2, z: 0.5 } },
+    line: { sub: 'line', b: { x: 0.6, y: 2.2, z: 2 }, a1: { x: 2.4, y: 1, z: 0.6 } },
+    fit: { sub: 'plane', b: { x: 0.4, y: 2.2, z: 1.6 }, a1: { x: 1, y: 1, z: 1 }, a2: { x: -1.5, y: 0, z: 1.5 } },
+    mean: { sub: 'line', b: { x: 0.5, y: 2.4, z: 1.3 }, a1: { x: 1, y: 1, z: 1 } },
+  };
+  const GS_PRESETS: Record<string, [Vec, Vec, Vec]> = {
+    skew: [{ x: 2.2, y: 0.4, z: 0.2 }, { x: 1.4, y: 1.8, z: 0.3 }, { x: 0.9, y: 0.8, z: 2 }],
+    near: [{ x: 2, y: 0.8, z: 0.3 }, { x: 2.1, y: 1.1, z: 0.7 }, { x: 0.4, y: 1.2, z: 1.8 }],
+    // a₃ = ½a₁ + ½a₂ exactly
+    flat: [{ x: 2, y: 0.5, z: 0 }, { x: 0.5, y: 1.5, z: 1 }, { x: 1.25, y: 1, z: 0.5 }],
+  };
+
+  const S = {
+    view: 'proj' as 'proj' | 'gs',
+    sub: 'plane' as 'line' | 'plane',
+    cand: { x: 0, y: 0, z: 0 } as Vec,
+    sweeping: false,
+    sweepT: 0,
+    spin: false,
+    L: 0, // Gram–Schmidt progress, 0..6 stages
+    target: 0,
+    dwell: 0,
+  };
+
+  // --- canvas, camera, theme --------------------------------------------------
+
+  const canvas = el('pj') as HTMLCanvasElement;
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d')!;
+  const applyDpr = () => {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  applyDpr();
+  document.addEventListener('fullscreenchange', () => { applyDpr(); dirty = true; });
+
+  const HOME = { yaw: 0.62, pitch: -0.42, zoom: 1.02 };
+  const cam = new Camera3D(W, H, { dist: 9, ...HOME });
+  const CEN: Vec = { x: 0.7, y: 0.7, z: 0.9 }; // the point the camera orbits, in maths coordinates (set per preset)
+
+  const DARK = { a1: '#7c8cff', a2: '#5eead4', a3: '#f472b6', b: '#fbbf24', p: '#34d399', e: '#f87171', c: '#a78bfa' };
+  const LIGHT = { a1: '#4f5bd5', a2: '#0d9488', a3: '#db2777', b: '#d97706', p: '#059669', e: '#dc2626', c: '#7c3aed' };
+  let C = DARK;
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  let ink = '232,233,236', light = false, bgCol = '#0d0e12';
+  const readTheme = () => {
+    ink = css('--stage-ink') || '232,233,236';
+    light = css('--stage-light') === '1';
+    bgCol = css('--stage-bg') || '#0d0e12';
+    C = light ? LIGHT : DARK;
+  };
+  readTheme();
+  const inkA = (a: number) => `rgba(${ink},${a})`;
+  const rgbOf = (hex: string) => {
+    const h = hex.replace('#', '');
+    return `${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)}`;
+  };
+  const tint = (hex: string, a: number) => `rgba(${rgbOf(hex)},${a})`;
+  /** text and strokes grow a little when the canvas is shown small */
+  let fk = 1;
+  const measureFk = () => { fk = Math.max(1, Math.min(2, (W / (canvas.clientWidth || W)) * 0.9)); };
+
+  const Wd = (p: Vec): Vec => ({ x: p.x - CEN.x, y: p.z - CEN.z, z: p.y - CEN.y });
+  const toMath = (w: Vec): Vec => ({ x: w.x + CEN.x, y: w.z + CEN.y, z: w.y + CEN.z });
+  const dirW = (d: Vec): Vec => ({ x: d.x, y: d.z, z: d.y });
+  const dirM = dirW; // the swap is its own inverse
+  const pr = (p: Vec) => cam.project(Wd(p));
+
+  // --- the maths ---------------------------------------------------------------
+
+  type Proj = {
+    b: Vec; a1: Vec; a2: Vec; p: Vec; e: Vec; xhat: number[]; ate: number[];
+    rank: number; deficient: boolean; u1: Vec; u2: Vec; n: Vec;
+  };
+
+  function projection(): Proj {
+    const b = vec('b'), a1 = vec('a1'), a2 = vec('a2');
+    let rank = S.sub === 'line' ? 1 : 2, deficient = false;
+    let p = O, xhat: number[] = [0];
+    const g11 = V.dot(a1, a1), g12 = V.dot(a1, a2), g22 = V.dot(a2, a2);
+    const det = g11 * g22 - g12 * g12;
+    if (rank === 2 && det < 1e-6 * (g11 * g22 + 1e-9)) { rank = 1; deficient = true; }
+    let line = a1;
+    if (rank === 1 && S.sub === 'plane' && g11 < 1e-9) line = a2;
+    if (rank === 2) {
+      const r1 = V.dot(a1, b), r2 = V.dot(a2, b);
+      xhat = [(g22 * r1 - g12 * r2) / det, (g11 * r2 - g12 * r1) / det];
+      p = V.add(V.mul(a1, xhat[0]), V.mul(a2, xhat[1]));
+    } else {
+      const aa = V.dot(line, line);
+      const t = aa < 1e-9 ? 0 : V.dot(line, b) / aa;
+      xhat = S.sub === 'line' ? [t] : line === a1 ? [t, 0] : [0, t];
+      p = V.mul(line, t);
+    }
+    const e = V.sub(b, p);
+    const ate = (S.sub === 'line' ? [a1] : [a1, a2]).map((c) => V.dot(c, e));
+    const u1 = V.unit(V.norm(line) > 1e-9 ? line : { x: 1, y: 0, z: 0 });
+    let u2 = V.sub(a2, V.mul(u1, V.dot(a2, u1)));
+    u2 = V.norm(u2) > 1e-6 ? V.unit(u2) : V.unit(V.cross(u1, Math.abs(u1.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 }));
+    const n = V.unit(V.cross(u1, u2));
+    return { b, a1, a2, p, e, xhat, ate, rank, deficient, u1, u2, n };
+  }
+
+  /** Half the side of the drawn sheet: room for the columns and a sweep around p. */
+  function sheetHalf(R: Proj) {
+    let m = 0;
+    for (const v of [R.a1, R.a2]) m = Math.max(m, Math.abs(V.dot(v, R.u1)) + 0.7, Math.abs(V.dot(v, R.u2)) + 0.7);
+    m = Math.max(m, Math.abs(V.dot(R.p, R.u1)) + 1.9, Math.abs(V.dot(R.p, R.u2)) + 1.9);
+    return Math.max(1.6, Math.min(3.4, Math.ceil(m * 2) / 2));
+  }
+
+  /** The subspace's own copy of a point: its projection, kept inside the drawn sheet. */
+  function intoSubspace(c: Vec, R: Proj): Vec {
+    const h = R.rank === 2 ? sheetHalf(R) : 3.6;
+    const s = Math.max(-h, Math.min(h, V.dot(c, R.u1)));
+    if (R.rank === 1) return V.mul(R.u1, s);
+    const t = Math.max(-h, Math.min(h, V.dot(c, R.u2)));
+    return V.add(V.mul(R.u1, s), V.mul(R.u2, t));
+  }
+
+  type GS = { a: Vec[]; q: (Vec | null)[]; v: Vec[]; w3: Vec; r: number[][] };
+  function gramSchmidt(): GS {
+    const a = [vec('a1'), vec('a2'), vec('a3')];
+    const q: (Vec | null)[] = [null, null, null];
+    const v: Vec[] = [O, O, O];
+    const r = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    let w3 = a[2];
+    for (let k = 0; k < 3; k++) {
+      let rest = a[k];
+      for (let j = 0; j < k; j++) {
+        const qj = q[j];
+        if (!qj) continue;
+        r[j][k] = V.dot(qj, a[k]);
+        rest = V.sub(rest, V.mul(qj, r[j][k]));
+        if (k === 2 && j === 0) w3 = rest;
+      }
+      v[k] = rest;
+      r[k][k] = V.norm(rest);
+      q[k] = r[k][k] > 1e-6 ? V.mul(rest, 1 / r[k][k]) : null;
+    }
+    if (!q[0]) w3 = a[2];
+    return { a, q, v, w3, r };
+  }
+
+  // --- drawing primitives --------------------------------------------------------
+
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  let obst: { x: number; y: number }[] = [];
+  let boxes: Box[] = [];
+  type Lab = { text: string; at: Vec; col: string; prio: number; size: number };
+  let queue: Lab[] = [];
+
+  function markSeg(a: Projected, b: Projected) {
+    const n = Math.max(1, Math.ceil(Math.hypot(b.sx - a.sx, b.sy - a.sy) / 7));
+    for (let i = 0; i <= n; i++) obst.push({ x: a.sx + ((b.sx - a.sx) * i) / n, y: a.sy + ((b.sy - a.sy) * i) / n });
+  }
+
+  function seg(p: Vec, q: Vec, col: string, w = 1.2, dash: number[] = [], mark = false) {
+    const a = pr(p), b = pr(q);
+    if (a.zc < 0.2 || b.zc < 0.2) return;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = w * fk;
+    ctx.setLineDash(dash.map((d) => d * fk));
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (mark) markSeg(a, b);
+  }
+
+  function arrow(from: Vec, to: Vec, col: string, o: { w?: number; dash?: number[]; alpha?: number; head?: number } = {}) {
+    const a = pr(from), b = pr(to);
+    if (a.zc < 0.2 || b.zc < 0.2) return;
+    const dx = b.sx - a.sx, dy = b.sy - a.sy, len = Math.hypot(dx, dy);
+    if (len < 1.5) return;
+    const ux = dx / len, uy = dy / len;
+    const head = Math.min(len * 0.5, (o.head ?? 14) * fk);
+    const depth = cam.fog((a.zc + b.zc) / 2, 3.4);
+    ctx.globalAlpha = (o.alpha ?? 1) * (0.55 + 0.45 * depth);
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = (o.w ?? 3) * fk;
+    ctx.setLineDash((o.dash ?? []).map((d) => d * fk));
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx - ux * head * 0.8, b.sy - uy * head * 0.8);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(b.sx, b.sy);
+    ctx.lineTo(b.sx - ux * head - uy * head * 0.42, b.sy - uy * head + ux * head * 0.42);
+    ctx.lineTo(b.sx - ux * head + uy * head * 0.42, b.sy - uy * head - ux * head * 0.42);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    markSeg(a, b);
+  }
+
+  function dot(p: Vec, col: string, r = 4, ring = false) {
+    const a = pr(p);
+    ctx.beginPath();
+    ctx.arc(a.sx, a.sy, r * fk, 0, Math.PI * 2);
+    if (ring) {
+      ctx.fillStyle = tint(col, 0.22);
+      ctx.fill();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.2 * fk;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = col;
+      ctx.fill();
+    }
+    obst.push({ x: a.sx, y: a.sy });
+    if (r > 4) for (let i = 0; i < 8; i++) obst.push({ x: a.sx + Math.cos(i * 0.785) * r * fk, y: a.sy + Math.sin(i * 0.785) * r * fk });
+  }
+
+  /** A small square in the corner where directions d1 and d2 meet at `at`. */
+  function rightMark(at: Vec, d1: Vec, d2: Vec, col: string, s = 0.26) {
+    const u = V.mul(V.unit(d1), s), w = V.mul(V.unit(d2), s);
+    const p1 = pr(V.add(at, u)), p2 = pr(V.add(V.add(at, u), w)), p3 = pr(V.add(at, w));
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.6 * fk;
+    ctx.beginPath();
+    ctx.moveTo(p1.sx, p1.sy);
+    ctx.lineTo(p2.sx, p2.sy);
+    ctx.lineTo(p3.sx, p3.sy);
+    ctx.stroke();
+  }
+
+  /** A translucent square sheet spanned by orthonormal u1, u2 through the origin. */
+  function sheet(u1: Vec, u2: Vec, half: number, col: string, alpha: number) {
+    const at = (s: number, t: number) => pr(V.add(V.mul(u1, s), V.mul(u2, t)));
+    const cs = [at(-half, -half), at(half, -half), at(half, half), at(-half, half)];
+    ctx.fillStyle = tint(col, (light ? 0.1 : 0.09) * alpha);
+    ctx.beginPath();
+    cs.forEach((c, i) => (i ? ctx.lineTo(c.sx, c.sy) : ctx.moveTo(c.sx, c.sy)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = tint(col, 0.45 * alpha);
+    ctx.lineWidth = 1.2 * fk;
+    ctx.stroke();
+    ctx.strokeStyle = tint(col, (light ? 0.2 : 0.16) * alpha);
+    ctx.lineWidth = 1;
+    for (let i = -Math.floor(half); i <= Math.floor(half); i++) {
+      for (const [p, q] of [[at(i, -half), at(i, half)], [at(-half, i), at(half, i)]]) {
+        ctx.beginPath();
+        ctx.moveTo(p.sx, p.sy);
+        ctx.lineTo(q.sx, q.sy);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function label(text: string, at: Vec, col: string, prio = 1, size = 14) {
+    queue.push({ text, at, col, prio, size });
+  }
+
+  const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+
+  /** Place the queued labels beside their anchors, clear of arrows and of each other. */
+  function flushLabels() {
+    const o = pr(O);
+    queue.sort((a, b) => b.prio - a.prio);
+    for (const L of queue) {
+      const size = L.size * fk;
+      ctx.font = `600 ${size}px 'JetBrains Mono', ui-monospace, monospace`;
+      const w = ctx.measureText(L.text).width, h = size * 0.9;
+      const a = pr(L.at);
+      const pref = Math.atan2(a.sy - o.sy, a.sx - o.sx);
+      const angs: number[] = [];
+      for (let i = 0; i < 12; i++) angs.push(pref + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 6));
+      let best: Box | null = null, bestCost = Infinity;
+      for (const r of [8, 14, 22, 32, 46, 62]) {
+        for (const g of angs) {
+          const cx = a.sx + Math.cos(g) * (r * fk + w / 2), cy = a.sy + Math.sin(g) * (r * fk + h / 2);
+          const bx: Box = { x0: cx - w / 2 - 2, y0: cy - h / 2 - 2, x1: cx + w / 2 + 2, y1: cy + h / 2 + 2 };
+          let cost = 0;
+          if (bx.x0 < 4 || bx.y0 < 4 || bx.x1 > W - 4 || bx.y1 > H - 4) cost += 100;
+          for (const b of boxes) if (overlaps(bx, b)) cost += 50;
+          for (const p of obst) if (p.x > bx.x0 && p.x < bx.x1 && p.y > bx.y0 && p.y < bx.y1) cost += 4;
+          cost += r * 0.05;
+          if (cost < bestCost) { bestCost = cost; best = bx; }
+          if (cost < 4) break;
+        }
+        if (bestCost < 4) break;
+      }
+      const bx = best!;
+      boxes.push(bx);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const cx = (bx.x0 + bx.x1) / 2, cy = (bx.y0 + bx.y1) / 2 + 1;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = bgCol;
+      ctx.lineWidth = 4;
+      ctx.strokeText(L.text, cx, cy);
+      ctx.fillStyle = L.col;
+      ctx.fillText(L.text, cx, cy);
+    }
+    queue = [];
+  }
+
+  function axes() {
+    const ax: [Vec, string][] = [[{ x: 1, y: 0, z: 0 }, 'x'], [{ x: 0, y: 1, z: 0 }, 'y'], [{ x: 0, y: 0, z: 1 }, 'z']];
+    for (const [d, n] of ax) {
+      seg(V.mul(d, -LIM), V.mul(d, LIM), inkA(light ? 0.22 : 0.18), 1);
+      const t = pr(V.mul(d, LIM + 0.25));
+      ctx.font = `500 ${11 * fk}px 'JetBrains Mono', ui-monospace, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const bx = { x0: t.sx - 6 * fk, y0: t.sy - 7 * fk, x1: t.sx + 6 * fk, y1: t.sy + 7 * fk };
+      if (boxes.some((b) => overlaps(b, bx))) continue;
+      ctx.fillStyle = inkA(0.4);
+      ctx.fillText(n, t.sx, t.sy);
+      boxes.push(bx);
+    }
+    dot(O, inkA(0.5), 2.2);
+  }
+
+  /** A small axis gizmo in maths orientation, z up. */
+  function gizmo() {
+    const ox = 40 * fk, oy = H - 40 * fk, len = 22 * fk;
+    const ax = [
+      { v: { x: 1, y: 0, z: 0 }, l: 'x' },
+      { v: { x: 0, y: 1, z: 0 }, l: 'y' },
+      { v: { x: 0, y: 0, z: 1 }, l: 'z' },
+    ].map((a) => {
+      const c = cam.toCam(dirW(a.v));
+      return { ex: ox + c.x * len, ey: oy - c.y * len, d: c.z, l: a.l };
+    }).sort((a, b) => b.d - a.d);
+    ctx.lineWidth = 1.5 * fk;
+    ctx.font = `600 ${10 * fk}px 'JetBrains Mono', monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const a of ax) {
+      ctx.strokeStyle = inkA(0.5);
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(a.ex, a.ey);
+      ctx.stroke();
+      ctx.fillStyle = inkA(0.7);
+      ctx.fillText(a.l, ox + (a.ex - ox) * 1.4, oy + (a.ey - oy) * 1.4);
+    }
+    boxes.push({ x0: ox - len * 1.6, y0: oy - len * 1.6, x1: ox + len * 1.6, y1: oy + len * 1.6 });
+  }
+
+  /** Is p on the far side of the plane (through the origin, normal n) from the eye? */
+  const farSide = (p: Vec, n: Vec) => V.dot(p, n) * V.dot(toMath(cam.eye()), n) < 0;
+
+  // --- projection view -------------------------------------------------------------
+
+  let trace: number[] = [];
+  let traceKey = '';
+  const atP = (R: Proj) => V.norm(V.sub(S.cand, R.p)) < 0.03;
+
+  function drawProj(R: Proj) {
+    const { b, a1, a2, p, e } = R;
+    const c = S.cand;
+    const plane = S.sub === 'plane' && R.rank === 2;
+    const onP = atP(R);
+
+    const offPlane = () => {
+      if (!onP) seg(c, b, C.c, 1.8, [6, 5], true);
+      arrow(O, b, C.b, { w: 3.2 });
+      if (V.norm(e) > 0.02) {
+        arrow(p, b, C.e, { w: 2.8, head: 12 });
+        const tang = !onP && V.norm(V.sub(c, p)) > 0.15 ? V.sub(c, p) : R.u1;
+        rightMark(p, e, tang, inkA(0.8), Math.min(0.26, V.norm(e) * 0.4));
+        label('e', V.mix(p, b, 0.5), C.e, 3);
+      }
+      label('b', b, C.b, 5);
+    };
+    const inPlane = () => {
+      arrow(O, a1, C.a1, { w: 2.8 });
+      if (S.sub === 'plane') arrow(O, a2, C.a2, { w: 2.8 });
+      if (!onP) seg(p, c, inkA(0.45), 1.3, [3, 4], true);
+      arrow(O, p, C.p, { w: 3 });
+      dot(p, C.p, 3.5);
+      dot(c, C.c, 7, true);
+      label('a₁', a1, C.a1, 2);
+      if (S.sub === 'plane') label('a₂', a2, C.a2, 2);
+      label('p', p, C.p, 4);
+      if (!onP) label('c', c, C.c, 3);
+    };
+
+    if (plane) {
+      const far = farSide(b, R.n);
+      if (far) offPlane();
+      sheet(R.u1, R.u2, sheetHalf(R), C.a1, 1);
+      inPlane();
+      if (!far) offPlane();
+    } else {
+      seg(V.mul(R.u1, -4), V.mul(R.u1, 4), tint(C.a1, 0.4), 2.2);
+      inPlane();
+      offPlane();
+    }
+    if (R.deficient) label('a₁ ∥ a₂: only a line', V.mul(R.u1, -2.6), inkA(0.7), 0, 12);
+    gauge(R);
+  }
+
+  /** |b − c| over the last few seconds, with |e| as the floor it cannot go below. */
+  function gaugeRect() {
+    const g = Math.min(fk, 1.35);
+    const gw = 190 * g, gh = 58 * g;
+    return { g, gw, gh, x0: W - gw - 14, y0: H - gh - 14 };
+  }
+  function gauge(R: Proj) {
+    const { g, gw, gh, x0, y0 } = gaugeRect();
+    const en = V.norm(R.e);
+    const top = Math.max(en * 1.6, ...trace, en + 1) * 1.05;
+    const Y = (d: number) => y0 + gh - (d / top) * gh;
+    ctx.fillStyle = bgCol;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(x0 - 6, y0 - 20 * g, gw + 12, gh + 26 * g);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = inkA(light ? 0.035 : 0.05);
+    ctx.fillRect(x0, y0, gw, gh);
+    ctx.font = `500 ${10.5 * g}px 'JetBrains Mono', ui-monospace, monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = inkA(0.6);
+    ctx.fillText('|b − c| over time', x0, y0 - 6 * g);
+    ctx.strokeStyle = C.e;
+    ctx.lineWidth = 1.4 * fk;
+    ctx.setLineDash([4 * fk, 3 * fk]);
+    ctx.beginPath();
+    ctx.moveTo(x0, Y(en));
+    ctx.lineTo(x0 + gw, Y(en));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = C.e;
+    ctx.textAlign = 'right';
+    ctx.fillText('|e|', x0 + gw - 3, Y(en) + 13 * fk > y0 + gh ? Y(en) - 4 * fk : Y(en) + 12 * fk);
+    if (trace.length > 1) {
+      ctx.strokeStyle = C.c;
+      ctx.lineWidth = 2 * fk;
+      ctx.beginPath();
+      trace.forEach((d, i) => {
+        const x = x0 + gw - ((trace.length - 1 - i) / 239) * gw;
+        i ? ctx.lineTo(x, Y(d)) : ctx.moveTo(x, Y(d));
+      });
+      ctx.stroke();
+    }
+    const last = trace[trace.length - 1] ?? V.norm(V.sub(R.b, S.cand));
+    ctx.fillStyle = C.c;
+    ctx.beginPath();
+    ctx.arc(x0 + gw, Y(last), 3.2 * fk, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // --- Gram–Schmidt view -------------------------------------------------------------
+
+  const ease = (t: number) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+  const SUB = ['₁', '₂', '₃'];
+
+  function drawGS(G: GS) {
+    const L = S.L;
+    const cols = [C.a1, C.a2, C.a3];
+    const stageT = (s: number) => Math.max(0, Math.min(1, L - (s - 1))); // progress of stage s (1..6)
+    const [q1, q2] = G.q;
+
+    // the current arrow of vector k, given how far its stages have gone
+    // vector 1: stage 1 normalises. vector 2: stage 2 subtracts, 3 normalises.
+    // vector 3: stage 4 subtracts the q₁ shadow, 5 the q₂ shadow, 6 normalises.
+    const ghost = (k: number) => arrow(O, G.a[k], cols[k], { w: 1.6, dash: [5, 5], alpha: 0.45, head: 10 });
+
+    const plane12 = q1 && q2;
+    const sheetA = plane12 ? ease((L - 3) / 0.6) : 0;
+    const far = plane12 ? farSide(G.a[2], V.unit(V.cross(q1!, q2!))) : false;
+
+    const inPlane = () => {
+      // vector 1
+      const t1 = ease(stageT(1));
+      if (q1) {
+        if (t1 > 0) ghost(0);
+        const len = G.r[0][0] + (1 - G.r[0][0]) * t1;
+        arrow(O, V.mul(q1, len), cols[0], { w: t1 >= 1 ? 3.6 : 3 });
+        label(t1 >= 1 ? 'q₁' : 'a₁', V.mul(q1, len), cols[0], 5);
+      } else {
+        dot(O, cols[0], 6, true);
+        label('a₁ = 0', O, cols[0], 5);
+      }
+      // vector 2
+      const s2 = stageT(2), t2 = ease(stageT(3));
+      const sh2 = q1 ? V.mul(q1, G.r[0][1]) : O;
+      if (s2 > 0 && L <= 2 && q1) {
+        // the shadow of a₂ on q₁, and the drop to it
+        const fa = ease(s2 * 2.2);
+        seg(G.a[1], sh2, inkA(0.5 * fa), 1.3, [3, 4]);
+        arrow(O, sh2, cols[0], { w: 6, alpha: 0.3 * fa, head: 0.01 });
+        label(`r₁₂q₁ = ${G.r[0][1].toFixed(2)} q₁`, sh2, cols[0], 3, 12);
+      }
+      const slide = ease(s2 * 1.6 - 0.6);
+      let tip2 = V.sub(G.a[1], V.mul(sh2, slide));
+      if (slide > 0) {
+        ghost(1);
+        if (L < 6) arrow(tip2, G.a[1], cols[0], { w: 2, dash: [4, 4], alpha: L <= 2 ? 0.95 : 0.35, head: 10 });
+      }
+      if (G.q[1]) {
+        const len = V.norm(tip2) + (1 - V.norm(tip2)) * t2;
+        tip2 = V.mul(V.unit(tip2), len);
+        arrow(O, tip2, cols[1], { w: t2 >= 1 ? 3.6 : 3 });
+        label(t2 >= 1 ? 'q₂' : slide >= 1 ? 'v₂' : 'a₂', tip2, cols[1], 5);
+        if (slide >= 1 && q1) rightMark(O, q1, tip2, inkA(0.75), 0.24);
+      } else if (slide >= 1) {
+        dot(O, cols[1], 6, true);
+        label('v₂ = 0', O, cols[1], 5);
+      } else {
+        arrow(O, tip2, cols[1], { w: 3 });
+        label('a₂', tip2, cols[1], 5);
+      }
+    };
+
+    const offPlane = () => {
+      // vector 3: two shadows, then normalise
+      const s4 = stageT(4), s5 = stageT(5), t6 = ease(stageT(6));
+      const sh31 = q1 ? V.mul(q1, G.r[0][2]) : O;
+      const sh32 = q2 ? V.mul(q2, G.r[1][2]) : O;
+      if (s4 > 0 && L <= 4 && q1) {
+        const fa = ease(s4 * 2.2);
+        seg(G.a[2], sh31, inkA(0.5 * fa), 1.3, [3, 4]);
+        arrow(O, sh31, cols[0], { w: 6, alpha: 0.3 * fa, head: 0.01 });
+        label(`r₁₃q₁ = ${G.r[0][2].toFixed(2)} q₁`, sh31, cols[0], 3, 12);
+      }
+      if (s5 > 0 && L <= 5 && q2) {
+        const fa = ease(s5 * 2.2);
+        seg(G.w3, sh32, inkA(0.5 * fa), 1.3, [3, 4]);
+        arrow(O, sh32, cols[1], { w: 6, alpha: 0.3 * fa, head: 0.01 });
+        label(`r₂₃q₂ = ${G.r[1][2].toFixed(2)} q₂`, sh32, cols[1], 3, 12);
+      }
+      const sl1 = ease(s4 * 1.6 - 0.6), sl2 = ease(s5 * 1.6 - 0.6);
+      const mid = V.sub(G.a[2], V.mul(sh31, sl1));
+      let tip3 = V.sub(mid, V.mul(sh32, sl2));
+      if (sl1 > 0) {
+        ghost(2);
+        if (L < 6) arrow(mid, G.a[2], cols[0], { w: 2, dash: [4, 4], alpha: L <= 4 ? 0.95 : 0.35, head: 10 });
+      }
+      if (sl2 > 0 && L < 6) arrow(tip3, mid, cols[1], { w: 2, dash: [4, 4], alpha: L <= 5 ? 0.95 : 0.35, head: 10 });
+      const name = sl1 <= 0 ? 'a₃' : 'v₃';
+      if (G.q[2]) {
+        const len = V.norm(tip3) + (1 - V.norm(tip3)) * t6;
+        tip3 = V.mul(V.unit(tip3), len);
+        arrow(O, tip3, cols[2], { w: t6 >= 1 ? 3.6 : 3 });
+        label(t6 >= 1 ? 'q₃' : name, tip3, cols[2], 5);
+        if (sl2 >= 1 && q1 && q2) {
+          rightMark(O, q1, tip3, inkA(0.75), 0.24);
+          rightMark(O, q2, tip3, inkA(0.75), 0.24);
+        }
+      } else if (sl2 >= 1 || (sl1 >= 1 && !q2)) {
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
+        dot(O, cols[2], 7 + 3 * pulse, true);
+        label('v₃ = 0: nothing left', O, cols[2], 6, 13);
+      } else {
+        arrow(O, tip3, cols[2], { w: 3 });
+        label(name, tip3, cols[2], 5);
+      }
+    };
+
+    if (sheetA > 0 && !far) sheet(q1!, q2!, 2.6, C.a1, sheetA * 0.9);
+    if (far) offPlane();
+    if (sheetA > 0 && far) sheet(q1!, q2!, 2.6, C.a1, sheetA * 0.9);
+    inPlane();
+    if (!far) offPlane();
+  }
+
+  // --- the side card ------------------------------------------------------------------
+
+  const card = el('pj-card') as HTMLCanvasElement;
+  const cctx = card.getContext('2d')!;
+  function cardSetup() {
+    const rect = card.getBoundingClientRect();
+    const cw = Math.max(120, Math.round(rect.width)), ch = Math.max(120, Math.round(rect.height));
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (card.width !== Math.round(cw * dpr) || card.height !== Math.round(ch * dpr)) {
+      card.width = Math.round(cw * dpr);
+      card.height = Math.round(ch * dpr);
+    }
+    cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cctx.clearRect(0, 0, cw, ch);
+    return { cw, ch };
+  }
+  const ctxt = (s: string, x: number, y: number, col: string, size = 12, align: CanvasTextAlign = 'left', weight = 500) => {
+    cctx.font = `${weight} ${size}px 'JetBrains Mono', ui-monospace, monospace`;
+    cctx.textAlign = align;
+    cctx.textBaseline = 'alphabetic';
+    cctx.fillStyle = col;
+    cctx.fillText(s, x, y);
+  };
+  /** fixed digits, with a rounding-level negative printed as plain 0 */
+  const fz = (v: number, d: number) => (Math.abs(v) < 0.5 * 10 ** -d ? (0).toFixed(d) : v.toFixed(d));
+  const isOnes = (v: Vec) => Math.abs(v.x - 1) < 0.02 && Math.abs(v.y - 1) < 0.02 && Math.abs(v.z - 1) < 0.02;
+
+  /** b as three data points, p as the fitted values, e as the residuals. */
+  function cardProj(R: Proj) {
+    const { cw, ch } = cardSetup();
+    const ones = isOnes(R.a1);
+    const lineFit = ones && S.sub === 'plane' && R.rank === 2;
+    const constFit = ones && S.sub === 'line';
+    const ts = lineFit ? [R.a2.x, R.a2.y, R.a2.z] : [1, 2, 3];
+    const bs = [R.b.x, R.b.y, R.b.z], ps = [R.p.x, R.p.y, R.p.z];
+    ctxt('least squares', 14, 22, inkA(0.85), 12, 'left', 600);
+    ctxt(lineFit ? 'fit C + D t, data b' : constFit ? 'fit a constant, data b' : 'b as data, p as fit', 14, 39, inkA(0.55), 11);
+
+    const wide = cw > ch * 1.5;
+    const px = 30, py = 54, pw = (wide ? cw * 0.58 : cw) - px - 14, ph = (wide ? ch : ch * 0.62) - py - 26;
+    let t0 = Math.min(...ts), t1 = Math.max(...ts);
+    if (t1 - t0 < 1e-6) { t0 -= 1; t1 += 1; }
+    const padT = 0.18 * (t1 - t0);
+    t0 -= padT; t1 += padT;
+    let y0 = Math.min(0, ...bs, ...ps), y1 = Math.max(0, ...bs, ...ps);
+    const padY = 0.15 * (y1 - y0 || 1);
+    y0 -= padY; y1 += padY;
+    const X = (t: number) => px + ((t - t0) / (t1 - t0)) * pw;
+    const Y = (y: number) => py + ph - ((y - y0) / (y1 - y0)) * ph;
+    cctx.strokeStyle = inkA(0.25);
+    cctx.lineWidth = 1;
+    cctx.beginPath();
+    cctx.moveTo(px, Y(0));
+    cctx.lineTo(px + pw, Y(0));
+    cctx.moveTo(px, py);
+    cctx.lineTo(px, py + ph);
+    cctx.stroke();
+    ctxt('0', px - 6, Y(0) + 4, inkA(0.45), 10, 'right');
+    ctxt(lineFit ? 't' : 'i', px + pw, Y(0) + 14 > py + ph + 4 ? Y(0) - 6 : Y(0) + 14, inkA(0.45), 10, 'right');
+
+    if (lineFit || constFit) {
+      const C0 = R.xhat[0], D = lineFit ? R.xhat[1] : 0;
+      cctx.strokeStyle = C.p;
+      cctx.lineWidth = 2;
+      cctx.beginPath();
+      cctx.moveTo(X(t0), Y(C0 + D * t0));
+      cctx.lineTo(X(t1), Y(C0 + D * t1));
+      cctx.stroke();
+    }
+    for (let i = 0; i < 3; i++) {
+      const x = X(ts[i]);
+      cctx.strokeStyle = C.e;
+      cctx.lineWidth = 2.4;
+      cctx.beginPath();
+      cctx.moveTo(x, Y(ps[i]));
+      cctx.lineTo(x, Y(bs[i]));
+      cctx.stroke();
+      cctx.fillStyle = bgCol;
+      cctx.strokeStyle = C.p;
+      cctx.lineWidth = 2;
+      cctx.beginPath();
+      cctx.arc(x, Y(ps[i]), 4, 0, Math.PI * 2);
+      cctx.fill();
+      cctx.stroke();
+      cctx.fillStyle = C.b;
+      cctx.beginPath();
+      cctx.arc(x, Y(bs[i]), 4.5, 0, Math.PI * 2);
+      cctx.fill();
+    }
+
+    const tx = wide ? cw * 0.58 + 6 : 14;
+    let ty = wide ? 66 : py + ph + 34;
+    const lh = 18;
+    const e2 = V.dot(R.e, R.e);
+    if (lineFit) { ctxt(`C = ${R.xhat[0].toFixed(2)}`, tx, ty, C.p); ty += lh; ctxt(`D = ${R.xhat[1].toFixed(2)}`, tx, ty, C.p); ty += lh; }
+    else if (constFit) { ctxt(`C = ${R.xhat[0].toFixed(2)} = mean`, tx, ty, C.p); ty += lh; }
+    ctxt(`Σ eᵢ² = ${e2.toFixed(3)}`, tx, ty, C.e); ty += lh;
+    if (lineFit) {
+      ctxt(`Σ eᵢ = ${fz(R.ate[0], 3)}`, tx, ty, inkA(0.7)); ty += lh;
+      ctxt(`Σ tᵢeᵢ = ${fz(R.ate[1], 3)}`, tx, ty, inkA(0.7)); ty += lh;
+    } else if (constFit) {
+      ctxt(`Σ eᵢ = ${fz(R.ate[0], 3)}`, tx, ty, inkA(0.7)); ty += lh;
+    } else {
+      ctxt(`Aᵀe = (${R.ate.map((v) => fz(v, 3)).join(', ')})`, tx, ty, inkA(0.7), wide ? 11 : 12); ty += lh;
+    }
+    if (ty + 14 < ch) ctxt(lineFit || constFit ? (wide ? 'least Σ eᵢ²: Aᵀe = 0' : 'smallest Σ eᵢ²: Aᵀe = 0') : 'the residuals are e', tx, ty + 4, inkA(0.5), wide ? 10 : 10.5);
+  }
+
+  /** R filling with the dot products, Q with the directions, as the steps happen. */
+  function cardGS(G: GS) {
+    const { cw, ch } = cardSetup();
+    const L = S.L;
+    const cols = [C.a1, C.a2, C.a3];
+    ctxt('A = Q R', 14, 22, inkA(0.85), 13, 'left', 600);
+    ctxt('rⱼₖ = qⱼ · aₖ,  rₖₖ = |vₖ|', 14, 40, inkA(0.55), 10.5);
+    // the stage at which each entry of R is known
+    const when: Record<string, number> = { '00': 1, '01': 2, '11': 3, '02': 4, '12': 5, '22': 6 };
+    const wide = cw > ch * 1.5;
+    const cell = Math.min(wide ? 56 : 62, wide ? (cw - 90) / 6.4 : (cw - 40) / 3);
+    const mx = 26, my = 70;
+    const bracket = (x: number, y: number, w: number, h: number) => {
+      cctx.strokeStyle = inkA(0.55);
+      cctx.lineWidth = 1.5;
+      cctx.beginPath();
+      cctx.moveTo(x + 5, y); cctx.lineTo(x, y); cctx.lineTo(x, y + h); cctx.lineTo(x + 5, y + h);
+      cctx.moveTo(x + w - 5, y); cctx.lineTo(x + w, y); cctx.lineTo(x + w, y + h); cctx.lineTo(x + w - 5, y + h);
+      cctx.stroke();
+    };
+    ctxt('R', mx - 12, my + cell * 1.6, inkA(0.7), 13, 'right', 600);
+    bracket(mx - 4, my - 4, cell * 3 + 8, cell * 2.1 + 8);
+    const rowH = cell * 0.7;
+    for (let j = 0; j < 3; j++)
+      for (let k = 0; k < 3; k++) {
+        const cx = mx + cell * (k + 0.5), cy = my + rowH * (j + 0.5) + 5;
+        if (j > k) { ctxt('0', cx, cy, inkA(0.35), 12, 'center'); continue; }
+        const st = when[`${j}${k}`];
+        const prog = L - (st - 1);
+        if (prog <= 0.35) { ctxt('·', cx, cy, inkA(0.3), 14, 'center'); continue; }
+        const live = prog < 1;
+        if (live) {
+          cctx.fillStyle = tint(cols[j], 0.16);
+          cctx.fillRect(cx - cell / 2 + 2, cy - rowH / 2 - 4, cell - 4, rowH);
+        }
+        cctx.globalAlpha = Math.min(1, (prog - 0.35) / 0.3);
+        const v = G.r[j][k];
+        ctxt(Math.abs(v) < 5e-4 ? '0' : v.toFixed(2), cx, cy, cols[j], 12, 'center', 600);
+        cctx.globalAlpha = 1;
+      }
+
+    // Q's columns, each written once it exists
+    const qx = wide ? mx + cell * 3 + 46 : mx, qy = wide ? my : my + cell * 2.1 + 40;
+    ctxt('Q', qx - 12, qy + cell * 1.6, inkA(0.7), 13, 'right', 600);
+    bracket(qx - 4, qy - 4, cell * 3 + 8, cell * 2.1 + 8);
+    const qdone = [1, 3, 6];
+    for (let k = 0; k < 3; k++) {
+      const q = G.q[k];
+      const ready = L >= qdone[k];
+      const comps = q ? [q.x, q.y, q.z] : [0, 0, 0];
+      for (let i = 0; i < 3; i++) {
+        const cx = qx + cell * (k + 0.5), cy = qy + rowH * (i + 0.5) + 5;
+        if (!ready) ctxt('·', cx, cy, inkA(0.3), 14, 'center');
+        else if (!q) ctxt('–', cx, cy, cols[k], 12, 'center', 600);
+        else ctxt(comps[i].toFixed(2), cx, cy, cols[k], 12, 'center', 600);
+      }
+    }
+    let ty = qy + cell * 2.1 + 30;
+    if (wide) ty = Math.min(ch - 8, my + cell * 2.1 + 30);
+    const tx = wide ? 14 : mx - 12;
+    if (ty < ch - 4) {
+      if (L >= 6) {
+        if (G.q[2] && G.q[1] && G.q[0]) ctxt('QᵀQ = I: orthonormal', tx, ty, C.p, 11);
+        else ctxt('rank 2: r₃₃ = 0, no q₃', tx, ty, C.a3, 11);
+      } else ctxt(`step ${Math.min(6, Math.floor(L) + (L % 1 > 0 ? 1 : 0))} of 6`, tx, ty, inkA(0.55), 11);
+    }
+  }
+
+  // --- words and numbers ------------------------------------------------------------------
+
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const f2 = (v: number) => (Math.abs(v) < 5e-4 ? '0.00' : v.toFixed(2));
+  const vstr = (v: Vec) => `(${f2(v.x)}, ${f2(v.y)}, ${f2(v.z)})`;
+
+  function textProj(R: Proj) {
+    const bT: Part = ['\\mathbf b', C.b], pT: Part = ['\\mathbf p', C.p], eT: Part = ['\\mathbf e', C.e];
+    const ate = R.ate.map((v) => fz(v, 3)).join(',\\ ');
+    if (S.sub === 'line') {
+      setEq({
+        rule: [pT, '=', ['\\mathbf a_1', C.a1], `\\,\\frac{\\mathbf a_1^{\\mathsf T}\\textcolor{${C.b}}{\\mathbf b}}{\\mathbf a_1^{\\mathsf T}\\mathbf a_1}`, ',\\qquad', ['\\mathbf a_1^{\\mathsf T}', C.a1], eT, '= 0,\\quad', eT, '=', bT, '-', pT],
+        live: [`\\hat x = ${R.xhat[0].toFixed(3)},\\quad`, ['\\mathbf p', C.p], `= ${vstr(R.p).replace(/, /g, ',\\,')},\\quad`, ['\\mathbf a_1^{\\mathsf T}\\mathbf e', C.e], `= ${ate}`],
+      });
+    } else {
+      setEq({
+        rule: [pT, '= A(A^{\\mathsf T}A)^{-1}A^{\\mathsf T}', bT, ',\\qquad A^{\\mathsf T}', eT, '= \\mathbf 0,\\quad', eT, '=', bT, '-', pT, ',\\quad A = [', ['\\mathbf a_1', C.a1], ['\\,\\mathbf a_2', C.a2], ']'],
+        live: [`\\hat{\\mathbf x} = (${R.xhat.map((v) => v.toFixed(3)).join(',\\ ')}),\\quad`, ['\\mathbf p', C.p], `= ${vstr(R.p).replace(/, /g, ',\\,')},\\quad A^{\\mathsf T}`, ['\\mathbf e', C.e], `= (${ate})`],
+      });
+    }
+    const en = V.norm(R.e), pc = V.norm(V.sub(S.cand, R.p)), bc = V.norm(V.sub(R.b, S.cand));
+    const onP = atP(R);
+    setResult({
+      value: `|b − c| = ${bc.toFixed(2)}`,
+      colour: onP ? C.p : C.c,
+      status: onP ? `c is at p: the shortest distance, |e| = ${en.toFixed(2)}` : `${(bc - en).toFixed(2)} longer than |e| = ${en.toFixed(2)}`,
+      note: R.deficient
+        ? 'a₁ and a₂ are parallel, so they span only a line and AᵀA has no inverse. The projection is onto that line.'
+        : onP
+          ? 'Here e meets the subspace at a right angle, so Aᵀe = 0. Drag c anywhere else in the subspace and b gets farther.'
+          : `b, p, c form a right triangle with the right angle at p: |b − c|² = |e|² + |p − c|² = ${(en * en).toFixed(2)} + ${(pc * pc).toFixed(2)}.`,
+    });
+    setRows({
+      'r-xhat': `(${R.xhat.map((v) => v.toFixed(3)).join(', ')})`,
+      'r-p': vstr(R.p),
+      'r-e': vstr(R.e),
+      'r-ate': `(${R.ate.map((v) => fz(v, 4)).join(', ')})`,
+      'r-pyth': (en * en + pc * pc).toFixed(4),
+      'r-bc': (bc * bc).toFixed(4),
+    });
+  }
+
+  function textGS(G: GS) {
+    const L = S.L;
+    const s = Math.min(6, Math.ceil(L - 1e-9));
+    const k = s <= 1 ? 0 : s <= 3 ? 1 : 2;
+    const cols = [C.a1, C.a2, C.a3];
+    const n = SUB[k], kk = k + 1;
+    const tc = (t: string, c: string) => `\\textcolor{${c}}{${t}}`;
+    const a = tc(`\\mathbf a_${kk}`, cols[k]), v = tc(`\\mathbf v_${kk}`, cols[k]), q = tc(`\\mathbf q_${kk}`, cols[k]);
+    const shadows = Array.from({ length: k }, (_, j) => {
+      const qj = tc(`\\mathbf q_${j + 1}`, cols[j]);
+      return ` - (${qj}\\cdot ${a})\\,${qj}`;
+    }).join('');
+    const rule: Part[] = k === 0
+      ? [`${q} = ${a}/\\|${a}\\|`, ',\\qquad A = QR']
+      : [`${v} = ${a}${shadows}`, `,\\quad ${q} = ${v}/\\|${v}\\|`, ',\\qquad A = QR'];
+    const live: Part[] = k === 0
+      ? [`r_{11} = \\|\\mathbf a_1\\| = ${G.r[0][0].toFixed(3)}`]
+      : [...Array.from({ length: k }, (_, j): Part[] => [[`r_{${j + 1}${kk}} = ${G.r[j][k].toFixed(3)}`, cols[j]], ',\\quad']).flat(), [`r_{${kk}${kk}} = \\|\\mathbf v_${kk}\\| = ${G.r[k][k].toFixed(3)}`, cols[k]]];
+    setEq({ rule, live });
+
+    const steps = [
+      'Three vectors, not yet at right angles. Step through to straighten them.',
+      'q₁ is a₁ scaled to length 1. Its length r₁₁ goes into R.',
+      'a₂ loses its shadow on q₁. What is left, v₂, is perpendicular to q₁.',
+      'v₂ is scaled to length 1: that is q₂.',
+      'a₃ loses its shadow on q₁.',
+      'Then its shadow on q₂. What is left, v₃, sticks straight out of the q₁q₂ plane.',
+      'v₃ is scaled to length 1: that is q₃.',
+    ];
+    const done = L >= 6;
+    const full = !!(G.q[0] && G.q[1] && G.q[2]);
+    let maxErr = 0;
+    const Q = G.q.map((x) => x ?? O);
+    for (let c = 0; c < 3; c++) {
+      const rec = V.add(V.add(V.mul(Q[0], G.r[0][c]), V.mul(Q[1], G.r[1][c])), V.mul(Q[2], G.r[2][c]));
+      const d = V.sub(G.a[c], rec);
+      maxErr = Math.max(maxErr, Math.abs(d.x), Math.abs(d.y), Math.abs(d.z));
+    }
+    setResult({
+      value: done ? (full ? 'orthonormal frame' : 'only two directions') : `step ${s} of 6`,
+      colour: done ? (full ? C.p : C.a3) : cols[k],
+      status: done
+        ? full ? `A = QR to ${maxErr.toExponential(0)}, QᵀQ = I` : `r₃₃ = |v₃| = ${G.r[2][2].toExponential(1)}: a₃ was already in the plane of a₁ and a₂`
+        : `working on a${n}`,
+      note: done
+        ? full ? 'Each q is a unit vector at right angles to the others. R is upper triangular because aₖ only ever needs q₁ … qₖ.' : 'Subtracting its two shadows took all of a₃ away: the columns of A span only a plane, so R has a zero on its diagonal.'
+        : steps[s],
+    });
+    const qd = (i: number, j: number) => (G.q[i] && G.q[j] ? V.dot(G.q[i]!, G.q[j]!).toExponential(1) : '—');
+    setRows({
+      'r-q12': qd(0, 1),
+      'r-q13': qd(0, 2),
+      'r-q23': qd(1, 2),
+      'r-qn': G.q.map((x) => (x ? V.norm(x).toFixed(3) : '0')).join(', '),
+      'r-qr': maxErr.toExponential(1),
+    });
+  }
+
+  // --- loop ------------------------------------------------------------------------------
+
+  let dirty = true;
+  function draw() {
+    measureFk();
+    ctx.clearRect(0, 0, W, H);
+    obst = [];
+    boxes = [];
+    queue = [];
+    const g = ctx.createRadialGradient(W / 2, H * 0.45, 20, W / 2, H / 2, Math.max(W, H) * 0.7);
+    g.addColorStop(0, light ? 'rgba(99,102,241,0.05)' : 'rgba(99,102,241,0.1)');
+    g.addColorStop(1, 'rgba(99,102,241,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    gizmo();
+    if (S.view === 'proj') {
+      const { g, x0, y0 } = gaugeRect();
+      boxes.push({ x0: x0 - 6, y0: y0 - 20 * g, x1: W, y1: H });
+    }
+    axes();
+    if (S.view === 'proj') {
+      const R = projection();
+      drawProj(R);
+      flushLabels();
+      cardProj(R);
+      textProj(R);
+    } else {
+      const G = gramSchmidt();
+      drawGS(G);
+      flushLabels();
+      cardGS(G);
+      textGS(G);
+    }
+  }
+
+  function sampleTrace(R: Proj) {
+    const key = JSON.stringify([R.b, R.a1, R.a2, S.sub]);
+    if (key !== traceKey) { traceKey = key; trace = []; }
+    const d = V.norm(V.sub(R.b, S.cand));
+    if (S.sweeping || trace.length === 0 || Math.abs(d - trace[trace.length - 1]) > 1e-6) {
+      trace.push(d);
+      if (trace.length > 240) trace.shift();
+    }
+  }
+
+  let last = performance.now();
+  function frame(now: number) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    if (S.spin) { cam.yaw += dt * 0.25; dirty = true; }
+    if (S.view === 'proj') {
+      const R = projection();
+      if (S.sweeping) {
+        S.sweepT += dt;
+        const phi = 0.5 + 0.42 * S.sweepT;
+        const d = R.rank === 2 ? V.add(V.mul(R.u1, Math.cos(phi)), V.mul(R.u2, Math.sin(phi))) : R.u1;
+        S.cand = V.add(R.p, V.mul(d, 1.7 * Math.sin(1.5 * S.sweepT)));
+        dirty = true;
+      }
+      sampleTrace(R);
+    } else {
+      if (S.dwell > 0) S.dwell -= dt;
+      else if (S.L < S.target) {
+        const nxt = S.L + dt * 0.85;
+        const k = Math.floor(S.L) + 1;
+        if (nxt >= k && k < S.target) { S.L = k; S.dwell = 0.45; }
+        else S.L = Math.min(S.target, nxt);
+        if (S.L >= 6) tp.setRunning(false);
+        dirty = true;
+      }
+      // the "nothing left" ring pulses
+      if (S.L >= 5) dirty = true;
+    }
+    if (dirty) {
+      dirty = false;
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('themechange', () => { readTheme(); dirty = true; });
+  const ro = new ResizeObserver(() => (dirty = true));
+  ro.observe(card);
+  ro.observe(canvas);
+
+  // --- dragging -------------------------------------------------------------------------
+
+  let dragging: VName | 'cand' | null = null;
+  function handles(): [VName | 'cand', Vec][] {
+    if (S.view === 'proj') {
+      const hs: [VName | 'cand', Vec][] = [['cand', S.cand], ['b', vec('b')], ['a1', vec('a1')]];
+      if (S.sub === 'plane') hs.push(['a2', vec('a2')]);
+      return hs;
+    }
+    return [['a1', vec('a1')], ['a2', vec('a2')], ['a3', vec('a3')]];
+  }
+  orbitControls(canvas, cam, W, H, {
+    changed: () => (dirty = true),
+    grab: (x, y) => {
+      const r = 16 * Math.max(1, W / (canvas.clientWidth || W));
+      let best: VName | 'cand' | null = null, bd = r;
+      for (const [n, p] of handles()) {
+        const q = pr(p);
+        const d = Math.hypot(q.sx - x, q.sy - y);
+        if (d < bd) { bd = d; best = n; }
+      }
+      dragging = best;
+      if (best === 'cand') { S.sweeping = false; tp.setRunning(false); }
+      return best !== null;
+    },
+    drag: (x, y) => {
+      if (!dragging) return;
+      if (dragging === 'cand') {
+        const R = projection();
+        if (R.rank === 2) {
+          const hit = cam.hitPlane(x, y, Wd(O), dirW(R.n));
+          if (hit) S.cand = intoSubspace(toMath(hit), R);
+        } else {
+          const ray = cam.ray(x, y);
+          const o = toMath(ray.o), d = dirM(ray.d), u = R.u1;
+          const bb = V.dot(d, u), den = 1 - bb * bb;
+          if (den > 1e-6) {
+            const t = (V.dot(u, o) - bb * V.dot(d, o)) / den;
+            S.cand = intoSubspace(V.mul(u, t), R);
+          }
+        }
+      } else {
+        const hit = cam.hitPlane(x, y, Wd(vec(dragging)), cam.forward());
+        if (hit) {
+          putVec(dragging, toMath(hit));
+          vectorsChanged(dragging !== 'b');
+        }
+      }
+      dirty = true;
+    },
+    release: () => { dragging = null; },
+  });
+
+  // --- controls -------------------------------------------------------------------------
+
+  const syncSliders = matrix(M, KEYS, (k) => vectorsChanged(!k.startsWith('b')));
+  /** After the vectors move: the candidate follows its subspace, the presets let go. */
+  function vectorsChanged(subspace: boolean) {
+    syncSliders();
+    if (S.view === 'proj') {
+      pex.clear();
+      if (subspace) S.cand = intoSubspace(S.cand, projection());
+    } else gex.clear();
+    dirty = true;
+  }
+
+  const tp = transport({
+    onRun: (running) => {
+      if (S.view === 'proj') S.sweeping = running;
+      else if (running) {
+        if (S.L >= 6) S.L = 0;
+        S.target = 6;
+      } else S.target = S.L;
+      dirty = true;
+    },
+    onStep: () => {
+      if (S.view !== 'gs') return;
+      if (S.L >= 6) S.L = 0;
+      S.target = Math.min(6, Math.floor(S.L + 1e-9) + 1);
+      S.dwell = 0;
+      tp.setRunning(false);
+      dirty = true;
+    },
+    onReset: () => {
+      if (S.view === 'proj') { pex.select('plane'); applyProj('plane'); }
+      else { gex.select('skew'); applyGS('skew'); }
+    },
+  });
+
+  /**
+   * Aim the camera at a preset: orbit the middle of what is drawn, zoom so it
+   * fills the stage, and (given the subspace's normal and the error) pick the
+   * angle that sees the sheet obliquely, shows e side-on and keeps the arrows
+   * apart on screen.
+   */
+  function fitView(pts: Vec[], n: Vec | null, e: Vec | null, arrows: Vec[], pull = 0) {
+    const all = [O, ...pts];
+    const lo = { x: Math.min(...all.map((p) => p.x)), y: Math.min(...all.map((p) => p.y)), z: Math.min(...all.map((p) => p.z)) };
+    const hi = { x: Math.max(...all.map((p) => p.x)), y: Math.max(...all.map((p) => p.y)), z: Math.max(...all.map((p) => p.z)) };
+    Object.assign(CEN, V.mul(V.mix(lo, hi, 0.5), 1 - pull));
+    const rad = Math.max(1.2, ...all.map((p) => V.norm(V.sub(p, CEN))));
+    cam.zoom = Math.max(0.6, Math.min(2.4, (pull ? 3.4 : 3.1) / rad));
+    if (!e) return;
+    let best = -Infinity, by = HOME.yaw, bp = HOME.pitch;
+    const eu = V.norm(e) > 1e-6 ? V.unit(e) : null;
+    for (let yi = 0; yi < 48; yi++)
+      for (let pi = 0; pi <= 12; pi++) {
+        cam.yaw = (yi / 48) * Math.PI * 2;
+        cam.pitch = -0.2 - pi * 0.05;
+        const fw = dirM(cam.forward()), rt = dirM(cam.right()), up = dirM(cam.up());
+        let sc = 0;
+        if (n) {
+          const c = Math.abs(V.dot(fw, n));
+          sc -= 8 * Math.max(0, 0.45 - c, c - 0.8);
+          if (V.dot(arrows[0], n) * V.dot(fw, n) < 0) sc += 0.3; // b on the near side
+        }
+        if (eu) sc += 1.5 * Math.sqrt(Math.max(0, 1 - V.dot(fw, eu) ** 2));
+        const dirs = arrows.filter((a) => V.norm(a) > 0.3).map((a) => Math.atan2(V.dot(a, up), V.dot(a, rt)));
+        let minAng = Math.PI;
+        for (let i = 0; i < dirs.length; i++)
+          for (let j = i + 1; j < dirs.length; j++) {
+            let d = Math.abs(dirs[i] - dirs[j]) % (Math.PI * 2);
+            if (d > Math.PI) d = Math.PI * 2 - d;
+            minAng = Math.min(minAng, d);
+          }
+        sc += Math.min(minAng, 0.6) * 1.5;
+        let dy = Math.abs(cam.yaw - HOME.yaw) % (Math.PI * 2);
+        if (dy > Math.PI) dy = Math.PI * 2 - dy;
+        sc -= 0.08 * dy;
+        if (sc > best) { best = sc; by = cam.yaw; bp = cam.pitch; }
+      }
+    cam.yaw = by;
+    cam.pitch = bp;
+  }
+
+  function applyProj(name: string) {
+    const pre = PROJ_PRESETS[name] ?? PROJ_PRESETS.plane;
+    S.sub = pre.sub;
+    putVec('b', pre.b);
+    putVec('a1', pre.a1);
+    if (pre.a2) putVec('a2', pre.a2);
+    syncSliders();
+    el('a2-wrap').hidden = S.sub === 'line';
+    el('lg-a2').hidden = S.sub === 'line';
+    S.sweeping = false;
+    tp.setRunning(false);
+    const R = projection();
+    S.cand = intoSubspace(V.add(R.p, R.rank === 2 ? V.add(V.mul(R.u1, 1.3), V.mul(R.u2, -0.9)) : V.mul(R.u1, 1.4)), R);
+    trace = [];
+    fitView([R.b, R.a1, S.sub === 'plane' ? R.a2 : R.a1, R.p, S.cand], R.rank === 2 ? R.n : null, R.e, S.sub === 'plane' ? [R.b, R.a1, R.a2, R.p] : [R.b, R.a1]);
+    dirty = true;
+  }
+
+  function applyGS(name: string) {
+    const [a1, a2, a3] = GS_PRESETS[name] ?? GS_PRESETS.skew;
+    putVec('a1', a1);
+    putVec('a2', a2);
+    putVec('a3', a3);
+    syncSliders();
+    fitView([a1, a2, a3], null, null, [], 0.45);
+    Object.assign(cam, { yaw: 0.55, pitch: -0.36 });
+    S.L = 0;
+    S.target = 0;
+    S.dwell = 0;
+    tp.setRunning(false);
+    dirty = true;
+  }
+
+  const pex = segmented('pex', (v) => applyProj(v));
+  const gex = segmented('gex', (v) => applyGS(v));
+
+  const HINT = {
+    proj: 'Drag to orbit · scroll to zoom · drag the ring c inside the subspace, or the tips of b, a₁, a₂ · Run sweeps c through p',
+    gs: 'Drag to orbit · scroll to zoom · drag the tips of a₁, a₂, a₃ · Step does one move of the process, Run does them all',
+  };
+  function setView(v: 'proj' | 'gs') {
+    S.view = v;
+    view.select(v);
+    S.sweeping = false;
+    S.target = S.L;
+    tp.setRunning(false);
+    const gs = v === 'gs';
+    el('pv-ctl').hidden = gs;
+    el('gs-ctl').hidden = !gs;
+    el('a3-wrap').hidden = !gs;
+    el('pv-read').hidden = gs;
+    el('gs-read').hidden = !gs;
+    el('snap').hidden = gs;
+    el('step').hidden = !gs;
+    for (const id of ['lg-b', 'lg-p', 'lg-e', 'lg-c']) el(id).hidden = gs;
+    el('lg-a3').hidden = !gs;
+    el('lg-a1').textContent = gs ? 'a₁, q₁' : 'a₁';
+    el('lg-a2').textContent = gs ? 'a₂, q₂' : 'a₂';
+    el('scene-hint').textContent = HINT[v];
+    el('result-label').textContent = gs ? 'Gram–Schmidt' : 'Distance from b';
+    if (gs) {
+      el('a2-wrap').hidden = false;
+      el('lg-a2').hidden = false;
+      gex.select('skew');
+      applyGS('skew');
+    } else {
+      pex.select('plane');
+      applyProj('plane');
+    }
+  }
+  const view = segmented('view', (v) => setView(v as 'proj' | 'gs'));
+
+  el('snap').addEventListener('click', () => {
+    S.sweeping = false;
+    tp.setRunning(false);
+    S.cand = projection().p;
+    dirty = true;
+  });
+  const setSpin = check('spin', (on) => { S.spin = on; dirty = true; });
+
+  tries({
+    sweep: () => {
+      if (S.view !== 'proj') setView('proj');
+      pex.select('plane');
+      applyProj('plane');
+      S.sweepT = 0;
+      S.sweeping = true;
+      tp.setRunning(true);
+    },
+    fit: () => {
+      if (S.view !== 'proj') setView('proj');
+      pex.select('fit');
+      applyProj('fit');
+    },
+    gs: () => {
+      if (S.view !== 'gs') setView('gs');
+      gex.select('skew');
+      applyGS('skew');
+      S.target = 6;
+      tp.setRunning(true);
+    },
+    flat: () => {
+      if (S.view !== 'gs') setView('gs');
+      gex.select('flat');
+      applyGS('flat');
+      S.target = 6;
+      tp.setRunning(true);
+    },
+  });
+
+  setSpin(false);
+  setView('proj');
+  requestAnimationFrame(frame);
+</script>
+
+<style>
+  .pj-wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 236px;
+    gap: 12px;
+    align-items: stretch;
+  }
+  .pj-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .pj-canvas:active {
+    cursor: grabbing;
+  }
+  .sim-stage canvas.pj-card {
+    width: 100%;
+    height: 100%;
+    min-height: 200px;
+    border: 1px solid var(--border);
+  }
+  @media (max-width: 1100px) {
+    .pj-wrap {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .sim-stage canvas.pj-card {
+      height: 230px;
+    }
+  }
+  :global(.sim:fullscreen) .sim-stage canvas.pj-card {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+  }
+</style>

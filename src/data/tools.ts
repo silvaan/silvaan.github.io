@@ -225,6 +225,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'projections',
+        title: 'Projections & Gram–Schmidt',
+        description:
+          'The closest point of a plane to a vector is where the error meets it at a right angle. The same picture fits a line to data, and done one direction at a time it straightens any basis into an orthonormal frame, A = QR.',
+        href: '/simulations/linear-algebra/projections',
+        status: 'live',
+      },
+      {
         slug: 'cross-product',
         title: 'Cross Product',
         description:
