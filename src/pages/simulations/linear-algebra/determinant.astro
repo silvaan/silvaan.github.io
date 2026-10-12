@@ -25,7 +25,7 @@ import Try from '../../../components/sim/Try.astro';
           width="1000"
           height="600"
           role="img"
-          aria-label="The image of the unit square under a matrix, shaded by the sign of its area, with the two columns drawn as arrows."
+          aria-label="The image of the unit square under a matrix, shaded by the sign of its area, with the two columns drawn as arrows and a letter F inside the square carried along."
         ></canvas>
       </div>
       <Caption
@@ -57,10 +57,10 @@ import Try from '../../../components/sim/Try.astro';
         label="Matrix A"
         view
         entries={[
-          { id: 'a', label: 'a', value: 1 },
-          { id: 'b', label: 'b', value: 0 },
-          { id: 'c', label: 'c', value: 0 },
-          { id: 'd', label: 'd', value: 1 },
+          { id: 'a', label: 'a', value: 1.4 },
+          { id: 'b', label: 'b', value: 0.6 },
+          { id: 'c', label: 'c', value: 0.3 },
+          { id: 'd', label: 'd', value: 1.2 },
         ]}
       />
       <Seg
@@ -68,12 +68,22 @@ import Try from '../../../components/sim/Try.astro';
         label="Presets"
         attr="m"
         options={[
+          { value: '1.4,0.6,0.3,1.2', label: 'Generic' },
           { value: '1,0,0,1', label: 'Identity' },
           { value: '2,0,0,1', label: 'Stretch x' },
           { value: '1,0.9,0,1', label: 'Shear' },
           { value: '0,-1,1,0', label: 'Rotate' },
           { value: '-1,0,0,1', label: 'Reflect' },
           { value: '1,2,0.5,1', label: 'Collapse' },
+        ]}
+      />
+      <Seg
+        id="zoom"
+        label="View"
+        attr="z"
+        options={[
+          { value: 'fit', label: 'Fit to the picture' },
+          { value: 'wide', label: 'Wide' },
         ]}
       />
       <Slider id="t" label="Sweep I → A" min={0} max={100} value={100} display="1.00" />
@@ -93,7 +103,7 @@ import Try from '../../../components/sim/Try.astro';
       <Checks
         label="Show"
         items={[
-          { id: 'shape', label: 'A shape inside the square' },
+          { id: 'shape', label: 'The figure, an F inside the square', checked: true },
           { id: 'hgt', label: 'Base times height' },
           { id: 'ghost', label: 'The original grid', checked: true },
         ]}
@@ -142,8 +152,9 @@ import Try from '../../../components/sim/Try.astro';
   // whether the plane got turned over on the way. Every property people
   // memorise is visible in that one picture, so this page draws the picture.
   type Mat = { a: number; b: number; c: number; d: number };
-  const A: Mat = { a: 1, b: 0, c: 0, d: 1 };
-  const view = { t: 1, shape: false, hgt: false, ghost: true, bkey: 'none' };
+  const HOME: Mat = { a: 1.4, b: 0.6, c: 0.3, d: 1.2 };
+  const A: Mat = { ...HOME };
+  const view = { t: 1, shape: true, hgt: false, ghost: true, bkey: 'none', zoom: 'fit' };
   const BS: Record<string, { m: Mat; name: string }> = {
     none: { m: { a: 1, b: 0, c: 0, d: 1 }, name: 'I' },
     rot: { m: { a: 0, b: -1, c: 1, d: 0 }, name: 'rotate 90°' },
@@ -158,14 +169,15 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('det') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label, textWidth } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
   const ACC = '#7c8cff', TEAL = '#5eead4', HOT = '#f9736a', WARM = '#f59e0b';
-  const O = { x: W / 2 - 40, y: H / 2 + 20 };
-  const UNIT = 70;
+  // where the origin sits and how many pixels one unit is; refitted to the picture
+  let O = { x: W / 2, y: H / 2 };
+  let UNIT = 70;
   const pt = (m: Mat, x: number, y: number) => ({ px: O.x + (m.a * x + m.b * y) * UNIT, py: O.y - (m.c * x + m.d * y) * UNIT });
   const raw = (x: number, y: number) => ({ px: O.x + x * UNIT, py: O.y - y * UNIT });
 
@@ -179,8 +191,111 @@ import Try from '../../../components/sim/Try.astro';
   }
   const SHAPE_AREA = Math.abs(shoelace(SHAPE));
 
+  /**
+   * Zoom so the square's whole journey (I to A, and on to BA) fills the stage.
+   * The path is a straight blend, so its two ends bound every frame between.
+   * "Wide" is a fixed, far-out view of the plane instead.
+   */
+  function fit() {
+    if (view.zoom === 'wide') { UNIT = 40; O = { x: W / 2, y: H / 2 }; return; }
+    const I: Mat = { a: 1, b: 0, c: 0, d: 1 };
+    const ends = [I, A];
+    if (view.bkey !== 'none') ends.push(BS[view.bkey].m, mul(BS[view.bkey].m, A));
+    let x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+    for (const m of ends)
+      for (const [x, y] of [[1, 0], [0, 1], [1, 1]]) {
+        const X = m.a * x + m.b * y, Y = m.c * x + m.d * y;
+        x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y);
+      }
+    UNIT = Math.max(16, Math.min(180, (W - 220) / Math.max(1e-6, x1 - x0), (H - 130) / Math.max(1e-6, y1 - y0)));
+    O = { x: W / 2 - ((x0 + x1) / 2) * UNIT, y: H / 2 + ((y0 + y1) / 2) * UNIT };
+  }
+  /** Grid lines from −R to R reach every corner of the stage, however hard m squeezes. */
+  function reach(m: Mat) {
+    const far = Math.hypot(Math.max(O.x, W - O.x), Math.max(O.y, H - O.y)) / UNIT;
+    const S = m.a * m.a + m.b * m.b + m.c * m.c + m.d * m.d, D = det(m);
+    const smin = Math.sqrt(Math.max(0, (S - Math.sqrt(Math.max(0, S * S - 4 * D * D))) / 2));
+    return Math.min(80, Math.ceil(far / Math.max(smin, 0.04)) + 1);
+  }
+  const xy = (p: { px: number; py: number }) => ({ x: p.px, y: p.py });
+  const polyPts = (m: Mat, pts: [number, number][]) => pts.map(([x, y]) => xy(pt(m, x, y)));
+  /** The direction an arrow points on screen, so its name goes past the tip. */
+  const away = (p: { px: number; py: number }) =>
+    Math.hypot(p.px - O.x, p.py - O.y) > 4 ? Math.atan2(p.py - O.y, p.px - O.x) : -Math.PI / 4;
+
+  // --- labels: measured boxes, each one nudged to the nearest free spot --------
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const taken: Box[] = [];
+  const segs: number[][] = [];
+  const fills: { x: number; y: number }[][] = [];
+  const layoutReset = () => { taken.length = 0; segs.length = 0; fills.length = 0; };
+  const blockLine = (x1: number, y1: number, x2: number, y2: number) => { segs.push([x1, y1, x2, y2]); };
+  const blockPoly = (pts: { x: number; y: number }[]) =>
+    pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length]; blockLine(p.x, p.y, q.x, q.y); });
+  /** A filled shape: no label may cross its outline or sit inside it. */
+  const blockFill = (pts: { x: number; y: number }[]) => { blockPoly(pts); fills.push(pts); };
+  const inside = (x: number, y: number, pts: { x: number; y: number }[]) => {
+    let hit = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++)
+      if ((pts[i].y > y) !== (pts[j].y > y) && x < ((pts[j].x - pts[i].x) * (y - pts[i].y)) / (pts[j].y - pts[i].y) + pts[i].x) hit = !hit;
+    return hit;
+  };
+  const blockDot = (x: number, y: number, r: number) => { taken.push({ x0: x - r, y0: y - r, x1: x + r, y1: y + r }); };
+  /** Does the segment cross the box? (Liang–Barsky clipping.) */
+  function crosses(s: number[], b: Box) {
+    const [x1, y1, x2, y2] = s;
+    const dx = x2 - x1, dy = y2 - y1;
+    const p = [-dx, dx, -dy, dy], q = [x1 - b.x0, b.x1 - x1, y1 - b.y0, b.y1 - y1];
+    let t0 = 0, t1 = 1;
+    for (let i = 0; i < 4; i++) {
+      if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+      const r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+    }
+    return true;
+  }
+  const overlap = (a: Box, b: Box) =>
+    Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  /**
+   * Draw `text` next to the point (ax, ay): on it if `onSpot`, otherwise just
+   * beyond it in the direction `prefer` (radians, screen axes), swinging round
+   * and stepping out until the box crosses no line and no other label. With
+   * `onlyIfFree`, only the spot itself and small nudges of it are tried, and
+   * nothing is drawn (false is returned) when none of them is clean.
+   */
+  function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, onSpot = false, gap = 7, onlyIfFree = false) {
+    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const cands: [number, number][] = onSpot || onlyIfFree ? [[ax, ay]] : [];
+    if (onlyIfFree) for (const dy of [0, -6, 6, -12, 12]) for (const dx of [0, -8, 8, -16, 16]) cands.push([ax + dx, ay + dy]);
+    else for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
+      for (let k = 0; k < 12; k++) {
+        const an = prefer + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
+        const c = Math.cos(an), s = Math.sin(an);
+        const edge = Math.min(Math.abs(c) > 1e-6 ? w / 2 / Math.abs(c) : 1e9, Math.abs(s) > 1e-6 ? h / 2 / Math.abs(s) : 1e9);
+        const d = gap + step * 9 + edge;
+        cands.push([ax + c * d, ay + s * d]);
+      }
+    }
+    let best = cands[0], bestCost = Infinity;
+    cands.forEach(([cx, cy], i) => {
+      const b = { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+      let cost = i * 0.6;
+      if (b.x0 < 2 || b.y0 < 2 || b.x1 > W - 2 || b.y1 > H - 2) cost += 1e5;
+      for (const s of segs) if (crosses(s, b)) cost += 1000;
+      for (const t of taken) cost += overlap(b, t) * 30;
+      for (const f of fills) if (inside(cx, cy, f)) cost += 1000;
+      if (cost < bestCost) { bestCost = cost; best = [cx, cy]; }
+    });
+    if (onlyIfFree && bestCost >= 1000) return false;
+    const [cx, cy] = best;
+    taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
+    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    return true;
+  }
+
   function grid(m: Mat, alpha: number, dash: number[]) {
-    const R = 9;
+    const R = reach(m);
     ctx.strokeStyle = ink(alpha);
     ctx.lineWidth = 1;
     ctx.setLineDash(dash);
@@ -192,7 +307,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.setLineDash([]);
   }
-  function arrow(to: { px: number; py: number }, col: string, text: string) {
+  function arrow(to: { px: number; py: number }, col: string) {
     ctx.strokeStyle = col;
     ctx.fillStyle = col;
     ctx.lineWidth = 3;
@@ -204,7 +319,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(to.px - 12 * Math.cos(ang + 0.4), to.py - 12 * Math.sin(ang + 0.4));
     ctx.closePath();
     ctx.fill();
-    label(text, to.px + 9, to.py - 9, 1, 'left', 13, col);
+    blockLine(O.x, O.y, to.px, to.py);
+    blockDot(to.px, to.py, 7);
   }
   function poly(m: Mat, pts: [number, number][]) {
     ctx.beginPath();
@@ -246,14 +362,14 @@ import Try from '../../../components/sim/Try.astro';
     ctx.setLineDash([5, 4]);
     ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.moveTo(pv.px, pv.py); ctx.lineTo(pf.px, pf.py); ctx.stroke();
+    blockLine(pv.px, pv.py, pf.px, pf.py);
     const far1 = raw(u.x * 8, u.y * 8), far2 = raw(-u.x * 8, -u.y * 8);
     ctx.strokeStyle = ink(0.16);
     ctx.beginPath(); ctx.moveTo(far1.px, far1.py); ctx.lineTo(far2.px, far2.py); ctx.stroke();
     ctx.setLineDash([]);
+    blockLine(far1.px, far1.py, far2.px, far2.py);
     const h = Math.abs(v.x * u.y - v.y * u.x) / ul;
-    label(`height ${h.toFixed(2)}`, (pv.px + pf.px) / 2 + 8, (pv.py + pf.py) / 2, 1, 'left', 11, WARM);
-    const pm = raw(u.x / 2, u.y / 2);
-    label(`base ${ul.toFixed(2)}`, pm.px, pm.py + 18, 1, 'center', 11, ACC);
+    return { h, ul, pv, pf, pm: raw(u.x / 2, u.y / 2) };
   }
 
   function draw() {
@@ -262,19 +378,22 @@ import Try from '../../../components/sim/Try.astro';
     const B = BS[view.bkey].m;
     const BA = mul(B, M);
     ctx.clearRect(0, 0, W, H);
+    layoutReset();
 
     if (view.ghost) grid({ a: 1, b: 0, c: 0, d: 1 }, 0.08, [3, 4]);
     grid(M, 0.18, []);
 
-    poly(M, [[0, 0], [1, 0], [1, 1], [0, 1]]);
+    const SQ: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    poly(M, SQ);
     ctx.fillStyle = D >= 0 ? 'rgba(94,234,212,0.16)' : 'rgba(249,115,106,0.18)';
     ctx.fill();
     ctx.strokeStyle = D >= 0 ? TEAL : HOT;
     ctx.lineWidth = 1.6;
     ctx.stroke();
+    blockPoly(polyPts(M, SQ));
 
     if (view.bkey !== 'none') {
-      poly(BA, [[0, 0], [1, 0], [1, 1], [0, 1]]);
+      poly(BA, SQ);
       ctx.fillStyle = 'rgba(245,158,11,0.10)';
       ctx.fill();
       ctx.strokeStyle = WARM;
@@ -282,23 +401,48 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineWidth = 1.8;
       ctx.stroke();
       ctx.setLineDash([]);
-      const lp = pt(BA, 0.5, 0.5);
-      label('B A', lp.px, lp.py + 4, 1, 'center', 12, WARM);
+      blockPoly(polyPts(BA, SQ));
+      if (view.shape) {
+        // the F after B as well, so two reflections visibly undo each other
+        poly(BA, SHAPE);
+        ctx.fillStyle = 'rgba(245,158,11,0.34)';
+        ctx.fill();
+        blockFill(polyPts(BA, SHAPE));
+      }
     }
     if (view.shape) {
       poly(M, SHAPE);
       ctx.fillStyle = D >= 0 ? 'rgba(94,234,212,0.4)' : 'rgba(249,115,106,0.42)';
       ctx.fill();
+      blockFill(polyPts(M, SHAPE));
     }
-    if (view.hgt) baseHeight(M);
+    const bh = view.hgt ? baseHeight(M) : null;
     orientationArc(M, D);
-    arrow(pt(M, 1, 0), ACC, 'A î');
-    arrow(pt(M, 0, 1), TEAL, 'A ĵ');
+    blockDot(O.x, O.y, 30);
+    const ti = pt(M, 1, 0), tj = pt(M, 0, 1);
+    arrow(ti, ACC);
+    arrow(tj, TEAL);
 
+    // names last, each in the first free spot near what it names
+    place('A î', 13, ACC, ti.px, ti.py, away(ti));
+    place('A ĵ', 13, TEAL, tj.px, tj.py, away(tj));
     const area = Math.abs(D);
     const mid = pt(M, 0.5, 0.5);
-    if (area > 0.12) label(`area ${area.toFixed(2)}`, mid.px, mid.py + (view.shape ? 34 : 4), 1, 'center', 12, D >= 0 ? TEAL : HOT);
-    else label('flattened', mid.px, mid.py - 16, 1, 'center', 12, HOT);
+    // inside the parallelogram if there is a clean spot, else just past its far corner
+    const far = pt(M, 1, 1);
+    if (area > 0.12)
+      place(`area ${area.toFixed(2)}`, 12, D >= 0 ? TEAL : HOT, mid.px, mid.py, Math.PI / 2, true, 4, true) ||
+        place(`area ${area.toFixed(2)}`, 12, D >= 0 ? TEAL : HOT, far.px, far.py, away(far), false, 8);
+    else place('flattened', 12, HOT, mid.px, mid.py, -Math.PI / 2, false, 6);
+    if (view.bkey !== 'none') {
+      const lp = pt(BA, 0.5, 0.5);
+      const bf = pt(BA, 1, 1);
+      place('B A', 12, WARM, lp.px, lp.py, -Math.PI / 2, true, 4, true) || place('B A', 12, WARM, bf.px, bf.py, away(bf), false, 8);
+    }
+    if (bh) {
+      place(`height ${bh.h.toFixed(2)}`, 11, WARM, (bh.pv.px + bh.pf.px) / 2, (bh.pv.py + bh.pf.py) / 2, 0, false, 6);
+      place(`base ${bh.ul.toFixed(2)}`, 11, ACC, bh.pm.px, bh.pm.py, Math.PI / 2, false, 8);
+    }
 
     // --- words, numbers, meter
     (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = M[k].toFixed(2)));
@@ -335,7 +479,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // --- controls -----------------------------------------------------------------
-  const sync = matrix(A, ['a', 'b', 'c', 'd'], () => draw());
+  const sync = matrix(A, ['a', 'b', 'c', 'd'], () => { fit(); draw(); });
   const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; draw(); }, (v) => (v / 100).toFixed(2));
   let raf = 0;
   function preset(m: string) {
@@ -345,10 +489,12 @@ import Try from '../../../components/sim/Try.astro';
     view.t = 1;
     setT(100);
     sync();
+    fit();
     draw();
   }
   const presets = segmented('presets', preset);
-  const bmats = segmented('bmat', (b) => { view.bkey = b; draw(); });
+  const bmats = segmented('bmat', (b) => { view.bkey = b; fit(); draw(); });
+  segmented('zoom', (z) => { view.zoom = z; fit(); draw(); });
   const setShape = check('shape', (on) => { view.shape = on; draw(); });
   const setHgt = check('hgt', (on) => { view.hgt = on; draw(); });
   check('ghost', (on) => { view.ghost = on; draw(); });
@@ -367,10 +513,14 @@ import Try from '../../../components/sim/Try.astro';
   });
   el('reset').addEventListener('click', () => {
     cancelAnimationFrame(raf);
-    Object.assign(A, { a: 1, b: 0, c: 0, d: 1 });
+    Object.assign(A, HOME);
+    presets.select('1.4,0.6,0.3,1.2');
+    view.bkey = 'none';
+    bmats.select('none');
     view.t = 1;
     setT(100);
     sync();
+    fit();
     draw();
   });
 
@@ -379,14 +529,15 @@ import Try from '../../../components/sim/Try.astro';
     preset(m);
     view.bkey = o.b ?? 'none';
     bmats.select(view.bkey);
-    view.shape = !!o.shape;
+    view.shape = o.shape ?? true;
     setShape(view.shape);
     view.hgt = !!o.hgt;
     setHgt(view.hgt);
+    fit();
     draw();
   }
   tries({
-    height: () => show('1,0.9,0,1', { hgt: true }),
+    height: () => show('1,0.9,0,1', { hgt: true, shape: false }),
     collapse: () => show('1,2,0.5,1'),
     mirror: () => { show('-1,0,0,1', { shape: true }); el('run').click(); },
     product: () => show('-1,0,0,1', { b: 'flip', shape: true }),
@@ -417,10 +568,17 @@ import Try from '../../../components/sim/Try.astro';
     sync();
     draw();
   });
-  const stop = () => (drag = null);
+  // the zoom holds still under the pointer while dragging, and refits after
+  const stop = () => {
+    if (!drag) return;
+    drag = null;
+    fit();
+    draw();
+  };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
+  fit();
   draw();
 </script>
 
