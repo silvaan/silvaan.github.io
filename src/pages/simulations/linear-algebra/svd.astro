@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="linear-algebra"
   title="Singular Value Decomposition"
-  description="Every matrix is three clean steps: rotate, stretch along the axes, rotate again. Watch the unit circle become an ellipse one step at a time."
+  description="Every matrix is three clean steps: rotate, stretch along the axes, rotate again. Watch the unit circle become an ellipse one step at a time, then use the same idea to compress a picture."
   shortcuts={['animate', 'fullscreen']}
 >
   <div class="sim">
@@ -22,222 +22,784 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="svd"
           width="1000"
-          height="600"
+          height="580"
           role="img"
-          aria-label="The unit circle part-way through being rotated, stretched and rotated again into the ellipse a matrix makes of it."
+          aria-label="Left: the unit circle with the right singular vectors and a letter F. Right: the same circle being rotated, stretched and rotated again into the ellipse the matrix makes of it, with a strip above showing the current step."
         ></canvas>
       </div>
-      <Caption
-        legend={[
-          { label: 'v₁ → σ₁u₁', color: '#7c8cff' },
-          { label: 'v₂ → σ₂u₂', color: '#f59e0b' },
-          { label: 'image of the unit circle', color: '#5eead4' },
-          { label: 'the unit circle', color: 'rgba(232,233,236,0.35)' },
-        ]}
-      />
+      <div id="cap-map">
+        <Caption
+          legend={[
+            { label: 'v₁ → σ₁u₁', color: '#7c8cff' },
+            { label: 'v₂ → σ₂u₂', color: '#f59e0b' },
+            { label: 'unit circle and its image', color: '#5eead4' },
+            { label: 'the letter F, carried along', color: 'rgba(232,233,236,0.6)' },
+          ]}
+          hintId="hint-map"
+        />
+      </div>
+      <div id="cap-img" hidden>
+        <Caption
+          legend={[
+            { label: 'singular values kept', color: '#7c8cff' },
+            { label: 'singular values dropped', color: 'rgba(232,233,236,0.35)' },
+            { label: 'k, the cut', color: '#f59e0b' },
+          ]}
+          hintId="hint-img"
+        />
+      </div>
       <Result label="Singular values σ<sub>1</sub>, σ<sub>2</sub>" />
     </div>
 
     <div class="sim-panel">
-      <Matrix
-        label="Matrix A"
-        view
-        min={-2.5}
-        max={2.5}
-        entries={[
-          { id: 'a', label: 'a', value: 1.2 },
-          { id: 'b', label: 'b', value: 0.8 },
-          { id: 'c', label: 'c', value: 0.3 },
-          { id: 'd', label: 'd', value: 1.1 },
-        ]}
-      />
-      <Slider id="t" label="Stage of A = UΣVᵀ" min={0} max={300} value={300} display="whole" hint={['circle', 'Vᵀ · Σ · U']} />
-      <Transport animate="Animate the three steps" reset={false} />
       <Seg
-        id="presets"
-        label="Presets"
-        attr="m"
+        id="mode"
+        label="View"
+        attr="v"
         options={[
-          { value: '1.2,0.8,0.3,1.1', label: 'Generic' },
-          { value: '2,0,0,0.6', label: 'Diagonal' },
-          { value: '1,1,1,1', label: 'Rank 1' },
-          { value: '0.8,-1.4,1.4,0.8', label: 'Rotation+' },
-          { value: '1,0.6,0.8,-1.2', label: 'Flip' },
+          { value: 'map', label: 'A = UΣVᵀ' },
+          { value: 'image', label: 'Compress an image' },
         ]}
       />
-      <Readout rows={[{ id: 'r-cond', label: 'condition σ<sub>1</sub>/σ<sub>2</sub>' }, { id: 'r-det', label: 'det A = ±σ<sub>1</sub>σ<sub>2</sub>' }, { id: 'r-rank', label: 'rank' }]} />
+      <div class="group" id="ctl-map">
+        <Matrix
+          label="Matrix A"
+          view
+          min={-2.5}
+          max={2.5}
+          entries={[
+            { id: 'a', label: 'a', value: 1.2 },
+            { id: 'b', label: 'b', value: 0.8 },
+            { id: 'c', label: 'c', value: 0.3 },
+            { id: 'd', label: 'd', value: 1.1 },
+          ]}
+        />
+        <Slider id="t" label="Stage of A = UΣVᵀ" min={0} max={300} value={300} display="whole" hint={['circle', 'Vᵀ · Σ · U']} />
+      </div>
+      <div class="group" id="ctl-img" hidden>
+        <Seg
+          id="pic"
+          label="Picture (64 × 64)"
+          attr="p"
+          options={[
+            { value: 'scene', label: 'House' },
+            { value: 'letters', label: 'Letters' },
+            { value: 'plaid', label: 'Plaid' },
+          ]}
+        />
+        <Slider id="k" label="Terms kept, k" min={1} max={64} value={8} hint={['1', '64 (exact)']} />
+      </div>
+      <Transport animate="Animate the three steps" reset={false} />
+      <div class="group" id="ctl-map2">
+        <Seg
+          id="presets"
+          label="Presets"
+          attr="m"
+          options={[
+            { value: '1.2,0.8,0.3,1.1', label: 'Generic' },
+            { value: '2,0,0,0.6', label: 'Diagonal' },
+            { value: '1,1,1,1', label: 'Rank 1' },
+            { value: '0.8,-1.4,1.4,0.8', label: 'Rotation+' },
+            { value: '1,0.6,0.8,-1.2', label: 'Flip' },
+          ]}
+        />
+        <Readout rows={[{ id: 'r-cond', label: 'condition σ<sub>1</sub>/σ<sub>2</sub>' }, { id: 'r-det', label: 'det A = ±σ<sub>1</sub>σ<sub>2</sub>' }, { id: 'r-rank', label: 'rank' }]} />
+      </div>
+      <div class="group" id="ctl-img2" hidden>
+        <Readout
+          rows={[
+            { id: 'r-store', label: 'numbers stored' },
+            { id: 'r-err', label: 'error ‖A − A<sub>k</sub>‖ / ‖A‖' },
+            { id: 'r-next', label: 'next σ<sub>k+1</sub> / σ<sub>1</sub>' },
+            { id: 'r-rankimg', label: 'rank of the picture' },
+          ]}
+        />
+      </div>
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Animate the stages: the circle <b>rotates</b> (Vᵀ), <b>stretches along the
-      axes</b> by σ₁ and σ₂ (Σ), then <b>rotates</b> again (U), and lands
-      exactly on A's ellipse. <Try id="steps" label="Animate" />
+      Animate the stages: <b>Vᵀ</b> turns v₁, v₂ onto the axes, <b>Σ</b> stretches
+      along the axes by σ₁ and σ₂, <b>U</b> turns them onto u₁, u₂. The result is
+      exactly the ellipse A makes of the circle. <Try id="steps" label="Animate" />
     </li>
     <li>
-      On <b>Flip</b>, det A &lt; 0 and no pair of rotations can do it: one of U, V
-      must be a reflection. Here the Σ step carries it as a minus sign on σ₂, so
-      the circle flattens and comes back mirrored. <Try id="flip" label="Animate" />
+      On <b>Flip</b>, det A &lt; 0 and the F comes out mirrored. Two rotations
+      and a stretch cannot do that, so one of U, V must be a <b>reflection</b>:
+      here U flips the plane over before it turns. <Try id="flip" label="Animate" />
     </li>
     <li>
-      On <b>Rank 1</b>, σ₂ = 0: the ellipse is a segment and |det A| = σ₁σ₂ = 0.
-      The condition number σ₁/σ₂ blows up, which is what makes a matrix hard
-      to invert. <Try id="rank" />
+      On <b>Rank 1</b>, σ₂ = 0: the Σ step squashes the circle and the F onto a
+      segment. A whole direction is lost, σ₁/σ₂ is infinite and A cannot be
+      inverted. <Try id="rank" label="Animate" />
+    </li>
+    <li>
+      <b>Compress</b> the house: keeping the first 8 terms σᵢuᵢvᵢᵀ stores a
+      quarter of the numbers and the picture is already clear, because the
+      singular values fall off fast. <Try id="compress" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
   import { el, segmented, slider, matrix, result, readout, tries } from '../../../lib/panel';
 
-  const M = { a: 1.2, b: 0.8, c: 0.3, d: 1.1 };
-  const view = { t: 3 }; // 0..3 across the three stages
-  const V1 = '#7c8cff', V2 = '#f59e0b', TEAL = '#5eead4';
+  type P = { x: number; y: number };
+  type Box = { x: number; y: number; w: number; h: number };
+  type Mat = { a: number; b: number; c: number; d: number };
+
+  const M: Mat = { a: 1.2, b: 0.8, c: 0.3, d: 1.1 };
+  const view = { t: 3, mode: 'map', k: 8, pic: 'scene' };
 
   const canvas = el('svd') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const ctx = canvas.getContext('2d')!;
+  const { ink, inv, css } = stageInk(canvas);
+  const { label, textWidth } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const O = { x: W / 2, y: H / 2 };
-  const U = 105;
-  const toPx = (x: number, y: number) => ({ px: O.x + x * U, py: O.y - y * U });
 
-  // 2×2 SVD via the symmetric eigenproblem of AᵀA
-  function svd() {
+  // ---------------------------------------------------------------- palette
+  let C = { ind: '#7c8cff', amb: '#f59e0b', teal: '#5eead4', red: '#f87171' };
+  function readTheme() {
+    const light = css('--stage-light', '0') === '1';
+    C = light
+      ? { ind: '#4f5bd5', amb: '#c27803', teal: '#0d9488', red: '#dc2626' }
+      : { ind: '#7c8cff', amb: '#f59e0b', teal: '#5eead4', red: '#f87171' };
+  }
+  const rgba = (hex: string, a: number) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
+
+  // ---------------------------------------------------------------- canvas size
+  // Wide: input and output side by side. Narrow: stacked, with a taller canvas.
+  let narrow = false, W = 1000, H = 580, lastKey = '';
+  function dims() {
+    if (view.mode === 'map') return narrow ? [520, 852] : [1000, 580];
+    return narrow ? [520, 800] : [1000, 580];
+  }
+  function resize(force = false) {
+    narrow = (canvas.parentElement?.clientWidth ?? 1000) < 620;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const [w, h] = dims();
+    const key = `${w}x${h}@${dpr}`;
+    if (!force && key === lastKey) return;
+    lastKey = key;
+    W = w; H = h;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  // ---------------------------------------------------------------- 2×2 SVD
+  // V is a rotation with v₁ along the major stretch. AV₁ = σ₁U₁, and AV₂ is
+  // perpendicular to U₁ with length σ₂ ≥ 0. When det A < 0, U₂ = −(U₁ turned a
+  // quarter), so U is a reflection: U = R(φ)·diag(1, −1).
+  function svd2() {
     const { a, b, c, d } = M;
     const e = a * a + c * c, f = a * b + c * d, g = b * b + d * d;
-    const theta = 0.5 * Math.atan2(2 * f, e - g);
-    const cv = Math.cos(theta), sv = Math.sin(theta);
-    const v1 = { x: cv, y: sv }, v2 = { x: -sv, y: cv };
-    const Av1 = { x: a * v1.x + b * v1.y, y: c * v1.x + d * v1.y };
-    const Av2 = { x: a * v2.x + b * v2.y, y: c * v2.x + d * v2.y };
-    let s1 = Math.hypot(Av1.x, Av1.y), s2 = Math.hypot(Av2.x, Av2.y);
-    const u1 = s1 > 1e-9 ? { x: Av1.x / s1, y: Av1.y / s1 } : { x: 1, y: 0 };
-    const u2 = s2 > 1e-9 ? { x: Av2.x / s2, y: Av2.y / s2 } : { x: -u1.y, y: u1.x };
-    let Vv1 = v1, U1 = u1;
-    if (s2 > s1) { [s1, s2] = [s2, s1]; Vv1 = v2; U1 = u2; }
-    // Keep both frames proper rotations: V₂ and U₂ are V₁ and U₁ turned a
-    // quarter. Then AV₂ = ±σ₂U₂, and the sign is det A's. A true SVD keeps
-    // σ₂ ≥ 0 and puts that reflection in U; here Σ carries it as sg₂ = ±σ₂,
-    // so the three steps always multiply back to exactly A.
-    const Vv2 = { x: -Vv1.y, y: Vv1.x }, U2 = { x: -U1.y, y: U1.x };
-    const AV2 = { x: a * Vv2.x + b * Vv2.y, y: c * Vv2.x + d * Vv2.y };
-    const sg2 = AV2.x * U2.x + AV2.y * U2.y;
-    return { s1, s2, sg2, flip: sg2 < -1e-9, V1: Vv1, V2: Vv2, U1, U2 };
+    let th = 0.5 * Math.atan2(2 * f, e - g);
+    let V1 = { x: Math.cos(th), y: Math.sin(th) };
+    const apply = (v: P) => ({ x: a * v.x + b * v.y, y: c * v.x + d * v.y });
+    // the larger stretch goes first
+    const n1 = Math.hypot(apply(V1).x, apply(V1).y);
+    const V1b = { x: -V1.y, y: V1.x };
+    if (Math.hypot(apply(V1b).x, apply(V1b).y) > n1) { V1 = V1b; th += Math.PI / 2; }
+    // the smallest turn for the Vᵀ step: angle in (−90°, 90°]
+    if (V1.x < -1e-12 || (Math.abs(V1.x) <= 1e-12 && V1.y < 0)) V1 = { x: -V1.x, y: -V1.y };
+    const V2 = { x: -V1.y, y: V1.x };
+    const AV1 = apply(V1), AV2 = apply(V2);
+    const s1 = Math.hypot(AV1.x, AV1.y);
+    const U1 = s1 > 1e-9 ? { x: AV1.x / s1, y: AV1.y / s1 } : { x: 1, y: 0 };
+    const q = { x: -U1.y, y: U1.x };
+    const sg2 = AV2.x * q.x + AV2.y * q.y;
+    const s2 = Math.abs(sg2);
+    const det = a * d - b * c;
+    const flip = s2 > 1e-6 && det < 0;
+    const U2 = flip ? { x: -q.x, y: -q.y } : q;
+    return { s1, s2, V1, V2, U1, U2, flip, det, angV: Math.atan2(V1.y, V1.x), angU: Math.atan2(U1.y, U1.x) };
   }
+  type S = ReturnType<typeof svd2>;
 
-  // Stage 0-1: rotate by Vᵀ. 1-2: scale by Σ along the axes. 2-3: rotate by U.
-  function transformPoint(x: number, y: number, s: ReturnType<typeof svd>, t: number) {
-    const angV = Math.atan2(s.V1.y, s.V1.x);
-    const angU = Math.atan2(s.U1.y, s.U1.x);
-    const r1 = -angV * Math.max(0, Math.min(1, t));
-    let px = x * Math.cos(r1) - y * Math.sin(r1), py = x * Math.sin(r1) + y * Math.cos(r1);
-    const f2 = Math.max(0, Math.min(1, t - 1));
-    px *= 1 + (s.s1 - 1) * f2;
-    py *= 1 + (s.sg2 - 1) * f2;
-    const r3 = angU * Math.max(0, Math.min(1, t - 2));
-    return { x: px * Math.cos(r3) - py * Math.sin(r3), y: px * Math.sin(r3) + py * Math.cos(r3) };
-  }
+  const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+  const ease = (x: number) => { const u = clamp01(x); return u * u * (3 - 2 * u); };
+  const rot = (a: number): Mat => ({ a: Math.cos(a), b: -Math.sin(a), c: Math.sin(a), d: Math.cos(a) });
+  const mul = (p: Mat, q: Mat): Mat => ({ a: p.a * q.a + p.b * q.c, b: p.a * q.b + p.b * q.d, c: p.c * q.a + p.d * q.c, d: p.c * q.b + p.d * q.d });
+  const app = (m: Mat, v: P): P => ({ x: m.a * v.x + m.b * v.y, y: m.c * v.x + m.d * v.y });
 
-  function arrow(x: number, y: number, color: string, text: string) {
-    const p = toPx(x, y);
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(p.px, p.py); ctx.stroke();
-    const ang = Math.atan2(p.py - O.y, p.px - O.x);
-    ctx.beginPath();
-    ctx.moveTo(p.px, p.py);
-    ctx.lineTo(p.px - 12 * Math.cos(ang - 0.4), p.py - 12 * Math.sin(ang - 0.4));
-    ctx.lineTo(p.px - 12 * Math.cos(ang + 0.4), p.py - 12 * Math.sin(ang + 0.4));
-    ctx.closePath();
-    ctx.fill();
-    label(text, p.px + 7, p.py - 7, 1, 'left', 13, color);
-  }
-
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    const s = svd();
-    const t = view.t;
-
-    ctx.strokeStyle = ink(0.08);
-    ctx.lineWidth = 1;
-    for (let i = -4; i <= 4; i++) {
-      const a = toPx(i, -3), b = toPx(i, 3), c = toPx(-4, i), e = toPx(4, i);
-      ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(c.px, c.py); ctx.lineTo(e.px, e.py); ctx.stroke();
+  /** The frame after t of the three steps: 0-1 Vᵀ, 1-2 Σ, 2-3 U. */
+  function frame(s: S, t: number) {
+    const e1 = ease(t), e2 = ease(t - 1);
+    const sx = 1 + (s.s1 - 1) * e2, sy = 1 + (s.s2 - 1) * e2;
+    let flipY = 1, turn = ease(t - 2);
+    if (s.flip) {
+      // U = R(φ)·diag(1,−1): first flip over the σ₁ axis, then turn
+      const u = t - 2;
+      flipY = Math.cos(Math.PI * ease(u / 0.45));
+      turn = ease((u - 0.45) / 0.55);
     }
-    ctx.strokeStyle = ink(0.25);
-    ctx.setLineDash([4, 5]);
-    ctx.beginPath(); ctx.arc(O.x, O.y, U, 0, Math.PI * 2); ctx.stroke();
-    ctx.setLineDash([]);
+    const m = mul(rot(s.angU * turn), mul({ a: 1, b: 0, c: 0, d: flipY }, mul({ a: sx, b: 0, c: 0, d: sy }, rot(-s.angV * e1))));
+    return { m, sx, sy, flipY };
+  }
 
-    ctx.fillStyle = 'rgba(94,234,212,0.12)';
-    ctx.strokeStyle = TEAL;
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    for (let i = 0; i <= 96; i++) {
-      const a = (i / 96) * Math.PI * 2;
-      const q = transformPoint(Math.cos(a), Math.sin(a), s, t);
-      const p = toPx(q.x, q.y);
-      i === 0 ? ctx.moveTo(p.px, p.py) : ctx.lineTo(p.px, p.py);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+  // ---------------------------------------------------------------- the letter F
+  const F_SHAPE: P[] = [
+    { x: -0.3, y: -0.55 }, { x: -0.12, y: -0.55 }, { x: -0.12, y: 0.02 }, { x: 0.22, y: 0.02 },
+    { x: 0.22, y: 0.18 }, { x: -0.12, y: 0.18 }, { x: -0.12, y: 0.37 }, { x: 0.38, y: 0.37 },
+    { x: 0.38, y: 0.55 }, { x: -0.3, y: 0.55 },
+  ];
 
-    const t1 = transformPoint(s.V1.x, s.V1.y, s, t);
-    const t2 = transformPoint(s.V2.x, s.V2.y, s, t);
-    arrow(t1.x, t1.y, V1, t < 0.5 ? 'v_1' : 'σ_1');
-    arrow(t2.x, t2.y, V2, t < 0.5 ? 'v_2' : s.flip ? '−σ_2' : 'σ_2');
-
-    // which step is under way
-    const stage = t <= 1 ? 'Vᵀ: rotate the circle so v₁, v₂ land on the axes' : t <= 2 ? (s.flip ? 'Σ: stretch by σ₁ and −σ₂, the minus sign is the reflection' : 'Σ: stretch along the axes by σ₁ and σ₂') : 'U: rotate into place';
-    label(stage, 30, 30, 0.5, 'left', 11);
-    for (const [k, name] of [[0, 'circle'], [1, 'Vᵀ'], [2, 'Σ'], [3, 'U']] as [number, string][]) {
-      const x = W - 240 + k * 70;
-      ctx.fillStyle = t >= k - 0.01 ? TEAL : ink(0.2);
-      ctx.beginPath(); ctx.arc(x, 30, 4, 0, Math.PI * 2); ctx.fill();
-      label(name, x, 48, t >= k - 0.01 ? 0.9 : 0.35, 'center', 11.5);
-      if (k < 3) {
-        ctx.strokeStyle = t >= k + 0.99 ? TEAL : ink(0.2);
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(x + 6, 30); ctx.lineTo(x + 64, 30); ctx.stroke();
+  // ---------------------------------------------------------------- labels
+  // Every label is placed with a measured box and nudged to a spot that does
+  // not cover another label or an arrow.
+  let boxes: Box[] = [];
+  let segs: number[][] = [];
+  const overlaps = (p: Box, q: Box, pad = 3) => p.x < q.x + q.w + pad && q.x < p.x + p.w + pad && p.y < q.y + q.h + pad && q.y < p.y + p.h + pad;
+  function hitsSeg(b: Box) {
+    for (const [x1, y1, x2, y2] of segs) {
+      const n = Math.max(2, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 4));
+      for (let i = 0; i <= n; i++) {
+        const x = x1 + ((x2 - x1) * i) / n, y = y1 + ((y2 - y1) * i) / n;
+        if (x > b.x - 6 && x < b.x + b.w + 6 && y > b.y - 6 && y < b.y + b.h + 6) return true;
       }
     }
+    return false;
+  }
+  function place(text: string, tip: P, ang: number, colour: string, clip: Box, size = 12.5) {
+    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    let best: Box | null = null, bestCost = Infinity;
+    for (const dist of [8, 18, 32, 50]) {
+      for (const da of [0, 0.7, -0.7, 1.4, -1.4, 2.1, -2.1, Math.PI]) {
+        const a = ang + da;
+        const cx = tip.x + Math.cos(a) * (dist + w / 2), cy = tip.y + Math.sin(a) * (dist + h / 2);
+        const b = { x: cx - w / 2, y: cy - h / 2, w, h };
+        let cost = dist + Math.abs(da) * 12;
+        if (b.x < clip.x + 2 || b.y < clip.y + 2 || b.x + b.w > clip.x + clip.w - 2 || b.y + b.h > clip.y + clip.h - 2) cost += 1000;
+        if (boxes.some((o) => overlaps(o, b))) cost += 500;
+        if (hitsSeg(b)) cost += 300;
+        if (cost < bestCost) { bestCost = cost; best = b; }
+      }
+      if (bestCost < 100) break;
+    }
+    const b = best!;
+    boxes.push(b);
+    ctx.fillStyle = inv(0.72);
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 4); ctx.fill();
+    label(text, b.x + 3, b.y + b.h / 2 + size * 0.48, 1, 'left', size, colour);
+  }
+  /** A fixed label that later labels must avoid. */
+  function fixed(text: string, x: number, y: number, alpha: number, align: CanvasTextAlign, size: number, colour?: string) {
+    const w = textWidth(text, size), h = size * 1.42;
+    const left = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+    boxes.push({ x: left, y: y - h * 0.8, w, h });
+    label(text, x, y, alpha, align, size, colour);
+  }
 
-    const det = M.a * M.d - M.b * M.c;
+  function arrowPx(o: P, p: P, colour: string, width = 3) {
+    const len = Math.hypot(p.x - o.x, p.y - o.y);
+    if (len < 3) return;
+    ctx.strokeStyle = colour;
+    ctx.fillStyle = colour;
+    ctx.lineWidth = width;
+    const ang = Math.atan2(p.y - o.y, p.x - o.x);
+    const head = Math.min(13, len * 0.5);
+    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(p.x - Math.cos(ang) * head * 0.6, p.y - Math.sin(ang) * head * 0.6); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x - head * Math.cos(ang - 0.38), p.y - head * Math.sin(ang - 0.38));
+    ctx.lineTo(p.x - head * Math.cos(ang + 0.38), p.y - head * Math.sin(ang + 0.38));
+    ctx.closePath();
+    ctx.fill();
+    segs.push([o.x, o.y, p.x, p.y]);
+  }
+
+  // ---------------------------------------------------------------- map view
+  type Panel = { box: Box; o: P; u: number };
+  function mapLayout(s: S) {
+    const strip = narrow ? { x: 0, y: 0, w: W, h: 92 } : { x: 0, y: 0, w: W, h: 84 };
+    let L: Box, R: Box;
+    if (narrow) {
+      const ph = (H - strip.h) / 2;
+      L = { x: 0, y: strip.h, w: W, h: ph };
+      R = { x: 0, y: strip.h + ph, w: W, h: ph };
+    } else {
+      L = { x: 0, y: strip.h, w: W / 2, h: H - strip.h };
+      R = { x: W / 2, y: strip.h, w: W / 2, h: H - strip.h };
+    }
+    const rad = (b: Box) => Math.min(b.w, b.h - 56) / 2;
+    const uL = rad(L) * 0.62;
+    const uR = Math.min(uL, (rad(R) * 0.9) / Math.max(1, s.s1));
+    const ctr = (b: Box): P => ({ x: b.x + b.w / 2, y: b.y + 24 + (b.h - 56) / 2 + 4 });
+    return { strip, left: { box: L, o: ctr(L), u: uL } as Panel, right: { box: R, o: ctr(R), u: uR } as Panel };
+  }
+  const px = (pn: Panel, v: P): P => ({ x: pn.o.x + v.x * pn.u, y: pn.o.y - v.y * pn.u });
+
+  function grid(pn: Panel, m: Mat, alpha: number, n = 8) {
+    ctx.strokeStyle = ink(alpha);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = -n; i <= n; i++) {
+      for (const [p, q] of [[{ x: i, y: -n }, { x: i, y: n }], [{ x: -n, y: i }, { x: n, y: i }]]) {
+        const a = px(pn, app(m, p)), b = px(pn, app(m, q));
+        ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      }
+    }
+    ctx.stroke();
+  }
+  function axes(pn: Panel) {
+    ctx.strokeStyle = ink(0.28);
+    ctx.lineWidth = 1.2;
+    const { box, o } = pn;
+    ctx.beginPath();
+    ctx.moveTo(box.x, o.y); ctx.lineTo(box.x + box.w, o.y);
+    ctx.moveTo(o.x, box.y); ctx.lineTo(o.x, box.y + box.h);
+    ctx.stroke();
+  }
+  function curve(pn: Panel, m: Mat) {
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const a = (i / 120) * Math.PI * 2;
+      const p = px(pn, app(m, { x: Math.cos(a), y: Math.sin(a) }));
+      i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+  }
+  function letterF(pn: Panel, m: Mat, mirrored: boolean) {
+    ctx.beginPath();
+    F_SHAPE.forEach((v, i) => { const p = px(pn, app(m, v)); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.closePath();
+    ctx.fillStyle = mirrored ? rgba(C.red, 0.28) : ink(0.24);
+    ctx.fill();
+    ctx.strokeStyle = mirrored ? C.red : ink(0.75);
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  function dottedLine(pn: Panel, dir: P, colour: string) {
+    const r = 9;
+    const a = px(pn, { x: -dir.x * r, y: -dir.y * r }), b = px(pn, { x: dir.x * r, y: dir.y * r });
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 5]);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function stageStrip(s: S, strip: Box, t: number) {
+    const active = t <= 0.001 ? 0 : Math.min(3, Math.ceil(t - 1e-6));
+    const items: [string, string][] = [
+      ['x', 'unit circle'],
+      ['Vᵀ', 'rotate'],
+      ['Σ', 'stretch'],
+      ['U', s.flip ? (narrow ? 'flip+rotate' : 'flip + rotate') : 'rotate'],
+    ];
+    const pad = narrow ? 12 : 30;
+    const gap = narrow ? 12 : 46;
+    const pw = (strip.w - 2 * pad - 3 * gap) / 4;
+    const ph = narrow ? 58 : 54;
+    const py = strip.y + (strip.h - ph) / 2;
+    items.forEach(([sym, word], k) => {
+      const x = strip.x + pad + k * (pw + gap);
+      const on = k === active, done = k < active;
+      ctx.beginPath(); ctx.roundRect(x, py, pw, ph, 10);
+      ctx.fillStyle = on ? C.teal : done ? rgba(C.teal, 0.14) : ink(0.04);
+      ctx.fill();
+      ctx.strokeStyle = on ? C.teal : done ? rgba(C.teal, 0.5) : ink(0.2);
+      ctx.lineWidth = on ? 2 : 1.2;
+      ctx.stroke();
+      const col = on ? inv(1) : done ? C.teal : ink(0.55);
+      const cx = x + pw / 2;
+      label(sym, cx, py + ph * 0.47, 1, 'center', narrow ? 16 : 14, col);
+      label(word, cx, py + ph * 0.84, 1, 'center', narrow ? 10.5 : 9.5, col);
+      boxes.push({ x, y: py, w: pw, h: ph });
+      if (k < 3) {
+        // the connector fills as the next step runs
+        const x1 = x + pw + 5, x2 = x + pw + gap - 5, y = py + ph / 2;
+        const f = clamp01(t - k);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = ink(0.2);
+        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
+        if (f > 0) {
+          ctx.strokeStyle = C.teal;
+          ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x1 + (x2 - x1) * f, y); ctx.stroke();
+        }
+        ctx.fillStyle = f >= 1 ? C.teal : ink(0.3);
+        ctx.beginPath(); ctx.moveTo(x2 + 2, y); ctx.lineTo(x2 - 5, y - 4.5); ctx.lineTo(x2 - 5, y + 4.5); ctx.closePath(); ctx.fill();
+      }
+    });
+  }
+
+  function drawMap() {
+    const s = svd2();
+    const t = view.t;
+    const { strip, left, right } = mapLayout(s);
+    boxes = []; segs = [];
+    stageStrip(s, strip, t);
+
+    // divider
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (narrow) { ctx.moveTo(16, right.box.y); ctx.lineTo(W - 16, right.box.y); }
+    else { ctx.moveTo(right.box.x, right.box.y + 10); ctx.lineTo(right.box.x, H - 10); }
+    ctx.stroke();
+
+    const capSize = narrow ? 13 : 11;
+    const fr = frame(s, t);
+    const done = t >= 2.999;
+    const I: Mat = { a: 1, b: 0, c: 0, d: 1 };
+
+    // --- left: the input
+    ctx.save();
+    ctx.beginPath(); ctx.rect(left.box.x, left.box.y, left.box.w, left.box.h); ctx.clip();
+    grid(left, I, 0.09);
+    axes(left);
+    dottedLine(left, s.V1, rgba(C.ind, 0.5));
+    dottedLine(left, s.V2, rgba(C.amb, 0.5));
+    curve(left, I);
+    ctx.fillStyle = rgba(C.teal, 0.08); ctx.fill();
+    ctx.strokeStyle = C.teal; ctx.lineWidth = 2.4; ctx.stroke();
+    letterF(left, I, false);
+    const l1 = px(left, s.V1), l2 = px(left, s.V2);
+    arrowPx(left.o, l1, C.ind);
+    arrowPx(left.o, l2, C.amb);
+    ctx.restore();
+
+    // --- right: the same things after t of the three steps
+    const mirrored = fr.flipY < 0;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(right.box.x, right.box.y, right.box.w, right.box.h); ctx.clip();
+    grid(right, fr.m, 0.09);
+    axes(right);
+    if (done) {
+      dottedLine(right, s.U1, rgba(C.ind, 0.5));
+      dottedLine(right, s.U2, rgba(C.amb, 0.5));
+    } else {
+      // where it is going
+      curve(right, M);
+      ctx.strokeStyle = rgba(C.teal, 0.45); ctx.lineWidth = 1.2; ctx.setLineDash([5, 5]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    curve(right, fr.m);
+    ctx.fillStyle = rgba(C.teal, 0.12); ctx.fill();
+    ctx.strokeStyle = C.teal; ctx.lineWidth = 2.4; ctx.stroke();
+    letterF(right, fr.m, mirrored);
+    const q1 = app(fr.m, s.V1), q2 = app(fr.m, s.V2);
+    const r1 = px(right, q1), r2 = px(right, q2);
+    arrowPx(right.o, r1, C.ind);
+    arrowPx(right.o, r2, C.amb);
+    ctx.restore();
+
+    // --- captions, then labels nudged around them
+    const pad = 16;
+    fixed(narrow ? 'input x' : 'input: x on the unit circle', left.box.x + pad, left.box.y + 22, 0.6, 'left', capSize);
+    const outName = t <= 0.001 ? 'x' : t <= 1 ? 'Vᵀx' : t <= 2 ? 'ΣVᵀx' : done ? 'Ax = UΣVᵀx' : 'UΣVᵀx';
+    fixed(`output: ${outName}`, right.box.x + pad, right.box.y + 22, 0.6, 'left', capSize);
+    if (mirrored) fixed('F mirrored', right.box.x + right.box.w - pad, right.box.y + 22, 1, 'right', capSize, C.red);
+
+    const f = (v: number) => v.toFixed(2);
+    const sentence =
+      t <= 0.001 ? 'Animate to run the three steps'
+        : t <= 1 ? `Vᵀ turns v₁ and v₂ onto the axes (${(-s.angV * 180 / Math.PI).toFixed(0)}°)`
+          : t <= 2 ? `Σ stretches along the axes: ×${f(s.s1)} and ×${f(s.s2)}`
+            : !done ? (s.flip ? 'U flips over the σ₁ axis, then turns' : `U turns the axes onto u₁, u₂ (${(s.angU * 180 / Math.PI).toFixed(0)}°)`)
+              : s.s2 < 1e-3 ? 'σ₂ = 0: the ellipse is a segment'
+                : `ellipse with semi-axes σ₁ = ${f(s.s1)}, σ₂ = ${f(s.s2)}`;
+    fixed(sentence, right.box.x + pad, right.box.y + right.box.h - 14, 0.75, 'left', capSize);
+    fixed('v₁, v₂: the right singular vectors', left.box.x + pad, left.box.y + left.box.h - 14, 0.5, 'left', capSize);
+
+    const ls = narrow ? 15 : 12.5;
+    place('v_{1}', l1, Math.atan2(l1.y - left.o.y, l1.x - left.o.x), C.ind, left.box, ls);
+    place('v_{2}', l2, Math.atan2(l2.y - left.o.y, l2.x - left.o.x), C.amb, left.box, ls);
+    const name = (i: 1 | 2, sc: number) =>
+      t < 1 ? `v_{${i}}` : t < 2 ? (t <= 1.001 ? `e_{${i}}` : `${sc.toFixed(2)}e_{${i}}`) : t <= 2.001 ? `σ_{${i}}e_{${i}}` : `σ_{${i}}u_{${i}}`;
+    const dirOf = (p: P, fallback: P) => (Math.hypot(p.x - right.o.x, p.y - right.o.y) > 4 ? Math.atan2(p.y - right.o.y, p.x - right.o.x) : Math.atan2(-fallback.y, fallback.x));
+    place(name(1, fr.sx), r1, dirOf(r1, s.U1), C.ind, right.box, ls);
+    const n2 = s.s2 < 1e-3 && t >= 2 ? 'σ_{2}u_{2} = 0' : name(2, Math.abs(fr.sy));
+    place(n2, r2, dirOf(r2, s.U2), C.amb, right.box, ls);
+
+    // --- panel text
+    const det = s.det;
     const cond = s.s2 > 1e-4 ? (s.s1 / s.s2).toFixed(2) : '∞';
     const rank = s.s2 > 1e-3 ? '2' : s.s1 > 1e-3 ? '1' : '0';
-    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = M[k].toFixed(2)));
     setEq({
-      rule: ['A = ', ['U', V1], ['\\,\\Sigma\\,', V2], ['V^{\\mathsf T}', TEAL]],
-      live: [[`\\sigma_1 = ${s.s1.toFixed(2)}`, V1], [`\\quad\\sigma_2 = ${s.s2.toFixed(2)}`, V2], `\\quad\\det A = \\pm\\sigma_1\\sigma_2 = ${det.toFixed(3)}`],
+      rule: ['A = U', ['\\,\\Sigma\\,', C.teal], 'V^{\\mathsf T}', '\\qquad', ['A v_1 = \\sigma_1 u_1', C.ind], '\\quad', ['A v_2 = \\sigma_2 u_2', C.amb]],
+      live: [[`\\sigma_1 = ${s.s1.toFixed(2)}`, C.ind], [`\\quad\\sigma_2 = ${s.s2.toFixed(2)}`, C.amb], `\\quad\\det A = ${det < 0 ? '-' : ''}\\sigma_1\\sigma_2 = ${det.toFixed(3)}`],
     });
     setResult({
       value: `${s.s1.toFixed(2)}, ${s.s2.toFixed(2)}`,
-      colour: TEAL,
-      status: `condition σ₁/σ₂ = ${cond} · det = ${det < 0 ? '−' : '+'}σ₁σ₂ = ${det.toFixed(3)} · rank ${rank}`,
+      colour: C.teal,
+      status: `condition σ₁/σ₂ = ${cond} · det = ${det < 0 ? '−' : '+'}σ₁σ₂ = ${det.toFixed(3)} · rank ${rank}${s.flip ? ' · U is a reflection' : ''}`,
       note: rank !== '2'
-        ? 'σ₂ has collapsed: the ellipse is flat, a whole direction has been thrown away, and the matrix cannot be inverted.'
+        ? 'σ₂ has collapsed: the ellipse is a segment, a whole direction has been thrown away, and the matrix cannot be inverted.'
         : s.flip
-          ? 'det A < 0, so A turns the plane over. Two rotations cannot do that: one of U, V has to be a reflection, shown here as the minus sign in the stretch.'
+          ? 'det A < 0, so A turns the plane over and the F comes out mirrored. Rotations cannot do that: U here is a reflection followed by a turn.'
           : 'Every matrix is a rotation, then a stretch along two perpendicular axes, then another rotation. The stretch factors are the singular values.',
     });
     setRows({ 'r-cond': cond, 'r-det': det.toFixed(3), 'r-rank': rank });
   }
 
-  const stageName = (t: number) => (t >= 2.99 ? 'whole' : t <= 1 ? `Vᵀ ${(t * 100).toFixed(0)}%` : t <= 2 ? `Σ ${((t - 1) * 100).toFixed(0)}%` : `U ${((t - 2) * 100).toFixed(0)}%`);
-  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; draw(); }, (v) => stageName(v / 100));
-  const sync = matrix(M, ['a', 'b', 'c', 'd'], () => draw());
+  // ---------------------------------------------------------------- image view
+  const N = 64;
+  function makePicture(kind: string): Float64Array {
+    const A = new Float64Array(N * N);
+    if (kind === 'plaid') {
+      // a pattern in x plus a pattern in y: exactly rank 2
+      for (let i = 0; i < N; i++)
+        for (let j = 0; j < N; j++)
+          A[i * N + j] = 0.12 + 0.4 * (Math.floor(j / 8) % 2) + 0.36 * (Math.floor(i / 6) % 3 === 0 ? 1 : 0);
+      return A;
+    }
+    const c = document.createElement('canvas');
+    c.width = N; c.height = N;
+    const g = c.getContext('2d')!;
+    const grey = (v: number) => `rgb(${Math.round(v * 255)},${Math.round(v * 255)},${Math.round(v * 255)})`;
+    if (kind === 'letters') {
+      g.fillStyle = grey(0.95); g.fillRect(0, 0, N, N);
+      g.fillStyle = grey(0.08);
+      g.font = 'bold 23px sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('SVD', 32, 24);
+      g.font = 'bold 12px sans-serif';
+      g.fillText('A = UΣV', 32, 47);
+      g.strokeStyle = grey(0.4); g.lineWidth = 2; g.strokeRect(2, 2, 60, 60);
+    } else {
+      const sky = g.createLinearGradient(0, 0, 0, 40);
+      sky.addColorStop(0, grey(0.92)); sky.addColorStop(1, grey(0.66));
+      g.fillStyle = sky; g.fillRect(0, 0, N, 40);
+      g.fillStyle = grey(1); g.beginPath(); g.arc(50, 11, 6.5, 0, Math.PI * 2); g.fill();
+      g.fillStyle = grey(0.42);
+      g.beginPath(); g.moveTo(0, 40); g.lineTo(13, 21); g.lineTo(24, 33); g.lineTo(37, 17); g.lineTo(58, 40); g.closePath(); g.fill();
+      const ground = g.createLinearGradient(0, 40, 0, 64);
+      ground.addColorStop(0, grey(0.34)); ground.addColorStop(1, grey(0.18));
+      g.fillStyle = ground; g.fillRect(0, 40, N, 24);
+      g.fillStyle = grey(0.82); g.fillRect(7, 34, 18, 18);
+      g.fillStyle = grey(0.12); g.beginPath(); g.moveTo(4, 35); g.lineTo(16, 25); g.lineTo(28, 35); g.closePath(); g.fill();
+      g.fillStyle = grey(0.1); g.fillRect(14, 43, 5, 9); g.fillRect(9, 37, 4, 4); g.fillRect(19, 37, 4, 4);
+      g.fillStyle = grey(0.14); g.fillRect(44, 40, 3, 15);
+      g.fillStyle = grey(0.5); g.beginPath(); g.arc(45.5, 35, 7.5, 0, Math.PI * 2); g.fill();
+      g.fillStyle = grey(0.6); g.fillRect(28, 54, 36, 2);
+    }
+    const d = g.getImageData(0, 0, N, N).data;
+    for (let i = 0; i < N * N; i++) A[i] = d[i * 4] / 255;
+    return A;
+  }
+
+  /** One-sided Jacobi SVD of a square N×N matrix stored row-major. */
+  function svdN(A: Float64Array) {
+    const cols = Array.from({ length: N }, (_, j) => Float64Array.from({ length: N }, (_, i) => A[i * N + j]));
+    const V = Array.from({ length: N }, (_, j) => Float64Array.from({ length: N }, (_, i) => (i === j ? 1 : 0)));
+    for (let sweep = 0; sweep < 40; sweep++) {
+      let rotated = 0;
+      for (let p = 0; p < N - 1; p++) {
+        for (let q = p + 1; q < N; q++) {
+          const cp = cols[p], cq = cols[q];
+          let al = 0, be = 0, ga = 0;
+          for (let i = 0; i < N; i++) { al += cp[i] * cp[i]; be += cq[i] * cq[i]; ga += cp[i] * cq[i]; }
+          if (Math.abs(ga) <= 1e-13 * Math.sqrt(al * be) || Math.abs(ga) < 1e-300) continue;
+          rotated++;
+          const z = (be - al) / (2 * ga);
+          const tt = (z >= 0 ? 1 : -1) / (Math.abs(z) + Math.sqrt(1 + z * z));
+          const c = 1 / Math.sqrt(1 + tt * tt), s = c * tt;
+          for (let i = 0; i < N; i++) {
+            const x = cp[i], y = cq[i];
+            cp[i] = c * x - s * y; cq[i] = s * x + c * y;
+          }
+          const vp = V[p], vq = V[q];
+          for (let i = 0; i < N; i++) {
+            const x = vp[i], y = vq[i];
+            vp[i] = c * x - s * y; vq[i] = s * x + c * y;
+          }
+        }
+      }
+      if (!rotated) break;
+    }
+    const order = cols.map((col, j) => ({ j, s: Math.hypot(...col) })).sort((x, y) => y.s - x.s);
+    return {
+      sigma: order.map((o) => o.s),
+      // σᵢuᵢ is just the rotated column; keep it unnormalised for the rebuild
+      su: order.map((o) => cols[o.j]),
+      v: order.map((o) => V[o.j]),
+    };
+  }
+
+  const pics = new Map<string, { A: Float64Array; svd: ReturnType<typeof svdN>; off: HTMLCanvasElement }>();
+  function picture(kind: string) {
+    let p = pics.get(kind);
+    if (!p) {
+      const A = makePicture(kind);
+      const off = document.createElement('canvas');
+      off.width = N; off.height = N;
+      p = { A, svd: svdN(A), off };
+      pics.set(kind, p);
+    }
+    return p;
+  }
+  const recon = document.createElement('canvas');
+  recon.width = N; recon.height = N;
+  function paint(target: HTMLCanvasElement, A: Float64Array) {
+    const g = target.getContext('2d')!;
+    const img = g.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) {
+      const v = Math.round(255 * Math.max(0, Math.min(1, A[i])));
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+      img.data[i * 4 + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+  }
+  let reconKey = '';
+  function rebuild(kind: string, k: number) {
+    const key = kind + ':' + k;
+    if (key === reconKey) return;
+    reconKey = key;
+    const { svd } = picture(kind);
+    const R = new Float64Array(N * N);
+    for (let l = 0; l < k; l++) {
+      const u = svd.su[l], v = svd.v[l];
+      for (let i = 0; i < N; i++) {
+        const ui = u[i];
+        if (ui === 0) continue;
+        const row = i * N;
+        for (let j = 0; j < N; j++) R[row + j] += ui * v[j];
+      }
+    }
+    paint(recon, R);
+  }
+
+  function frameImage(src: HTMLCanvasElement, x: number, y: number, s: number, caption: string, colour?: string) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(src, x, y, s, s);
+    ctx.imageSmoothingEnabled = true;
+    ctx.strokeStyle = ink(0.3);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 0.5, y - 0.5, s + 1, s + 1);
+    label(caption, x + s / 2, y + s + 26, colour ? 1 : 0.7, 'center', narrow ? 13 : 11, colour);
+  }
+
+  function meter(x: number, y: number, w: number, frac: number, colour: string, text: string, mark?: number) {
+    const size = narrow ? 12.5 : 11;
+    label(text, x, y, 0.8, 'left', size);
+    const by = y + 10;
+    ctx.fillStyle = ink(0.08);
+    ctx.beginPath(); ctx.roundRect(x, by, w, 12, 6); ctx.fill();
+    ctx.fillStyle = colour;
+    ctx.beginPath(); ctx.roundRect(x, by, Math.max(3, w * Math.min(1, frac)), 12, 6); ctx.fill();
+    if (mark !== undefined) {
+      ctx.strokeStyle = ink(0.6);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x + w * mark, by - 4); ctx.lineTo(x + w * mark, by + 16); ctx.stroke();
+    }
+  }
+
+  function spectrum(sigma: number[], k: number, b: Box) {
+    const size = narrow ? 12 : 10.5;
+    const DEC = 4; // decades shown below σ₁
+    const left = b.x + (narrow ? 58 : 54), right = b.x + b.w, top = b.y + 26, bottom = b.y + b.h - 34;
+    const yOf = (r: number) => top + (Math.min(DEC, Math.max(0, -Math.log10(Math.max(r, 1e-12)))) / DEC) * (bottom - top);
+    label('σᵢ / σ₁ for i = 1 … 64 (log scale)', b.x, b.y + 10, 0.7, 'left', size);
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    for (let dcd = 0; dcd <= DEC; dcd++) {
+      const y = top + (dcd / DEC) * (bottom - top);
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+      label(dcd === 0 ? '1' : `10⁻${'¹²³⁴'[dcd - 1]}`, left - 6, y + 5, 0.55, 'right', size);
+    }
+    const bw = (right - left) / N;
+    sigma.forEach((s, i) => {
+      const y = yOf(s / sigma[0]);
+      ctx.fillStyle = i < k ? C.ind : ink(0.25);
+      ctx.fillRect(left + i * bw + 0.6, y, Math.max(1, bw - 1.2), bottom - y + (y >= bottom ? 0 : 0));
+      if (y >= bottom - 0.5) { ctx.fillRect(left + i * bw + 0.6, bottom - 2, Math.max(1, bw - 1.2), 2); }
+    });
+    const kx = left + k * bw;
+    ctx.strokeStyle = C.amb;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(kx, top - 8); ctx.lineTo(kx, bottom + 6); ctx.stroke();
+    const kt = `k = ${k}`;
+    const kw = textWidth(kt, size);
+    label(kt, Math.min(right - kw, Math.max(left, kx + 6)), top + 8, 1, 'left', size, C.amb);
+    for (const i of [1, 16, 32, 48, 64]) label(String(i), left + (i - 0.5) * bw, bottom + 20, 0.5, 'center', size);
+  }
+
+  function drawImage() {
+    const { A, svd, off } = picture(view.pic);
+    if (!off.dataset.painted) { paint(off, A); off.dataset.painted = '1'; }
+    const k = view.k;
+    rebuild(view.pic, k);
+    const sig = svd.sigma;
+    const tot = sig.reduce((a, s) => a + s * s, 0);
+    const kept = sig.slice(0, k).reduce((a, s) => a + s * s, 0);
+    const err = Math.sqrt(Math.max(0, tot - kept) / tot);
+    const store = k * (2 * N + 1), full = N * N;
+    const rankPic = sig.filter((s) => s > sig[0] * 1e-9).length;
+    const next = k < N ? sig[k] / sig[0] : 0;
+
+    let spec: Box, mY: number, mW: number, mX: number;
+    if (narrow) {
+      const s = 232;
+      frameImage(off, 20, 24, s, 'original');
+      frameImage(recon, W - 20 - s, 24, s, `first ${k} term${k > 1 ? 's' : ''}`, C.ind);
+      spec = { x: 20, y: 310, w: W - 40, h: 270 };
+      mX = 20; mY = 618; mW = W - 40;
+    } else {
+      const s = 256;
+      frameImage(off, 34, 34, s, 'original 64 × 64');
+      frameImage(recon, 324, 34, s, `rank ${k}: the first ${k} term${k > 1 ? 's' : ''}`, C.ind);
+      spec = { x: 624, y: 24, w: 346, h: 300 };
+      mX = 34; mY = 384; mW = W - 68;
+    }
+    spectrum(sig, k, spec);
+    const pct = (100 * store) / full;
+    meter(mX, mY, mW, store / full, store > full ? C.red : C.teal,
+      narrow ? `storage: ${store} of ${full} numbers (${pct.toFixed(0)}%)` : `storage: k(64 + 64 + 1) = ${store} numbers, ${pct.toFixed(0)}% of the ${full} pixels`, 1);
+    meter(mX, mY + 64, mW, err, C.amb, `error ‖A − A_{k}‖ / ‖A‖ = ${(100 * err).toFixed(1)}%`);
+    const foot = narrow
+      ? ['Each term σᵢuᵢvᵢᵀ is a column pattern times', 'a row pattern; A_k keeps the k biggest.']
+      : ['Each term σᵢuᵢvᵢᵀ is one column pattern times one row pattern. A_k keeps the k biggest,', 'and no other rank-k picture is closer to the original (Eckart and Young).'];
+    foot.forEach((line, i) => label(line, mX, mY + 136 + i * 24, 0.55, 'left', narrow ? 12 : 10.5));
+
+    setEq({
+      rule: [['A_k', C.ind], ' = \\sum_{i=1}^{k} ', ['\\sigma_i', C.ind], '\\, u_i v_i^{\\mathsf T}', '\\qquad \\frac{\\|A-A_k\\|}{\\|A\\|} = \\sqrt{\\frac{\\sum_{i>k}\\sigma_i^2}{\\sum_i \\sigma_i^2}}'],
+      live: [[`k = ${k}`, C.amb], `\\quad ${store}\\text{ of }${full}\\text{ numbers}`, [`\\quad\\text{error} = ${(100 * err).toFixed(1)}\\%`, C.amb]],
+    });
+    setResult({
+      value: `${(100 * err).toFixed(1)}% error`,
+      colour: C.amb,
+      status: `k = ${k} · ${store} of ${full} numbers (${pct.toFixed(0)}%) · picture has rank ${rankPic}`,
+      note: view.pic === 'plaid'
+        ? 'The plaid is a stripe pattern in x plus one in y, so only two singular values are not zero: k = 2 rebuilds it exactly.'
+        : store > full
+          ? 'Past k = 31 the factors take more numbers than the pixels themselves: compression has stopped paying.'
+          : err < 0.005
+            ? 'The dropped singular values are tiny, so the copy is pixel-perfect to the eye.'
+            : 'The big singular values carry the broad shapes; the small ones add edges and detail. Drop the small ones and the picture survives.',
+    });
+    setRows({
+      'r-store': `${store} (${pct.toFixed(0)}%)`,
+      'r-err': `${(100 * err).toFixed(1)}%`,
+      'r-next': k < N ? (next < 1e-6 ? '0' : next.toPrecision(2)) : '—',
+      'r-rankimg': String(rankPic),
+    });
+  }
+
+  function draw() {
+    readTheme();
+    ctx.clearRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    if (view.mode === 'map') drawMap(); else drawImage();
+  }
+
+  // ---------------------------------------------------------------- controls
   let raf = 0;
+  const stageName = (t: number) => (t >= 2.99 ? 'whole' : t <= 0.001 ? 'circle' : t <= 1 ? `Vᵀ ${(t * 100).toFixed(0)}%` : t <= 2 ? `Σ ${((t - 1) * 100).toFixed(0)}%` : `U ${((t - 2) * 100).toFixed(0)}%`);
+  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; draw(); }, (v) => stageName(v / 100));
+  const setK = slider('k', (v) => { cancelAnimationFrame(raf); view.k = v; draw(); });
+  const sync = matrix(M, ['a', 'b', 'c', 'd'], () => { presets.clear(); draw(); });
   function preset(m: string) {
     cancelAnimationFrame(raf);
     const [a, b, c, d] = m.split(',').map(Number);
@@ -249,23 +811,85 @@ import Try from '../../../components/sim/Try.astro';
   }
   const presets = segmented('presets', preset);
   const pick = (m: string) => { presets.select(m); preset(m); };
-  tries({
-    steps: () => { pick('1.2,0.8,0.3,1.1'); el('run').click(); },
-    flip: () => { pick('1,0.6,0.8,-1.2'); el('run').click(); },
-    rank: () => pick('1,1,1,1'),
-  });
-  el('run').addEventListener('click', () => {
+  const picSeg = segmented('pic', (p) => { cancelAnimationFrame(raf); view.pic = p; draw(); });
+
+  const runBtn = el('run');
+  function setMode(m: string) {
     cancelAnimationFrame(raf);
+    view.mode = m;
+    const map = m === 'map';
+    el('ctl-map').hidden = !map;
+    el('ctl-map2').hidden = !map;
+    el('ctl-img').hidden = map;
+    el('ctl-img2').hidden = map;
+    el('cap-map').hidden = !map;
+    el('cap-img').hidden = map;
+    runBtn.textContent = map ? 'Animate the three steps' : 'Sweep k from 1 to 64';
+    const rl = document.getElementById('result-label');
+    if (rl) rl.innerHTML = map ? 'Singular values σ<sub>1</sub>, σ<sub>2</sub>' : 'Rank-k copy of the picture';
+    resize(true);
+  }
+  const modes = segmented('mode', setMode);
+
+  function animateSteps() {
     const start = performance.now();
+    const dur = 4200;
     const tick = (now: number) => {
-      const p = Math.min(1, (now - start) / 2600);
-      view.t = p * 3;
+      const p = Math.min(1, (now - start) / dur);
+      // a short hold on the circle, then the three steps
+      view.t = 3 * clamp01((p - 0.06) / 0.94);
       setT(Math.round(view.t * 100));
       draw();
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+  }
+  function sweepK() {
+    const start = performance.now();
+    const dur = 5000;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / dur);
+      view.k = Math.max(1, Math.round(1 + 63 * p * p));
+      setK(view.k);
+      draw();
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  }
+  runBtn.addEventListener('click', () => {
+    cancelAnimationFrame(raf);
+    if (view.mode === 'map') animateSteps(); else sweepK();
   });
 
-  draw();
+  const toMap = () => { if (view.mode !== 'map') { modes.select('map'); setMode('map'); } };
+  tries({
+    steps: () => { toMap(); pick('1.2,0.8,0.3,1.1'); runBtn.click(); },
+    flip: () => { toMap(); pick('1,0.6,0.8,-1.2'); runBtn.click(); },
+    rank: () => { toMap(); pick('1,1,1,1'); runBtn.click(); },
+    compress: () => {
+      modes.select('image');
+      setMode('image');
+      view.pic = 'scene';
+      picSeg.select('scene');
+      view.k = 8;
+      setK(8);
+      draw();
+    },
+  });
+
+  new ResizeObserver(() => resize()).observe(canvas.parentElement!);
+  document.addEventListener('fullscreenchange', () => resize(true));
+  window.addEventListener('themechange', () => draw());
+  resize(true);
 </script>
+
+<style>
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .group[hidden] {
+    display: none;
+  }
+</style>

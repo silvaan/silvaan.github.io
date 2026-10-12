@@ -244,7 +244,7 @@ export const AREAS: Area[] = [
         slug: 'svd',
         title: 'Singular Value Decomposition',
         description:
-          'Watch any matrix turn a circle into an ellipse as rotate, stretch, rotate, the geometry of A = U Σ Vᵀ.',
+          'Watch any matrix turn a circle into an ellipse as rotate, stretch, rotate, the geometry of A = U Σ Vᵀ. Then keep only the biggest singular values and compress a picture.',
         href: '/simulations/linear-algebra/svd',
         status: 'live',
       },
