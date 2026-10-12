@@ -68,14 +68,40 @@ function render(bar: HTMLElement, lines: Part[][]) {
   });
 }
 
+/** A line that still runs past the bar after wrapping (one part wider than
+ *  a phone, or a whole line set as one formula) is shrunk until it fits. */
+function fit(bar: HTMLElement) {
+  for (const line of bar.querySelectorAll<HTMLElement>('.eq-line')) {
+    line.style.fontSize = '';
+    // twice: wrapping can change once the size does
+    for (let pass = 0; pass < 2; pass++) {
+      const room = line.clientWidth;
+      const need = line.scrollWidth;
+      if (room <= 0 || need <= room + 1) break;
+      const size = parseFloat(getComputedStyle(line).fontSize);
+      line.style.fontSize = `${size * Math.max(0.6, (room - 2) / need)}px`;
+    }
+  }
+}
+
 /** Sims that animate call the setter every frame, so only rebuild on a change. */
 function cached(bar: HTMLElement) {
   let last = '';
+  let width = 0;
+  new ResizeObserver(() => {
+    if (bar.clientWidth === width) return;
+    width = bar.clientWidth;
+    fit(bar);
+  }).observe(bar);
+  // KaTeX's fonts arrive after the first render and widen the line
+  document.fonts?.ready.then(() => fit(bar));
+  document.fonts?.addEventListener('loadingdone', () => fit(bar));
   return (lines: Part[][]) => {
     const key = JSON.stringify(lines);
     if (key === last) return;
     last = key;
     render(bar, lines);
+    fit(bar);
   };
 }
 
