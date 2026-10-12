@@ -18,281 +18,836 @@ import Try from '../../../components/sim/Try.astro';
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="taylor" width="900" height="520" role="img" aria-label="The true function and its Taylor polynomial drawn together, with the radius of convergence shaded where it is finite."></canvas>
+        <canvas
+          id="taylor"
+          width="960"
+          height="692"
+          role="img"
+          aria-label="The true function and its Taylor polynomial drawn together, the band of x where the series converges, one thin lane per term of the series underneath, and a small complex plane with the disc of convergence and the singularity that limits it."
+        ></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the true function', color: '#5eead4' }, { label: 'the polynomial', color: '#7c8cff' }]}
-        hint="Drag across the graph to read the gap at another x. The shaded band, when there is one, is the radius of convergence."
+        legend={[
+          { label: 'the true function f', color: '#5eead4' },
+          { label: 'the running sum P', color: '#7c8cff' },
+          { label: 'singularity', color: '#f87171' },
+        ]}
+        hint="Drag across the graph or the lanes to read the gap at another x. Each lane is one term on its own (squashed to fit), bright where it is bigger than 0.05."
       />
       <Result label="Gap at x = 1.50" />
     </div>
     <div class="sim-panel">
-      <Seg id="fn" label="Function" attr="fn" options={[{ value: 'sin', label: 'sin x' }, { value: 'cos', label: 'cos x' }, { value: 'exp', label: 'eˣ' }, { value: 'ln', label: 'ln(1+x)' }, { value: 'geom', label: '1/(1−x)' }]} />
+      <Seg
+        id="fn"
+        label="Function"
+        attr="fn"
+        options={[
+          { value: 'sin', label: 'sin x' },
+          { value: 'cos', label: 'cos x' },
+          { value: 'exp', label: 'eˣ' },
+          { value: 'ln', label: 'ln(1+x)' },
+          { value: 'geom', label: '1/(1−x)' },
+          { value: 'rat', label: '1/(1+x²)' },
+        ]}
+      />
       <Transport animate="Animate" reset={false}>
         <button type="button" class="btn ghost" id="step">Add a term</button>
       </Transport>
-      <Slider id="n" label="Non-zero terms" min={1} max={16} value={3} />
+      <Slider id="n" label="Non-zero terms" min={1} max={12} value={3} />
       <Slider id="xe" label="Read the gap at x" min={-7} max={7} step={0.05} value={1.5} display="1.50" />
-      <Readout rows={[{ id: 'r-deg', label: 'degree of P' }, { id: 'r-f', label: 'f(x)' }, { id: 'r-p', label: 'P(x)' }]} />
+      <Readout
+        rows={[
+          { id: 'r-deg', label: 'degree of P' },
+          { id: 'r-f', label: 'f(x)' },
+          { id: 'r-p', label: 'P(x)' },
+          { id: 'r-R', label: 'radius of convergence' },
+        ]}
+      />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      Add terms and the polynomial <b>hugs the curve near x = 0</b> first, then
-      further out. For sin x every other derivative at 0 is zero, so each new term
-      raises the degree by two. <Try id="grow" label="Animate" />
+      Watch each new term <b>drop from its lane</b> into the sum. A term is tiny near 0 and only
+      matters further out, so every one pushes the stretch where P hugs f a little wider.
+      <Try id="grow" label="Animate" />
     </li>
     <li>
-      For <b>sin, cos, eˣ</b> the series converges everywhere: even at x = 5 the
-      gap falls to zero once there are enough terms. <Try id="far" label="Animate" />
+      Each lane's coefficient is <b>f⁽ᵏ⁾(0)/k!</b>: for eˣ every derivative at 0 is 1, so the
+      terms are xᵏ/k!, and each one makes P match one more derivative. With no singularity
+      anywhere the disc fills the plane, and x = 2.5 converges too. <Try id="exp" label="Animate" />
     </li>
     <li>
-      For <b>ln(1+x)</b> the radius of convergence is 1. At x = 1.5, outside the
-      band, adding terms makes the gap <b>grow</b> without bound. <Try id="diverge" label="Animate" />
+      <b>ln(1+x)</b> is perfectly fine at x = 1.5, yet the gap there grows with every term. The
+      series cannot reach past a point where the function blows up: z = −1 caps the disc at
+      radius 1, on both sides of 0. <Try id="diverge" label="Animate" />
+    </li>
+    <li>
+      <b>1/(1+x²)</b> is smooth on the whole real line, but its series still dies at |x| = 1.
+      The culprits are the poles at <b>±i</b>, off to the side, at distance 1 from the centre.
+      <Try id="rat" label="Animate" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
+
+  const MAXN = 12; // terms the lanes have room for
+  const TOL = 0.05; // "close enough" for the strip under the plot and the bright part of a lane
 
   const fact: number[] = [1];
   for (let k = 1; k <= 40; k++) fact[k] = fact[k - 1] * k;
 
   type TF = {
     f: (x: number) => number;
-    // k-th non-zero term of the series (k from 0)
-    term: (k: number, x: number) => number;
+    /** Power of x in the j-th non-zero term. */
+    pow: (j: number) => number;
+    /** Its coefficient, as a number. */
+    coef: (j: number) => number;
+    /** The denominator as it is written ('' for none). */
+    den: (j: number) => string;
+    /** f^(k)(0) for k = pow(j), as sign · m! */
+    dv: (j: number) => [number, number];
     xr: [number, number];
     yr: [number, number];
-    radius?: number;
+    /** Radius of convergence (Infinity for an entire function). */
+    R: number;
+    /** Singularities in the complex plane, with the label they get there. */
+    sing: { re: number; im: number }[];
+    singText: string;
   };
+  const alt = (j: number) => (j % 2 ? -1 : 1);
   const FNS: Record<string, TF> = {
     sin: {
       f: Math.sin,
-      term: (k, x) => ((-1) ** k * x ** (2 * k + 1)) / fact[2 * k + 1],
+      pow: (j) => 2 * j + 1,
+      coef: (j) => alt(j) / fact[2 * j + 1],
+      den: (j) => (j ? `${2 * j + 1}!` : ''),
+      dv: (j) => [alt(j), 0],
       xr: [-7, 7],
-      yr: [-4, 4],
+      yr: [-3, 3],
+      R: Infinity,
+      sing: [],
+      singText: 'sin is entire: no singularity',
     },
     cos: {
       f: Math.cos,
-      term: (k, x) => ((-1) ** k * x ** (2 * k)) / fact[2 * k],
+      pow: (j) => 2 * j,
+      coef: (j) => alt(j) / fact[2 * j],
+      den: (j) => (j ? `${2 * j}!` : ''),
+      dv: (j) => [alt(j), 0],
       xr: [-7, 7],
-      yr: [-4, 4],
+      yr: [-3, 3],
+      R: Infinity,
+      sing: [],
+      singText: 'cos is entire: no singularity',
     },
     exp: {
       f: Math.exp,
-      term: (k, x) => x ** k / fact[k],
+      pow: (j) => j,
+      coef: (j) => 1 / fact[j],
+      den: (j) => (j > 1 ? `${j}!` : ''),
+      dv: () => [1, 0],
       xr: [-3.5, 3],
       yr: [-2, 14],
+      R: Infinity,
+      sing: [],
+      singText: 'eˣ is entire: no singularity',
     },
     ln: {
       f: (x) => Math.log(1 + x),
-      term: (k, x) => ((-1) ** k * x ** (k + 1)) / (k + 1),
-      xr: [-1.3, 3],
+      pow: (j) => j + 1,
+      coef: (j) => alt(j) / (j + 1),
+      den: (j) => (j ? `${j + 1}` : ''),
+      dv: (j) => [alt(j), j],
+      xr: [-1.4, 3],
       yr: [-4, 3],
-      radius: 1,
+      R: 1,
+      sing: [{ re: -1, im: 0 }],
+      singText: 'ln(1+z) blows up at z = −1',
     },
     geom: {
       f: (x) => 1 / (1 - x),
-      term: (k, x) => x ** k,
+      pow: (j) => j,
+      coef: () => 1,
+      den: () => '',
+      dv: (j) => [1, j],
       xr: [-2.5, 2.5],
-      yr: [-7, 7],
-      radius: 1,
+      yr: [-6, 6],
+      R: 1,
+      sing: [{ re: 1, im: 0 }],
+      singText: '1/(1−z) blows up at z = 1',
+    },
+    rat: {
+      f: (x) => 1 / (1 + x * x),
+      pow: (j) => 2 * j,
+      coef: (j) => alt(j),
+      den: () => '',
+      dv: (j) => [alt(j), 2 * j],
+      xr: [-2.5, 2.5],
+      yr: [-1.5, 2.5],
+      R: 1,
+      sing: [{ re: 0, im: 1 }, { re: 0, im: -1 }],
+      singText: 'poles at z = ±i, off the line',
     },
   };
+  const term = (fn: TF, j: number, x: number) => fn.coef(j) * x ** fn.pow(j);
+  function partial(fn: TF, x: number, n: number) {
+    let s = 0;
+    for (let j = 0; j < n; j++) s += term(fn, j, x);
+    return s;
+  }
 
-  /** Degree of the polynomial built from n non-zero terms. */
-  const DEGREE: Record<string, (n: number) => number> = {
-    sin: (n) => 2 * n - 1,
-    cos: (n) => 2 * n - 2,
-    exp: (n) => n - 1,
-    ln: (n) => n,
-    geom: (n) => n - 1,
-  };
+  // --- text helpers ------------------------------------------------------------
+  const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+  const sup = (k: number) => String(k).split('').map((c) => SUP[+c]).join('');
+  const minus = (s: number) => (s < 0 ? '−' : '');
+  function termText(fn: TF, j: number) {
+    const k = fn.pow(j), d = fn.den(j), s = Math.sign(fn.coef(j));
+    const body = k === 0 ? '1' : 'x' + (k > 1 ? sup(k) : '');
+    return minus(s) + body + (d ? '/' + d : '');
+  }
+  function termTex(fn: TF, j: number) {
+    const k = fn.pow(j), d = fn.den(j), s = Math.sign(fn.coef(j));
+    const body = k === 0 ? '1' : k === 1 ? 'x' : `x^{${k}}`;
+    return (s < 0 ? '-' : '') + (d ? `\\frac{${body}}{${d}}` : body);
+  }
+  /** f^(k)(0) written out: small factorials as numbers, the rest as m!. */
+  function derivText(fn: TF, j: number) {
+    const [s, m] = fn.dv(j);
+    return minus(s) + (m <= 3 ? String(fact[m]) : `${m}!`);
+  }
+  const derivTex = (fn: TF, j: number) => derivText(fn, j).replace('−', '-');
+  const fmt = (v: number, d = 3) => (Math.abs(v) < 0.5 * 10 ** -d ? (0).toFixed(d) : v.toFixed(d)).replace('-', '−');
 
+  // --- state ----------------------------------------------------------------------
   const state = { fn: 'sin', n: 3, x: 1.5 };
+  let drop: { t0: number } | null = null; // the newest term on its way into the sum
+  let auto = false;
+  let nextAt = 0;
   let raf = 0;
+  const DROP = 1000; // ms for one term to fall into the sum
+  const PAUSE = 450;
 
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const canvas = el('taylor') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const PAD = { l: 46, r: 24, t: 24, b: 40 };
-  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
 
-  function partial(fn: TF, x: number, n: number) {
-    let s = 0;
-    for (let k = 0; k < n; k++) s += fn.term(k, x);
-    return s;
+  // --- canvas, sized for wide and narrow screens ---------------------------------
+  const canvas = el('taylor') as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  type Lay = {
+    narrow: boolean; W: number; H: number;
+    x0: number; x1: number; pt: number; pb: number; tolY: number;
+    laneHead: number; laneTop: number; lh: number; rc: number;
+    ins: { x: number; y: number; s: number }; insText: { x: number; y: number };
+  };
+  function layout(narrow: boolean): Lay {
+    if (!narrow) {
+      const laneTop = 452, lh = 21;
+      return {
+        narrow, W: 960, H: laneTop + MAXN * lh + 12,
+        x0: 96, x1: 702, pt: 22, pb: 350, tolY: 390,
+        laneHead: laneTop - 16, laneTop, lh, rc: 728,
+        ins: { x: 730, y: 22, s: 214 }, insText: { x: 730, y: 260 },
+      };
+    }
+    const laneTop = 450, lh = 24, insY = laneTop + MAXN * lh + 30;
+    return {
+      narrow, W: 520, H: insY + 186,
+      x0: 72, x1: 440, pt: 20, pb: 340, tolY: 380,
+      laneHead: laneTop - 16, laneTop, lh, rc: 450,
+      ins: { x: 72, y: insY, s: 170 }, insText: { x: 258, y: insY + 16 },
+    };
+  }
+  let L = layout(false);
+  let lastDpr = 0;
+  function resize(force = false) {
+    const narrow = (canvas.parentElement?.clientWidth ?? 960) < 620;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (!force && narrow === L.narrow && dpr === lastDpr) return;
+    lastDpr = dpr;
+    L = layout(narrow);
+    canvas.width = Math.round(L.W * dpr);
+    canvas.height = Math.round(L.H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+  new ResizeObserver(() => resize()).observe(canvas.parentElement!);
+  document.addEventListener('fullscreenchange', () => resize(true));
+  window.addEventListener('themechange', () => draw());
+
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  let ink = '232,233,236', light = false, teal = '#5eead4', accent = '#7c8cff', bad = '#f87171';
+  function readTheme() {
+    ink = css('--stage-ink') || '232,233,236';
+    light = css('--stage-light') === '1';
+    teal = css('--accent-2') || '#5eead4';
+    accent = css('--accent') || '#7c8cff';
+    bad = light ? '#dc2626' : '#f87171';
+  }
+  const inkA = (a: number) => `rgba(${ink},${a})`;
+  function hexA(hex: string, a: number) {
+    const h = hex.replace('#', '');
+    const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function hsl2hex(h: number, s: number, l: number) {
+    const f = (n: number) => {
+      const k = (n + h / 30) % 12;
+      const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return Math.round(255 * c).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  }
+  /** One colour per term: pink through orange to lime, clear of the teal f and the indigo P. */
+  const laneColour = (j: number) =>
+    hsl2hex((300 + (j / (MAXN - 1)) * 150) % 360, light ? 0.8 : 0.85, light ? 0.45 : 0.66);
+
+  const font = (size: number) => `${size}px 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace`;
+  function text(s: string, x: number, y: number, colour: string, size = 11, align: CanvasTextAlign = 'left') {
+    ctx.font = font(size);
+    ctx.fillStyle = colour;
+    ctx.textAlign = align;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
   }
 
-  const toX = (fn: TF, px: number) =>
-    fn.xr[0] + ((px - PAD.l) / (W - PAD.l - PAD.r)) * (fn.xr[1] - fn.xr[0]);
+  // --- drawing ------------------------------------------------------------------------
+  const ease = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t));
 
   function draw() {
+    readTheme();
     const fn = FNS[state.fn];
     const [xmin, xmax] = fn.xr;
     const [lo, hi] = fn.yr;
-    const teal = css('--accent-2') || '#5eead4';
-    const accent = css('--accent') || '#7c8cff';
-    const grid = css('--border') || '#262a32';
-    const faint = css('--text-faint') || '#6b7280';
-    const ink = css('--stage-ink') || '232,233,236';
+    const { W, H, x0, x1, pt, pb } = L;
+    const sx = (x: number) => x0 + ((x - xmin) / (xmax - xmin)) * (x1 - x0);
+    const sy = (y: number) => pb - ((y - lo) / (hi - lo)) * (pb - pt);
+    const fsz = L.narrow ? 12.5 : 11.5;
 
-    const sx = (x: number) => PAD.l + ((x - xmin) / (xmax - xmin)) * (W - PAD.l - PAD.r);
-    const sy = (y: number) => H - PAD.b - ((y - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
-    const cy = (y: number) => Math.max(PAD.t, Math.min(H - PAD.b, sy(y)));
+    // progress of the newest term's fall: lift (0..1) then merge (0..1)
+    const p = drop ? Math.min(1, (performance.now() - drop.t0) / DROP) : 1;
+    const lift = drop ? ease(p / 0.45) : 1;
+    const merge = drop ? ease((p - 0.45) / 0.55) : 1;
+    const jNew = state.n - 1;
+    const nOld = drop ? state.n - 1 : state.n;
+    const Pnow = (x: number) => partial(fn, x, nOld) + (drop ? merge * term(fn, jNew, x) : 0);
 
     ctx.clearRect(0, 0, W, H);
 
-    // radius-of-convergence band
-    if (fn.radius) {
-      ctx.fillStyle = 'rgba(124,140,255,0.07)';
-      ctx.fillRect(sx(-fn.radius), PAD.t, sx(fn.radius) - sx(-fn.radius), H - PAD.t - PAD.b);
-      ctx.strokeStyle = 'rgba(124,140,255,0.4)';
+    // the band where the series converges, read off the disc in the complex plane
+    const R = fn.R;
+    if (isFinite(R)) {
+      const a = Math.max(x0, sx(-R)), b = Math.min(x1, sx(R));
+      ctx.fillStyle = hexA(accent, light ? 0.08 : 0.1);
+      ctx.fillRect(a, pt, b - a, pb - pt);
+      ctx.strokeStyle = hexA(accent, 0.45);
       ctx.setLineDash([5, 5]);
       ctx.lineWidth = 1;
-      for (const xv of [-fn.radius, fn.radius]) {
+      for (const xv of [-R, R]) {
+        if (xv < xmin || xv > xmax) continue;
         ctx.beginPath();
-        ctx.moveTo(sx(xv), PAD.t);
-        ctx.lineTo(sx(xv), H - PAD.b);
+        ctx.moveTo(sx(xv) + 0.5, pt);
+        ctx.lineTo(sx(xv) + 0.5, pb);
         ctx.stroke();
       }
       ctx.setLineDash([]);
+      text(`|x| < ${R}`, b - 6, pt + 15, hexA(accent, 0.9), fsz, 'right');
+    } else {
+      text('converges for every x', x0 + 6, pt + 15, hexA(accent, 0.85), fsz);
     }
 
     // grid + axes
-    ctx.strokeStyle = grid;
-    ctx.fillStyle = faint;
     ctx.lineWidth = 1;
-    ctx.font = "12px 'JetBrains Mono', monospace";
-    for (let i = 0; i <= 8; i++) {
-      const xv = xmin + ((xmax - xmin) * i) / 8;
-      const px = sx(xv);
-      ctx.globalAlpha = 0.35;
+    const step = xmax - xmin > 8 ? 2 : xmax - xmin > 4 ? 1 : 0.5;
+    for (let xv = Math.ceil(xmin / step) * step; xv <= xmax + 1e-9; xv += step) {
+      const px = Math.round(sx(xv)) + 0.5;
+      ctx.strokeStyle = inkA(0.06);
       ctx.beginPath();
-      ctx.moveTo(px, PAD.t);
-      ctx.lineTo(px, H - PAD.b);
+      ctx.moveTo(px, pt);
+      ctx.lineTo(px, pb);
       ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.fillText(xv.toFixed(1), px - 10, H - PAD.b + 18);
+      text(fmt(xv, step < 1 ? 1 : 0), px, pb + 17, inkA(0.45), fsz, 'center');
     }
-    ctx.strokeStyle = css('--border-strong') || '#343a45';
+    ctx.strokeStyle = inkA(0.28);
     ctx.beginPath();
-    ctx.moveTo(PAD.l, sy(0));
-    ctx.lineTo(W - PAD.r, sy(0));
+    ctx.moveTo(x0, Math.round(sy(0)) + 0.5);
+    ctx.lineTo(x1, Math.round(sy(0)) + 0.5);
+    ctx.moveTo(Math.round(sx(0)) + 0.5, pt);
+    ctx.lineTo(Math.round(sx(0)) + 0.5, pb);
     ctx.stroke();
 
-    const plot = (g: (x: number) => number, color: string, width: number) => {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
+    // a singularity on the real line itself
+    for (const s of fn.sing) {
+      if (s.im !== 0 || s.re < xmin || s.re > xmax) continue;
+      const px = sx(s.re);
+      ctx.strokeStyle = hexA(bad, 0.55);
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(px, pt);
+      ctx.lineTo(px, pb);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      cross(px, sy(0), 6, bad);
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, pt, x1 - x0, pb - pt);
+    ctx.clip();
+    const NS = L.narrow ? 360 : 520;
+    const xs = (i: number) => xmin + ((xmax - xmin) * i) / NS;
+    const curve = (g: (x: number) => number) => {
       ctx.beginPath();
       let pen = false;
-      for (let i = 0; i <= 600; i++) {
-        const x = xmin + ((xmax - xmin) * i) / 600;
-        const y = g(x);
-        if (!isFinite(y) || y < lo - 6 || y > hi + 6) {
-          pen = false;
-          continue;
-        }
-        const px = sx(x);
-        const py = sy(y);
-        pen ? ctx.lineTo(px, py) : ((ctx.moveTo(px, py)), (pen = true));
+      for (let i = 0; i <= NS; i++) {
+        const x = xs(i), y = g(x);
+        if (!isFinite(y) || y < lo - 50 || y > hi + 50) { pen = false; continue; }
+        const X = sx(x), Y = sy(y);
+        if (pen) ctx.lineTo(X, Y);
+        else { ctx.moveTo(X, Y); pen = true; }
       }
       ctx.stroke();
     };
 
-    plot((x) => fn.f(x), teal, 2.4);
-    plot((x) => partial(fn, x, state.n), accent, 2.2);
-
-    // centre marker
-    ctx.fillStyle = `rgba(${ink},0.9)`;
-    ctx.beginPath();
-    ctx.arc(sx(0), sy(fn.f(0)), 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // the reading point: a guide line and the gap between the two curves
-    const x = state.x;
-    const fx = fn.f(x), px = partial(fn, x, state.n);
-    ctx.strokeStyle = `rgba(${ink},0.22)`;
-    ctx.setLineDash([3, 4]);
-    ctx.beginPath();
-    ctx.moveTo(sx(x), PAD.t);
-    ctx.lineTo(sx(x), H - PAD.b);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    if (isFinite(fx)) {
-      ctx.strokeStyle = `rgba(${ink},0.85)`;
-      ctx.lineWidth = 2;
+    // the newest term merging: the strip between the old sum and the new one is that term
+    if (drop && merge > 0) {
+      const col = laneColour(jNew);
+      ctx.fillStyle = hexA(col, 0.24);
       ctx.beginPath();
-      ctx.moveTo(sx(x), cy(fx));
-      ctx.lineTo(sx(x), cy(px));
-      ctx.stroke();
-      for (const [y, c] of [[fx, teal], [px, accent]] as [number, string][]) {
-        if (sy(y) < PAD.t || sy(y) > H - PAD.b) continue;
-        ctx.fillStyle = c;
-        ctx.beginPath();
-        ctx.arc(sx(x), sy(y), 4.5, 0, Math.PI * 2);
-        ctx.fill();
+      const clampY = (y: number) => Math.max(lo - 50, Math.min(hi + 50, y));
+      for (let i = 0; i <= NS; i++) {
+        const x = xs(i);
+        ctx.lineTo(sx(x), sy(clampY(partial(fn, x, nOld))));
+      }
+      for (let i = NS; i >= 0; i--) {
+        const x = xs(i);
+        ctx.lineTo(sx(x), sy(clampY(Pnow(x))));
+      }
+      ctx.fill();
+      ctx.strokeStyle = inkA(0.3);
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 4]);
+      curve((x) => partial(fn, x, nOld));
+      ctx.setLineDash([]);
+    }
+
+    ctx.strokeStyle = teal;
+    ctx.lineWidth = 2.6;
+    curve(fn.f);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2.2;
+    curve(Pnow);
+
+    ctx.restore();
+
+    // the newest term lifting out of its lane, on its way up to the axis
+    if (drop && lift < 1) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0, pt, x1 - x0, L.laneTop + MAXN * L.lh - pt);
+      const G = laneGeom();
+      ctx.clip();
+      const col = laneColour(jNew);
+      const yLane = G.mid(jNew);
+      const y0 = yLane + (sy(0) - yLane) * lift;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.95 - 0.35 * lift;
+      laneCurve(fn, jNew, y0, laneHalf(G.lh) * (1 + 2 * lift), sx, xs, NS);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+
+    // where P is within TOL of f: a strip under the axis labels
+    const ty = L.tolY;
+    ctx.fillStyle = inkA(0.07);
+    ctx.fillRect(x0, ty, x1 - x0, 6);
+    ctx.fillStyle = accent;
+    let run0 = -1;
+    for (let i = 0; i <= NS + 1; i++) {
+      const ok = i <= NS && (() => { const x = xs(i), g = Math.abs(fn.f(x) - Pnow(x)); return isFinite(g) && g < TOL; })();
+      if (ok && run0 < 0) run0 = i;
+      if (!ok && run0 >= 0) {
+        ctx.fillRect(sx(xs(run0)), ty, Math.max(1, sx(xs(i - 1)) - sx(xs(run0))), 6);
+        run0 = -1;
       }
     }
-    ctx.fillStyle = `rgba(${ink},0.75)`;
-    ctx.fillText('x', sx(x) - 3, H - PAD.b + 34);
+    text(`bar: where P is within ${TOL} of f`, x0, ty + 22, hexA(accent, 0.85), L.narrow ? 12.5 : 11.5);
 
-    sync(fn, teal, accent);
+    // centre
+    if (isFinite(fn.f(0))) {
+      ctx.fillStyle = inkA(0.9);
+      ctx.beginPath();
+      ctx.arc(sx(0), sy(fn.f(0)), 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    drawLanes(fn, sx, xs, NS);
+
+    // the reading x, through the plot and the lanes
+    const x = state.x, rx = Math.round(sx(x)) + 0.5;
+    ctx.strokeStyle = inkA(0.28);
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rx, pt);
+    ctx.lineTo(rx, pb);
+    ctx.moveTo(rx, L.laneTop);
+    ctx.lineTo(rx, laneGeom().bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const fx = fn.f(x), px = Pnow(x);
+    const cyc = (y: number) => Math.max(pt, Math.min(pb, sy(y)));
+    if (isFinite(fx)) {
+      ctx.strokeStyle = inkA(0.85);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(rx, cyc(fx));
+      ctx.lineTo(rx, cyc(px));
+      ctx.stroke();
+    }
+    for (const [y, c] of [[fx, teal], [px, accent]] as [number, string][]) {
+      if (!isFinite(y) || sy(y) < pt || sy(y) > pb) continue;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(rx, sy(y), 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    text('x', rx, pb + 32, inkA(0.8), fsz, 'center');
+
+    drawPlane(fn);
+    sync(fn);
   }
 
-  function sync(fn: TF, teal: string, accent: string) {
+  /**
+   * A term squashed into a lane on a signed log scale: TOL sits a sixth of the way
+   * out, the plot's whole height at the edge, so a term's sign and where it switches
+   * on both survive.
+   */
+  const squash = (fn: TF, v: number) =>
+    Math.max(-1, Math.min(1, Math.asinh(v / TOL) / Math.asinh((fn.yr[1] - fn.yr[0]) / TOL)));
+  function laneCurve(fn: TF, j: number, y0: number, half: number, sx: (x: number) => number, xs: (i: number) => number, NS: number, strongOnly = false) {
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i <= NS; i++) {
+      const v = term(fn, j, xs(i));
+      const on = !strongOnly || Math.abs(v) >= TOL;
+      if (!on || !isFinite(v)) { pen = false; continue; }
+      const Y = y0 - half * squash(fn, v);
+      if (pen) ctx.lineTo(sx(xs(i)), Y);
+      else { ctx.moveTo(sx(xs(i)), Y); pen = true; }
+    }
+    ctx.stroke();
+  }
+
+  /**
+   * The lanes take a fixed block of the canvas: the terms added so far plus the
+   * next one, each as tall as the block allows (16 to 40 px).
+   */
+  function laneGeom() {
+    const area = MAXN * L.lh;
+    const count = Math.min(MAXN, state.n + 1);
+    const lh = Math.max(16, Math.min(40, area / count));
+    return { count, lh, mid: (j: number) => L.laneTop + (j + 0.5) * lh, bottom: L.laneTop + count * lh };
+  }
+
+  /** How far a term may swing from its midline, leaving a clear gap to the next lane. */
+  const laneHalf = (lh: number) => lh / 2 - Math.max(3, lh * 0.14);
+
+  function drawLanes(fn: TF, sx: (x: number) => number, xs: (i: number) => number, NS: number) {
+    const { x0, x1, rc, narrow } = L;
+    const G = laneGeom(), lh = G.lh;
+    const half = laneHalf(lh);
+    const sz = narrow ? 12.5 : 12;
+    text('each term on its own', x0, L.laneHead, inkA(0.5), sz);
+    text(narrow ? 'f⁽ᵏ⁾(0)' : 'its f⁽ᵏ⁾(0)', rc, L.laneHead, inkA(0.5), sz);
+    const x = state.x;
+    for (let j = 0; j < G.count; j++) {
+      const y0 = G.mid(j);
+      const col = laneColour(j);
+      const added = j < state.n;
+      const falling = drop !== null && j === state.n - 1;
+      // a faint band behind every other lane and a zero midline in each
+      if (j % 2 === 0) {
+        ctx.fillStyle = inkA(0.025);
+        ctx.fillRect(x0, y0 - lh / 2, x1 - x0, lh);
+      }
+      ctx.strokeStyle = inkA(added ? 0.16 : 0.08);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x0, Math.round(y0) + 0.5);
+      ctx.lineTo(x1, Math.round(y0) + 0.5);
+      ctx.stroke();
+      text(termText(fn, j), x0 - 8, y0 + 4, added ? col : inkA(0.3), sz, 'right');
+      const k = fn.pow(j);
+      text(narrow ? derivText(fn, j) : `f${k === 0 ? '' : '⁽' + sup(k) + '⁾'}(0) = ${derivText(fn, j)}`, rc, y0 + 4, added ? inkA(0.7) : inkA(0.3), sz);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0, y0 - lh / 2, x1 - x0, lh);
+      ctx.clip();
+      if (!added) {
+        // the next term, waiting
+        ctx.strokeStyle = inkA(0.22);
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        laneCurve(fn, j, y0, half, sx, xs, NS);
+        ctx.setLineDash([]);
+      } else {
+        // the signed area between the term and zero, then the term itself:
+        // faint where it is negligible, full colour where it is at least TOL
+        ctx.fillStyle = hexA(col, falling ? 0.12 : light ? 0.2 : 0.24);
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        for (let i = 0; i <= NS; i++) {
+          const v = term(fn, j, xs(i));
+          ctx.lineTo(sx(xs(i)), y0 - half * (isFinite(v) ? squash(fn, v) : 0));
+        }
+        ctx.lineTo(x1, y0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = hexA(col, falling ? 0.3 : 0.45);
+        ctx.lineWidth = 1.2;
+        laneCurve(fn, j, y0, half, sx, xs, NS);
+        ctx.strokeStyle = falling ? hexA(col, 0.55) : col;
+        ctx.lineWidth = 1.8;
+        laneCurve(fn, j, y0, half, sx, xs, NS, true);
+        const v = term(fn, j, x);
+        if (isFinite(v)) {
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.arc(sx(x), y0 - half * squash(fn, v), 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  function cross(x: number, y: number, r: number, colour: string) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r);
+    ctx.lineTo(x + r, y + r);
+    ctx.moveTo(x - r, y + r);
+    ctx.lineTo(x + r, y - r);
+    ctx.stroke();
+  }
+
+  /** The complex plane: the centre, the singularities, and the disc they allow. */
+  function drawPlane(fn: TF) {
+    const { x, y, s } = L.ins;
+    const SPAN = 2.4;
+    const k = s / (2 * SPAN);
+    const cx = x + s / 2, cy = y + s / 2;
+    const zx = (re: number) => cx + re * k, zy = (im: number) => cy - im * k;
+    const sz = L.narrow ? 12 : 11;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, s, s);
+    ctx.fillStyle = inkA(0.03);
+    ctx.fill();
+    ctx.clip();
+    const R = fn.R;
+    if (isFinite(R)) {
+      ctx.fillStyle = hexA(accent, light ? 0.12 : 0.15);
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * k, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = hexA(accent, light ? 0.08 : 0.1);
+      ctx.fillRect(x, y, s, s);
+    }
+    // axes and unit ticks
+    ctx.strokeStyle = inkA(0.25);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, Math.round(cy) + 0.5);
+    ctx.lineTo(x + s, Math.round(cy) + 0.5);
+    ctx.moveTo(Math.round(cx) + 0.5, y);
+    ctx.lineTo(Math.round(cx) + 0.5, y + s);
+    for (const t of [-2, -1, 1, 2]) {
+      ctx.moveTo(zx(t), cy - 3);
+      ctx.lineTo(zx(t), cy + 3);
+      ctx.moveTo(cx - 3, zy(t));
+      ctx.lineTo(cx + 3, zy(t));
+    }
+    ctx.stroke();
+    text('Re', x + s - 5, cy - 6, inkA(0.45), sz, 'right');
+    text('Im', cx + 6, y + 13, inkA(0.45), sz);
+    for (const t of [-2, -1, 1, 2])
+      if (!fn.sing.some((q) => q.im === 0 && q.re === t)) text(fmt(t, 0), zx(t) + (t > 0 ? 7 : -7), cy + 15, inkA(0.35), sz - 1, 'center');
+
+    // the circle the series needs at the reading x: radius |x|
+    const ax = Math.abs(state.x);
+    const blocked = ax > R;
+    ctx.strokeStyle = blocked ? hexA(bad, 0.7) : inkA(0.4);
+    ctx.setLineDash([3, 4]);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ax * k, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (isFinite(R)) {
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * k, 0, Math.PI * 2);
+      ctx.stroke();
+      // its slice of the real line is the band on the plot
+      ctx.strokeStyle = hexA(accent, 0.9);
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(zx(-R), cy);
+      ctx.lineTo(zx(R), cy);
+      ctx.stroke();
+      // radius out to the nearest singularity
+      const sg = fn.sing[0];
+      ctx.strokeStyle = inkA(0.55);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(zx(sg.re), zy(sg.im));
+      ctx.stroke();
+      const mx = (cx + zx(sg.re)) / 2, my = (cy + zy(sg.im)) / 2;
+      text('R', mx + (sg.im ? 6 : 0), my + (sg.im ? 4 : -7), inkA(0.8), sz, sg.im ? 'left' : 'center');
+    }
+    for (const sg of fn.sing) {
+      cross(zx(sg.re), zy(sg.im), 5, bad);
+      const lab = sg.im ? (sg.im > 0 ? 'i' : '−i') : fmt(sg.re, 0);
+      text(lab, zx(sg.re) + (sg.im ? 10 : 0), zy(sg.im) + (sg.im ? 4 : -10), bad, sz, sg.im ? 'left' : 'center');
+    }
+    // the centre and the reading x
+    ctx.fillStyle = inkA(0.9);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    if (ax <= SPAN) {
+      ctx.fillStyle = blocked ? bad : inkA(0.95);
+      ctx.beginPath();
+      ctx.arc(zx(state.x), cy, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle = inkA(0.14);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+    text('complex plane', x + 6, y + s - 7, inkA(0.45), sz);
+
+    // what it says
+    const t = L.insText, lh = L.narrow ? 19 : 18;
+    const lines: [string, string][] = [
+      [fn.singText, fn.sing.length ? bad : inkA(0.7)],
+      [isFinite(R) ? `so the disc stops at R = ${R}` : 'so the disc is the whole plane', accent],
+      [isFinite(R) ? `P converges for |x| < ${R} only` : 'P converges for every x', inkA(0.6)],
+      [`dashed circle: |z| = ${ax.toFixed(2)}`, blocked ? bad : inkA(0.5)],
+    ];
+    if (blocked) lines.push(['it holds a singularity:', bad], ['P diverges at this x', bad]);
+    const max = L.narrow ? 32 : 31;
+    const wrap: [string, string][] = [];
+    for (const [s2, c] of lines) {
+      let rest = s2;
+      let first = true;
+      while (rest.length > max) {
+        const cut = rest.lastIndexOf(' ', max);
+        wrap.push([(first ? '' : '  ') + rest.slice(0, cut), c]);
+        rest = rest.slice(cut + 1);
+        first = false;
+      }
+      wrap.push([(first ? '' : '  ') + rest, c]);
+    }
+    wrap.forEach(([s2, c], i) => text(s2, t.x, t.y + i * lh, c, L.narrow ? 12.5 : 11.5));
+  }
+
+  function sync(fn: TF) {
     const x = state.x, xs = x.toFixed(2);
     const fx = fn.f(x), px = partial(fn, x, state.n);
     const gap = Math.abs(fx - px);
-    const D = DEGREE[state.fn](state.n);
+    const j = state.n - 1;
+    const D = fn.pow(j);
     const defined = isFinite(fx);
     const huge = gap > 1e6;
-    const gapText = !defined ? 'undefined' : huge ? '≫ diverging' : gap.toFixed(4);
-    const outside = fn.radius !== undefined && Math.abs(x) > fn.radius;
+    const outside = Math.abs(x) > fn.R;
+    const col = laneColour(j);
 
     setEq({
       rule: [['f(x)', teal], '\\approx', [`P_{${D}}(x)=\\sum_{k=0}^{${D}}\\frac{f^{(k)}(0)}{k!}\\,x^k`, accent]],
-      live: defined
-        ? [`\\text{at }x=${xs}:\\ `, [`f=${fx.toFixed(4)}`, teal], [`\\quad P_{${D}}=${huge ? '\\text{huge}' : px.toFixed(4)}`, accent]]
-        : [`\\text{at }x=${xs}:\\ f\\text{ is not defined}`],
+      live: [
+        `\\text{newest term }`,
+        [termTex(fn, j), col],
+        `,\\ \\ f^{(${D})}(0)=${derivTex(fn, j)},\\quad`,
+        [isFinite(fn.R) ? `R=${fn.R}` : 'R=\\infty', accent],
+      ],
     });
     el('result-label').textContent = `Gap at x = ${xs}`;
     setRows({
-      'r-deg': `${D} (${state.n} non-zero term${state.n > 1 ? 's' : ''})`,
+      'r-deg': `${D} (${state.n} term${state.n > 1 ? 's' : ''})`,
       'r-f': defined ? fx.toFixed(4) : 'undefined',
       'r-p': huge ? 'far off' : px.toFixed(4),
+      'r-R': isFinite(fn.R) ? String(fn.R) : '∞ (entire)',
     });
+    const where = fn.sing.length ? fn.singText.replace(/^.* (at z = .*?)(,.*)?$/, '$1') : '';
     setResult({
-      value: gapText,
+      value: !defined ? 'undefined' : huge ? '≫ diverging' : gap.toFixed(4),
       colour: accent,
       status: !defined
         ? 'f has no value here'
         : outside
-          ? `Outside the radius of convergence (|x| > ${fn.radius})`
-          : fn.radius
-            ? `Inside the radius of convergence (|x| < ${fn.radius})`
+          ? `Outside the disc of convergence (|x| > ${fn.R})`
+          : isFinite(fn.R)
+            ? `Inside the disc of convergence (|x| < ${fn.R})`
             : 'This series converges for every x',
-      note: outside
-        ? 'Out here each extra term is larger than the last, so adding terms makes the gap worse, however many you add.'
-        : 'The polynomial matches every derivative of f at 0 up to its degree, and drifts off as you walk away; more terms push the drift further out.',
+      note: !defined
+        ? 'Left of the singularity f is not defined at all, and the series has nothing to approach.'
+        : outside
+          ? `The nearest singularity, ${where}, sits at distance ${fn.R} from the centre, so out here each term is bigger than the last and adding terms only makes the gap worse.`
+          : `P matches f and its first ${D} derivatives at 0; each new term matches one more and pushes the good stretch further out.`,
     });
   }
 
-  const setNSlider = slider('n', (v) => {
+  // --- animation ------------------------------------------------------------------
+  function frame(now: number) {
+    raf = 0;
+    if (drop && now - drop.t0 >= DROP) {
+      drop = null;
+      nextAt = now + PAUSE;
+    }
+    if (auto && !drop && now >= nextAt && !addTerm()) auto = false;
+    draw();
+    if (drop || auto) raf = requestAnimationFrame(frame);
+  }
+  function kick() {
+    if (!raf) raf = requestAnimationFrame(frame);
+  }
+  function stop() {
+    auto = false;
+    drop = null;
     cancelAnimationFrame(raf);
+    raf = 0;
+  }
+
+  const setNSlider = slider('n', (v) => {
+    stop();
     state.n = v;
     draw();
   });
   function setN(n: number) {
     state.n = n;
     setNSlider(n);
+  }
+  /** Add the next term and let it fall into the sum. */
+  function addTerm() {
+    if (state.n >= MAXN) return false;
+    setN(state.n + 1);
+    drop = { t0: performance.now() };
+    kick();
+    return true;
   }
 
   const xeEl = el('xe') as HTMLInputElement;
@@ -311,49 +866,49 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   const fns = segmented('fn', (v) => {
+    stop();
     state.fn = v;
     fitX();
     draw();
   });
 
   el('step').addEventListener('click', () => {
-    setN(Math.min(16, state.n + 1));
-    draw();
+    if (drop) return;
+    auto = false;
+    addTerm();
   });
 
   function animate() {
-    cancelAnimationFrame(raf);
+    stop();
     setN(1);
+    auto = true;
+    nextAt = performance.now() + PAUSE;
     draw();
-    const grow = () => {
-      if (state.n >= 16) {
-        raf = 0;
-        return;
-      }
-      setN(state.n + 1);
-      draw();
-      raf = requestAnimationFrame(() => setTimeout(grow, 420));
-    };
-    raf = requestAnimationFrame(() => setTimeout(grow, 420));
+    kick();
   }
   el('run').addEventListener('click', animate);
 
-  // drag across the graph to move the reading point
+  // drag across the graph or the lanes to move the reading point
   let dragging = false;
   const readAt = (e: PointerEvent) => {
     const b = canvas.getBoundingClientRect();
-    setX(toX(FNS[state.fn], ((e.clientX - b.left) / b.width) * W));
-    draw();
+    const px = ((e.clientX - b.left) / b.width) * L.W;
+    const fn = FNS[state.fn];
+    setX(fn.xr[0] + ((px - L.x0) / (L.x1 - L.x0)) * (fn.xr[1] - fn.xr[0]));
+    if (!raf) draw();
   };
   canvas.addEventListener('pointerdown', (e) => {
+    const b = canvas.getBoundingClientRect();
+    const px = ((e.clientX - b.left) / b.width) * L.W, py = ((e.clientY - b.top) / b.height) * L.H;
+    if (px > L.x1 + 12 || py > L.laneTop + MAXN * L.lh + 6) return; // the complex plane and its notes
     dragging = true;
     try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
     readAt(e);
   });
   canvas.addEventListener('pointermove', (e) => { if (dragging) readAt(e); });
-  const drop = () => { dragging = false; };
-  canvas.addEventListener('pointerup', drop);
-  canvas.addEventListener('pointercancel', drop);
+  const release = () => { dragging = false; };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
 
   function show(fn: string, x: number) {
     state.fn = fn;
@@ -364,12 +919,13 @@ import Try from '../../../components/sim/Try.astro';
   }
   tries({
     grow: () => show('sin', 1.5),
-    far: () => show('sin', 5),
+    exp: () => show('exp', 2.5),
     diverge: () => show('ln', 1.5),
+    rat: () => show('rat', 1.5),
   });
 
   fitX();
-  draw();
+  resize(true);
 </script>
 
 <style>

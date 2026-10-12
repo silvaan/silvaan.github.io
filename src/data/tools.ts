@@ -84,7 +84,7 @@ export const AREAS: Area[] = [
         slug: 'taylor-series',
         title: 'Taylor Series',
         description:
-          'Add polynomial terms one by one and watch the approximation hug a curve near a point, then fall apart past its radius of convergence.',
+          'Add polynomial terms one by one and watch the approximation hug a curve near a point, then fall apart past its radius of convergence, set by the nearest singularity in the complex plane.',
         href: '/simulations/calculus/taylor-series',
         status: 'live',
       },
