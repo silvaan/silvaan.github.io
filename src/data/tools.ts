@@ -273,6 +273,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'covariance',
+        title: 'Covariance Matrix',
+        description:
+          'Every point and the mean are opposite corners of a rectangle, positive or negative by where the point sits. Covariance is the average of those signed areas, the variances are the squares, and correlation is what is left once the units are divided out.',
+        href: '/simulations/statistics/covariance',
+        status: 'live',
+      },
+      {
         slug: 'probability-density',
         title: 'Probability Density',
         description:
