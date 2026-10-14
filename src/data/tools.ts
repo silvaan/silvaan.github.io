@@ -384,6 +384,14 @@ export const AREAS: Area[] = [
         href: '/simulations/machine-learning/curse-of-dimensionality',
         status: 'live',
       },
+      {
+        slug: 'pca',
+        title: 'Principal Component Analysis',
+        description:
+          'Keep one number per point: its shadow on a line. Turn the line and watch the spread it keeps rise and fall; the best line keeps the most, loses the least, and is the top eigenvector of the covariance.',
+        href: '/simulations/machine-learning/pca',
+        status: 'live',
+      },
     ],
   },
   {

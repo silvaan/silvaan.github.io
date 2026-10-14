@@ -1,0 +1,560 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Principal Component Analysis"
+  description="Keep one number per point instead of two: its shadow on a line u. Turn u and watch how much of the spread the shadows keep. The best line keeps the most and throws away the least, and it is the top eigenvector of the covariance matrix."
+  shortcuts={['animate', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="pca"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A cloud of points, a line u through their mean with each point's shadow on it, the residuals to the line, and the two principal components as arrows."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the data', color: '#7c8cff' },
+          { label: 'u and the shadows on it', color: '#fbbf24' },
+          { label: 'residuals: what u throws away', color: '#f9736a' },
+          { label: 'PC1', color: '#5eead4' },
+          { label: 'PC2', color: '#c4b5fd' },
+        ]}
+        hint="Drag anywhere to turn u · drag a point to move it"
+      />
+      <Result label="Spread kept by u" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="data"
+        label="Data"
+        attr="d"
+        options={[
+          { value: 'tilted', label: 'Tilted' },
+          { value: 'thin', label: 'Almost a line' },
+          { value: 'round', label: 'Round' },
+          { value: 'groups', label: 'Two groups' },
+          { value: 'units', label: 'Mixed units' },
+        ]}
+      />
+      <Slider id="th" label="Direction of u" min={0} max={180} value={100} display="100°" />
+      <Actions>
+        <button type="button" class="btn" id="snap">Snap u to a component</button>
+        <button type="button" class="btn ghost" id="resample">New sample</button>
+      </Actions>
+      <Slider id="t" label="Squash onto u" min={0} max={100} value={0} display="0%" hint={['two numbers each', 'one number each']} />
+      <Transport animate="Project onto u" />
+      <Checks
+        label="Before PCA"
+        items={[{ id: 'std', label: 'Standardize each axis (divide by its spread)' }]}
+      />
+      <Checks
+        label="Show"
+        items={[
+          { id: 'resid', label: 'Residuals to the line', checked: true },
+        ]}
+      />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-cov', label: 'covariance C' },
+          { id: 'r-lam', label: 'λ₁, λ₂ (variance along PC1, PC2)' },
+          { id: 'r-pc1', label: 'direction of PC1' },
+          { id: 'r-ev', label: 'explained by PC1' },
+          { id: 'r-u', label: 'kept / lost by u' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Turn u and watch the amber shadows spread out and bunch up. They are
+      most spread along <b>PC1</b> and least along <b>PC2</b>, always 90° apart. Those two are
+      the <a href="/simulations/linear-algebra/eigenvectors">eigenvectors</a>
+      of the covariance matrix C, and the peak height is λ₁. <Try id="snap" />
+    </li>
+    <li>
+      Kept plus lost is always the same total, by Pythagoras on every point.
+      So the line that keeps the most spread is also the one with the
+      <b>smallest residuals</b>. Project onto it and each point becomes a single
+      number. <Try id="project" label="Project" />
+    </li>
+    <li>
+      On <b>Round</b> every direction keeps about half: λ₁ ≈ λ₂ and there is no
+      best line to pick, so one number per point loses a lot.
+      On <b>Almost a line</b> PC1 keeps nearly all of it. <Try id="round" label="Round" /> <Try id="thin" label="Almost a line" />
+    </li>
+    <li>
+      On <b>Mixed units</b> PC1 lies along x only because x is written in
+      bigger numbers. <b>Standardize</b> and it swings round to the real trend
+      in the data. <Try id="units" />
+    </li>
+    <li>
+      Variance squares distances, so one far point pulls hard. On <b>Round</b>
+      there is no trend to resist it, and a single outlier decides where PC1
+      points. Drag one out and watch. <Try id="outlier" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, arrow } from '../../../lib/draw';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
+
+  // PCA in two dimensions is one question asked of every direction u: how
+  // spread out are the shadows of the points on u? The spread is uᵀCu, its
+  // largest value is the top eigenvalue of C, and spread kept plus squared
+  // residuals is the same total for every u.
+  type P = [number, number];
+  const DATA = '#7c8cff', U = '#fbbf24', LOST = '#f9736a', PC1 = '#5eead4', PC2 = '#c4b5fd';
+  const N = 90;
+  const view = { data: 'tilted', theta: (100 * Math.PI) / 180, t: 0, std: false, resid: true };
+  let pts: P[] = [];
+  let seed = 7;
+
+  const canvas = el('pca') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink } = stageInk(canvas);
+  const { label, textWidth } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const PLOT = { x: 16, y: 16, w: W - 32, h: H - 32 };
+  let O = { x: PLOT.x + PLOT.w / 2, y: PLOT.y + PLOT.h / 2 };
+  let UNIT = 80;
+  const toPx = (x: number, y: number) => ({ px: O.x + x * UNIT, py: O.y - y * UNIT });
+
+  // --- data ---------------------------------------------------------------------
+  function sample(kind: string) {
+    let s = seed;
+    const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    const gauss = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, rnd()))) * Math.cos(2 * Math.PI * rnd());
+    /** An elliptical blob: spreads sx along the angle `deg`, sy across it. */
+    const blob = (n: number, cx: number, cy: number, sx: number, sy: number, deg: number): P[] => {
+      const c = Math.cos((deg * Math.PI) / 180), si = Math.sin((deg * Math.PI) / 180);
+      return Array.from({ length: n }, () => {
+        const a = gauss() * sx, b = gauss() * sy;
+        return [cx + a * c - b * si, cy + a * si + b * c];
+      });
+    };
+    switch (kind) {
+      case 'thin': return blob(N, 0.4, 0.2, 1.5, 0.12, 115);
+      case 'round': return blob(N, 0.4, 0.2, 1, 1, 0);
+      case 'groups': return [...blob(N / 2, -1.2, -0.7, 0.45, 0.3, 0), ...blob(N / 2, 1.3, 0.8, 0.45, 0.3, 0)];
+      // a diagonal trend, with x then written in units four times smaller
+      case 'units': return blob(N, 0, 0, 1.1, 0.35, 45).map(([x, y]) => [x * 4, y] as P);
+      default: return blob(N, 0.6, 0.3, 1.5, 0.45, 30);
+    }
+  }
+
+  /** The points PCA actually sees: the raw ones, or each axis rescaled to spread 1. */
+  function stats(ps: P[]) {
+    const n = ps.length;
+    let mx = 0, my = 0;
+    for (const [x, y] of ps) { mx += x; my += y; }
+    mx /= n; my /= n;
+    let sxx = 0, sxy = 0, syy = 0;
+    for (const [x, y] of ps) { sxx += (x - mx) ** 2; sxy += (x - mx) * (y - my); syy += (y - my) ** 2; }
+    return { mx, my, sxx: sxx / n, sxy: sxy / n, syy: syy / n };
+  }
+  let scale = { mx: 0, my: 0, sx: 1, sy: 1 };
+  function seen(): P[] {
+    const r = stats(pts);
+    scale = view.std
+      ? { mx: r.mx, my: r.my, sx: Math.sqrt(r.sxx) || 1, sy: Math.sqrt(r.syy) || 1 }
+      : { mx: 0, my: 0, sx: 1, sy: 1 };
+    return pts.map(([x, y]) => [(x - scale.mx) / scale.sx, (y - scale.my) / scale.sy]);
+  }
+
+  /** Eigen-decomposition of the symmetric 2×2 covariance. */
+  function pca(X: P[]) {
+    const s = stats(X);
+    const h = (s.sxx + s.syy) / 2, r = Math.hypot((s.sxx - s.syy) / 2, s.sxy);
+    let th = 0.5 * Math.atan2(2 * s.sxy, s.sxx - s.syy);
+    if (th < 0) th += Math.PI;
+    return { ...s, l1: h + r, l2: Math.max(0, h - r), th1: th, total: s.sxx + s.syy };
+  }
+  const varAlong = (c: ReturnType<typeof pca>, th: number) => {
+    const ux = Math.cos(th), uy = Math.sin(th);
+    return c.sxx * ux * ux + 2 * c.sxy * ux * uy + c.syy * uy * uy;
+  };
+  const deg = (r: number) => (r * 180) / Math.PI;
+  /** The angle between two undirected lines, in [0°, 90°]. */
+  const between = (a: number, b: number) => { const d = Math.abs(a - b) % Math.PI; return deg(Math.min(d, Math.PI - d)); };
+
+  /** Equal scale on both axes, zoomed to the cloud; held still while a point is dragged. */
+  function fit() {
+    const X = seen();
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of X) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    UNIT = Math.max(10, Math.min(170, (PLOT.w - 80) / Math.max(1e-6, x1 - x0), (PLOT.h - 80) / Math.max(1e-6, y1 - y0)));
+    O = { x: PLOT.x + PLOT.w / 2 - ((x0 + x1) / 2) * UNIT, y: PLOT.y + PLOT.h / 2 + ((y0 + y1) / 2) * UNIT };
+  }
+
+  // --- labels: measured boxes, each one nudged to the nearest free spot --------
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const taken: Box[] = [];
+  const segs: number[][] = [];
+  const layoutReset = () => { taken.length = 0; segs.length = 0; };
+  const blockLine = (x1: number, y1: number, x2: number, y2: number) => { segs.push([x1, y1, x2, y2]); };
+  const blockDot = (x: number, y: number, r: number) => { taken.push({ x0: x - r, y0: y - r, x1: x + r, y1: y + r }); };
+  /** Does the segment cross the box? (Liang–Barsky clipping.) */
+  function crosses(s: number[], b: Box) {
+    const [x1, y1, x2, y2] = s;
+    const dx = x2 - x1, dy = y2 - y1;
+    const p = [-dx, dx, -dy, dy], q = [x1 - b.x0, b.x1 - x1, y1 - b.y0, b.y1 - y1];
+    let t0 = 0, t1 = 1;
+    for (let i = 0; i < 4; i++) {
+      if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+      const r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+    }
+    return true;
+  }
+  const overlap = (a: Box, b: Box) =>
+    Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  /**
+   * Draw `text` just beyond (ax, ay) in the direction `prefer` (radians, screen
+   * axes), swinging round and stepping out until the box crosses no line and
+   * no other label, and stays inside the plot.
+   */
+  function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, gap = 7) {
+    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const cands: [number, number][] = [];
+    for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
+      for (let k = 0; k < 12; k++) {
+        const an = prefer + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
+        const c = Math.cos(an), s = Math.sin(an);
+        const edge = Math.min(Math.abs(c) > 1e-6 ? w / 2 / Math.abs(c) : 1e9, Math.abs(s) > 1e-6 ? h / 2 / Math.abs(s) : 1e9);
+        const d = gap + step * 9 + edge;
+        cands.push([ax + c * d, ay + s * d]);
+      }
+    }
+    let best = cands[0], bestCost = Infinity;
+    cands.forEach(([cx, cy], i) => {
+      const b = { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+      let cost = i * 0.6;
+      if (b.x0 < PLOT.x + 2 || b.y0 < PLOT.y + 2 || b.x1 > PLOT.x + PLOT.w - 2 || b.y1 > PLOT.y + PLOT.h - 2) cost += 1e5;
+      for (const s of segs) if (crosses(s, b)) cost += 1000;
+      for (const t of taken) cost += overlap(b, t) * 30;
+      if (cost < bestCost) { bestCost = cost; best = [cx, cy]; }
+    });
+    const [cx, cy] = best;
+    taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
+    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+  }
+
+  // --- the scatter --------------------------------------------------------------
+  /** Where each point is drawn: slid toward its shadow on u by the squash t. */
+  let shown: { px: number; py: number }[] = [];
+
+  function drawScatter(X: P[], c: ReturnType<typeof pca>) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(PLOT.x, PLOT.y, PLOT.w, PLOT.h); ctx.clip();
+    // a light grid: whole units, or fives when the cloud is wide
+    const step = UNIT < 22 ? 5 : 1;
+    const gx0 = Math.floor((PLOT.x - O.x) / UNIT / step) * step, gx1 = Math.ceil((PLOT.x + PLOT.w - O.x) / UNIT);
+    const gy0 = Math.floor((O.y - PLOT.y - PLOT.h) / UNIT / step) * step, gy1 = Math.ceil((O.y - PLOT.y) / UNIT);
+    ctx.strokeStyle = ink(0.06);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = gx0; i <= gx1; i += step) { const p = toPx(i, 0); ctx.moveTo(p.px, PLOT.y); ctx.lineTo(p.px, PLOT.y + PLOT.h); }
+    for (let i = gy0; i <= gy1; i += step) { const p = toPx(0, i); ctx.moveTo(PLOT.x, p.py); ctx.lineTo(PLOT.x + PLOT.w, p.py); }
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.16);
+    ctx.beginPath(); ctx.moveTo(PLOT.x, O.y); ctx.lineTo(PLOT.x + PLOT.w, O.y); ctx.moveTo(O.x, PLOT.y); ctx.lineTo(O.x, PLOT.y + PLOT.h); ctx.stroke();
+
+    const m = toPx(c.mx, c.my);
+    const e1 = { x: Math.cos(c.th1), y: Math.sin(c.th1) }, e2 = { x: -e1.y, y: e1.x };
+    // u: a line through the mean, and every point's shadow on it
+    const ux = Math.cos(view.theta), uy = Math.sin(view.theta);
+    const far = Math.hypot(PLOT.w, PLOT.h) / UNIT;
+    const a = toPx(c.mx - ux * far, c.my - uy * far), b = toPx(c.mx + ux * far, c.my + uy * far);
+    ctx.strokeStyle = 'rgba(251,191,36,0.7)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke();
+    blockLine(a.px, a.py, b.px, b.py);
+
+    shown = [];
+    const shadows = X.map(([x, y]) => {
+      const s = (x - c.mx) * ux + (y - c.my) * uy;
+      return toPx(c.mx + s * ux, c.my + s * uy);
+    });
+    X.forEach(([x, y], i) => {
+      const p = toPx(x, y), q = shadows[i];
+      const d = { px: p.px + view.t * (q.px - p.px), py: p.py + view.t * (q.py - p.py) };
+      shown.push(d);
+      if (view.resid && view.t < 0.999) {
+        ctx.strokeStyle = 'rgba(249,115,106,0.45)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(d.px, d.py); ctx.lineTo(q.px, q.py); ctx.stroke();
+      }
+    });
+    ctx.fillStyle = 'rgba(251,191,36,0.85)';
+    for (const q of shadows) { ctx.beginPath(); ctx.arc(q.px, q.py, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = DATA;
+    ctx.strokeStyle = 'rgba(13,14,18,0.6)';
+    ctx.lineWidth = 1;
+    for (const d of shown) { ctx.beginPath(); ctx.arc(d.px, d.py, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    if (drag >= 0) {
+      ctx.strokeStyle = DATA;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(shown[drag].px, shown[drag].py, 9, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // the two components, as arrows two standard deviations long
+    const tips: [{ px: number; py: number }, string, string][] = [];
+    for (const [e, l, col, name] of [[e1, c.l1, PC1, 'PC1'], [e2, c.l2, PC2, 'PC2']] as const) {
+      const r = Math.max(2 * Math.sqrt(l), 18 / UNIT);
+      const tip = toPx(c.mx + e.x * r, c.my + e.y * r);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = ctx.fillStyle = col;
+      arrow(ctx, m.px, m.py, tip.px, tip.py, 11);
+      blockLine(m.px, m.py, tip.px, tip.py);
+      blockDot(tip.px, tip.py, 7);
+      tips.push([tip, col, name]);
+    }
+    ctx.fillStyle = ink(0.9);
+    ctx.beginPath(); ctx.arc(m.px, m.py, 3.5, 0, Math.PI * 2); ctx.fill();
+    blockDot(m.px, m.py, 8);
+    ctx.restore();
+
+    for (const [tip, col, name] of tips) place(name, 13, col, tip.px, tip.py, Math.atan2(tip.py - m.py, tip.px - m.px), 6);
+    // name u near the edge of the plot, on the far side from PC1's label
+    const end = toPx(c.mx + ux * Math.min(far, (PLOT.h / 2 - 30) / UNIT), c.my + uy * Math.min(far, (PLOT.h / 2 - 30) / UNIT));
+    place('u', 15, U, end.px, end.py, Math.atan2(end.py - m.py, end.px - m.px) + Math.PI / 2, 6);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    layoutReset();
+    const X = seen();
+    const c = pca(X);
+    const kept = varAlong(c, view.theta);
+    const off = between(view.theta, c.th1);
+    const onPC1 = off < 0.5, onPC2 = off > 89.5;
+    drawScatter(X, c);
+
+    const pct = c.total > 0 ? (100 * kept) / c.total : 0;
+    const ev = c.total > 0 ? (100 * c.l1) / c.total : 0;
+    setEq({
+      rule: [
+        ['\\operatorname{Var}(\\mathbf u^{\\top}\\mathbf x) = \\mathbf u^{\\top} C\\,\\mathbf u', U],
+        '\\le',
+        ['\\lambda_1', PC1],
+        '\\quad\\text{where}\\quad',
+        ['C\\mathbf v_1 = \\lambda_1\\mathbf v_1', PC1],
+      ],
+      live: [
+        [`\\text{kept } ${kept.toFixed(2)}`, U],
+        '+',
+        [`\\text{lost } ${(c.total - kept).toFixed(2)}`, LOST],
+        `= \\operatorname{tr} C = ${c.total.toFixed(2)}`,
+      ],
+    });
+    setResult({
+      value: `${pct.toFixed(0)}%`,
+      colour: onPC1 ? PC1 : onPC2 ? PC2 : U,
+      status: onPC1
+        ? `u is PC1: no other line keeps more than these ${pct.toFixed(0)}%`
+        : onPC2
+          ? `u is PC2: the worst line there is, keeping only ${pct.toFixed(0)}%`
+          : `u is ${off.toFixed(0)}° off PC1 and keeps ${pct.toFixed(0)}% of the spread; PC1 would keep ${ev.toFixed(0)}%`,
+      note:
+        ev < 62
+          ? 'The two components are nearly equal: no single direction stands out, so one number per point loses a lot.'
+          : view.t > 0.5
+            ? 'Squashed onto u, every point is one number. The red residuals are exactly what was thrown away.'
+            : 'Kept plus lost never changes. Turning u only moves spread from one to the other.',
+    });
+    setRows({
+      'r-cov': `[${c.sxx.toFixed(2)} ${c.sxy.toFixed(2)}; ${c.sxy.toFixed(2)} ${c.syy.toFixed(2)}]`,
+      'r-lam': `${c.l1.toFixed(3)}, ${c.l2.toFixed(3)}`,
+      'r-pc1': `${deg(c.th1).toFixed(1)}°`,
+      'r-ev': `${ev.toFixed(1)}%`,
+      'r-u': `${kept.toFixed(3)} / ${(c.total - kept).toFixed(3)}`,
+    });
+  }
+
+  // --- controls -----------------------------------------------------------------
+  let raf = 0;
+  const aimAt = (th: number) => {
+    view.theta = ((th % Math.PI) + Math.PI) % Math.PI;
+    setTh(Math.round(deg(view.theta)));
+  };
+  /** By hand, a component within 2° pulls u onto it. */
+  function magnet(th: number) {
+    th = ((th % Math.PI) + Math.PI) % Math.PI;
+    const c = pca(seen());
+    for (const p of [c.th1, (c.th1 + Math.PI / 2) % Math.PI]) if (between(th, p) < 2) return p;
+    return th;
+  }
+  const setTh = slider('th', (v) => { cancelAnimationFrame(raf); view.theta = magnet((v * Math.PI) / 180); draw(); }, (v) => `${Math.round(v)}°`);
+  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; draw(); }, (v) => `${Math.round(v)}%`);
+  const setStd = check('std', (on) => { view.std = on; fit(); draw(); });
+  check('resid', (on) => { view.resid = on; draw(); });
+
+  function load(kind: string) {
+    cancelAnimationFrame(raf);
+    view.data = kind;
+    pts = sample(kind);
+    view.t = 0;
+    setT(0);
+    fit();
+    draw();
+  }
+  const datas = segmented('data', load);
+  el('resample').addEventListener('click', () => { seed = (seed * 48271 + 11) % 2147483647; load(view.data); });
+
+  /** Ease a value from where it is to where it is going. */
+  function ease(ms: number, step: (e: number) => void) {
+    cancelAnimationFrame(raf);
+    const start = performance.now();
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / ms);
+      step(p * p * (3 - 2 * p));
+      draw();
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  }
+  /** Glide u the short way round to a direction. */
+  function glide(to: number) {
+    const from = view.theta;
+    let d = (((to - from) % Math.PI) + Math.PI) % Math.PI;
+    if (d > Math.PI / 2) d -= Math.PI;
+    ease(500, (e) => aimAt(from + d * e));
+  }
+  el('snap').addEventListener('click', () => {
+    const c = pca(seen());
+    // to PC1, or on to PC2 when u is already there
+    glide(between(view.theta, c.th1) < 0.5 ? c.th1 + Math.PI / 2 : c.th1);
+  });
+  el('run').addEventListener('click', () => {
+    view.t = 0;
+    ease(1300, (e) => { view.t = e; setT(Math.round(e * 100)); });
+  });
+  el('reset').addEventListener('click', () => {
+    seed = 7;
+    datas.select('tilted');
+    view.std = false;
+    setStd(false);
+    aimAt((100 * Math.PI) / 180);
+    load('tilted');
+  });
+
+  function show(kind: string, o: { std?: boolean; th?: number } = {}) {
+    if (kind !== view.data || o.std !== undefined) seed = 7;
+    datas.select(kind);
+    view.std = !!o.std;
+    setStd(view.std);
+    load(kind);
+    if (o.th !== undefined) aimAt((o.th * Math.PI) / 180);
+    draw();
+  }
+  tries({
+    snap: () => { show('tilted', { th: 100 }); el('snap').click(); },
+    project: () => {
+      show('tilted');
+      const c = pca(seen());
+      aimAt(c.th1);
+      el('run').click();
+    },
+    round: () => show('round', { th: 30 }),
+    thin: () => { show('thin', { th: 40 }); el('snap').click(); },
+    units: () => {
+      show('units', { th: 120 });
+      el('snap').click();
+      // then standardize, once u has landed on the misleading PC1
+      setTimeout(() => { view.std = true; setStd(true); fit(); el('snap').click(); }, 1100);
+    },
+    outlier: () => {
+      show('round', { th: 30 });
+      const c = pca(seen());
+      // one point far out, well away from where PC1 pointed
+      const e2 = { x: -Math.sin(c.th1 + 0.4), y: Math.cos(c.th1 + 0.4) };
+      pts.push([c.mx + e2.x * 5, c.my + e2.y * 5]);
+      fit();
+      el('snap').click();
+    },
+  });
+
+  // --- dragging: a point if one is under the pointer, otherwise u ---------------
+  let drag = -1, turning = false;
+  let frozen = { ...scale };
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const inPlot = (p: { x: number; y: number }) => p.x >= PLOT.x && p.x <= PLOT.x + PLOT.w && p.y >= PLOT.y && p.y <= PLOT.y + PLOT.h;
+  function nearest(p: { x: number; y: number }) {
+    let best = -1, bd = 11;
+    shown.forEach((q, i) => { const d = Math.hypot(q.px - p.x, q.py - p.y); if (d < bd) { bd = d; best = i; } });
+    return best;
+  }
+  function turn(p: { x: number; y: number }) {
+    const c = pca(seen()), m = toPx(c.mx, c.my);
+    if (Math.hypot(p.x - m.px, p.y - m.py) > 4) aimAt(magnet(Math.atan2(m.py - p.y, p.x - m.px)));
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = local(e);
+    if (!inPlot(p)) return;
+    cancelAnimationFrame(raf);
+    canvas.setPointerCapture(e.pointerId);
+    drag = inPlot(p) && view.t < 0.05 ? nearest(p) : -1;
+    if (drag >= 0) { frozen = { ...scale }; datas.clear(); draw(); return; }
+    turning = true;
+    turn(p);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = local(e);
+    if (drag >= 0) {
+      // back from the drawn (possibly standardized) plane to the raw data, with the scale held still
+      const x = (p.x - O.x) / UNIT, y = (O.y - p.y) / UNIT;
+      pts[drag] = [frozen.mx + x * frozen.sx, frozen.my + y * frozen.sy];
+      draw();
+      return;
+    }
+    if (turning) { turn(p); return; }
+    canvas.style.cursor = inPlot(p) && view.t < 0.05 && nearest(p) >= 0 ? 'move' : inPlot(p) ? 'grab' : 'default';
+  });
+  const stop = () => {
+    if (drag >= 0) { drag = -1; fit(); draw(); }
+    turning = false;
+  };
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+
+  pts = sample('tilted');
+  fit();
+  draw();
+</script>
+
+<style>
+  #pca {
+    touch-action: none;
+  }
+</style>
