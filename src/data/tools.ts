@@ -212,7 +212,7 @@ export const AREAS: Area[] = [
         slug: 'eigenvectors',
         title: 'Eigenvectors & Eigenvalues',
         description:
-          'Spin a vector around the circle and watch where the matrix sends it. When the input and output line up, you have found an eigenvector.',
+          'A matrix knocks almost every vector off its own line. Aim v until Av lands back on it: that is an eigenvector, and the stretch is λ.',
         href: '/simulations/linear-algebra/eigenvectors',
         status: 'live',
       },
