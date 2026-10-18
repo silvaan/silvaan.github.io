@@ -782,6 +782,22 @@ export const AREAS: Area[] = [
     ],
   },
   {
+    slug: 'cosmology',
+    title: 'Cosmology',
+    description: 'The universe at every scale, drawn from real catalogues: how far things are, how we see them, and how space itself grows.',
+    icon: 'M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0 M3 12c0-2.2 4-4 9-4s9 1.8 9 4-4 4-9 4-9-1.8-9-4z M5 4h.01 M19 5h.01 M18 19h.01 M6 19h.01',
+    simulators: [
+      {
+        slug: 'universe-atlas',
+        title: 'A Journey Through the Universe',
+        description:
+          'Fly from the planets to the edge of what we can see, through 45,000 Hipparcos stars, the Local Group, 43,000 galaxies of the 2MASS Redshift Survey and 42,000 SDSS quasars, to the cosmic microwave background as WMAP mapped it.',
+        href: '/simulations/cosmology/universe-atlas',
+        status: 'live',
+      },
+    ],
+  },
+  {
     slug: 'electronics',
     title: 'Electronics',
     description:
