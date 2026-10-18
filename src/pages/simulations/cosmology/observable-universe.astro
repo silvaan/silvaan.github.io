@@ -1,0 +1,665 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="cosmology"
+  title="The Observable Universe"
+  description="The universe is 13.8 billion years old, yet we see 46 billion light-years in every direction, and some galaxies we see today we could never reach. Three horizons explain it: the Hubble sphere, the event horizon and the particle horizon. Watch them grow and shrink through cosmic time, then follow light down our past light cone, shaped like a teardrop."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="ou" width="960" height="600"></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'particle horizon: the observable universe', color: '#60a5fa' },
+          { label: 'event horizon: what we can still reach', color: '#5eead4' },
+          { label: 'Hubble sphere: v = c', color: '#c084fc' },
+          { label: 'our past light cone', color: '#f5c26b' },
+          { label: 'galaxy and its light', color: '#ff7a8a' },
+        ]}
+        hint="Drag to turn, scroll to zoom"
+      />
+      <Result label="Radius of the observable universe" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="view"
+        label="View"
+        options={[
+          { value: 'spheres', label: 'Horizons in space' },
+          { value: 'cone', label: 'Light cone in spacetime' },
+        ]}
+      />
+      <Transport />
+      <div id="sph-ctl">
+        <Slider id="t" label="Cosmic time" min={0} max={1} step={0.001} value={0.8} display="13.8 Gyr" hint={['1 million yr', '100 billion yr']} />
+        <Seg
+          id="coords"
+          label="Distances"
+          attr="c"
+          options={[
+            { value: 'comoving', label: 'Comoving (as today)' },
+            { value: 'proper', label: 'Proper (at that time)' },
+          ]}
+        />
+        <Checks
+          items={[
+            { id: 's-ph', label: 'Particle horizon', checked: true },
+            { id: 's-eh', label: 'Event horizon', checked: true },
+            { id: 's-hs', label: 'Hubble sphere', checked: true },
+            { id: 's-gal', label: 'Galaxies', checked: true },
+          ]}
+        />
+      </div>
+      <div id="cone-ctl" hidden>
+        <Slider id="z" label="Redshift of the galaxy z" min={-1} max={3.04} step={0.005} value={0.3} display="2.00" hint={['0.1', 'CMB, 1100']} />
+        <Seg
+          id="axes"
+          label="Draw space as"
+          attr="a"
+          options={[
+            { value: 'proper', label: 'Proper distance' },
+            { value: 'comoving', label: 'Comoving' },
+            { value: 'conformal', label: 'Comoving, conformal time' },
+          ]}
+        />
+        <Checks
+          items={[
+            { id: 'k-hs', label: 'Hubble sphere', checked: true },
+            { id: 'k-hz', label: 'Particle and event horizons', checked: true },
+            { id: 'k-wl', label: 'Other galaxies', checked: true },
+          ]}
+        />
+      </div>
+      <Readout
+        title="Numbers"
+        open
+        rows={[
+          { id: 'r-1', label: '—' },
+          { id: 'r-2', label: '—' },
+          { id: 'r-3', label: '—' },
+          { id: 'r-4', label: '—' },
+          { id: 'r-5', label: '—' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Today the <b>particle horizon</b>, the farthest light could have come from, is 46 billion light-years away,
+      over three times 13.8 billion: the space it crossed kept growing behind it. <Try id="today" />
+    </li>
+    <li>
+      The <b>event horizon</b> is only 16.6 billion light-years. Galaxies between the two horizons are ones we can
+      still see, as they were, but light we send now will never reach them, nor theirs us. <Try id="between" />
+    </li>
+    <li>
+      Run time forward: the particle horizon keeps growing, but the event horizon closes in as dark energy takes over.
+      In 100 billion years every galaxy beyond our own group will have slipped out of reach. <Try id="future" />
+    </li>
+    <li>
+      Our past light cone, drawn in proper distance, is a <b>teardrop</b>. The light now reaching us from a
+      galaxy at z = 2 left it when it was only 5.8 billion light-years away, then was carried away from us at first
+      before it gained ground. <Try id="teardrop" />
+    </li>
+    <li>
+      In comoving distance with conformal time, the same cone is straight at 45°, and the CMB is simply the
+      oldest light on it. <Try id="straight" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { stageInk } from '../../../lib/draw';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { Camera3D, orbitControls, drawBackdrop, type Vec } from '../../../lib/scene3d';
+  import { PLANCK18, history, interp, E, hubbleDist, GLY_PER_MPC } from '../../../lib/cosmology';
+
+  const GOLD = '#f5c26b', ROSE = '#ff7a8a', TEAL = '#5eead4', VIOLET = '#c084fc', BLUE = '#60a5fa';
+  const c = PLANCK18;
+  const DH = hubbleDist(c) * GLY_PER_MPC; // c / H0 in Gly
+  const A_LS = 1 / 1090; // last scattering
+
+  // =====================================================================
+  //  Tables in a: cosmic time and conformal distance from the Big Bang
+  // =====================================================================
+  const hist = history(c, 120);
+  const T = hist.t, A = hist.a;
+  const ETA: number[] = [0]; // comoving distance light has covered since the start, Gly
+  for (let i = 1; i < A.length; i++) {
+    const f = (a: number) => DH / (a * a * E(c, a));
+    ETA.push(ETA[i - 1] + 0.5 * (f(A[i]) + f(A[i - 1])) * (A[i] - A[i - 1]));
+  }
+  // light from before the table's first a = 1e-5 adds a sliver: radiation era, η ∝ a
+  const eta0 = DH * A[0] / Math.sqrt(c.Or);
+  for (let i = 0; i < ETA.length; i++) ETA[i] += eta0;
+  // the conformal time still to come, η(∞) − η(a), for the event horizon
+  const ETA_INF = (() => {
+    const f = (x: number) => 1 / Math.sqrt(c.Or * x ** 4 + c.Om * x ** 3 + c.OL);
+    let s = 0;
+    const n = 4000, xmax = 1 / A[A.length - 1];
+    for (let i = 0; i < n; i++) s += f(((i + 0.5) / n) * xmax);
+    return ETA[ETA.length - 1] + DH * (s * xmax) / n;
+  })();
+
+  const aOf = (t: number) => interp(T, A, t);
+  const etaOfT = (t: number) => interp(T, ETA, t);
+  const etaOfA = (a: number) => interp(A, ETA, a);
+  const tOfA = (a: number) => interp(A, T, a);
+  const T0 = hist.tNow;
+  const ETA_NOW = etaOfT(T0);
+
+  /** The horizons at time t, comoving Gly (as they map onto today's grid). */
+  function horizons(t: number) {
+    const a = aOf(t), et = etaOfT(t);
+    return {
+      a,
+      particle: et,
+      event: ETA_INF - et,
+      hubble: DH / (a * E(c, a)),
+      cmb: Math.max(0, et - etaOfA(A_LS)),
+    };
+  }
+
+  // =====================================================================
+  //  Scene
+  // =====================================================================
+  const canvas = el('ou') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => { dirty = true; });
+  const { ink } = stageInk(canvas);
+  const cam = new Camera3D(W, H, { dist: 7, yaw: 0.65, pitch: -0.32, zoom: 1.15 });
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let dirty = true;
+
+  const state = {
+    view: 'spheres' as 'spheres' | 'cone',
+    // time slider is logarithmic from 1 Myr to 100 Gyr
+    u: 0,
+    coords: 'comoving' as 'comoving' | 'proper',
+    show: { ph: true, eh: true, hs: true, gal: true },
+    lz: Math.log10(2),
+    axes: 'proper' as 'proper' | 'comoving' | 'conformal',
+    cone: { hs: true, hz: true, wl: true },
+    running: false,
+    photon: 1, // 0 at emission, 1 at arrival
+  };
+  const tOfU = (u: number) => Math.pow(10, -3 + u * 5); // Gyr
+  const uOfT = (t: number) => (Math.log10(t) + 3) / 5;
+  state.u = uOfT(T0);
+
+  // galaxies: uniform in comoving space out to 60 Gly
+  const GALS: Vec[] = [];
+  {
+    let seed = 4242;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    while (GALS.length < 2600) {
+      const p = { x: rnd() * 2 - 1, y: rnd() * 2 - 1, z: rnd() * 2 - 1 };
+      if (p.x * p.x + p.y * p.y + p.z * p.z <= 1) GALS.push({ x: p.x * 60, y: p.y * 60, z: p.z * 60 });
+    }
+  }
+
+  // =====================================================================
+  //  Horizons in space
+  // =====================================================================
+  function sphere(r: number, s: number, colour: string, alpha: number) {
+    // a few latitude rings and meridians, back half fainter
+    const N = 72;
+    const rings = [-60, -30, 0, 30, 60].map((d) => (d * Math.PI) / 180);
+    const segs: [Vec, Vec][] = [];
+    for (const lat of rings) {
+      for (let i = 0; i < N; i++) {
+        const a0 = (i / N) * 2 * Math.PI, a1 = ((i + 1) / N) * 2 * Math.PI;
+        const cl = Math.cos(lat), sl = Math.sin(lat);
+        segs.push([
+          { x: r * cl * Math.cos(a0) * s, y: r * sl * s, z: r * cl * Math.sin(a0) * s },
+          { x: r * cl * Math.cos(a1) * s, y: r * sl * s, z: r * cl * Math.sin(a1) * s },
+        ]);
+      }
+    }
+    for (let m = 0; m < 8; m++) {
+      const lon = (m / 8) * Math.PI;
+      for (let i = 0; i < N; i++) {
+        const a0 = (i / N) * 2 * Math.PI, a1 = ((i + 1) / N) * 2 * Math.PI;
+        const P = (a: number): Vec => ({ x: r * Math.cos(a) * Math.cos(lon) * s, y: r * Math.sin(a) * s, z: r * Math.cos(a) * Math.sin(lon) * s });
+        segs.push([P(a0), P(a1)]);
+      }
+    }
+    const zc0 = cam.toCam({ x: 0, y: 0, z: 0 }).zc;
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1;
+    for (const [a, b] of segs) {
+      const pa = cam.project(a), pb = cam.project(b);
+      if (pa.zc < 0.1 || pb.zc < 0.1) continue;
+      const back = (pa.zc + pb.zc) / 2 > zc0;
+      ctx.globalAlpha = alpha * (back ? 0.35 : 1);
+      ctx.beginPath();
+      ctx.moveTo(pa.sx, pa.sy);
+      ctx.lineTo(pb.sx, pb.sy);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // its outline, for the label
+    const o = cam.project({ x: 0, y: 0, z: 0 });
+    return { x: o.sx, y: o.sy, r: (r * s * cam.k) / o.zc };
+  }
+
+  function drawSpheres() {
+    const t = tOfU(state.u);
+    const h = horizons(t);
+    const prop = state.coords === 'proper';
+    // display scale: 60 Gly comoving fills the view; proper multiplies by a
+    const k = prop ? h.a : 1;
+    const fit = 1.55 / Math.max(10, Math.min(60, Math.max(h.particle, h.hubble) * k * 1.15));
+    const S = fit;
+
+    // galaxies, coloured by which horizons they sit inside
+    if (state.show.gal) {
+      for (const g of GALS) {
+        const d = Math.hypot(g.x, g.y, g.z);
+        const q = cam.project({ x: g.x * k * S, y: g.y * k * S, z: g.z * k * S });
+        if (q.zc < 0.1 || q.sx < -5 || q.sx > W + 5 || q.sy < -5 || q.sy > H + 5) continue;
+        let col: string;
+        if (d < h.event && d < h.particle) col = TEAL; // seen, and still reachable
+        else if (d < h.particle) col = GOLD; // seen as it was, out of reach now
+        else col = ink(0.22); // its light has not reached us yet
+        ctx.fillStyle = col;
+        ctx.globalAlpha = col === TEAL || col === GOLD ? 0.85 : 1;
+        ctx.fillRect(q.sx - 1, q.sy - 1, 2.2, 2.2);
+      }
+      ctx.globalAlpha = 1;
+    }
+    const labels: [string, string, ReturnType<typeof sphere>][] = [];
+    if (state.show.hs) labels.push(['Hubble sphere', VIOLET, sphere(h.hubble, k * S, VIOLET, 0.5)]);
+    if (state.show.eh && Number.isFinite(h.event)) labels.push(['event horizon', TEAL, sphere(h.event, k * S, TEAL, 0.45)]);
+    if (state.show.ph) labels.push(['particle horizon', BLUE, sphere(h.particle, k * S, BLUE, 0.55)]);
+    // label each sphere at its right edge, nudged so they do not collide
+    ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+    const used: number[] = [];
+    for (const [name, colour, o] of labels) {
+      let y = o.y;
+      while (used.some((u) => Math.abs(u - y) < 16)) y += 16;
+      used.push(y);
+      const x = Math.min(W - 120, o.x + o.r + 6);
+      ctx.fillStyle = colour;
+      ctx.fillText(name, x, y);
+    }
+    // home
+    const o = cam.project({ x: 0, y: 0, z: 0 });
+    ctx.fillStyle = ROSE;
+    ctx.beginPath();
+    ctx.arc(o.sx, o.sy, 3.5, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText('us', o.sx + 6, o.sy - 6);
+
+    ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = ink(0.75);
+    ctx.fillText(`t = ${fmtT(t)}   a = ${h.a < 0.01 ? h.a.toExponential(2) : h.a.toFixed(3)}   ${prop ? 'proper distances at that time' : 'comoving: positions scaled to today'}`, 14, H - 14);
+    // the key, laid out from the right edge
+    let kx = W - 14;
+    for (const [txt, col] of [['● not yet seen', ink(0.45)], ['● seen, out of reach', GOLD], ['● seen and reachable', TEAL]] as const) {
+      kx -= ctx.measureText(txt).width;
+      ctx.fillStyle = col;
+      ctx.fillText(txt, kx, H - 14);
+      kx -= 16;
+    }
+
+    setRows({
+      'r-1': `${fmtGly(h.particle * k)}`,
+      'r-2': `${Number.isFinite(h.event) ? fmtGly(h.event * k) : '∞'}`,
+      'r-3': `${fmtGly(h.hubble * k)}`,
+      'r-4': `${fmtGly(h.cmb * k)}`,
+      'r-5': `${Math.round(Math.min(1, h.event / h.particle) ** 3 * 100)}%`,
+    });
+    setResult({
+      value: fmtGly(h.particle * h.a),
+      colour: BLUE,
+      status: `at t = ${fmtT(t)}`,
+      note: t < T0 * 0.98
+        ? 'Proper distance to the farthest light that could have reached us by then.'
+        : t > T0 * 1.02
+          ? 'It keeps growing, but fewer galaxies stay inside the event horizon to share it with.'
+          : 'Today: light from 46 billion light-years away, in today\'s distances, is only now arriving.',
+    });
+    setEq({
+      rule: [['\\chi_p', BLUE], '= \\displaystyle\\int_0^{t}\\frac{c\\,dt\'}{a(t\')}', '\\qquad', ['\\chi_e', TEAL], '= \\displaystyle\\int_t^{\\infty}\\frac{c\\,dt\'}{a(t\')}', '\\qquad', ['r_H', VIOLET], '= \\dfrac{c}{H}'],
+      live: [`\\chi_p = ${h.particle.toFixed(1)}`, `\\quad \\chi_e = ${Number.isFinite(h.event) ? h.event.toFixed(1) : '\\infty'}`, `\\quad \\chi_H = ${h.hubble.toFixed(1)}\\ \\text{Gly (comoving)}`],
+    });
+  }
+
+  // =====================================================================
+  //  The light cone in spacetime
+  // =====================================================================
+  // Two dimensions of space lie flat; time runs up. Every curve here is a
+  // surface of revolution round our own worldline at the centre.
+  const T_TOP = 30; // Gyr shown
+  function coneGeom() {
+    const ax = state.axes;
+    const tTop = ax === 'conformal' ? etaOfT(T_TOP) : T_TOP;
+    const sMax = ax === 'proper' ? 20 : 60;
+    const Y = (t: number) => {
+      const v = ax === 'conformal' ? etaOfT(t) : t;
+      return -1.25 + (v / tTop) * 2.5;
+    };
+    const R = (comovingGly: number, t: number) => ((ax === 'proper' ? comovingGly * aOf(t) : comovingGly) / sMax) * 1.6;
+    return { ax, Y, R, sMax };
+  }
+
+  function revolve(rOf: (t: number) => number | null, ts: number[], colour: string, alpha: number, meridians = 18) {
+    const g = coneGeom();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1;
+    const ringEvery = Math.max(1, Math.floor(ts.length / 9));
+    // rings
+    ts.forEach((t, j) => {
+      if (j % ringEvery) return;
+      const r = rOf(t);
+      if (r == null || r <= 0) return;
+      const y = g.Y(t);
+      ctx.globalAlpha = alpha * 0.6;
+      ctx.beginPath();
+      for (let i = 0; i <= 60; i++) {
+        const a = (i / 60) * 2 * Math.PI;
+        const q = cam.project({ x: r * Math.cos(a), y, z: r * Math.sin(a) });
+        if (i === 0) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+      }
+      ctx.stroke();
+    });
+    // meridians
+    ctx.globalAlpha = alpha;
+    for (let m = 0; m < meridians; m++) {
+      const a = (m / meridians) * 2 * Math.PI;
+      ctx.beginPath();
+      let pen = false;
+      for (const t of ts) {
+        const r = rOf(t);
+        if (r == null) { pen = false; continue; }
+        const q = cam.project({ x: r * Math.cos(a), y: g.Y(t), z: r * Math.sin(a) });
+        if (!pen) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+        pen = true;
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Our past light cone: comoving radius η0 − η(t) for t ≤ now. */
+  const coneChi = (t: number) => (t <= T0 ? ETA_NOW - etaOfT(t) : null);
+
+  function drawCone() {
+    const g = coneGeom();
+    const ts: number[] = [];
+    for (let i = 0; i <= 160; i++) ts.push(Math.max(1e-4, (i / 160) ** 2 * T_TOP));
+    const tsPast = ts.filter((t) => t <= T0).concat([T0]);
+    const sc = (chi: number, t: number) => Math.min(g.R(chi, t), 2.3);
+
+    // the 'now' slice
+    ctx.strokeStyle = ink(0.25);
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    for (let i = 0; i <= 80; i++) {
+      const a = (i / 80) * 2 * Math.PI;
+      const q = cam.project({ x: 1.7 * Math.cos(a), y: g.Y(T0), z: 1.7 * Math.sin(a) });
+      if (i === 0) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // our worldline and the time axis
+    const bot = cam.project({ x: 0, y: g.Y(0), z: 0 }), top = cam.project({ x: 0, y: g.Y(T_TOP), z: 0 });
+    ctx.strokeStyle = ROSE;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(bot.sx, bot.sy); ctx.lineTo(top.sx, top.sy); ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // other galaxies: fixed comoving distances
+    if (state.cone.wl) {
+      for (const chi of [5, 10, 15, 20, 30, 40, 50]) {
+        for (const ang of [0, Math.PI]) {
+          ctx.strokeStyle = ink(0.16);
+          ctx.beginPath();
+          let pen = false;
+          for (const t of ts) {
+            const r = g.R(chi, t);
+            if (r > 2.4) { pen = false; continue; }
+            const q = cam.project({ x: r * Math.cos(ang), y: g.Y(t), z: r * Math.sin(ang) });
+            if (!pen) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+            pen = true;
+          }
+          ctx.stroke();
+        }
+      }
+    }
+
+    if (state.cone.hs) revolve((t) => sc(DH / (aOf(t) * E(c, aOf(t))), t), ts, VIOLET, 0.32, 12);
+    revolve((t) => { const x = coneChi(t); return x == null ? null : sc(x, t); }, tsPast, GOLD, 0.75, 20);
+
+    // horizons in the plane of the galaxy, as curves
+    if (state.cone.hz) {
+      const curve = (f: (t: number) => number, colour: string, label: string) => {
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        let pen = false, lastQ: { sx: number; sy: number } | null = null;
+        for (const t of ts) {
+          const r = g.R(f(t), t);
+          if (!(r <= 2.4)) { pen = false; continue; }
+          const q = cam.project({ x: -r, y: g.Y(t), z: 0 });
+          if (!pen) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+          pen = true;
+          lastQ = q;
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        if (lastQ) {
+          ctx.fillStyle = colour;
+          ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+          ctx.fillText(label, lastQ.sx - 40, lastQ.sy - 6);
+        }
+      };
+      curve((t) => etaOfT(t), BLUE, 'particle horizon');
+      curve((t) => ETA_INF - etaOfT(t), TEAL, 'event horizon');
+    }
+
+    // the chosen galaxy, its light and the moment it left
+    const z = Math.pow(10, state.lz);
+    const ae = 1 / (1 + z), te = tOfA(ae), chi = ETA_NOW - etaOfA(ae);
+    ctx.strokeStyle = ROSE;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    let pen = false;
+    for (const t of ts) {
+      const r = g.R(chi, t);
+      if (r > 2.4) { pen = false; continue; }
+      const q = cam.project({ x: r, y: g.Y(t), z: 0 });
+      if (!pen) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+      pen = true;
+    }
+    ctx.stroke();
+    // the photon's path along the cone, emission to us
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    pen = false;
+    const path = tsPast.filter((t) => t >= te);
+    path.unshift(te);
+    for (const t of path) {
+      const q = cam.project({ x: g.R(ETA_NOW - etaOfT(t), t), y: g.Y(t), z: 0 });
+      if (!pen) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+      pen = true;
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+    const em = cam.project({ x: g.R(chi, te), y: g.Y(te), z: 0 });
+    ctx.fillStyle = ROSE;
+    ctx.beginPath(); ctx.arc(em.sx, em.sy, 4.5, 0, 2 * Math.PI); ctx.fill();
+    ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText(`light leaves, z = ${fmtZ(z)}`, em.sx + 8, em.sy + 4);
+    // the photon itself
+    const tp = te + (T0 - te) * state.photon;
+    const pq = cam.project({ x: g.R(ETA_NOW - etaOfT(tp), tp), y: g.Y(tp), z: 0 });
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = ROSE;
+    ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(pq.sx, pq.sy, 3.5, 0, 2 * Math.PI); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // axis words
+    ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = ink(0.7);
+    const nowQ = cam.project({ x: 0, y: g.Y(T0), z: 0 });
+    ctx.fillText('now, us', nowQ.sx + 8, nowQ.sy - 6);
+    ctx.fillText('Big Bang', bot.sx + 8, bot.sy + 14);
+    ctx.fillText(g.ax === 'conformal' ? 'conformal time ↑' : `cosmic time ↑ (to ${T_TOP} Gyr)`, top.sx + 8, top.sy);
+    ctx.fillStyle = ink(0.75);
+    ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillText(g.ax === 'proper' ? `space: proper distance, out to ${g.sMax} billion ly` : `space: comoving distance, out to ${g.sMax} billion ly`, 14, H - 14);
+
+    // numbers for the chosen galaxy
+    const lookback = T0 - te;
+    const dThen = chi * ae;
+    setRows({
+      'r-1': fmtT(lookback) + ' ago',
+      'r-2': fmtGly(lookback),
+      'r-3': fmtGly(dThen),
+      'r-4': fmtGly(chi),
+      'r-5': `${(chi / DH).toFixed(2)} c`, // v = H0 d
+    });
+    setResult({
+      value: fmtGly(chi),
+      colour: ROSE,
+      status: `z = ${fmtZ(z)}, now`,
+      note: `Its light left ${fmtT(lookback)} ago, ${fmtGly(dThen)} from here. It has travelled ${fmtGly(lookback)}, and the galaxy is now ${fmtGly(chi)} away.`,
+    });
+    setEq({
+      rule: [['\\chi', ROSE], '= \\displaystyle\\int_{t_e}^{t_0}\\frac{c\\,dt}{a(t)}', '\\qquad', '1+z = \\dfrac{1}{a(t_e)}', '\\qquad', ['d_{\\text{then}}', GOLD], '= a(t_e)\\,\\chi'],
+      live: [`z = ${fmtZ(z)}`, `\\quad t_e = ${te < 1 ? (te * 1000).toFixed(0) + '\\ \\text{Myr}' : te.toFixed(2) + '\\ \\text{Gyr}'}`, `\\quad \\chi = ${chi.toFixed(2)}`, `\\quad d_{\\text{then}} = ${dThen.toFixed(2)}\\ \\text{Gly}`],
+    });
+  }
+
+  // =====================================================================
+  //  Formatting, loop, controls
+  // =====================================================================
+  const fmtGly = (gly: number) => (gly < 0.01 ? `${Math.round(gly * 1e6).toLocaleString('en-US')} thousand ly` : gly < 1 ? `${Math.round(gly * 1000)} million ly` : `${gly.toFixed(gly < 10 ? 2 : 1)} billion ly`);
+  const fmtT = (gyr: number) => (gyr < 0.001 ? `${Math.round(gyr * 1e6).toLocaleString('en-US')} thousand years` : gyr < 1 ? `${Math.round(gyr * 1000)} million years` : `${gyr.toFixed(gyr < 10 ? 2 : 1)} billion years`);
+  const fmtZ = (z: number) => (z < 10 ? z.toFixed(2) : z.toFixed(0));
+
+  const LABELS = {
+    spheres: ['Particle horizon', 'Event horizon', 'Hubble radius', 'Microwave background', 'Seen galaxies still reachable'],
+    cone: ['Light left it', 'Light-travel distance', 'Distance when it left', 'Distance now', 'Recedes now at'],
+  };
+  function setLabels() {
+    LABELS[state.view].forEach((l, i) => {
+      const span = document.querySelector(`#r-${i + 1}`)?.previousElementSibling;
+      if (span) span.textContent = l;
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const light = getComputedStyle(canvas).getPropertyValue('--stage-light').trim() === '1';
+    drawBackdrop(ctx, W, H, light);
+    if (state.view === 'spheres') drawSpheres();
+    else drawCone();
+  }
+
+  let last = performance.now();
+  function frame(t: number) {
+    const dt = Math.min(0.1, (t - last) / 1000);
+    last = t;
+    if (state.running) {
+      if (state.view === 'spheres') {
+        state.u = Math.min(1, state.u + dt / 25);
+        setT(state.u);
+        if (state.u >= 1) runCtl.setRunning((state.running = false));
+      } else {
+        state.photon = Math.min(1, state.photon + dt / 6);
+        if (state.photon >= 1) runCtl.setRunning((state.running = false));
+      }
+      dirty = true;
+    }
+    if (dirty) { draw(); dirty = false; }
+    requestAnimationFrame(frame);
+  }
+
+  orbitControls(canvas, cam, W, H, { changed: () => { dirty = true; } });
+
+  const show = () => {
+    el('sph-ctl').hidden = state.view !== 'spheres';
+    el('cone-ctl').hidden = state.view !== 'cone';
+    setLabels();
+    dirty = true;
+  };
+  const viewSeg = segmented('view', (v) => {
+    state.view = v as typeof state.view;
+    cam.pitch = state.view === 'cone' ? -0.12 : -0.32;
+    show();
+  });
+  const setT = slider('t', (v) => { state.u = v; dirty = true; }, (v) => fmtT(tOfU(v)));
+  setT(state.u);
+  const coordsSeg = segmented('coords', (v) => { state.coords = v as typeof state.coords; dirty = true; });
+  check('s-ph', (on) => { state.show.ph = on; dirty = true; });
+  check('s-eh', (on) => { state.show.eh = on; dirty = true; });
+  check('s-hs', (on) => { state.show.hs = on; dirty = true; });
+  check('s-gal', (on) => { state.show.gal = on; dirty = true; });
+  const setZ = slider('z', (v) => { state.lz = v; state.photon = 1; dirty = true; }, (v) => fmtZ(Math.pow(10, v)));
+  setZ(state.lz);
+  const axesSeg = segmented('axes', (v) => { state.axes = v as typeof state.axes; dirty = true; });
+  check('k-hs', (on) => { state.cone.hs = on; dirty = true; });
+  check('k-hz', (on) => { state.cone.hz = on; dirty = true; });
+  check('k-wl', (on) => { state.cone.wl = on; dirty = true; });
+  const runCtl = transport({
+    onRun: (on) => {
+      if (on && state.view === 'spheres' && state.u >= 1) state.u = 0;
+      if (on && state.view === 'cone') state.photon = 0;
+      state.running = on;
+    },
+    onReset: () => {
+      state.u = uOfT(T0);
+      setT(state.u);
+      state.photon = 1;
+      runCtl.setRunning((state.running = false));
+      dirty = true;
+    },
+  });
+
+  const go = (o: { view?: typeof state.view; t?: number; coords?: typeof state.coords; z?: number; axes?: typeof state.axes; run?: boolean }) => {
+    if (o.view) { state.view = o.view; viewSeg.select(o.view); cam.pitch = o.view === 'cone' ? -0.12 : -0.32; }
+    if (o.t != null) { state.u = uOfT(o.t); setT(state.u); }
+    if (o.coords) { state.coords = o.coords; coordsSeg.select(o.coords); }
+    if (o.z != null) { state.lz = Math.log10(o.z); setZ(state.lz); }
+    if (o.axes) { state.axes = o.axes; axesSeg.select(o.axes); }
+    state.photon = o.run ? 0 : 1;
+    state.running = !!o.run;
+    runCtl.setRunning(state.running);
+    show();
+  };
+  tries({
+    today: () => go({ view: 'spheres', t: T0, coords: 'comoving' }),
+    between: () => { go({ view: 'spheres', t: T0, coords: 'comoving' }); state.show.hs = false; (el('s-hs') as HTMLInputElement).checked = false; },
+    future: () => { go({ view: 'spheres', t: T0, coords: 'comoving' }); state.running = true; runCtl.setRunning(true); },
+    teardrop: () => go({ view: 'cone', z: 2, axes: 'proper', run: true }),
+    straight: () => go({ view: 'cone', z: 1089, axes: 'conformal', run: true }),
+  });
+
+  show();
+  requestAnimationFrame(frame);
+</script>

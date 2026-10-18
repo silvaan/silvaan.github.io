@@ -811,6 +811,14 @@ export const AREAS: Area[] = [
         href: '/simulations/cosmology/hubble-expansion',
         status: 'live',
       },
+      {
+        slug: 'observable-universe',
+        title: 'The Observable Universe',
+        description:
+          'Why we see 46 billion light-years in a universe 13.8 billion years old, and why some of the galaxies we see are already out of reach. Three horizons as spheres through cosmic time, and our past light cone in 3D, shaped like a teardrop.',
+        href: '/simulations/cosmology/observable-universe',
+        status: 'live',
+      },
     ],
   },
   {
