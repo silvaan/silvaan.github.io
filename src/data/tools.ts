@@ -795,6 +795,14 @@ export const AREAS: Area[] = [
         href: '/simulations/cosmology/universe-atlas',
         status: 'live',
       },
+      {
+        slug: 'relativistic-travel',
+        title: 'Travelling Near the Speed of Light',
+        description:
+          'Fly towards a real star at 0.99999 c and look out: the sky crowds forward and turns blue, the microwave background glows ahead, and the route is shorter on your ruler than on Earth’s map. Then find the galaxies that no rocket can ever reach.',
+        href: '/simulations/cosmology/relativistic-travel',
+        status: 'live',
+      },
     ],
   },
   {
