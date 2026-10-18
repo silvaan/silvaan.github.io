@@ -803,6 +803,14 @@ export const AREAS: Area[] = [
         href: '/simulations/cosmology/relativistic-travel',
         status: 'live',
       },
+      {
+        slug: 'hubble-expansion',
+        title: 'Hubble Expansion',
+        description:
+          'A box of galaxies carried apart by growing space. Stand on any of them and the rest recede as v = H d, so none is the centre. Change the matter and dark energy and watch the expansion slow, accelerate or turn round, and stretch a photon on its way across.',
+        href: '/simulations/cosmology/hubble-expansion',
+        status: 'live',
+      },
     ],
   },
   {

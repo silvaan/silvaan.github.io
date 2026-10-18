@@ -1,0 +1,739 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="cosmology"
+  title="Hubble Expansion"
+  description="Space grows and carries the galaxies apart. Stand on any galaxy and every other one recedes at a speed in proportion to its distance, so no galaxy is the centre. Change what the universe is made of and watch the expansion slow, speed up or turn round, and send a photon across to see its wavelength stretched with space."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="hx" width="960" height="600"></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'home galaxy', color: '#f5c26b' },
+          { label: 'selected galaxy', color: '#ff7a8a' },
+          { label: 'recession velocity v = H d', color: '#5eead4' },
+          { label: 'Hubble sphere, v = c', color: '#c084fc' },
+          { label: 'photon, coloured by wavelength', color: '#60a5fa' },
+        ]}
+        hint="Drag to turn, scroll to zoom, click a galaxy to select it"
+      />
+      <Result label="Hubble rate H(t)" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="preset"
+        label="Universe"
+        attr="p"
+        options={[
+          { value: 'ours', label: 'Ours (Planck)' },
+          { value: 'matter', label: 'Matter only' },
+          { value: 'empty', label: 'Empty' },
+          { value: 'closed', label: 'Closed' },
+          { value: 'lambda', label: 'Mostly dark energy' },
+        ]}
+      />
+      <Slider id="om" label="Matter Ω<sub>m</sub>" min={0} max={3} step={0.01} value={0.31} display="0.31" />
+      <Slider id="ol" label="Dark energy Ω<sub>Λ</sub>" min={-0.5} max={1.5} step={0.01} value={0.69} display="0.69" />
+      <Slider id="h0" label="Hubble constant H<sub>0</sub>" min={50} max={90} step={0.1} value={67.7} display="67.7 km/s/Mpc" />
+      <Transport />
+      <Slider id="t" label="Cosmic time t" min={0} max={1} step={0.0005} value={0.3} display="13.8 Gyr" />
+      <Actions>
+        <button type="button" class="btn" id="home">Make it home</button>
+        <button type="button" class="btn" id="send">Send light to home</button>
+      </Actions>
+      <Checks
+        items={[
+          { id: 'c-arrows', label: 'Velocity arrows', checked: true },
+          { id: 'c-sphere', label: 'Hubble sphere', checked: true },
+          { id: 'c-grid', label: 'Comoving grid' },
+          { id: 'c-comoving', label: 'Divide out the expansion (comoving view)' },
+        ]}
+      />
+      <Readout
+        title="Numbers"
+        open
+        rows={[
+          { id: 'r-a', label: 'Scale factor a (today = 1)' },
+          { id: 'r-hr', label: 'Hubble radius c / H' },
+          { id: 'r-acc', label: 'Expansion is' },
+          { id: 'r-sd', label: 'Selected: distance now' },
+          { id: 'r-sv', label: 'Selected: recession speed' },
+          { id: 'r-ph', label: 'Photon' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Every arrow points straight away from home, and its length grows with distance: <b>v = H d</b>. Make another
+      galaxy home and the picture is the same from there. There is no centre. <Try id="nocentre" />
+    </li>
+    <li>
+      The galaxies themselves do not grow, only the space between them. Tick the comoving view, which divides the
+      growth out: then nothing moves at all. <Try id="comoving" />
+    </li>
+    <li>
+      Beyond the purple <b>Hubble sphere</b> galaxies recede faster than light. That breaks no rule: nothing moves
+      through space faster than light; space between grows. <Try id="sphere" />
+    </li>
+    <li>
+      Send light from a distant galaxy early on. At first the photon is carried <b>away</b> from us, then the
+      Hubble sphere grows past it and it starts to gain ground, arriving stretched from blue into the infrared. <Try id="photon" />
+    </li>
+    <li>
+      With matter only, the expansion slows forever; with enough matter it turns round into a crunch; with dark
+      energy it slowed for 9 billion years and has been <b>speeding up</b> since. <Try id="fates" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { stageInk } from '../../../lib/draw';
+  import { equation } from '../../../lib/equation';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { Camera3D, orbitControls, drawBackdrop, type Vec } from '../../../lib/scene3d';
+  import { history, Ok, C_KMS, GLY_PER_MPC, type Cosmo, type History } from '../../../lib/cosmology';
+
+  const GOLD = '#f5c26b', ROSE = '#ff7a8a', TEAL = '#5eead4', VIOLET = '#c084fc', BLUE = '#60a5fa';
+  /** Half the box, comoving Mpc. */
+  const L0 = 2500;
+  /** c in Mpc per Gyr. */
+  const C_MPC_GYR = C_KMS * 3.15576e16 / 3.0857e19;
+
+  const canvas = el('hx') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => { dirty = true; });
+  const { ink } = stageInk(canvas);
+  const SPLIT = 600; // the 3D scene on the left, charts on the right
+  const cam = new Camera3D(SPLIT, H, { dist: 7, yaw: 0.6, pitch: -0.35, zoom: 1.5 });
+
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let dirty = true;
+
+  // =====================================================================
+  //  The galaxies: a jittered lattice, fixed in comoving coordinates
+  // =====================================================================
+  type Gal = { x: number; y: number; z: number; hue: number; tilt: number };
+  const gals: Gal[] = [];
+  {
+    let seed = 99;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const n = 7;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        for (let k = 0; k < n; k++) {
+          const g = (v: number) => ((v + 0.5) / n) * 2 - 1 + (rnd() - 0.5) * (1.3 / n);
+          gals.push({ x: g(i), y: g(j), z: g(k), hue: rnd(), tilt: rnd() * Math.PI });
+        }
+  }
+  const centreIdx = () => {
+    let b = 0, bd = Infinity;
+    gals.forEach((g, i) => {
+      const d = Math.hypot(g.x, g.y, g.z);
+      if (d < bd) { bd = d; b = i; }
+    });
+    return b;
+  };
+
+  const state = {
+    c: { H0: 67.7, Om: 0.31, OL: 0.69, Or: 9.1e-5 } as Cosmo,
+    t: 13.8,
+    running: false,
+    home: centreIdx(),
+    homeShift: { x: 0, y: 0, z: 0 } as Vec, // animated origin, comoving units of L0
+    sel: -1,
+    arrows: true,
+    sphere: true,
+    grid: false,
+    comoving: false,
+    photon: null as null | { from: number; te: number },
+  };
+
+  // =====================================================================
+  //  The universe's history for the current parameters
+  // =====================================================================
+  let hist: History;
+  let eta: number[] = []; // conformal time ∫ c dt / a, comoving Mpc
+  let tMax = 50;
+  let bounce = false;
+
+  function rebuild() {
+    const c = state.c;
+    // a universe whose E² goes negative before today never had a Big Bang
+    bounce = false;
+    for (let a = 1e-4; a < 1; a *= 1.02) {
+      const e2 = c.Or / a ** 4 + c.Om / a ** 3 + Ok(c) / a ** 2 + c.OL;
+      if (e2 < 0) { bounce = true; break; }
+    }
+    hist = history(c, 60);
+    // show the history until the universe is four times today's size, a crunch, or 60 Gyr
+    const big = hist.a.findIndex((a, i) => a >= 4 && hist.H[i] > 0);
+    tMax = Math.min(60, hist.t[hist.t.length - 1], big > 0 ? hist.t[big] : Infinity);
+    eta = [0];
+    for (let i = 1; i < hist.t.length; i++) {
+      const dt = hist.t[i] - hist.t[i - 1];
+      eta.push(eta[i - 1] + C_MPC_GYR * dt * 0.5 * (1 / hist.a[i] + 1 / hist.a[i - 1]));
+    }
+    // the first entry starts at a = 1e-5, close enough to the Big Bang for conformal time
+    if (!(state.t <= tMax)) state.t = Math.min(tMax, Number.isFinite(hist.tNow) ? hist.tNow : tMax / 2);
+    syncT();
+    dirty = true;
+  }
+
+  /** Table lookups by time, valid on both branches of a recollapse. */
+  function atTime(t: number) {
+    const T = hist.t;
+    let i = 1;
+    while (i < T.length - 1 && T[i] < t) i++;
+    const f = Math.max(0, Math.min(1, (t - T[i - 1]) / (T[i] - T[i - 1] || 1)));
+    const lerp = (A: number[]) => A[i - 1] + f * (A[i] - A[i - 1]);
+    return { a: lerp(hist.a), h: lerp(hist.H), eta: lerp(eta) };
+  }
+  /** H in km/s/Mpc at time t, signed. */
+  const Hof = (t: number) => atTime(t).h * state.c.H0;
+
+  // =====================================================================
+  //  Drawing
+  // =====================================================================
+  const disp = (g: Gal | Vec, scale: number): Vec => ({
+    x: (g.x - state.homeShift.x) * scale,
+    y: (g.y - state.homeShift.y) * scale,
+    z: (g.z - state.homeShift.z) * scale,
+  });
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const light = getComputedStyle(canvas).getPropertyValue('--stage-light').trim() === '1';
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, SPLIT, H);
+    ctx.clip();
+    drawBackdrop(ctx, SPLIT, H, light);
+    if (bounce) {
+      ctx.fillStyle = ink(0.8);
+      ctx.font = '14px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText('With this much dark energy and so little matter,', 30, H / 2 - 10);
+      ctx.fillText('the universe would have bounced: no Big Bang.', 30, H / 2 + 12);
+      ctx.restore();
+      drawCharts(light);
+      return;
+    }
+    const now = atTime(state.t);
+    const scale = state.comoving ? 1 : now.a; // display units: L0 comoving at a = 1
+    const H_t = now.h * state.c.H0;
+
+    // the comoving grid, stretched with the galaxies
+    if (state.grid) {
+      ctx.lineWidth = 1;
+      const n = 7;
+      for (let ax = 0; ax < 3; ax++)
+        for (let i = 0; i <= n; i += 1)
+          for (let j = 0; j <= n; j += 1) {
+            const u = (i / n) * 2 - 1, v = (j / n) * 2 - 1;
+            const A = ax === 0 ? { x: -1, y: u, z: v } : ax === 1 ? { x: u, y: -1, z: v } : { x: u, y: v, z: -1 };
+            const B = ax === 0 ? { x: 1, y: u, z: v } : ax === 1 ? { x: u, y: 1, z: v } : { x: u, y: v, z: 1 };
+            const pa = cam.project(disp(A, scale)), pb = cam.project(disp(B, scale));
+            if (pa.zc <= 0.1 || pb.zc <= 0.1) continue;
+            ctx.strokeStyle = ink(0.05);
+            ctx.beginPath();
+            ctx.moveTo(pa.sx, pa.sy);
+            ctx.lineTo(pb.sx, pb.sy);
+            ctx.stroke();
+          }
+    }
+
+    // the Hubble sphere round home: radius c / H, proper
+    const rH = (C_KMS / Math.abs(H_t || 1e-9)) / L0; // display units at proper scale
+    if (state.sphere && Math.abs(H_t) > 1e-6) {
+      const r = state.comoving ? rH / now.a : rH;
+      const c0 = cam.project({ x: 0, y: 0, z: 0 });
+      const px = r * cam.k / c0.zc;
+      ctx.strokeStyle = VIOLET;
+      ctx.globalAlpha = 0.7;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(c0.sx, c0.sy, Math.min(px, 5000), 0, 2 * Math.PI);
+      ctx.stroke();
+      // an equator ring, so it reads as a sphere
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      for (let i = 0; i <= 64; i++) {
+        const a = (i / 64) * 2 * Math.PI;
+        const q = cam.project({ x: r * Math.cos(a), y: 0, z: r * Math.sin(a) });
+        if (i === 0) ctx.moveTo(q.sx, q.sy); else ctx.lineTo(q.sx, q.sy);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // galaxies, far first
+    const order = gals
+      .map((g, i) => ({ i, p: disp(g, scale) }))
+      .map((o) => ({ ...o, q: cam.project(o.p) }))
+      .sort((a, b) => b.q.zc - a.q.zc);
+    // an arrow a quarter of a box-half long at the speed of light
+    const ARROW_C = 0.25;
+    for (const o of order) {
+      if (o.q.zc <= 0.1) continue;
+      const g = gals[o.i];
+      const isHome = o.i === state.home, isSel = o.i === state.sel;
+      const fog = cam.fog(o.q.zc, 1.6);
+      // the velocity: proper distance times H, along the line from home
+      if (state.arrows && !isHome) {
+        const dProper = Math.hypot(o.p.x, o.p.y, o.p.z) * (state.comoving ? now.a : 1) * L0; // Mpc
+        const v = H_t * dProper;
+        const len = (v / C_KMS) * ARROW_C;
+        const dir = { x: o.p.x, y: o.p.y, z: o.p.z };
+        const m = Math.hypot(dir.x, dir.y, dir.z) || 1;
+        const tip = cam.project({ x: o.p.x + (dir.x / m) * len, y: o.p.y + (dir.y / m) * len, z: o.p.z + (dir.z / m) * len });
+        const fast = Math.abs(v) > C_KMS;
+        ctx.strokeStyle = fast ? `rgba(192,132,252,${0.75 * fog})` : `rgba(94,234,212,${0.7 * fog})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(o.q.sx, o.q.sy);
+        ctx.lineTo(tip.sx, tip.sy);
+        ctx.stroke();
+      }
+      // galaxies keep their own size: only the space between them grows
+      // a fixed proper size, so in the comoving view they shrink as space grows
+      const r = Math.max(1.4, 0.03 * (state.comoving ? 1 / now.a : 1) * o.q.s * cam.scale);
+      ctx.save();
+      ctx.translate(o.q.sx, o.q.sy);
+      ctx.rotate(g.tilt);
+      ctx.scale(1, 0.45);
+      const col = isHome ? GOLD : isSel ? ROSE : g.hue < 0.6 ? `rgba(170,200,255,${fog})` : `rgba(255,214,160,${fog})`;
+      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.2);
+      grad.addColorStop(0, col);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 2.2, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.restore();
+      if (isHome || isSel) {
+        ctx.strokeStyle = isHome ? GOLD : ROSE;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(o.q.sx, o.q.sy, r * 2.6 + 4, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+        ctx.fillStyle = isHome ? GOLD : ROSE;
+        ctx.fillText(isHome ? 'home' : 'selected', o.q.sx + r * 2.6 + 7, o.q.sy - 4);
+      }
+    }
+
+    // the photon
+    const ph = photonNow();
+    if (ph && ph.state === 'flying') {
+      const src = gals[ph.from];
+      const dir = { x: src.x - gals[state.home].x, y: src.y - gals[state.home].y, z: src.z - gals[state.home].z };
+      const m = Math.hypot(dir.x, dir.y, dir.z);
+      const home = gals[state.home];
+      const f = ph.chiLeft / (m * L0); // the fraction of the comoving way still to go
+      const at = { x: home.x + dir.x * f, y: home.y + dir.y * f, z: home.z + dir.z * f };
+      const q = cam.project(disp(at, scale));
+      const qh = cam.project(disp(home, scale));
+      const col = waveColour(ph.lambda);
+      // the way still to go
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.45;
+      ctx.setLineDash([3, 5]);
+      ctx.beginPath(); ctx.moveTo(q.sx, q.sy); ctx.lineTo(qh.sx, qh.sy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = col;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(q.sx, q.sy, 4.5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillText(`${Math.round(ph.lambda)} nm`, q.sx + 8, q.sy + 14);
+    }
+
+    ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = ink(0.7);
+    ctx.fillText(state.comoving ? 'comoving view: the box is fixed' : `box is ${fmtGly(2 * L0 * now.a)} across`, 14, H - 14);
+    ctx.restore();
+    drawCharts(light);
+  }
+
+  /** The visible spectrum for 380–750 nm, then darkening into the infrared. */
+  function waveColour(nm: number) {
+    const l = Math.max(380, nm);
+    let r = 0, g = 0, b = 0;
+    if (l < 440) { r = (440 - l) / 60; b = 1; }
+    else if (l < 490) { g = (l - 440) / 50; b = 1; }
+    else if (l < 510) { g = 1; b = (510 - l) / 20; }
+    else if (l < 580) { r = (l - 510) / 70; g = 1; }
+    else if (l < 645) { r = 1; g = (645 - l) / 65; }
+    else r = 1;
+    const fade = l > 750 ? Math.max(0.35, 750 / l) : 1;
+    return `rgb(${Math.round(255 * r * fade)},${Math.round(255 * g * fade)},${Math.round(255 * b * fade)})`;
+  }
+
+  const fmtGly = (mpc: number) => {
+    const gly = mpc * GLY_PER_MPC;
+    return gly < 1 ? `${Math.round(gly * 1000)} million ly` : `${gly.toFixed(gly < 10 ? 2 : 1)} billion ly`;
+  };
+
+  // =====================================================================
+  //  The photon: comoving distance left = χ_source − (η(t) − η(t_e))
+  // =====================================================================
+  function photonNow() {
+    const p = state.photon;
+    if (!p) return null;
+    const src = gals[p.from], home = gals[state.home];
+    const chiS = Math.hypot(src.x - home.x, src.y - home.y, src.z - home.z) * L0;
+    if (state.t < p.te) return { state: 'waiting' as const, from: p.from, chiLeft: chiS, lambda: 450, z: 0, proper: chiS * atTime(state.t).a };
+    const e = atTime(p.te), n = atTime(state.t);
+    const left = chiS - (n.eta - e.eta);
+    const lambda = 450 * (n.a / e.a);
+    if (left <= 0) return { state: 'arrived' as const, from: p.from, chiLeft: 0, lambda, z: n.a / e.a - 1, proper: 0 };
+    return { state: 'flying' as const, from: p.from, chiLeft: left, lambda, z: n.a / e.a - 1, proper: left * n.a };
+  }
+
+  /** When (if ever) a photon from comoving distance chi sent at te arrives. */
+  function arrival(chi: number, te: number) {
+    const e = atTime(te);
+    const need = e.eta + chi;
+    for (let i = 0; i < hist.t.length; i++) if (eta[i] >= need && hist.t[i] >= te) return hist.t[i];
+    return null;
+  }
+
+  // =====================================================================
+  //  The charts on the right
+  // =====================================================================
+  function drawCharts(light: boolean) {
+    const x0 = SPLIT + 46, x1 = W - 16;
+    ctx.fillStyle = light ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.02)';
+    ctx.fillRect(SPLIT, 0, W - SPLIT, H);
+    ctx.strokeStyle = ink(0.12);
+    ctx.beginPath(); ctx.moveTo(SPLIT + 0.5, 0); ctx.lineTo(SPLIT + 0.5, H); ctx.stroke();
+    if (bounce) return;
+    const now = atTime(state.t);
+    const Ht = now.h * state.c.H0;
+
+    // --- Hubble diagram: v against proper distance from home ---------------
+    {
+      const top = 34, bot = 270;
+      const dMax = Math.max(...gals.map((g) => Math.hypot(g.x - gals[state.home].x, g.y - gals[state.home].y, g.z - gals[state.home].z))) * L0 * now.a;
+      const vMax = Math.max(C_KMS * 1.3, Math.abs(Ht) * dMax) * 1.05;
+      const X = (d: number) => x0 + (d / dMax) * (x1 - x0);
+      // a collapsing universe has negative velocities, so the axis moves to the middle
+      const Yv = (v: number) => (Ht >= 0 ? bot - (v / vMax) * (bot - top) : (top + bot) / 2 - (v / vMax) * ((bot - top) / 2));
+      ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillStyle = ink(0.85);
+      ctx.fillText('Hubble diagram, seen from home', x0, top - 14);
+      ctx.strokeStyle = ink(0.25);
+      ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0, bot); ctx.lineTo(x1, bot); ctx.stroke();
+      // v = c
+      ctx.strokeStyle = VIOLET;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, Yv(C_KMS)); ctx.lineTo(x1, Yv(C_KMS)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillStyle = VIOLET;
+      ctx.fillText('v = c', x1 - 30, Yv(C_KMS) - 5);
+      // the law
+      ctx.strokeStyle = TEAL;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(0), Yv(0)); ctx.lineTo(X(dMax), Yv(Ht * dMax)); ctx.stroke();
+      ctx.lineWidth = 1;
+      for (let i = 0; i < gals.length; i++) {
+        if (i === state.home) continue;
+        const g = gals[i], h = gals[state.home];
+        const d = Math.hypot(g.x - h.x, g.y - h.y, g.z - h.z) * L0 * now.a;
+        ctx.fillStyle = i === state.sel ? ROSE : ink(0.45);
+        ctx.beginPath();
+        ctx.arc(X(d), Yv(Ht * d), i === state.sel ? 4 : 1.6, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      ctx.fillStyle = ink(0.6);
+      ctx.fillText(`distance, 0 – ${fmtGly(dMax)}`, x0 + 4, bot + 16);
+      ctx.save();
+      ctx.translate(x0 - 10, (top + bot) / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'center';
+      ctx.fillText('recession velocity', 0, 0);
+      ctx.restore();
+      ctx.fillStyle = TEAL;
+      ctx.fillText(`slope H = ${Ht.toFixed(1)} km/s/Mpc`, x0 + 10, top + 14);
+    }
+
+    // --- a(t) -----------------------------------------------------------------
+    {
+      const top = 330, bot = H - 40;
+      const aMax = Math.max(1.5, Math.max(...hist.a.filter((_, i) => hist.t[i] <= tMax)));
+      const X = (t: number) => x0 + (t / tMax) * (x1 - x0);
+      const Y = (a: number) => bot - (Math.min(a, aMax) / aMax) * (bot - top);
+      ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillStyle = ink(0.85);
+      ctx.fillText('Size of the universe, a(t)', x0, top - 14);
+      ctx.strokeStyle = ink(0.25);
+      ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0, bot); ctx.lineTo(x1, bot); ctx.stroke();
+      // today, a = 1
+      ctx.strokeStyle = ink(0.18);
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, Y(1)); ctx.lineTo(x1, Y(1)); ctx.stroke();
+      ctx.setLineDash([]);
+      // shade where the expansion speeds up (ä > 0)
+      const c = state.c;
+      ctx.lineWidth = 2;
+      for (let i = 1; i < hist.t.length; i++) {
+        if (hist.t[i] > tMax) break;
+        const a = hist.a[i];
+        const acc = -c.Or / a ** 3 - c.Om / (2 * a * a) + c.OL * a;
+        ctx.strokeStyle = acc > 0 ? GOLD : BLUE;
+        ctx.beginPath();
+        ctx.moveTo(X(hist.t[i - 1]), Y(hist.a[i - 1]));
+        ctx.lineTo(X(hist.t[i]), Y(a));
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1;
+      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+      ctx.fillStyle = BLUE;
+      ctx.fillText('slowing', x0 + 6, top + 12);
+      ctx.fillStyle = GOLD;
+      ctx.fillText('speeding up', x0 + 62, top + 12);
+      ctx.fillStyle = ink(0.6);
+      ctx.fillText(`t, 0 – ${tMax.toFixed(0)} billion years`, x0 + 4, bot + 16);
+      ctx.fillText('a = 1', x1 - 32, Y(1) - 4);
+      if (Number.isFinite(hist.tNow)) {
+        ctx.fillText('today', X(hist.tNow) - 14, Y(1) - 8);
+      }
+      // the cursor
+      ctx.fillStyle = ROSE;
+      ctx.beginPath();
+      ctx.arc(X(state.t), Y(now.a), 4.5, 0, 2 * Math.PI);
+      ctx.fill();
+      if (hist.fate === 'recollapses') {
+        ctx.fillStyle = ROSE;
+        ctx.fillText('Big Crunch', X(hist.t[hist.t.length - 1]) - 62, bot - 6);
+      }
+    }
+  }
+
+  // =====================================================================
+  //  Numbers
+  // =====================================================================
+  function updateText() {
+    if (bounce) {
+      setResult({ value: '—', status: 'no Big Bang', note: 'Lower Ω_Λ or raise Ω_m.' });
+      return;
+    }
+    const now = atTime(state.t);
+    const Ht = now.h * state.c.H0;
+    const c = state.c;
+    const acc = -c.Or / now.a ** 3 - c.Om / (2 * now.a ** 2) + c.OL * now.a;
+    const rows: Record<string, string> = {
+      'r-a': now.a.toFixed(3),
+      'r-hr': Math.abs(Ht) > 1e-6 ? fmtGly(C_KMS / Math.abs(Ht) * 1) : '∞',
+      'r-acc': Ht < 0 ? 'collapsing' : acc > 0 ? 'speeding up' : 'slowing down',
+      'r-sd': '—',
+      'r-sv': '—',
+      'r-ph': '—',
+    };
+    if (state.sel >= 0) {
+      const g = gals[state.sel], h = gals[state.home];
+      const d = Math.hypot(g.x - h.x, g.y - h.y, g.z - h.z) * L0 * now.a;
+      const v = Ht * d;
+      rows['r-sd'] = fmtGly(d);
+      rows['r-sv'] = `${Math.round(v).toLocaleString('en-US')} km/s = ${(v / C_KMS).toFixed(2)} c`;
+    }
+    const ph = photonNow();
+    if (ph) {
+      const src = gals[ph.from], h = gals[state.home];
+      const ta = arrival(Math.hypot(src.x - h.x, src.y - h.y, src.z - h.z) * L0, state.photon!.te);
+      const when = ta == null ? 'never arrives' : `arrives at ${ta.toFixed(1)} Gyr`;
+      if (ph.state === 'waiting') rows['r-ph'] = `leaves at ${state.photon!.te.toFixed(2)} Gyr, ${when}`;
+      else if (ph.state === 'arrived') rows['r-ph'] = `arrived, z = ${ph.z.toFixed(2)}, ${Math.round(ph.lambda)} nm`;
+      else rows['r-ph'] = `${fmtGly(ph.proper)} from home, z = ${ph.z.toFixed(2)}, ${when}`;
+    }
+    setRows(rows);
+    setResult({
+      value: `${Ht.toFixed(1)} km/s/Mpc`,
+      colour: TEAL,
+      status: `t = ${state.t.toFixed(2)} billion years`,
+      note: Ht < 0
+        ? 'Every galaxy is approaching every other: the universe is falling back together.'
+        : `A galaxy 1 billion light-years away recedes at ${Math.round(Ht * 306.6).toLocaleString('en-US')} km/s, ${(Ht * 306.6 / C_KMS * 100).toFixed(1)}% of light speed.`,
+    });
+    setEq({
+      rule: [['v', TEAL], '=', ['H(t)', GOLD], ['\\,d', BLUE], '\\qquad', ['H^2', GOLD], '= H_0^2\\left(\\dfrac{\\Omega_m}{a^3} + \\dfrac{\\Omega_k}{a^2} + \\Omega_\\Lambda\\right)'],
+      live: [`a = ${now.a.toFixed(3)}`, `\\quad H = ${Ht.toFixed(1)}\\ \\text{km/s/Mpc}`, `\\quad \\Omega_k = ${Ok(c).toFixed(2)}`],
+    });
+  }
+
+  // =====================================================================
+  //  Loop and controls
+  // =====================================================================
+  let shiftFrom: Vec | null = null, shiftT0 = 0;
+  let last = performance.now();
+  function frame(t: number) {
+    const dt = Math.min(0.1, (t - last) / 1000);
+    last = t;
+    if (state.running && !bounce) {
+      // slower while a photon is on its way, so its journey can be followed
+      const flying = photonNow()?.state === 'flying';
+      state.t = Math.min(tMax, state.t + dt * (tMax / (flying ? 60 : 28)));
+      syncT();
+      if (state.t >= tMax) runCtl.setRunning((state.running = false));
+      dirty = true;
+    }
+    if (shiftFrom) {
+      const k = Math.min(1, (t - shiftT0) / 700);
+      const e = k * k * (3 - 2 * k), h = gals[state.home];
+      state.homeShift = { x: shiftFrom.x + (h.x - shiftFrom.x) * e, y: shiftFrom.y + (h.y - shiftFrom.y) * e, z: shiftFrom.z + (h.z - shiftFrom.z) * e };
+      if (k >= 1) shiftFrom = null;
+      dirty = true;
+    }
+    if (dirty) {
+      draw();
+      updateText();
+      dirty = false;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  orbitControls(canvas, cam, W, H, {
+    changed: () => { dirty = true; },
+    click: (x, y) => {
+      if (x > SPLIT) return;
+      const now = atTime(state.t);
+      const scale = state.comoving ? 1 : now.a;
+      let best = -1, bd = 14;
+      gals.forEach((g, i) => {
+        const q = cam.project(disp(g, scale));
+        const d = Math.hypot(q.sx - x, q.sy - y);
+        if (q.zc > 0.1 && d < bd) { bd = d; best = i; }
+      });
+      state.sel = best === state.home ? -1 : best;
+      dirty = true;
+    },
+  });
+
+  const makeHome = (i: number) => {
+    if (i < 0 || i === state.home) return;
+    shiftFrom = { ...state.homeShift };
+    shiftT0 = performance.now();
+    state.home = i;
+    state.sel = -1;
+    state.photon = null;
+    dirty = true;
+  };
+  el('home').addEventListener('click', () => makeHome(state.sel));
+  el('send').addEventListener('click', () => {
+    if (state.sel < 0) {
+      // nothing selected: pick the farthest galaxy in the box
+      let b = -1, bd = 0;
+      gals.forEach((g, i) => {
+        const h = gals[state.home], d = Math.hypot(g.x - h.x, g.y - h.y, g.z - h.z);
+        if (d > bd) { bd = d; b = i; }
+      });
+      state.sel = b;
+    }
+    state.photon = { from: state.sel, te: state.t };
+    dirty = true;
+  });
+
+  const tToSlider = (t: number) => t / tMax;
+  let setTSlider: (v: number) => void = () => {};
+  function syncT() { setTSlider(tToSlider(state.t)); }
+  setTSlider = slider('t', (v) => { state.t = Math.max(0.05, v * tMax); dirty = true; }, (v) => `${(v * tMax).toFixed(2)} Gyr`);
+
+  const setOm = slider('om', (v) => { state.c.Om = v; presetSeg.clear(); rebuild(); }, (v) => v.toFixed(2));
+  const setOl = slider('ol', (v) => { state.c.OL = v; presetSeg.clear(); rebuild(); }, (v) => v.toFixed(2));
+  const setH0 = slider('h0', (v) => { state.c.H0 = v; presetSeg.clear(); rebuild(); }, (v) => `${v.toFixed(1)} km/s/Mpc`);
+  const PRESETS: Record<string, [number, number]> = {
+    ours: [0.31, 0.69],
+    matter: [1, 0],
+    empty: [0, 0],
+    closed: [2.5, 0],
+    lambda: [0.05, 0.95],
+  };
+  const applyPreset = (k: string) => {
+    const [om, ol] = PRESETS[k];
+    state.c.Om = om; state.c.OL = ol;
+    setOm(om); setOl(ol);
+    state.t = NaN; // re-centre time on "today" for the new universe
+    rebuild();
+  };
+  const presetSeg = segmented('preset', applyPreset);
+  check('c-arrows', (on) => { state.arrows = on; dirty = true; });
+  check('c-sphere', (on) => { state.sphere = on; dirty = true; });
+  check('c-grid', (on) => { state.grid = on; dirty = true; });
+  const setComoving = check('c-comoving', (on) => { state.comoving = on; dirty = true; });
+  const runCtl = transport({
+    onRun: (on) => {
+      if (on && state.t >= tMax - 1e-6) state.t = 0.3;
+      state.running = on;
+    },
+    onReset: () => {
+      state.c = { H0: 67.7, Om: 0.31, OL: 0.69, Or: 9.1e-5 };
+      setOm(0.31); setOl(0.69); setH0(67.7);
+      presetSeg.select('ours');
+      state.home = centreIdx();
+      state.homeShift = { ...gals[state.home] };
+      state.sel = -1;
+      state.photon = null;
+      state.t = NaN;
+      runCtl.setRunning((state.running = false));
+      rebuild();
+    },
+  });
+
+  tries({
+    nocentre: () => {
+      state.comoving = false; setComoving(false);
+      const far = gals.findIndex((g) => g.x > 0.55 && g.y > 0.2 && g.z < -0.3);
+      state.sel = far;
+      makeHome(far);
+      state.sel = -1;
+    },
+    comoving: () => { state.comoving = true; setComoving(true); state.running = true; runCtl.setRunning(true); dirty = true; },
+    sphere: () => { state.comoving = false; setComoving(false); state.sphere = true; state.t = Math.min(tMax, 25); syncT(); dirty = true; },
+    photon: () => {
+      applyPreset('ours'); presetSeg.select('ours');
+      state.comoving = false; setComoving(false);
+      state.t = 1.2; syncT();
+      let b = -1, bd = 0;
+      gals.forEach((g, i) => {
+        const h = gals[state.home], d = Math.hypot(g.x - h.x, g.y - h.y, g.z - h.z);
+        if (d > bd && d * L0 < 6000) { bd = d; b = i; }
+      });
+      state.sel = b;
+      state.photon = { from: b, te: state.t };
+      state.running = true;
+      runCtl.setRunning(true);
+      dirty = true;
+    },
+    fates: () => { applyPreset('closed'); presetSeg.select('closed'); state.t = 1; syncT(); state.running = true; runCtl.setRunning(true); },
+  });
+
+  state.homeShift = { ...gals[state.home] };
+  rebuild();
+  state.t = hist.tNow;
+  syncT();
+  requestAnimationFrame(frame);
+</script>
