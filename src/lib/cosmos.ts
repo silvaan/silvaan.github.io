@@ -71,6 +71,28 @@ export const loadGalaxyNames = () => json<NamedGalaxy[]>('galaxies.json');
 /** SDSS DR16 quasars: x, y, z (comoving Mpc), redshift. */
 export const loadQuasars = () => loadBin('quasars.bin');
 
+/**
+ * The cosmic web: SDSS and 6dFGS redshift-survey galaxies, ~900k of them,
+ * quantised to Int16 to keep the file small. Rows: x, y, z (comoving Mpc,
+ * galactic), absolute r or K magnitude.
+ */
+export async function loadWeb() {
+  const buf = await (await fetch(BASE + 'web.bin')).arrayBuffer();
+  const dv = new DataView(buf);
+  const n = dv.getUint32(0, true), scale = dv.getFloat32(4, true);
+  const q = new Int16Array(buf, 12, n * 4);
+  const rows = new Float32Array(n * 4);
+  const m = EQ_TO_GAL;
+  for (let i = 0; i < n; i++) {
+    const o = i * 4, x = q[o] * scale, y = q[o + 1] * scale, z = q[o + 2] * scale;
+    rows[o] = m[0][0] * x + m[0][1] * y + m[0][2] * z;
+    rows[o + 1] = m[1][0] * x + m[1][1] * y + m[1][2] * z;
+    rows[o + 2] = m[2][0] * x + m[2][1] * y + m[2][2] * z;
+    rows[o + 3] = q[o + 3] / 100;
+  }
+  return { n, stride: 4, rows };
+}
+
 export type LocalGalaxy = { n: string; t: string; p: V3; d: number; M: number | null; r: number | null };
 /** McConnachie (2012): positions turned galactic, still Mpc. */
 export async function loadLocalGroup() {

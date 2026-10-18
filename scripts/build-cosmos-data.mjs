@@ -8,6 +8,8 @@
 //   McConnachie (2012) Local Group catalogue, VizieR J/AJ/144/4
 //   2MASS Redshift Survey (Huchra et al. 2012), VizieR J/ApJS/199/26
 //   SDSS DR16 quasar catalogue (Lyke et al. 2020), VizieR VII/289
+//   SDSS DR18 spectroscopic galaxies, z < 0.2, from SkyServer
+//   6dF Galaxy Survey DR3 (Jones et al. 2009), VizieR VII/259, when VizieR answers
 //
 // Every position is equatorial J2000 Cartesian: x towards RA 0 Dec 0, z towards
 // the north celestial pole. Stars are in parsecs, galaxies and quasars in Mpc.
@@ -29,9 +31,18 @@ const SOURCES = {
   'dr16q.tsv': VIZ + '-source=VII/289&-out=RAJ2000,DEJ2000,z&z=>0.05',
 };
 
+const SKY = 'https://skyserver.sdss.org/dr18/SkyServerWS/SearchTools/SqlSearch?format=csv&cmd=';
+// SkyServer answers one large query slowly, so the sky goes in twelve slices of RA
+for (let i = 0; i < 12; i++)
+  SOURCES[`sdss_${i}.csv`] = SKY + encodeURIComponent(
+    `SELECT ra,dec,z,petroMag_r FROM SpecPhoto WHERE class='GALAXY' AND zWarning=0 AND z BETWEEN 0.005 AND 0.2 AND ra >= ${i * 30} AND ra < ${i * 30 + 30}`
+  );
+SOURCES['6dfgs.tsv'] = VIZ + '-source=VII/259/6dfgs&-out=RAJ2000,DEJ2000,cz,q_cz,bJmag';
+
 async function get(name) {
   const file = path.join(CACHE, name);
-  if (!fs.existsSync(file)) {
+  const bad = (f) => !fs.existsSync(f) || fs.readFileSync(f, 'utf8').slice(0, 4000).includes('QUERY_STATUS=ERROR');
+  if (bad(file)) {
     console.log('downloading', name);
     const res = await fetch(SOURCES[name]);
     if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
@@ -167,4 +178,49 @@ function writeF32(name, rows, stride) {
   const dist = (z) => { const i = Math.min(ztab.length - 2, Math.floor(z / 0.005)); const f = (z - ztab[i]) / 0.005; return dtab[i] + f * (dtab[i + 1] - dtab[i]); };
   const out = keep.map((r) => [...cart(+r.RAJ2000, +r.DEJ2000, dist(+r.z)), +r.z]);
   writeF32('quasars.bin', out, 4);
+}
+
+// --- SDSS and 6dF galaxies: the cosmic web in depth -------------------------
+// Packed small, 8 bytes a galaxy: three Int16 coordinates in units of
+// SCALE Mpc and an Int16 absolute magnitude × 100.
+{
+  const SCALE = 1100 / 32767; // ±1100 Mpc, about 0.03 Mpc a step
+  const rows = [];
+  const push = (ra, dec, z, M) => {
+    const d = comoving(z);
+    const [x, y, zz] = cart(ra, dec, d);
+    rows.push([x, y, zz, M]);
+  };
+  for (let i = 0; i < 12; i++) {
+    const lines = (await get(`sdss_${i}.csv`)).split('\n').slice(2);
+    for (const l of lines) {
+      const [ra, dec, z, mr] = l.split(',').map(Number);
+      if (!(z > 0)) continue;
+      const dl = comoving(z) * (1 + z);
+      push(ra, dec, z, mr - 5 * Math.log10(dl * 1e6 / 10));
+    }
+  }
+  let six = 0;
+  try {
+    for (const r of tsv(await get('6dfgs.tsv'))) {
+      const cz = +r.cz, q = +r.q_cz;
+      if (!(cz > 600) || q < 3) continue;
+      const z = cz / C, dl = comoving(z) * (1 + z);
+      push(sexa(r.RAJ2000, true), sexa(r.DEJ2000, false), z, (+r.bJmag || 16) - 5 * Math.log10(dl * 1e6 / 10));
+      six++;
+    }
+  } catch (e) {
+    console.log('6dFGS skipped:', e.message);
+  }
+  const buf = Buffer.alloc(12 + rows.length * 8);
+  buf.writeUInt32LE(rows.length, 0);
+  buf.writeFloatLE(SCALE, 4);
+  buf.writeUInt32LE(six, 8);
+  rows.forEach((r, i) => {
+    const o = 12 + i * 8;
+    for (let k = 0; k < 3; k++) buf.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(r[k] / SCALE))), o + k * 2);
+    buf.writeInt16LE(Math.round(Math.max(-30, Math.min(-5, r[3])) * 100), o + 6);
+  });
+  fs.writeFileSync(path.join(OUT, 'web.bin'), buf);
+  console.log('web.bin', rows.length, `(6dF: ${six})`, (buf.length / 1048576).toFixed(1) + ' MB');
 }
