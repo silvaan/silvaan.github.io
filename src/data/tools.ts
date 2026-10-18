@@ -788,6 +788,14 @@ export const AREAS: Area[] = [
     icon: 'M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0 M3 12c0-2.2 4-4 9-4s9 1.8 9 4-4 4-9 4-9-1.8-9-4z M5 4h.01 M19 5h.01 M18 19h.01 M6 19h.01',
     simulators: [
       {
+        slug: 'big-bang',
+        title: 'From the Big Bang to Galaxies',
+        description:
+          'One box of the universe from a split second after the Big Bang to today, across 54 orders of magnitude in time: quarks lock into protons, helium forms in three minutes, the glowing fog clears into the microwave background, and the seeds of inflation grow into the cosmic web.',
+        href: '/simulations/cosmology/big-bang',
+        status: 'live',
+      },
+      {
         slug: 'universe-atlas',
         title: 'A Journey Through the Universe',
         description:
@@ -799,7 +807,7 @@ export const AREAS: Area[] = [
         slug: 'relativistic-travel',
         title: 'Travelling Near the Speed of Light',
         description:
-          'Fly towards a real star at 0.99999 c and look out: the sky crowds forward and turns blue, the microwave background glows ahead, and the route is shorter on your ruler than on Earth’s map. Then find the galaxies that no rocket can ever reach.',
+          'Pick a speed and see the real sky three ways: as Earth maps it, as the ship measures it, and where its light set out from. A ladder of scales from the Moon to the Coma Cluster shows how near everything gets, and how long the trip takes on your own clock.',
         href: '/simulations/cosmology/relativistic-travel',
         status: 'live',
       },
