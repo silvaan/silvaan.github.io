@@ -136,7 +136,8 @@ import Try from '../../../components/sim/Try.astro';
   import { el, segmented, slider, check, transport, readout, tries } from '../../../lib/panel';
   import { View, v3, compile, vertexArray, setView, fitCanvas, GLSL_PROJECT, type V3, type Program } from '../../../lib/gl3d';
   import { LY_PER_PC, PC_PER_MPC, radec, starRGB, loadStars, loadStarNames, loadLocalGroup, loadGalaxies, fmtDist } from '../../../lib/cosmos';
-  import { GC, DISKS, diskGalaxy, milkyWay } from '../../../lib/galaxies';
+  import { GC, DISKS, diskGalaxy } from '../../../lib/galaxies';
+  import { milkyWayGL } from '../../../lib/milkyway-gl';
 
   const MPC = PC_PER_MPC;
   const GOLD = '#f5c26b', BLUE = '#9cc4ff', TEAL = '#5eead4', ROSE = '#ff9fb2';
@@ -297,6 +298,19 @@ void main() {
 }`;
 
   const prog: Program | null = gl ? compile(gl, POINT_VS, POINT_FS, 'relativistic-travel') : null;
+  // the Milky Way's disk, bent into whichever map is drawn by the same rule as the points
+  const mwGL = gl
+    ? milkyWayGL(gl, `
+uniform vec3 uU, uW;
+uniform float uBeta, uGamma, uOmb;
+vec3 place(vec3 x) {
+  float par = dot(x, uU);
+  vec3 perp = x - uU * par;
+  float r = length(x);
+  float ahead = par >= 0.0 ? par + uBeta * r : dot(perp, perp) / max(r - par, 1e-30) - uOmb * r;
+  return perp + uU * (uW.x * par + uW.y * par / uGamma + uW.z * uGamma * ahead);
+}`)
+    : null;
   type Layer = { vao: WebGLVertexArrayObject; count: number; unit: number; floor: number; fade: () => number; gain: number; min: number; on: () => boolean };
   const layers: Record<string, Layer> = {};
   const ATTRS: [string, number][] = [['aPos', 3], ['aSize', 1], ['aLum', 1], ['aCol', 3]];
@@ -329,10 +343,8 @@ void main() {
     { name: 'Pleiades', pos: radec(56.75, 24.12, 136), kind: 'star' },
   ];
   {
-    const mw: number[] = [], dust: number[] = [], others: number[] = [];
-    milkyWay(mw, dust);
+    const others: number[] = [];
     for (const d of DISKS) diskGalaxy(d.spec, others);
-    addLayer('mw', new Float32Array(mw), 1, { on: () => state.show.mw, min: 1.2, gain: 1.4 });
     addLayer('disks', new Float32Array(others), 1, { on: () => state.show.gal, min: 1.2, gain: 3 });
   }
   const STAR_LABELS = new Set(['Proxima Centauri', 'Sirius', 'Vega', 'Betelgeuse', 'Rigel', 'Deneb', 'Polaris', 'Arcturus', 'Canopus', 'Antares']);
@@ -423,6 +435,18 @@ void main() {
     // follows the zoom relative to the Earth map's own framing, as a camera's would.
     const natural = 1.55 * v3.len(DESTS[state.dest].pos);
     const expo = Math.pow(10, 0.4 * 7.5) * Math.min(400, Math.max(1, (state.r / natural) ** 2));
+    if (mwGL && state.show.mw)
+      mwGL.draw(view, view.eye, {
+        gain: 0.11 * Math.min(4, Math.sqrt(expo / Math.pow(10, 3))),
+        extra: (p) => {
+          gl.uniform3f(p.u('uU'), ...u);
+          gl.uniform3f(p.u('uW'), ...state.w);
+          gl.uniform1f(p.u('uBeta'), b);
+          gl.uniform1f(p.u('uGamma'), g);
+          gl.uniform1f(p.u('uOmb'), oneMinusBeta());
+        },
+      });
+    gl.useProgram(prog.prog);
     const maxPoint = (gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array)[1];
     for (const key of ['mw', 'disks', 'gal', 'lg', 'stars']) {
       const L = layers[key];

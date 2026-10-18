@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="cosmology"
   title="A Journey Through the Universe"
-  description="Every point here is a real measurement. Leave the planets for 45,000 stars catalogued by Hipparcos, see the Milky Way from outside, cross to Andromeda, fly through 900,000 galaxies strung into a cosmic web, and keep going past the quasars to the glow of the Big Bang, 46 billion light-years away."
+  description="Every star and galaxy here is a real measurement. Leave the planets for 45,000 stars catalogued by Hipparcos, visit nebulae and black holes, see the Milky Way from outside, cross to Andromeda, fly through 900,000 galaxies strung into a cosmic web, and keep going past the quasars to the glow of the Big Bang, 46 billion light-years away."
   shortcuts={['run', 'reset', 'fullscreen']}
   standard={false}
 >
@@ -68,9 +68,12 @@ import Try from '../../../components/sim/Try.astro';
       <Checks
         label="Layers"
         items={[
-          { id: 'l-planets', label: 'Planets and orbits', checked: true },
+          { id: 'l-planets', label: 'Planets', checked: true },
+          { id: 'l-orbits', label: 'Planet orbits', checked: true },
           { id: 'l-stars', label: 'Stars', checked: true },
           { id: 'l-mw', label: 'Milky Way', checked: true },
+          { id: 'l-neb', label: 'Nebulae and star clusters', checked: true },
+          { id: 'l-bh', label: 'Black holes', checked: true },
           { id: 'l-lg', label: 'Local Group galaxies', checked: true },
           { id: 'l-gal', label: '2MRS galaxies (whole sky)', checked: true },
           { id: 'l-web', label: 'SDSS and 6dF galaxies (cosmic web)', checked: true },
@@ -105,6 +108,8 @@ import Try from '../../../components/sim/Try.astro';
           <li>Stars: HYG v4.0 database (Hipparcos, Yale Bright Star, Gliese), D. Nash / astronexus, CC BY-SA 4.0.</li>
           <li>Planets: JPL approximate Keplerian elements (Standish), valid 1800–2050.</li>
           <li>Milky Way: spiral arms from the maser parallaxes of Reid et al. (2019), ApJ 885, 131; long bar after Wegg et al. (2015). The galaxy is drawn as a model on that skeleton.</li>
+          <li>The sky seen from the Solar System: the Milky Way panorama by ESO/S. Brunier (CC BY 4.0).</li>
+          <li>Nebulae, clusters and black holes: positions and sizes from the literature (Gaia for the dormant black holes); their pictures are drawn, not photographed.</li>
           <li>Local Group: A. McConnachie (2012), AJ 144, 4, via VizieR.</li>
           <li>Galaxies: 2MASS Redshift Survey, Huchra et al. (2012); SDSS DR18 spectroscopic galaxies (z &lt; 0.2); 6dF Galaxy Survey DR3, Jones et al. (2009). Distances from redshift.</li>
           <li>Quasars: SDSS DR16Q, Lyke et al. (2020), via VizieR; a 6% sample plus every quasar above z = 5.</li>
@@ -123,6 +128,15 @@ import Try from '../../../components/sim/Try.astro';
     <li>
       Every star in the catalogue sits inside a bubble a few thousand light-years wide, on the <b>Orion Spur</b>
       between the Sagittarius and Perseus arms, 26,000 light-years from the centre. <Try id="mw" />
+    </li>
+    <li>
+      The arms are where stars are born. Visit the <b>Orion Nebula</b>, 1,300 light-years away, or the <b>Crab
+      Nebula</b>, the wreck of a star that exploded in 1054 and was seen from Earth in daylight. <Try id="crab" />
+    </li>
+    <li>
+      The nearest known black hole, <b>Gaia BH1</b>, is only 1,560 light-years away and gives off no light at all:
+      Gaia found it from the wobble of the star that orbits it. At the centre of the galaxy sits
+      <b>Sagittarius A*</b>, 4.3 million times the Sun’s mass. <Try id="sgra" />
     </li>
     <li>
       <b>Andromeda</b> is 2.5 million light-years away: the light reaching you tonight left it before there
@@ -148,7 +162,9 @@ import Try from '../../../components/sim/Try.astro';
     loadStars, loadStarNames, loadGalaxies, loadGalaxyNames, loadQuasars, loadLocalGroup, loadWeb,
     fmtDist, fmtLightTime, type Catalogue,
   } from '../../../lib/cosmos';
-  import { GC, DISKS, diskGalaxy, milkyWay, armPoint, ARM_NAMES } from '../../../lib/galaxies';
+  import { GC, DISKS, diskGalaxy, armPoint, ARM_NAMES } from '../../../lib/galaxies';
+  import { milkyWayGL } from '../../../lib/milkyway-gl';
+  import { deepSkyGL, DEEP_SKY } from '../../../lib/deep-sky';
   import { PLANCK18, comoving, particleHorizon } from '../../../lib/cosmology';
 
   const MPC = PC_PER_MPC;
@@ -195,7 +211,7 @@ import Try from '../../../components/sim/Try.astro';
   // =====================================================================
   //  Things with names: what labels, the search and the camera can aim at
   // =====================================================================
-  type Kind = 'sun' | 'planet' | 'probe' | 'star' | 'mw' | 'arm' | 'lg' | 'galaxy' | 'structure' | 'quasar' | 'edge';
+  type Kind = 'sun' | 'planet' | 'probe' | 'star' | 'mw' | 'arm' | 'nebula' | 'cluster' | 'bh' | 'lg' | 'galaxy' | 'structure' | 'quasar' | 'edge';
   type Obj = {
     name: string;
     kind: Kind;
@@ -213,7 +229,7 @@ import Try from '../../../components/sim/Try.astro';
     jd: 2440587.5 + Date.now() / 86400000,
     running: false,
     lim: 7.5,
-    layers: { planets: true, stars: true, mw: true, lg: true, gal: true, web: true, qso: true, cmb: true, labels: true, rings: true },
+    layers: { planets: true, orbits: true, neb: true, bh: true, stars: true, mw: true, lg: true, gal: true, web: true, qso: true, cmb: true, labels: true, rings: true },
     camMode: 'orbit' as 'orbit' | 'look',
     keys: new Set<string>(),
     // camera: orbit `centre` at distance r
@@ -252,7 +268,15 @@ import Try from '../../../components/sim/Try.astro';
     size: 2 / AU_PER_PC,
     info: 'the most distant human-made object, launched 1977',
   });
-  const GCOBJ = add({ name: 'Galactic Centre (Sgr A*)', kind: 'mw', pos: () => GC, size: 1500, info: '4 million solar mass black hole at the centre of the Milky Way' });
+  add({ name: 'Galactic Centre', kind: 'mw', pos: () => GC, size: 1500, info: 'the crowded heart of the Milky Way, round the black hole Sagittarius A*' });
+  for (const d of DEEP_SKY)
+    add({
+      name: d.name,
+      kind: d.kind === 'bh' ? 'bh' : d.kind === 'open' || d.kind === 'globular' ? 'cluster' : 'nebula',
+      pos: () => d.pos,
+      size: d.kind === 'bh' ? d.r * 3 : d.r * 1.3,
+      info: d.info,
+    });
   const MW = add({ name: 'Milky Way', kind: 'mw', pos: () => GC, size: 22000, info: 'our galaxy, a barred spiral about 100,000 light-years across' });
   // the arms, labelled where they are best traced
   ([[0, -60], [1, -40], [2, -50], [3, 120], [4, 10]] as const).forEach(([i, b]) => {
@@ -422,6 +446,10 @@ void main() {
   let skyVao: WebGLVertexArrayObject | null = null, skyTex: WebGLTexture | null = null, skyReady = false;
   const layers: Record<string, Layer> = {};
   let maxPoint = 256;
+  const mwGL = gl ? milkyWayGL(gl) : null;
+  const deepGL = gl ? deepSkyGL(gl) : null;
+  if (mwGL) mwGL.onPhoto = () => { dirty = true; };
+  const MW_GAIN = 0.3;
 
   if (gl) {
     pointProg = compile(gl, POINT_VS, POINT_FS, 'universe-atlas');
@@ -483,11 +511,8 @@ void main() {
   const done = () => { loaded++; dirty = true; };
 
   {
-    const mw: number[] = [], dust: number[] = [], others: number[] = [];
-    milkyWay(mw, dust);
+    const others: number[] = [];
     for (const d of DISKS) diskGalaxy(d.spec, others);
-    addLayer('mw', new Float32Array(mw), 1, { on: () => state.layers.mw, min: 1.2, gain: 1.4 });
-    addLayer('dust', new Float32Array(dust), 1, { on: () => state.layers.mw, min: 1.2, dust: true });
     addLayer('disks', new Float32Array(others), 1, { on: () => state.layers.lg, min: 1.2, gain: 3 });
   }
   done();
@@ -690,6 +715,9 @@ void main() {
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 
+    // the Milky Way, lit and dusty, under everything that is a point
+    if (mwGL && state.layers.mw) mwGL.drawVolume(view, eye, { gain: MW_GAIN * Math.pow(10, 0.4 * (state.lim - 7.5) * 0.5), pixAng: (2 * view.tanY) / (H * dpr), photoGain: Math.pow(10, 0.4 * (state.lim - 7.5) * 0.4) });
+
     gl.useProgram(pointProg.prog);
     const expo = Math.pow(10, 0.4 * state.lim);
     for (const key of ['mw', 'dust', 'disks', 'qso', 'web', 'gal', 'lg', 'stars']) {
@@ -712,6 +740,11 @@ void main() {
       gl.drawArrays(gl.POINTS, 0, L.count);
     }
     gl.bindVertexArray(null);
+
+    // nebulae, clusters and black holes; a black hole only once the view is near its scale
+    deepGL?.draw(view, eye, {
+      show: (d) => (d.kind === 'bh' ? state.layers.bh && v3.len(v3.sub(d.pos, eye)) < state.r * 2.5 && state.r < (v3.len(d.pos) > 1e6 ? 5e6 : 3000) : state.layers.neb),
+    });
   }
 
   type Placed = { x: number; y: number; w: number; h: number };
@@ -739,6 +772,11 @@ void main() {
       }
       case 'arm':
         return d > 9000 && d < 150000 ? 640 : null;
+      case 'nebula':
+      case 'cluster':
+        return d < reach && d < o.size * 4000 && d > o.size * 1.2 && eyeFromSun < 60000 ? 560 - Math.log10(d / o.size) * 20 : null;
+      case 'bh':
+        return d < state.r * 2.5 && state.r < (v3.len(o.pos()) > 1e6 ? 5e6 : 3000) ? 600 : null;
       case 'mw':
         if (o === MW) return d > 40000 && d < 2.5e7 ? 700 : null;
         return d > 2500 && d < 25000 ? 650 : null;
@@ -802,7 +840,7 @@ void main() {
 
     // --- planets ---------------------------------------------------------
     const near = eyeR < 0.02;
-    if (state.layers.planets && near) {
+    if (state.layers.orbits && near) {
       for (const p of PLANETS) {
         ctx.beginPath();
         for (let i = 0; i <= 160; i++) {
@@ -814,6 +852,8 @@ void main() {
         ctx.lineWidth = 1;
         ctx.stroke();
       }
+    }
+    if (state.layers.planets && near) {
       for (const p of PLANETS) {
         const pos = planetPos.get(p.n)!;
         const q = view.project(pos, W, H);
@@ -929,6 +969,8 @@ void main() {
       case 'planet': case 'probe': return L.planets;
       case 'star': return L.stars;
       case 'mw': case 'arm': return L.mw;
+      case 'nebula': case 'cluster': return L.neb;
+      case 'bh': return L.bh;
       case 'lg': return L.lg;
       case 'galaxy': return L.gal;
       case 'quasar': return L.qso;
@@ -941,6 +983,9 @@ void main() {
       case 'planet': case 'probe': return o.colour ?? '#e8e9ec';
       case 'star': case 'sun': return 'rgba(255,226,176,0.9)';
       case 'mw': case 'arm': return 'rgba(201,184,255,0.95)';
+      case 'nebula': return 'rgba(255,150,180,0.95)';
+      case 'cluster': return 'rgba(255,226,176,0.9)';
+      case 'bh': return 'rgba(255,190,120,0.95)';
       case 'lg': case 'galaxy': return 'rgba(156,196,255,0.9)';
       case 'structure': return 'rgba(232,233,236,0.8)';
       case 'quasar': return 'rgba(255,122,138,0.95)';
@@ -1273,7 +1318,7 @@ void main() {
   void runCtl;
   slider('lim', (v) => { state.lim = v; dirty = true; }, (v) => v.toFixed(1));
   const LAYER_IDS: [keyof typeof state.layers, string][] = [
-    ['planets', 'l-planets'], ['stars', 'l-stars'], ['mw', 'l-mw'], ['lg', 'l-lg'], ['gal', 'l-gal'],
+    ['planets', 'l-planets'], ['orbits', 'l-orbits'], ['neb', 'l-neb'], ['bh', 'l-bh'], ['stars', 'l-stars'], ['mw', 'l-mw'], ['lg', 'l-lg'], ['gal', 'l-gal'],
     ['qso', 'l-qso'], ['web', 'l-web'], ['cmb', 'l-cmb'], ['labels', 'l-labels'], ['rings', 'l-rings'],
   ];
   for (const [k, id] of LAYER_IDS) check(id, (on) => { state.layers[k] = on; dirty = true; });
@@ -1303,6 +1348,8 @@ void main() {
     proxima: () => { scaleSeg.clear(); const o = byName.get('proxima centauri'); if (o) { state.pitch = 0.3; flyTo(o, 6 / LY_PER_PC); } },
     mw: () => { scaleSeg.select('mw'); PRESETS.mw(); },
     andromeda: () => { scaleSeg.clear(); const o = byName.get('andromeda galaxy (m31)'); if (o) flyTo(o, 85000); },
+    crab: () => { scaleSeg.clear(); const o = byName.get('crab nebula (m1)'); if (o) flyTo(o); },
+    sgra: () => { scaleSeg.clear(); const o = byName.get('sagittarius a*'); if (o) flyTo(o); },
     web: () => { scaleSeg.select('web'); state.pitch = 0.02; flyTo(SUN, 420 * MPC); },
     edge: () => { scaleSeg.select('obs'); PRESETS.obs(); },
   });

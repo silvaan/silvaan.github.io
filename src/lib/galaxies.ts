@@ -1,7 +1,8 @@
-// Spiral galaxies as clouds of glowing points, for the Cosmology sims: the
-// Milky Way, Andromeda, Triangulum and the Large Magellanic Cloud. The shapes
-// are models; the positions, tilts and brightnesses are measured. The Milky
-// Way's arms follow the maser parallaxes of Reid et al. (2019).
+// Spiral galaxies as clouds of glowing points, for the Cosmology sims:
+// Andromeda, Triangulum and the Large Magellanic Cloud. The shapes are models;
+// the positions, tilts and brightnesses are measured. Also the skeleton of the
+// Milky Way's arms, from the maser parallaxes of Reid et al. (2019), which
+// milkyway-gl.ts draws.
 
 import { v3, mulM3, type V3 } from './gl3d';
 import { EQ_TO_GAL, R_GC } from './cosmos';
@@ -122,7 +123,7 @@ export const DISKS: { name: string; spec: DiskSpec }[] = [
  * growing in the direction of rotation. Beyond the stretch the masers cover,
  * each arm is continued at the same pitch, as the usual maps draw them.
  */
-const ARMS: { name: string; Rk: number; bk: number; p1: number; p2: number; b0: number; b1: number; w: number; weight: number }[] = [
+export const ARMS: { name: string; Rk: number; bk: number; p1: number; p2: number; b0: number; b1: number; w: number; weight: number }[] = [
   { name: 'Scutum–Centaurus', Rk: 4910, bk: 23, p1: 14.1, p2: 12.1, b0: -235, b1: 60, w: 420, weight: 1.0 },
   { name: 'Perseus', Rk: 8870, bk: 40, p1: 10.3, p2: 8.7, b0: -125, b1: 285, w: 380, weight: 1.0 },
   { name: 'Sagittarius–Carina', Rk: 6040, bk: 24, p1: 17.1, p2: 1.0, b0: -105, b1: 95, w: 260, weight: 0.55 },
@@ -140,83 +141,4 @@ export function armPoint(i: number, betaDeg: number): V3 {
   const psi = (betaDeg < a.bk ? a.p1 : a.p2) * DEG;
   const R = a.Rk * Math.exp(-(betaDeg - a.bk) * DEG * Math.tan(psi));
   return fromGC(R, betaDeg * DEG, 0);
-}
-
-/**
- * The Milky Way as points. `light` gets rows of position, radius, luminosity
- * and RGB like diskGalaxy; `dust` gets clouds that absorb (RGB is how much
- * of each colour they take out, blue most). The pieces:
- *   a long bar (half-length 5 kpc, 30° from the Sun–centre line, near end at
- *   positive longitudes) round a boxy bulge, both old and yellow;
- *   an exponential disk of old stars (scale length 2.6 kpc, 300 pc thick);
- *   the arms, lit by young blue stars and pink nebulae, with dust lanes along
- *   their inner edges; the Sun's own 600 pc is left to the real stars.
- */
-export function milkyWay(light: number[], dust: number[]) {
-  let seed = 7;
-  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-  const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
-  const M_TOTAL = -20.9;
-  const N_BAR = 45000, N_DISK = 90000, N_ARM = 120000, N_HII = 5000, N_DUST = 60000;
-  const Lc = lum(M_TOTAL) / (N_BAR + N_DISK + N_ARM);
-  const near = (p: V3) => Math.hypot(p[0], p[1], p[2]) < 600;
-  const put = (p: V3, size: number, L: number, c: [number, number, number]) => {
-    if (!near(p)) light.push(...p, size, L, ...c);
-  };
-
-  // bar and bulge: positions in the bar's own frame, then turned
-  const barDir = 30 * DEG; // from the centre towards the near end, as a β
-  for (let i = 0; i < N_BAR; i++) {
-    const boxy = rnd() < 0.45;
-    const along = boxy ? gauss() * 900 : (rnd() * 2 - 1) * 5000 * Math.sqrt(rnd());
-    const across = gauss() * (boxy ? 800 : 420);
-    const z = gauss() * (boxy ? 650 * (1 - Math.min(1, Math.abs(along) / 2500)) + 120 : 180);
-    const b = barDir, c = Math.cos(b), s = Math.sin(b);
-    // the bar's axis in the plane, measured like β from the Sun line
-    const x = along * c - across * s, y = along * s + across * c;
-    put([GC[0] - x, GC[1] + y, GC[2] + z], 140, Lc * 1.25, [1.0, 0.78, 0.5]);
-  }
-  // the old disk
-  for (let i = 0; i < N_DISK; i++) {
-    const R = -2600 * Math.log(rnd() * 0.997 + 0.001);
-    if (R > 16000 || R < 2000) { i--; continue; }
-    const beta = rnd() * 2 * Math.PI;
-    put(fromGC(R, beta, gauss() * 300), 200, Lc, [1.0, 0.86, 0.68]);
-  }
-  // the arms
-  const totalW = ARMS.reduce((s, a) => s + a.weight * (a.b1 - a.b0), 0);
-  for (let i = 0; i < N_ARM + N_HII + N_DUST; i++) {
-    // pick an arm in proportion to its length and weight, then a place along it
-    let r = rnd() * totalW, k = 0;
-    while (r > ARMS[k].weight * (ARMS[k].b1 - ARMS[k].b0)) { r -= ARMS[k].weight * (ARMS[k].b1 - ARMS[k].b0); k++; }
-    const a = ARMS[k];
-    const bdeg = a.b0 + rnd() * (a.b1 - a.b0);
-    const psi = (bdeg < a.bk ? a.p1 : a.p2) * DEG;
-    const R0 = a.Rk * Math.exp(-(bdeg - a.bk) * DEG * Math.tan(psi));
-    if (R0 > 17000 || R0 < 3000) continue;
-    // arms widen outwards, as Reid's widths do
-    const w = a.w * (R0 / 8150) ** 0.6;
-    if (i < N_ARM) {
-      const R = R0 + gauss() * w;
-      const young = rnd() < 0.6;
-      put(fromGC(R, bdeg * DEG, gauss() * (young ? 90 : 200)), 110, Lc * (young ? 1.6 : 1), young ? [0.6, 0.72, 1.0] : [1.0, 0.9, 0.78]);
-    } else if (i < N_ARM + N_HII) {
-      // pink nebulae, clumped
-      const R = R0 + gauss() * w * 0.6;
-      const p = fromGC(R, bdeg * DEG, gauss() * 50);
-      for (let j = 0; j < 3; j++) put([p[0] + gauss() * 60, p[1] + gauss() * 60, p[2] + gauss() * 30], 60, Lc * 2.2, [1.0, 0.42, 0.62]);
-    } else {
-      // dust on the inner side of the arm, where the gas is compressed
-      const R = R0 - w * 0.6 + gauss() * w * 0.45;
-      const p = fromGC(R, bdeg * DEG, gauss() * 60);
-      if (!near(p)) dust.push(...p, 180, 0, 0.55, 0.65, 0.8);
-    }
-  }
-  // a little dust everywhere in the inner disk too
-  for (let i = 0; i < 15000; i++) {
-    const R = -3000 * Math.log(rnd() * 0.99 + 0.005);
-    if (R > 12000 || R < 1500) continue;
-    const p = fromGC(R, rnd() * 2 * Math.PI, gauss() * 70);
-    if (!near(p)) dust.push(...p, 220, 0, 0.35, 0.42, 0.55);
-  }
 }
