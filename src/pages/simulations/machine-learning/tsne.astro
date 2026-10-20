@@ -14,7 +14,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="machine-learning"
   title="t-SNE"
-  description="Points in hundreds of dimensions, laid out on a page so that neighbours stay neighbours. Each point's neighbours in the data become probabilities, the map gets probabilities of its own, and the points move until the two agree. Watch it happen, then see what perplexity and early exaggeration change and what the picture does not mean."
+  description="Points in hundreds of dimensions, laid out on a page so that neighbours stay neighbours. Follow it step by step: distances in the data, neighbour probabilities P, a random map with its own probabilities Q, the forces that pull and push each point, and the descent that makes Q match P."
   shortcuts={['run', 'step', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -25,21 +25,37 @@ import Try from '../../../components/sim/Try.astro';
           width="1000"
           height="640"
           role="img"
-          aria-label="A 2D t-SNE map of the data, coloured by class, with the chosen point linked to its nearest neighbours in the original space. On the right, that point's neighbour probabilities in the data and in the map, and the KL divergence over the iterations."
+          aria-label="The stages of t-SNE: the matrix of distances in the data, the neighbour probabilities P, a random 2D map and its probabilities Q, the attraction and repulsion on each point, and the optimisation with the KL divergence over the iterations."
         ></canvas>
       </div>
       <Caption
         legend={[
           { label: 'p: neighbours in the data', color: '#7c8cff' },
           { label: 'q: neighbours on the map', color: '#fbbf24' },
-          { label: 'early exaggeration', color: '#f9736a' },
+          { label: 'attraction', color: '#5eead4' },
+          { label: 'repulsion', color: '#f9736a' },
         ]}
-        hint="Hover a point to see its neighbours · click to keep it"
+        hint="Hover the matrix or the map to pick a point · click to keep it"
       />
-      <Result label="KL(P ‖ Q)" />
+      <Result label="Step" />
     </div>
 
     <div class="sim-panel">
+      <Seg
+        id="stage"
+        label="Step"
+        attr="s"
+        options={[
+          { value: '1', label: '1 · Distances' },
+          { value: '2', label: '2 · Neighbours P' },
+          { value: '3', label: '3 · Random start' },
+          { value: '4', label: '4 · Forces' },
+          { value: '5', label: '5 · Optimize' },
+        ]}
+      />
+      <Actions>
+        <button type="button" class="btn" id="next">Next step →</button>
+      </Actions>
       <Seg
         id="data"
         label="Data"
@@ -52,18 +68,22 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Slider id="perp" label="Perplexity" min={0} max={100} value={58} display="30" hint={['local', 'global']} />
-      <Transport running step />
+      <Transport step />
+      <Slider id="it" label="Show iteration" min={0} max={0} value={0} display="live" />
+      <Slider id="sp" label="Steps per frame" min={1} max={12} value={2} />
       <Actions>
         <button type="button" class="btn ghost" id="again">New random start</button>
       </Actions>
-      <Slider id="sp" label="Steps per frame" min={1} max={12} value={4} />
       <Checks
         label="Optimizer"
         items={[{ id: 'ex', label: 'Early exaggeration (P × 12 for 250 steps)', checked: true }]}
       />
       <Checks
         label="Show"
-        items={[{ id: 'links', label: 'Links to the 12 nearest in the data', checked: true }]}
+        items={[
+          { id: 'arrows', label: 'Where each point is pushed', checked: true },
+          { id: 'links', label: 'Links to the 12 nearest in the data', checked: true },
+        ]}
       />
       <Readout
         title="Values"
@@ -80,30 +100,34 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      The map starts as a tiny random speck. In the first 250 steps P is blown up 12 times, so groups pull together
-      hard and <b>drift apart as whole clusters</b>; then the exaggeration stops and each cluster relaxes. Watch the
-      KL curve jump when it does. <Try id="restart" />
+      Step 1 is all t-SNE knows: one distance for every pair. Sorted by digit, the matrix shows <b>bright blocks</b> on
+      the diagonal, images of the same digit being closer in pixel space. Hover a row to see an image's nearest
+      images. <Try id="s1" />
     </li>
     <li>
-      Hover a digit: its 12 nearest images in the 784 pixel dimensions are linked. Most land next to it on the map.
-      t-SNE is built to keep <b>who is next to whom</b>, and the readout counts how many it kept. <Try id="digits" />
+      Step 2 turns each row into probabilities with a Gaussian of its own width, tuned so every row has the same
+      perplexity. Drag perplexity: the blocks <b>sharpen or blur</b>. <Try id="s2" />
     </li>
     <li>
-      The blobs have very different spreads in 10-D, but on the map they come out <b>about the same size</b>, and the
-      gaps between them say little. Cluster size and distance between clusters are not to be read off a t-SNE map.
-      <Try id="blobs" />
+      Step 3 drops the points at random in a tiny speck. On the map every pair looks about as close as any other, so
+      <b>Q is flat</b> where P has blocks, and the KL divergence is large. <Try id="s3" />
     </li>
     <li>
-      Pure noise has no clusters at all. At a low perplexity t-SNE still draws <b>clumps</b> out of chance
-      fluctuations; at a high one it shows the honest round blob. <Try id="noise" />
+      Step 4: each point is <b>pulled</b> towards its neighbours in the data (teal) and <b>pushed</b> away from everyone
+      it is close to on the map (red). Press Step and watch the arrows act. <Try id="s4" />
     </li>
     <li>
-      The Swiss roll is a sheet rolled up in 3-D. With a small perplexity t-SNE only sees neighbours along the sheet
-      and unrolls it, in pieces; a large one starts to see across the gap between layers. <Try id="roll" />
+      Step 5 runs it. For 250 steps P is blown up 12 times, so whole groups gather and drift apart first; then the
+      exaggeration stops and each cluster relaxes. Q grows the same blocks as P. Drag "Show iteration" to go back.
+      <Try id="s5" />
     </li>
     <li>
-      Turn off early exaggeration and start again: the clusters form inside each other and some get
-      <b>split in two</b>, stuck in a worse layout with a higher KL. <Try id="noex" />
+      The blobs have very different spreads in 10-D, but on the map they come out <b>about the same size</b>. Cluster
+      sizes and the gaps between clusters are not to be read off a t-SNE map. <Try id="blobs" />
+    </li>
+    <li>
+      Pure noise has no clusters at all. At a low perplexity t-SNE still draws <b>clumps</b> out of chance; at a high
+      one it shows the honest round blob. <Try id="noise" />
     </li>
   </Fragment>
 </SimLayout>
@@ -114,25 +138,40 @@ import Try from '../../../components/sim/Try.astro';
   import { stageInk } from '../../../lib/draw';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
   import { digitSet } from '../../../lib/digits';
-  import { sqDistances, jointP, Embedding, EXAGGERATION_ITERS } from '../../../lib/tsne';
+  import { sqDistances, jointP, Embedding, EXAGGERATION, EXAGGERATION_ITERS } from '../../../lib/tsne';
 
-  // Exact t-SNE on a few hundred points, live: affinities P in the data from a
-  // Gaussian per point (its σ set by the perplexity), a Student-t kernel Q on
-  // the map, and gradient descent on KL(P‖Q).
-  const PP = '#7c8cff', QQ = '#fbbf24', EX = '#f9736a';
+  // Exact t-SNE on a few hundred points, shown as the five things it does:
+  // measure distances, turn them into neighbour probabilities P, scatter a
+  // map at random, work out the pull and push on each point, and descend on
+  // KL(P‖Q) until the map's probabilities Q look like P.
+  const PP = '#7c8cff', QQ = '#fbbf24', ATT = '#5eead4', REP = '#f9736a', EX = '#f9736a';
   const CLASS = ['#7c8cff', '#f9736a', '#34d399', '#fbbf24', '#c084fc', '#5eead4', '#f472b6', '#a3e635', '#fb923c', '#93c5fd'];
   const MAX_ITER = 1000;
 
-  type Data = { X: ArrayLike<number>[]; label: number[]; colour: string[]; dim: number; img?: Float64Array[]; classes: string[] };
+  type Data = {
+    X: ArrayLike<number>[];
+    label: number[];
+    colour: string[];
+    dim: number;
+    img?: Float64Array[];
+    classes: string[];
+    /** Order for the matrices: grouped by class, or along the roll. */
+    order: number[];
+  };
 
-  const state = { data: 'digits', perp: 30, running: true, speed: 4, ex: true, links: true, seed: 1, hover: -1, pinned: -1 };
+  const state = {
+    stage: 1, data: 'digits', perp: 30, running: false, speed: 2, ex: true, arrows: true, links: true,
+    seed: 1, hover: -1, pinned: -1, other: -1, show: -1,
+  };
   let data: Data | null = null;
   let D = new Float64Array(0);
   let cond = new Float64Array(0);
+  let Pj = new Float64Array(0);
   let sigma = new Float64Array(0);
   let emb: Embedding | null = null;
-  /** Each point's 12 nearest in the data, by distance. */
   let knn: number[][] = [];
+  /** The map every two steps, for going back. */
+  let snaps: Float32Array[] = [];
 
   const canvas = el('ts') as HTMLCanvasElement;
   const { ctx } = setupCanvas(canvas, () => draw());
@@ -141,9 +180,8 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
 
-  const MAP = { x: 16, y: 16, w: 608, h: 608 };
-  const NBR = { x: 652, y: 40, w: 330, h: 300 };
-  const KLP = { x: 676, y: 402, w: 306, h: 196 };
+  const MAIN = { x: 16, y: 16, w: 608, h: 608 };
+  const SIDE = { x: 652, y: 16, w: 330 };
 
   // --- the data sets ------------------------------------------------------------
   function rng(seed: number) {
@@ -180,63 +218,72 @@ import Try from '../../../components/sim/Try.astro';
     n = Math.sqrt(n) || 1;
     return a.map((v) => v / n);
   }
-
+  /** Grouped by label; inside a group, by distance from its first member, so the blocks read smoothly. */
+  function byLabel(label: number[], X: ArrayLike<number>[]) {
+    const first = new Map<number, number>();
+    label.forEach((l, i) => { if (!first.has(l)) first.set(l, i); });
+    const d = (i: number) => {
+      const a = X[i], b = X[first.get(label[i])!];
+      let s = 0;
+      for (let k = 0; k < a.length; k++) s += (a[k] - b[k]) ** 2;
+      return s;
+    };
+    const key = label.map((_, i) => d(i));
+    return label.map((_, i) => i).sort((a, b) => label[a] - label[b] || key[a] - key[b]);
+  }
   function makeData(kind: string): Data {
     const { rnd, g } = rng(5);
     if (kind === 'digits') {
       const ds = digitSet(500, 28, 4);
+      const X = ds.map((d) => features(d.img)), label = ds.map((d) => d.label);
       return {
-        X: ds.map((d) => features(d.img)), label: ds.map((d) => d.label), colour: ds.map((d) => CLASS[d.label]),
-        dim: 784, img: ds.map((d) => d.img), classes: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+        X, label, colour: label.map((l) => CLASS[l]), dim: 784, img: ds.map((d) => d.img),
+        classes: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'], order: byLabel(label, X),
       };
     }
     if (kind === 'blobs') {
-      // five groups: spreads from tight to loose, and two of them near each other
-      const spec = [
-        { n: 100, sd: 0.25, c: 0 }, { n: 100, sd: 0.6, c: 1 }, { n: 100, sd: 1.5, c: 2 },
-        { n: 100, sd: 0.6, c: 3 }, { n: 100, sd: 0.6, c: 4 },
-      ];
+      // five groups: spreads from tight to loose, and two of them half as far apart as the rest
+      const sd = [0.25, 0.6, 1.5, 0.6, 0.6];
       const centre = (c: number) => Array.from({ length: 10 }, (_, d) => (c === 4 ? (d === 3 ? 2.2 : 0) : d === c ? 7 : 0));
       const X: number[][] = [], label: number[] = [];
-      for (const s of spec) for (let k = 0; k < s.n; k++) { const m = centre(s.c); X.push(m.map((v) => v + g() * s.sd)); label.push(s.c); }
+      for (let c = 0; c < 5; c++) for (let k = 0; k < 100; k++) { const m = centre(c); X.push(m.map((v) => v + g() * sd[c])); label.push(c); }
       return {
-        X, label, colour: label.map((l) => CLASS[l]), dim: 10,
+        X, label, colour: label.map((l) => CLASS[l]), dim: 10, order: byLabel(label, X),
         classes: ['spread 0.25', 'spread 0.6', 'spread 1.5', 'spread 0.6, half as far from purple', 'spread 0.6, half as far from yellow'],
       };
     }
     if (kind === 'roll') {
-      const X: number[][] = [], label: number[] = [], colour: string[] = [];
+      const X: number[][] = [], label: number[] = [], colour: string[] = [], u: number[] = [];
       for (let k = 0; k < 500; k++) {
         const t = 1.5 * Math.PI * (1 + 2 * rnd()), h = 21 * rnd();
         X.push([t * Math.cos(t), h, t * Math.sin(t)].map((v) => v + g() * 0.15));
-        const u = (t - 1.5 * Math.PI) / (3 * Math.PI);
-        label.push(Math.min(9, Math.floor(u * 10)));
-        colour.push(`hsl(${Math.round(260 - 240 * u)},80%,65%)`);
+        u.push((t - 1.5 * Math.PI) / (3 * Math.PI));
+        label.push(0);
+        colour.push(`hsl(${Math.round(260 - 240 * u[k])},80%,65%)`);
       }
-      return { X, label, colour, dim: 3, classes: [] };
+      return { X, label, colour, dim: 3, classes: [], order: u.map((_, i) => i).sort((a, b) => u[a] - u[b]) };
     }
     const X = Array.from({ length: 400 }, () => Array.from({ length: 10 }, g));
-    return { X, label: X.map(() => 0), colour: X.map(() => '#a5b4fc'), dim: 10, classes: [] };
+    return { X, label: X.map(() => 0), colour: X.map(() => '#a5b4fc'), dim: 10, classes: [], order: X.map((_, i) => i) };
   }
 
   function nearestK(N: number, k: number) {
-    const out: number[][] = [];
     const idx = Array.from({ length: N }, (_, j) => j);
-    for (let i = 0; i < N; i++) {
-      out.push(idx.filter((j) => j !== i).sort((a, b) => D[i * N + a] - D[i * N + b]).slice(0, k));
-    }
-    return out;
+    return idx.map((i) => idx.filter((j) => j !== i).sort((a, b) => D[i * N + a] - D[i * N + b]).slice(0, k));
   }
 
   let busy = '';
   function load(kind: string) {
     state.data = kind;
+    state.pinned = state.hover = state.other = -1;
     busy = 'Measuring every distance…';
+    emb = null;
     draw();
     setTimeout(() => {
       data = makeData(kind);
       D = sqDistances(data.X);
       knn = nearestK(data.X.length, 12);
+      matD = null;
       busy = '';
       affinities();
     }, 20);
@@ -246,45 +293,71 @@ import Try from '../../../components/sim/Try.astro';
     const r = jointP(D, data.X.length, state.perp);
     cond = r.cond;
     sigma = r.sigma;
-    restart(r.P);
+    Pj = r.P;
+    matP = null;
+    restart();
   }
-  let lastP: Float64Array | null = null;
-  function restart(P = lastP) {
-    if (!data || !P) return;
-    lastP = P;
-    emb = new Embedding(P, data.X.length, state.seed);
+  function restart() {
+    if (!data) return;
+    emb = new Embedding(Pj, data.X.length, state.seed);
     emb.exaggerate = state.ex;
+    snaps = [Float32Array.from(emb.Y)];
+    state.show = -1;
+    setIt(0, 0);
     fit = null;
     draw();
   }
-
-  // --- the map's frame: follows the points, smoothly ------------------------------
-  let fit: { cx: number; cy: number; s: number } | null = null;
-  function frameTo() {
+  function step() {
     if (!emb) return;
-    const N = emb.N, Y = emb.Y;
+    emb.step();
+    if (emb.iter % 2 === 0) snaps.push(Float32Array.from(emb.Y));
+  }
+
+  // --- what is on screen: the live map, or a past one ------------------------------
+  type Layout = { Y: ArrayLike<number>; num: Float64Array; Z: number; iter: number };
+  let pastCache: { k: number; L: Layout } | null = null;
+  function layout(): Layout | null {
+    if (!emb) return null;
+    if (state.show < 0 || state.show * 2 >= emb.iter) return { Y: emb.Y, num: emb.num, Z: emb.Z, iter: emb.iter };
+    if (pastCache && pastCache.k === state.show) return pastCache.L;
+    const Y = snaps[state.show], N = emb.N, num = new Float64Array(N * N);
+    let Z = 0;
+    for (let i = 0; i < N; i++)
+      for (let j = i + 1; j < N; j++) {
+        const v = 1 / (1 + (Y[2 * i] - Y[2 * j]) ** 2 + (Y[2 * i + 1] - Y[2 * j + 1]) ** 2);
+        num[i * N + j] = num[j * N + i] = v;
+        Z += 2 * v;
+      }
+    pastCache = { k: state.show, L: { Y, num, Z, iter: state.show * 2 } };
+    return pastCache.L;
+  }
+
+  // --- the map's frame: follows the points, smoothly --------------------------------
+  let fit: { cx: number; cy: number; s: number } | null = null;
+  function frameTo(Y: ArrayLike<number>, N: number) {
     const xs: number[] = [], ys: number[] = [];
     for (let i = 0; i < N; i++) { xs.push(Y[2 * i]); ys.push(Y[2 * i + 1]); }
     xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
     const q = (a: number[], f: number) => a[Math.floor(f * (a.length - 1))];
     const x0 = q(xs, 0.005), x1 = q(xs, 0.995), y0 = q(ys, 0.005), y1 = q(ys, 0.995);
-    const want = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s: Math.min(MAP.w, MAP.h) * 0.86 / Math.max(1e-6, x1 - x0, y1 - y0) };
+    const want = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s: (MAIN.w * 0.8) / Math.max(1e-9, x1 - x0, y1 - y0) };
     if (!fit) fit = want;
     else {
-      const k = 0.12;
+      const k = 0.15;
       fit.cx += (want.cx - fit.cx) * k;
       fit.cy += (want.cy - fit.cy) * k;
       fit.s *= Math.exp(Math.log(want.s / fit.s) * k);
     }
   }
-  const mx = (x: number) => MAP.x + MAP.w / 2 + (x - fit!.cx) * fit!.s;
-  const my = (y: number) => MAP.y + MAP.h / 2 - (y - fit!.cy) * fit!.s;
+  const mx = (x: number) => MAIN.x + MAIN.w / 2 + (x - fit!.cx) * fit!.s;
+  const my = (y: number) => MAIN.y + MAIN.h / 2 - (y - fit!.cy) * fit!.s;
 
-  // --- drawing ------------------------------------------------------------------
+  // --- drawing helpers --------------------------------------------------------------
   function hexA(hex: string, a: number) {
     const n = parseInt(hex.slice(1), 16);
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
+  const rgbOf = (hex: string) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
   const UI = (size: number, weight = 400) => `${weight} ${size}px 'Inter', system-ui, sans-serif`;
   function text(s: string, x: number, y: number, size: number, col: string, align: CanvasTextAlign = 'left', weight = 400) {
     ctx.font = UI(size, weight);
@@ -293,21 +366,253 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillText(s, x, y);
     ctx.textAlign = 'left';
   }
+  function para(lines: string[], x: number, y: number, w: number, size = 12, col = ink(0.62)) {
+    ctx.font = UI(size);
+    let yy = y;
+    for (const line of lines) {
+      let cur = '';
+      for (const word of line.split(' ')) {
+        const next = cur ? cur + ' ' + word : word;
+        if (ctx.measureText(next).width > w && cur) { text(cur, x, yy, size, col); yy += size + 5; cur = word; }
+        else cur = next;
+      }
+      if (cur) { text(cur, x, yy, size, col); yy += size + 5; }
+      yy += 4;
+    }
+    return yy;
+  }
+  function arrowTo(x1: number, y1: number, x2: number, y2: number, col: string, wdt = 1.4) {
+    const a = Math.atan2(y2 - y1, x2 - x1), L = Math.hypot(x2 - x1, y2 - y1);
+    if (L < 1.5) return;
+    const hs = Math.min(6, L * 0.45);
+    ctx.strokeStyle = col;
+    ctx.fillStyle = col;
+    ctx.lineWidth = wdt;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2 - Math.cos(a) * hs * 0.6, y2 - Math.sin(a) * hs * 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - hs * Math.cos(a - 0.45), y2 - hs * Math.sin(a - 0.45));
+    ctx.lineTo(x2 - hs * Math.cos(a + 0.45), y2 - hs * Math.sin(a + 0.45));
+    ctx.closePath();
+    ctx.fill();
+  }
+  function digitImage(img: Float64Array, x: number, y: number, s: number) {
+    for (let r = 0; r < 28; r++)
+      for (let c = 0; c < 28; c++) {
+        const v = img[r * 28 + c];
+        if (v < 0.04) continue;
+        ctx.fillStyle = `rgba(232,233,236,${v})`;
+        ctx.fillRect(x + c * s, y + r * s, s + 0.2, s + 0.2);
+      }
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 0.5, y - 0.5, 28 * s + 1, 28 * s + 1);
+  }
+
+  // --- the matrices -----------------------------------------------------------------
+  // An N×N picture, rows and columns in `order`. Kept as images and redrawn
+  // only when what they show changes.
+  const off = document.createElement('canvas');
+  const offCtx = off.getContext('2d')!;
+  let matD: ImageData | null = null, matP: ImageData | null = null;
+  let matQ: { img: ImageData; key: string } | null = null;
+  function matrixImage(value: (i: number, j: number) => number, col: string): ImageData {
+    const N = data!.X.length, ord = data!.order;
+    const img = new ImageData(N, N), [r, g, b] = rgbOf(col);
+    for (let a = 0; a < N; a++)
+      for (let c = 0; c < N; c++) {
+        const t = a === c ? 0 : Math.max(0, Math.min(1, value(ord[a], ord[c])));
+        const k = (a * N + c) * 4;
+        img.data[k] = 10 + (r - 10) * t;
+        img.data[k + 1] = 11 + (g - 11) * t;
+        img.data[k + 2] = 16 + (b - 16) * t;
+        img.data[k + 3] = 255;
+      }
+    return img;
+  }
+  /**
+   * P and Q on one log scale, so the two can be compared by eye: an even
+   * share of 1/N² per pair is dim, ten times that is bright.
+   */
+  const logScale = (v: number, N: number) => (Math.log10(Math.max(v, 1e-12) * N * N) + 0.5) / 2.3;
+  function getD() {
+    if (!matD) {
+      const N = data!.X.length;
+      const s = [...D].sort((a, b) => a - b), med = s[Math.floor(s.length * 0.5)];
+      matD = matrixImage((i, j) => Math.exp(-D[i * N + j] / (0.7 * med)), '#e8e9ec');
+    }
+    return matD;
+  }
+  function getP() {
+    if (!matP) { const N = data!.X.length; matP = matrixImage((i, j) => logScale(Pj[i * N + j], N), PP); }
+    return matP;
+  }
+  function getQ(L: Layout) {
+    const key = `${L.iter}:${state.seed}:${state.data}`;
+    if (!matQ || matQ.key !== key) {
+      const N = data!.X.length;
+      matQ = { key, img: matrixImage((i, j) => logScale(L.num[i * N + j] / L.Z, N), QQ) };
+    }
+    return matQ.img;
+  }
+  function blit(img: ImageData, x: number, y: number, s: number) {
+    off.width = img.width;
+    off.height = img.height;
+    offCtx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = s < img.width;
+    ctx.drawImage(off, x, y, s, s);
+    ctx.imageSmoothingEnabled = true;
+    ctx.strokeStyle = ink(0.2);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 0.5, y - 0.5, s + 1, s + 1);
+  }
+  /** Ticks along a big matrix: where each class starts. */
+  function classTicks(x: number, y: number, s: number) {
+    if (!data!.classes.length) return;
+    const N = data!.X.length, ord = data!.order;
+    let start = 0;
+    for (let a = 1; a <= N; a++) {
+      if (a < N && data!.label[ord[a]] === data!.label[ord[start]]) continue;
+      const l = data!.label[ord[start]];
+      const mid = ((start + a) / 2 / N) * s;
+      const name = state.data === 'digits' ? data!.classes[l] : String(l + 1);
+      text(name, x - 6, y + mid + 4, 11, CLASS[l], 'right', 600);
+      text(name, x + mid, y - 5, 11, CLASS[l], 'center', 600);
+      start = a;
+    }
+  }
   const focus = () => (state.hover >= 0 ? state.hover : state.pinned);
 
-  function drawMap() {
+  // --- step 1 and 2: the data side --------------------------------------------------
+  const MAT = { x: MAIN.x + 18, y: MAIN.y + 18, s: MAIN.w - 30 };
+  function drawMatrixStage() {
+    const st = state.stage;
+    blit(st === 1 ? getD() : getP(), MAT.x, MAT.y, MAT.s);
+    classTicks(MAT.x, MAT.y, MAT.s);
+    const f = focus(), N = data!.X.length;
+    if (f >= 0) {
+      const r = data!.order.indexOf(f), y = MAT.y + ((r + 0.5) / N) * MAT.s;
+      ctx.strokeStyle = hexA(QQ, 0.9);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(MAT.x - 2, y - 2, MAT.s + 4, 4);
+      if (state.other >= 0) {
+        const c = data!.order.indexOf(state.other), x = MAT.x + ((c + 0.5) / N) * MAT.s;
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+    const S = SIDE;
+    let y = S.y + 16;
+    if (st === 1) {
+      text('1 · Distances in the data', S.x, y, 15, ink(0.95), 'left', 700);
+      y = para([
+        `Every pair of the ${N} points gets one number: how far apart they are in all ${data!.dim} dimensions. This matrix is everything t-SNE will ever use.`,
+        data!.classes.length ? 'Rows and columns are sorted by class; bright means near.' : 'Bright means near.',
+      ], S.x, y + 24, S.w);
+    } else {
+      text('2 · Neighbour probabilities P', S.x, y, 15, ink(0.95), 'left', 700);
+      y = para([
+        `Each row becomes probabilities with a Gaussian, p(j|i) ∝ exp(−d²/2σᵢ²). σᵢ is searched for so every row has perplexity ${state.perp}: about that many neighbours each.`,
+        'Then p_ij = (p(j|i) + p(i|j)) / 2N. Most of the matrix is now practically zero (log colour scale).',
+      ], S.x, y + 24, S.w);
+    }
+    y += 6;
+    if (f < 0) { text('Hover a row of the matrix.', S.x, y + 10, 12.5, ink(0.5)); return; }
+    // the chosen row
+    if (data!.img) {
+      digitImage(data!.img[f], S.x, y, 2);
+      text(`row ${f}: a ${data!.classes[data!.label[f]]}`, S.x + 66, y + 14, 12.5, ink(0.9), 'left', 600);
+      text(`σ = ${sigma[f].toFixed(3)}`, S.x + 66, y + 32, 12, ink(0.55));
+      y += 68;
+    } else {
+      text(`row ${f}`, S.x, y + 12, 12.5, ink(0.9), 'left', 600);
+      text(`σ = ${sigma[f].toFixed(3)}`, S.x + 70, y + 12, 12, ink(0.55));
+      y += 26;
+    }
+    if (st === 1) {
+      // its nearest, as images when there are images, and the spread of all its distances
+      if (data!.img) {
+        text('its 12 nearest images', S.x, y + 10, 11.5, ink(0.5));
+        knn[f].forEach((j, k) => digitImage(data!.img![j], S.x + (k % 6) * 54, y + 20 + Math.floor(k / 6) * 54, 1.7));
+        y += 132;
+      }
+      const ds = Array.from({ length: N }, (_, j) => Math.sqrt(D[f * N + j])).filter((_, j) => j !== f);
+      const dmax = Math.max(...ds), bins = new Array(40).fill(0);
+      for (const d of ds) bins[Math.min(39, Math.floor((d / dmax) * 40))]++;
+      const bmax = Math.max(...bins), h = 70, bw = S.w / 40;
+      text('distances from it to all the others', S.x, y + 10, 11.5, ink(0.5));
+      const near = Math.sqrt(D[f * N + knn[f][11]]);
+      bins.forEach((c, k) => {
+        ctx.fillStyle = (k + 1) / 40 * dmax <= near ? hexA(QQ, 0.9) : ink(0.35);
+        ctx.fillRect(S.x + k * bw, y + 20 + h - (c / bmax) * h, bw - 1, (c / bmax) * h);
+      });
+      text('nearest 12', S.x, y + h + 34, 11, QQ);
+      text('far →', S.x + S.w, y + h + 34, 11, ink(0.4), 'right');
+      if (data!.dim > 100) para(['In 784 dimensions almost everyone is at a similar distance: the near ones are a thin sliver on the left.'], S.x, y + h + 56, S.w, 11.5, ink(0.5));
+    } else {
+      // p(j|i), largest first
+      const row = Array.from({ length: N }, (_, j) => ({ j, p: cond[f * N + j] })).filter((r) => r.j !== f).sort((a, b) => b.p - a.p).slice(0, 24);
+      const top = row[0].p, h = 120, bw = S.w / 24;
+      text('p(j | i), its 24 largest', S.x, y + 10, 11.5, ink(0.5));
+      row.forEach((r, k) => {
+        const hh = (r.p / top) * h;
+        ctx.fillStyle = data!.classes.length ? data!.colour[r.j] : PP;
+        ctx.fillRect(S.x + k * bw, y + 20 + h - hh, bw - 2, hh);
+      });
+      let H = 0;
+      for (let j = 0; j < N; j++) { const p = cond[f * N + j]; if (p > 1e-300) H -= p * Math.log2(p); }
+      y += h + 38;
+      text(`entropy ${H.toFixed(2)} bits → perplexity 2^H = ${(2 ** H).toFixed(1)}`, S.x, y, 12, PP);
+      // σ of every point
+      const sorted = [...sigma].sort((a, b) => a - b);
+      const lo = sorted[0], hi = sorted[sorted.length - 1], bins = new Array(30).fill(0);
+      for (const s of sigma) bins[Math.min(29, Math.floor(((s - lo) / (hi - lo || 1)) * 30))]++;
+      const bmax = Math.max(...bins), hb = 54, bwb = S.w / 30;
+      text('σ of every point: narrow where it is crowded', S.x, y + 26, 11.5, ink(0.5));
+      bins.forEach((c, k) => {
+        ctx.fillStyle = ink(0.35);
+        ctx.fillRect(S.x + k * bwb, y + 34 + hb - (c / bmax) * hb, bwb - 1, (c / bmax) * hb);
+      });
+      const fx = S.x + ((sigma[f] - lo) / (hi - lo || 1)) * S.w;
+      ctx.fillStyle = QQ;
+      ctx.fillRect(fx - 1, y + 30, 2, hb + 6);
+      text(lo.toFixed(2), S.x, y + hb + 48, 10.5, ink(0.4));
+      text(hi.toFixed(2), S.x + S.w, y + hb + 48, 10.5, ink(0.4), 'right');
+    }
+  }
+
+  // --- step 3 to 5: the map -------------------------------------------------------
+  /** The pull of P and the push of Q on point i: −∂C/∂yᵢ split in two. */
+  function forces(L: Layout, i: number) {
+    const N = emb!.N, Y = L.Y, ex = L.iter < EXAGGERATION_ITERS && state.ex ? EXAGGERATION : 1;
+    let ax = 0, ay = 0, rx = 0, ry = 0;
+    for (let j = 0; j < N; j++) {
+      if (j === i) continue;
+      const n = L.num[i * N + j], dx = Y[2 * j] - Y[2 * i], dy = Y[2 * j + 1] - Y[2 * i + 1];
+      const a = 4 * ex * Pj[i * N + j] * n, r = (4 * n * n) / L.Z;
+      ax += a * dx; ay += a * dy;
+      rx -= r * dx; ry -= r * dy;
+    }
+    return { ax, ay, rx, ry };
+  }
+
+  function drawMap(L: Layout) {
+    const N = emb!.N, Y = L.Y, f = focus();
+    frameTo(Y, N);
     ctx.strokeStyle = ink(0.1);
     ctx.lineWidth = 1;
-    ctx.strokeRect(MAP.x + 0.5, MAP.y + 0.5, MAP.w - 1, MAP.h - 1);
-    if (!emb || !data || !fit) return;
-    const N = emb.N, Y = emb.Y, f = focus();
+    ctx.strokeRect(MAIN.x + 0.5, MAIN.y + 0.5, MAIN.w - 1, MAIN.h - 1);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.rect(MAIN.x, MAIN.y, MAIN.w, MAIN.h);
     ctx.clip();
     if (f >= 0 && state.links) {
-      ctx.strokeStyle = hexA(PP, 0.75);
-      ctx.lineWidth = 1.3;
+      ctx.strokeStyle = hexA(PP, 0.7);
+      ctx.lineWidth = 1.2;
       for (const j of knn[f]) {
         ctx.beginPath();
         ctx.moveTo(mx(Y[2 * f]), my(Y[2 * f + 1]));
@@ -315,16 +620,35 @@ import Try from '../../../components/sim/Try.astro';
         ctx.stroke();
       }
     }
-    const dim = f >= 0 && state.links;
     const near = new Set(f >= 0 ? knn[f] : []);
+    const dim = f >= 0 && state.links;
     for (let i = 0; i < N; i++) {
       ctx.globalAlpha = dim && i !== f && !near.has(i) ? 0.35 : 0.92;
-      ctx.fillStyle = data.colour[i];
+      ctx.fillStyle = data!.colour[i];
       ctx.beginPath();
       ctx.arc(mx(Y[2 * i]), my(Y[2 * i + 1]), near.has(i) ? 4.2 : 3, 0, 2 * Math.PI);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    // where every point is being pushed, in screen terms
+    if (state.arrows && state.stage >= 4) {
+      const F = Array.from({ length: N }, (_, i) => forces(L, i));
+      const mags = F.map((v) => Math.hypot(v.ax + v.rx, v.ay + v.ry)).sort((a, b) => a - b);
+      const k = 22 / Math.max(1e-12, mags[Math.floor(N * 0.9)]);
+      for (let i = 0; i < N; i += state.stage === 4 ? 1 : 2) {
+        const x = mx(Y[2 * i]), y = my(Y[2 * i + 1]);
+        let dx = (F[i].ax + F[i].rx) * k, dy = -(F[i].ay + F[i].ry) * k;
+        const m = Math.hypot(dx, dy);
+        if (m > 34) { dx *= 34 / m; dy *= 34 / m; }
+        arrowTo(x, y, x + dx, y + dy, ink(0.45), 1);
+      }
+      if (f >= 0) {
+        const v = forces(L, f), x = mx(Y[2 * f]), y = my(Y[2 * f + 1]);
+        const kk = 60 / Math.max(1e-12, Math.hypot(v.ax, v.ay), Math.hypot(v.rx, v.ry));
+        arrowTo(x, y, x + v.ax * kk, y - v.ay * kk, ATT, 2.6);
+        arrowTo(x, y, x + v.rx * kk, y - v.ry * kk, REP, 2.6);
+      }
+    }
     if (f >= 0) {
       ctx.strokeStyle = ink(0.95);
       ctx.lineWidth = 2;
@@ -333,127 +657,136 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     }
     ctx.restore();
-    // digit glyphs as labels, at the centre of each class
-    if (data.classes.length) {
-      const cx = new Array(data.classes.length).fill(0), cy = [...cx], n = [...cx];
-      for (let i = 0; i < N; i++) { const l = data.label[i]; cx[l] += Y[2 * i]; cy[l] += Y[2 * i + 1]; n[l]++; }
-      if (state.data === 'digits' && emb.iter > 60)
-        data.classes.forEach((c, l) => {
-          if (!n[l]) return;
-          const x = mx(cx[l] / n[l]), y = my(cy[l] / n[l]);
-          if (x < MAP.x || x > MAP.x + MAP.w || y < MAP.y || y > MAP.y + MAP.h) return;
-          ctx.fillStyle = inv(0.7);
-          ctx.beginPath();
-          ctx.arc(x, y, 11, 0, 2 * Math.PI);
-          ctx.fill();
-          text(c, x, y + 5, 14, CLASS[l], 'center', 700);
-        });
+    // class names at their centres, once the map has some shape
+    if (state.data === 'digits' && L.iter > 60) {
+      const cx = new Array(10).fill(0), cy = [...cx], n = [...cx];
+      for (let i = 0; i < N; i++) { const l = data!.label[i]; cx[l] += Y[2 * i]; cy[l] += Y[2 * i + 1]; n[l]++; }
+      data!.classes.forEach((c, l) => {
+        if (!n[l]) return;
+        const x = mx(cx[l] / n[l]), y = my(cy[l] / n[l]);
+        if (x < MAIN.x || x > MAIN.x + MAIN.w || y < MAIN.y || y > MAIN.y + MAIN.h) return;
+        ctx.fillStyle = inv(0.7);
+        ctx.beginPath();
+        ctx.arc(x, y, 11, 0, 2 * Math.PI);
+        ctx.fill();
+        text(c, x, y + 5, 14, CLASS[l], 'center', 700);
+      });
     }
-    if (emb.exaggerating) text(`early exaggeration · step ${emb.iter} of ${EXAGGERATION_ITERS}`, MAP.x + 12, MAP.y + 22, 12, EX);
+    if (state.data === 'blobs')
+      data!.classes.forEach((c, l) => {
+        const y = MAIN.y + MAIN.h - 14 - (data!.classes.length - 1 - l) * 17;
+        ctx.fillStyle = CLASS[l];
+        ctx.beginPath();
+        ctx.arc(MAIN.x + 18, y - 4, 4, 0, 2 * Math.PI);
+        ctx.fill();
+        text(c, MAIN.x + 28, y, 11.5, ink(0.7));
+      });
+    const ex = L.iter < EXAGGERATION_ITERS && state.ex;
+    text(
+      L.iter === 0 ? 'iteration 0: a random speck, magnified' : `iteration ${L.iter}${ex ? ` · early exaggeration, P × ${EXAGGERATION}` : ''}${state.show >= 0 && state.show * 2 < emb!.iter ? ' · looking back' : ''}`,
+      MAIN.x + 12, MAIN.y + 22, 12, ex ? EX : ink(0.6),
+    );
   }
 
-  function drawLegend() {
-    if (!data || state.data !== 'blobs') return;
-    data.classes.forEach((c, l) => {
-      const y = MAP.y + MAP.h - 14 - (data!.classes.length - 1 - l) * 17;
-      ctx.fillStyle = CLASS[l];
-      ctx.beginPath();
-      ctx.arc(MAP.x + 18, y - 4, 4, 0, 2 * Math.PI);
-      ctx.fill();
-      text(c, MAP.x + 28, y, 11.5, ink(0.7));
-    });
+  function drawPQ(L: Layout, y: number, s: number) {
+    const S = SIDE, gap = S.w - 2 * s;
+    blit(getP(), S.x, y, s);
+    blit(getQ(L), S.x + s + gap, y, s);
+    text('P, in the data', S.x, y + s + 15, 11.5, PP);
+    text(`Q, on the map at step ${L.iter}`, S.x + s + gap, y + s + 15, 11.5, QQ);
+    return y + s + 24;
   }
 
-  function drawNeighbours() {
-    const B = NBR;
-    if (!emb || !data) return;
-    const f = focus();
-    if (f < 0) {
-      text('Hover a point on the map', B.x, B.y + 20, 13, ink(0.6));
-      text('to compare its neighbours in the data (p)', B.x, B.y + 40, 12, ink(0.45));
-      text('with its neighbours on the map (q).', B.x, B.y + 58, 12, ink(0.45));
-      return;
-    }
-    const N = emb.N;
-    let y = B.y;
-    let x0 = B.x;
-    if (data.img) {
-      // the image itself
-      const s = 2.4;
-      const img = data.img[f];
-      for (let r = 0; r < 28; r++)
-        for (let c = 0; c < 28; c++) {
-          const v = img[r * 28 + c];
-          if (v < 0.04) continue;
-          ctx.fillStyle = `rgba(232,233,236,${v})`;
-          ctx.fillRect(B.x + c * s, y + r * s, s, s);
-        }
-      ctx.strokeStyle = ink(0.2);
-      ctx.strokeRect(B.x - 0.5, y - 0.5, 28 * s + 1, 28 * s + 1);
-      x0 = B.x + 28 * s + 14;
-    }
-    text(`point ${f}${data.classes.length ? ` · ${state.data === 'digits' ? 'a ' + data.classes[data.label[f]] : data.classes[data.label[f]]}` : ''}`, x0, y + 14, 13, ink(0.9), 'left', 600);
-    text(`σ = ${sigma[f].toFixed(3)} in the data`, x0, y + 33, 12, ink(0.55));
-    text('its 12 nearest, in the data', x0, y + 51, 12, ink(0.55));
-    // q(j|i) on the map, for the same j
-    let qs = 0;
-    for (let j = 0; j < N; j++) if (j !== f) qs += emb.num[f * N + j];
-    y += data.img ? 84 : 72;
-    const rows = knn[f];
-    const ps = rows.map((j) => cond[f * N + j]), qv = rows.map((j) => emb!.num[f * N + j] / qs);
-    const top = Math.max(...ps, ...qv) * 1.05;
-    const rh = 17, bx = B.x + 34, bw = B.w - 34 - 50;
-    rows.forEach((j, k) => {
-      const yy = y + k * rh;
-      ctx.fillStyle = data!.colour[j];
-      ctx.beginPath();
-      ctx.arc(B.x + 6, yy + 7, 4, 0, 2 * Math.PI);
-      ctx.fill();
-      text(data!.classes.length && state.data === 'digits' ? data!.classes[data!.label[j]] : String(k + 1), B.x + 16, yy + 11, 11, ink(0.55));
-      ctx.fillStyle = hexA(PP, 0.85);
-      ctx.fillRect(bx, yy + 1, (ps[k] / top) * bw, 6);
-      ctx.fillStyle = hexA(QQ, 0.85);
-      ctx.fillRect(bx, yy + 8, (qv[k] / top) * bw, 6);
-      text(`${(ps[k] * 100).toFixed(1)}%`, B.x + B.w, yy + 11, 10.5, ink(0.5), 'right');
-    });
-    const sumP = ps.reduce((a, b) => a + b, 0), sumQ = qv.reduce((a, b) => a + b, 0);
-    text(`these 12 hold ${(sumP * 100).toFixed(0)}% of p(·|i) and ${(sumQ * 100).toFixed(0)}% of q(·|i)`, B.x, y + rows.length * rh + 14, 11.5, ink(0.6));
-  }
-
-  function drawKL() {
-    const B = KLP;
-    text('KL(P ‖ Q) as the map is optimized', B.x - 24, B.y - 16, 12, ink(0.55));
+  function drawKL(y: number, L: Layout) {
+    const B = { x: SIDE.x + 26, y: y + 18, w: SIDE.w - 26, h: 160 };
+    text('KL(P ‖ Q) as the map is optimized', SIDE.x, y + 6, 11.5, ink(0.55));
     ctx.strokeStyle = ink(0.18);
     ctx.lineWidth = 1;
     ctx.strokeRect(B.x, B.y, B.w, B.h);
-    if (!emb) return;
     const X = (it: number) => B.x + (it / MAX_ITER) * B.w;
     if (state.ex) {
       ctx.fillStyle = hexA(EX, 0.1);
       ctx.fillRect(B.x, B.y, X(EXAGGERATION_ITERS) - B.x, B.h);
       text('× 12', B.x + 4, B.y + 14, 10.5, hexA(EX, 0.8));
     }
-    const h = emb.history;
-    if (!h.length) return;
-    const top = Math.max(...h.map((p) => p.kl)) * 1.08;
-    const Y = (v: number) => B.y + B.h - (v / top) * B.h;
-    for (const v of [0.5, 1, 1.5, 2, 2.5, 3, 4]) {
-      if (v > top) break;
-      text(v.toFixed(1), B.x - 4, Y(v) + 4, 10, ink(0.4), 'right');
+    const h = emb!.history;
+    if (h.length) {
+      const top = Math.max(...h.map((p) => p.kl)) * 1.08;
+      const Y = (v: number) => B.y + B.h - (v / top) * B.h;
+      for (const v of [0.5, 1, 1.5, 2, 2.5, 3, 4]) if (v < top) text(v.toFixed(1), B.x - 4, Y(v) + 4, 10, ink(0.4), 'right');
+      ctx.strokeStyle = QQ;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      h.forEach((p, k) => (k ? ctx.lineTo(X(p.iter), Y(p.kl)) : ctx.moveTo(X(p.iter), Y(p.kl))));
+      ctx.stroke();
     }
-    ctx.strokeStyle = QQ;
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    h.forEach((p, k) => (k ? ctx.lineTo(X(p.iter), Y(p.kl)) : ctx.moveTo(X(p.iter), Y(p.kl))));
-    ctx.stroke();
-    text('0', B.x, B.y + B.h + 14, 10, ink(0.4), 'center');
-    text(`${MAX_ITER} steps`, B.x + B.w, B.y + B.h + 14, 10, ink(0.4), 'right');
+    ctx.fillStyle = ink(0.8);
+    ctx.fillRect(X(L.iter) - 0.75, B.y, 1.5, B.h);
+    text('0', B.x, B.y + B.h + 13, 10, ink(0.4), 'center');
+    text(`${MAX_ITER} steps`, B.x + B.w, B.y + B.h + 13, 10, ink(0.4), 'right');
+  }
+
+  function drawMapStage() {
+    const L = layout()!;
+    drawMap(L);
+    const S = SIDE, st = state.stage, N = emb!.N;
+    let y = S.y + 16;
+    const kl = klOf(L);
+    if (st === 3) {
+      text('3 · A random start', S.x, y, 15, ink(0.95), 'left', 700);
+      y = para([
+        'The points are dropped at random in a tiny speck (drawn magnified). On the map, closeness becomes q_ij with a heavy-tailed Student-t: (1 + d²)⁻¹, normalised over all pairs.',
+        `In a random speck every pair is about as close as any other, so Q is flat where P has blocks. KL(P‖Q) = ${kl.toFixed(2)}: how badly Q describes P.`,
+      ], S.x, y + 24, S.w);
+      drawPQ(L, y + 6, 156);
+    } else if (st === 4) {
+      text('4 · Forces on each point', S.x, y, 15, ink(0.95), 'left', 700);
+      y = para([
+        'The gradient of the KL divergence splits in two. Every neighbour in the data pulls with strength p_ij (teal). Everyone near on the map pushes with strength q_ij (red).',
+        'Grey arrows: where each point will move. Press Step to take one step, Run to keep going.',
+      ], S.x, y + 24, S.w);
+      const f = focus();
+      if (f >= 0) {
+        const v = forces(L, f);
+        if (data!.img) { digitImage(data!.img[f], S.x, y + 4, 2); }
+        const x0 = data!.img ? S.x + 70 : S.x;
+        text(`point ${f}${data!.classes.length ? ` · ${data!.classes[data!.label[f]]}` : ''}`, x0, y + 18, 12.5, ink(0.9), 'left', 600);
+        text(`pull  ${Math.hypot(v.ax, v.ay).toExponential(2)}`, x0, y + 38, 12, ATT);
+        text(`push  ${Math.hypot(v.rx, v.ry).toExponential(2)}`, x0, y + 56, 12, REP);
+        y += 76;
+      } else {
+        text('Hover a point to see its pull and push.', S.x, y + 12, 12.5, ink(0.5));
+        y += 28;
+      }
+      para([
+        L.iter < EXAGGERATION_ITERS && state.ex
+          ? `Early exaggeration is on: the pull is ${EXAGGERATION} times too strong for the first ${EXAGGERATION_ITERS} steps, so groups gather before they settle.`
+          : 'The heavy tail of q keeps pushing far points apart, which is what opens the gaps between clusters.',
+      ], S.x, y + 6, S.w, 11.5, ink(0.5));
+      drawKL(450, L);
+    } else {
+      text('5 · Optimize', S.x, y, 15, ink(0.95), 'left', 700);
+      y = para([`Gradient descent with momentum moves every point a little each step, until Q has the same blocks as P.`], S.x, y + 24, S.w);
+      y = drawPQ(L, y + 2, 150);
+      drawKL(y + 10, L);
+    }
+    void N;
+  }
+
+  let klCache = { key: '', v: 0 };
+  function klOf(L: Layout) {
+    const key = `${L.iter}:${state.seed}:${state.data}:${state.perp}:${state.ex}`;
+    if (klCache.key === key) return klCache.v;
+    const N = emb!.N;
+    let c = 0;
+    for (let k = 0; k < N * N; k++) { const p = Pj[k]; if (p > 1e-12) c += p * Math.log(p / Math.max(1e-300, L.num[k] / L.Z)); }
+    klCache = { key, v: c };
+    return c;
   }
 
   /** Share of the 12 nearest in the data that are also among the 12 nearest on the map. */
-  function kept() {
-    if (!emb) return 0;
-    const N = emb.N, Y = emb.Y;
+  function kept(Y: ArrayLike<number>) {
+    const N = emb!.N;
     let hit = 0;
     const idx = Array.from({ length: N }, (_, j) => j);
     for (let i = 0; i < N; i += 5) {
@@ -463,60 +796,83 @@ import Try from '../../../components/sim/Try.astro';
     }
     return hit / (Math.ceil(N / 5) * 12);
   }
-  let keptShare = 0, keptAt = -1;
+  let keptShare = 0, keptKey = '';
+
+  const STAGE_NOTE: Record<number, string> = {
+    1: 'Only distances go in. Nothing about classes or colours: those are drawn for you, not for t-SNE.',
+    2: 'A crowded point gets a narrow Gaussian and a lonely one a wide one, so everyone has the same number of neighbours.',
+    3: 'The map starts with no idea of the data: Q is almost flat.',
+    4: 'Attraction comes from P, repulsion from Q. Their sum is minus the gradient of KL(P‖Q).',
+    5: '',
+  };
 
   function update() {
     if (!emb || !data) return;
+    const L = layout()!;
     const kl = emb.history.length ? emb.history[emb.history.length - 1].kl : NaN;
-    if (emb.iter !== keptAt && (emb.iter % 20 === 0 || !state.running)) { keptShare = kept(); keptAt = emb.iter; }
+    const key = `${L.iter}:${state.seed}:${state.data}:${state.perp}`;
+    if (key !== keptKey && (L.iter % 20 === 0 || !state.running)) { keptShare = kept(L.Y); keptKey = key; }
     let smin = Infinity, smax = 0;
     for (const s of sigma) { smin = Math.min(smin, s); smax = Math.max(smax, s); }
     setRows({
       'r-n': `${emb.N} × ${data.dim}`,
-      'r-iter': `${emb.iter}${emb.iter >= MAX_ITER ? ' (done)' : ''}`,
+      'r-iter': `${L.iter}${emb.iter >= MAX_ITER ? ' (done)' : ''}`,
       'r-kl': isFinite(kl) ? kl.toFixed(3) : '—',
       'r-sig': `${smin.toFixed(2)} … ${smax.toFixed(2)}`,
       'r-keep': `${(keptShare * 100).toFixed(0)}%`,
     });
+    const st = state.stage;
     setEq({
-      rule: [
-        [`p_{ij}=\\tfrac{p_{j|i}+p_{i|j}}{2N}`, PP], '\\qquad',
-        [`q_{ij}=\\frac{(1+\\|y_i-y_j\\|^2)^{-1}}{\\sum_{k\\ne l}(1+\\|y_k-y_l\\|^2)^{-1}}`, QQ], '\\qquad',
-        `C=\\mathrm{KL}(P\\,\\|\\,Q)=\\textstyle\\sum p_{ij}\\log\\frac{p_{ij}}{q_{ij}}`,
-      ],
-      live: [
-        [`\\mathrm{Perp} = ${state.perp.toFixed(0)}`, PP], `\\quad t = ${emb.iter}`,
-        [emb.exaggerating ? '\\quad P\\times 12' : '', EX], `\\quad C = ${isFinite(kl) ? kl.toFixed(3) : '-'}`,
-      ],
+      rule:
+        st === 1 ? [[`d_{ij}=\\|x_i-x_j\\|`, ink(0.95)], `\\quad x_i\\in\\mathbb{R}^{${data.dim}}`]
+        : st === 2 ? [[`p_{j|i}=\\frac{e^{-d_{ij}^2/2\\sigma_i^2}}{\\sum_{k\\ne i}e^{-d_{ik}^2/2\\sigma_i^2}}`, PP], '\\qquad', [`2^{H(P_i)}=\\mathrm{Perp}`, PP], '\\qquad', [`p_{ij}=\\tfrac{p_{j|i}+p_{i|j}}{2N}`, PP]]
+        : st === 3 ? [[`q_{ij}=\\frac{(1+\\|y_i-y_j\\|^2)^{-1}}{\\sum_{k\\ne l}(1+\\|y_k-y_l\\|^2)^{-1}}`, QQ], '\\qquad', `C=\\mathrm{KL}(P\\,\\|\\,Q)=\\textstyle\\sum p_{ij}\\log\\frac{p_{ij}}{q_{ij}}`]
+        : st === 4 ? [`-\\frac{\\partial C}{\\partial y_i}=4\\textstyle\\sum_j`, [`p_{ij}`, ATT], '\\,(1+\\|y_i-y_j\\|^2)^{-1}(y_j-y_i)', '\\;+\\;4\\textstyle\\sum_j', [`q_{ij}`, REP], '\\,(1+\\|y_i-y_j\\|^2)^{-1}(y_i-y_j)']
+        : [`y_i \\leftarrow y_i - \\eta\\,\\frac{\\partial C}{\\partial y_i} + \\text{momentum}`, '\\qquad', [`C=\\mathrm{KL}(P\\,\\|\\,Q)`, QQ]],
+      live: [[`\\mathrm{Perp} = ${state.perp}`, PP], `\\quad t = ${L.iter}`, [L.iter < EXAGGERATION_ITERS && state.ex && st >= 4 ? '\\quad P\\times 12' : '', EX], `\\quad C = ${isFinite(kl) ? klOf(L).toFixed(3) : '-'}`],
     });
+    const names = ['', 'Distances', 'Neighbour probabilities P', 'Random start', 'Forces', 'Optimize'];
     setResult({
-      value: isFinite(kl) ? kl.toFixed(3) : '—',
-      colour: QQ,
-      status: `step ${emb.iter} · ${(keptShare * 100).toFixed(0)}% of each point's 12 nearest neighbours are still among its 12 nearest on the map`,
-      note: emb.exaggerating
-        ? 'Early exaggeration: attraction is 12 times too strong, so whole groups gather and move apart before the fine detail is settled.'
-        : emb.iter >= MAX_ITER
-          ? 'Done. Distances within a cluster mean something; sizes of clusters and gaps between them mostly do not.'
-          : 'Attraction pulls together what is near in the data; the heavy tail of q pushes everything else far apart.',
+      value: `${st} of 5`,
+      colour: st <= 2 ? PP : QQ,
+      status: `${names[st]} · iteration ${L.iter} · KL ${klOf(L).toFixed(3)} · ${(keptShare * 100).toFixed(0)}% of 12-nearest neighbourhoods kept`,
+      note: st < 5 ? STAGE_NOTE[st]
+        : L.iter < EXAGGERATION_ITERS && state.ex
+          ? 'Early exaggeration: attraction is 12 times too strong, so whole groups gather and move apart before the fine detail is settled.'
+          : emb.iter >= MAX_ITER
+            ? 'Done. Distances within a cluster mean something; sizes of clusters and gaps between them mostly do not.'
+            : 'Attraction pulls together what is near in the data; the heavy tail of q pushes everything else far apart.',
     });
   }
 
   function draw() {
     ctx.clearRect(0, 0, 1000, 640);
-    if (busy || !emb) {
-      text(busy || 'Preparing…', MAP.x + MAP.w / 2, MAP.y + MAP.h / 2, 14, ink(0.6), 'center');
-      drawKL();
+    if (busy || !emb || !data) {
+      text(busy || 'Preparing…', MAIN.x + MAIN.w / 2, MAIN.y + MAIN.h / 2, 14, ink(0.6), 'center');
       return;
     }
-    frameTo();
-    drawMap();
-    drawLegend();
-    drawNeighbours();
-    drawKL();
+    if (state.stage <= 2) drawMatrixStage();
+    else drawMapStage();
     update();
   }
 
   // --- controls -------------------------------------------------------------------
+  const stageSeg = segmented('stage', (v) => setStage(+v));
+  function setStage(s: number) {
+    state.stage = s;
+    stageSeg.select(String(s));
+    state.other = -1;
+    if (s === 3 && emb) { state.running = false; run.setRunning(false); restart(); }
+    if (s <= 3) { state.running = false; run.setRunning(false); }
+    el('next').textContent = s < 5 ? 'Next step →' : 'Start over';
+    draw();
+  }
+  el('next').addEventListener('click', () => {
+    if (state.stage < 5) {
+      setStage(state.stage + 1);
+      if (state.stage === 5) { state.running = true; run.setRunning(true); }
+    } else setStage(1);
+  });
   const perpOf = (v: number) => Math.round(Math.exp(Math.log(2) + (v / 100) * (Math.log(100) - Math.log(2))));
   const vOf = (p: number) => Math.round((100 * (Math.log(p) - Math.log(2))) / (Math.log(100) - Math.log(2)));
   let perpTimer = 0;
@@ -527,68 +883,116 @@ import Try from '../../../components/sim/Try.astro';
   }, (v) => String(perpOf(v)));
   const dataSeg = segmented('data', (v) => load(v));
   const run = transport({
-    onRun: (on) => { state.running = on; if (on && emb && emb.iter >= MAX_ITER) restart(); },
-    onStep: () => { emb?.step(); draw(); },
-    onReset: () => restart(),
+    onRun: (on) => {
+      state.running = on;
+      if (on) {
+        if (state.stage < 4) setStage(5);
+        if (emb && emb.iter >= MAX_ITER) restart();
+        state.show = -1;
+        setIt(Math.floor(emb!.iter / 2), Math.floor(emb!.iter / 2));
+      }
+    },
+    onStep: () => {
+      if (state.stage < 4) setStage(4);
+      state.show = -1;
+      step();
+      draw();
+    },
+    onReset: () => { state.running = false; run.setRunning(false); restart(); },
   });
+  // the iteration scrubber: the max grows as the run goes
+  const itInput = el('it') as HTMLInputElement;
+  const fmtIt = (v: number) => (state.show < 0 ? 'live' : String(v * 2));
+  const setItLabel = slider('it', (v) => {
+    state.running = false;
+    run.setRunning(false);
+    state.show = emb && v * 2 >= emb.iter ? -1 : v;
+    if (state.stage < 3) setStage(5);
+    draw();
+  }, fmtIt);
+  function setIt(v: number, max: number) {
+    itInput.max = String(max);
+    setItLabel(v);
+  }
   el('again').addEventListener('click', () => { state.seed++; restart(); });
   slider('sp', (v) => (state.speed = v));
   const setEx = check('ex', (on) => { state.ex = on; restart(); });
+  check('arrows', (on) => { state.arrows = on; draw(); });
   check('links', (on) => { state.links = on; draw(); });
 
-  function go(kind: string, perp: number, ex = true) {
+  function go(kind: string, perp: number, stage: number, runIt: boolean) {
     state.perp = perp;
     setPerp(vOf(perp));
-    state.ex = ex;
-    setEx(ex);
-    state.running = true;
-    run.setRunning(true);
+    state.ex = true;
+    setEx(true);
     state.pinned = -1;
-    if (kind !== state.data || !data) { dataSeg.select(kind); load(kind); }
-    else affinities();
+    const after = () => {
+      setStage(stage);
+      if (runIt) { state.running = true; run.setRunning(true); }
+    };
+    if (kind !== state.data || !data) { dataSeg.select(kind); load(kind); setTimeout(after, 80); }
+    else { if (perp !== state.perp || stage >= 3) affinities(); after(); }
   }
   tries({
-    restart: () => go(state.data, state.perp),
-    digits: () => { go('digits', 30); },
-    blobs: () => go('blobs', 30),
-    noise: () => go('noise', 3),
-    roll: () => go('roll', 8),
-    noex: () => go(state.data, state.perp, false),
+    s1: () => go(state.data, state.perp, 1, false),
+    s2: () => go(state.data, state.perp, 2, false),
+    s3: () => go(state.data, state.perp, 3, false),
+    s4: () => { go(state.data, state.perp, 4, false); for (let k = 0; k < 30; k++) step(); draw(); },
+    s5: () => go(state.data, state.perp, 5, true),
+    blobs: () => go('blobs', 30, 5, true),
+    noise: () => go('noise', 3, 5, true),
   });
 
   // --- pointer --------------------------------------------------------------------
-  const local = (e: PointerEvent) => {
+  const local = (e: MouseEvent) => {
     const b = canvas.getBoundingClientRect();
     return { x: ((e.clientX - b.left) / b.width) * 1000, y: ((e.clientY - b.top) / b.height) * 640 };
   };
-  function pick(x: number, y: number) {
-    if (!emb || !fit) return -1;
+  /** The point under the pointer: a row (and column) of the matrix, or a dot of the map. */
+  function pick(x: number, y: number): { i: number; j: number } {
+    if (!emb || !data) return { i: -1, j: -1 };
+    if (state.stage <= 2) {
+      if (x < MAT.x || y < MAT.y || x > MAT.x + MAT.s || y > MAT.y + MAT.s) return { i: -1, j: -1 };
+      const N = data.X.length;
+      const r = Math.floor(((y - MAT.y) / MAT.s) * N), c = Math.floor(((x - MAT.x) / MAT.s) * N);
+      return { i: data.order[Math.min(N - 1, r)], j: data.order[Math.min(N - 1, c)] };
+    }
+    if (!fit) return { i: -1, j: -1 };
+    const L = layout()!;
     let best = -1, bd = 10 * 10;
     for (let i = 0; i < emb.N; i++) {
-      const d = (mx(emb.Y[2 * i]) - x) ** 2 + (my(emb.Y[2 * i + 1]) - y) ** 2;
+      const d = (mx(L.Y[2 * i]) - x) ** 2 + (my(L.Y[2 * i + 1]) - y) ** 2;
       if (d < bd) { bd = d; best = i; }
     }
-    return best;
+    return { i: best, j: -1 };
   }
   canvas.addEventListener('pointermove', (e) => {
     const p = local(e);
-    const i = pick(p.x, p.y);
-    if (i !== state.hover) { state.hover = i; if (!state.running) draw(); }
+    const { i, j } = pick(p.x, p.y);
+    if (i !== state.hover || j !== state.other) {
+      state.hover = i;
+      state.other = j;
+      if (!state.running) draw();
+    }
     canvas.style.cursor = i >= 0 ? 'pointer' : '';
   });
-  canvas.addEventListener('pointerleave', () => { state.hover = -1; if (!state.running) draw(); });
+  canvas.addEventListener('pointerleave', () => { state.hover = -1; state.other = -1; if (!state.running) draw(); });
   canvas.addEventListener('click', (e) => {
     const p = local(e);
-    state.pinned = pick(p.x, p.y);
+    state.pinned = pick(p.x, p.y).i;
     draw();
   });
 
+  let frameNo = 0;
   function loop() {
+    frameNo++;
     if (emb && state.running && emb.iter < MAX_ITER) {
-      for (let k = 0; k < state.speed && emb.iter < MAX_ITER; k++) emb.step();
-      if (emb.iter >= MAX_ITER) { state.running = false; run.setRunning(false); keptAt = -1; }
+      for (let k = 0; k < state.speed && emb.iter < MAX_ITER; k++) step();
+      const m = Math.floor(emb.iter / 2);
+      setIt(m, m);
+      if (emb.iter >= MAX_ITER) { state.running = false; run.setRunning(false); }
       draw();
-    } else if (emb && fit) {
+    } else if (emb && state.stage >= 3 && frameNo % 2 === 0) {
       // keep easing the frame after a stop
       draw();
     }
