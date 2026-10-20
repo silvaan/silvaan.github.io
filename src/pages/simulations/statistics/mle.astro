@@ -1,6 +1,8 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
 import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
@@ -11,8 +13,8 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Maximum Likelihood"
-  description="Which bell curve most likely produced this data? Slide its mean and spread and watch the likelihood rise and fall. The best fit lands on the sample mean and the spread that divides by n."
-  shortcuts={['fullscreen']}
+  description="Which bell curve most likely produced this data? Let every point vote with the height of the bell above it, multiply the votes, and slide the bell until the product is as large as it can be. It lands on the sample mean and on the spread that divides by n."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -20,24 +22,42 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="mle"
           width="1000"
-          height="600"
+          height="640"
           role="img"
-          aria-label="Data points on an axis under a Gaussian curve, each with a stick showing its likelihood, and a plot of the log-likelihood against the mean."
+          aria-label="Data points on an axis under a candidate bell curve, each with a bar for its vote, the votes multiplied and then added as logs, and the log-likelihood traced as the bell slides and widens."
         ></canvas>
       </div>
       <Caption
         legend={[
           { label: 'data', color: '#f59e0b' },
-          { label: 'candidate Gaussian', color: '#5eead4' },
-          { label: 'log-likelihood against μ', color: '#7c8cff' },
+          { label: 'candidate bell', color: '#5eead4' },
+          { label: 'each point’s vote', color: '#5eead4' },
+          { label: 'log-likelihood', color: '#7c8cff' },
         ]}
+        hint="Drag the bell (sideways moves it, up and down widens it) or drag a data point"
       />
       <Result label="Log-likelihood" />
     </div>
 
     <div class="sim-panel">
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · Data' },
+          { value: '1', label: '2 · Votes' },
+          { value: '2', label: '3 · Logs' },
+          { value: '3', label: '4 · Best centre' },
+          { value: '4', label: '5 · Best width' },
+          { value: '5', label: '6 · Explore' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
       <Slider id="mu" label="Mean μ" min={-3} max={3} step={0.02} value={0} display="0.00" />
-      <Slider id="sg" label="Std dev σ" min={0.4} max={2.5} step={0.02} value={1} display="1.00" />
+      <Slider id="sg" label="Std dev σ" min={0.3} max={3} step={0.02} value={1} display="1.00" />
       <Actions>
         <button type="button" class="btn" id="snap">Snap to best fit</button>
         <button type="button" class="btn ghost" id="regen">New sample</button>
@@ -47,6 +67,7 @@ import Try from '../../../components/sim/Try.astro';
           { id: 'r-mean', label: 'sample mean x̄' },
           { id: 'r-std', label: 'MLE σ̂, divides by n' },
           { id: 'r-s', label: 'sample std s, divides by n − 1' },
+          { id: 'r-L', label: 'likelihood L (the product)' },
         ]}
       />
     </div>
@@ -54,57 +75,64 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Each stick is one point's <b>likelihood</b>, the height of the bell above
-      it, and log L adds up their logs. Slide μ off to one side and the far
-      points' sticks collapse. <Try id="off" />
+      A point far out in the tail gives a tiny vote, and one tiny factor drags the whole product toward zero. Slide
+      the bell off to one side and watch the far points sink it. <Try id="off" />
     </li>
     <li>
-      <b>Snap to best fit</b> lands on μ̂ = x̄ and σ̂ = √(Σ(xᵢ − x̄)²/n). That σ̂
-      divides by n, not n − 1, so it comes out a little smaller than the sample
-      standard deviation s. <Try id="snap" />
+      Products of many small numbers underflow, so we add logs instead: a small vote becomes a long cost bar. Same
+      winner, easier numbers. <Try id="logs" />
     </li>
     <li>
-      The strip is log L as μ slides: for a Gaussian it is an exact
-      <b>parabola</b> with one peak, so gradient ascent finds it from anywhere.
-      Shrink σ and it gets steeper. <Try id="steep" />
+      <b>Snap to best fit</b> lands on μ̂ = x̄ and σ̂ = √(Σ(xᵢ − x̄)²/n). That σ̂ divides by n, not n − 1, so it comes
+      out a little smaller than the sample standard deviation s. <Try id="snap" />
+    </li>
+    <li>
+      Too narrow and the outer points get almost no vote; too wide and nobody votes strongly. The best width
+      balances the two. <Try id="width" />
+    </li>
+    <li>
+      Drag one point far away in Explore: the best bell follows it and widens. Maximum likelihood for a bell listens
+      to every point, outliers included. <Try id="outlier" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
   import { el, slider, result, readout, tries } from '../../../lib/panel';
+  import { story, headline, say, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
 
-  const state = { mu: 0, sg: 1 };
-  let data: number[] = [];
-  const TEAL = '#5eead4', ACCENT = '#7c8cff', AMBER = '#f59e0b';
+  // Likelihood as a vote. Each data point votes with the height of the bell
+  // above it; the likelihood is the product of the votes, and its log the sum
+  // of their logs, drawn as cost bars laid end to end. The bell then slides to
+  // the top of log L, and widens and narrows to the best σ. Explore keeps the
+  // sliders, Snap and New sample, and lets the points be dragged.
+  const TEAL = '#5eead4', ACCENT = '#7c8cff', AMBER = '#f59e0b', RED = '#f87171';
+  const NPTS = 16;
 
   const canvas = el('mle') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink, bg } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv, bg } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  const TOP = { l: 30, r: 30, t: 24, b: 34, bottom: 380 };
-  const STRIP = { x: 60, y: 440, w: W - 90, h: 120 };
-  const XR = [-5, 5] as const;
-  const YMAX = 1.05;
-
-  function gauss() {
-    const u = 1 - Math.random(), v = Math.random();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-  }
+  const S = { mu: -2.2, sg: 1 };
+  let data: number[] = [];
+  let seed = 3;
+  const rng = (s0: number) => {
+    let s = s0 >>> 0 || 1;
+    return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  };
   function regen() {
-    data = Array.from({ length: 34 }, () => 0.6 + 1.1 * gauss());
+    const r = rng(seed++);
+    const g = () => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r());
+    data = Array.from({ length: NPTS }, () => Math.max(-4.6, Math.min(4.6, 0.6 + 1.1 * g()))).sort((a, b) => a - b);
   }
-  const pdf = (x: number, mu: number, sg: number) =>
-    Math.exp(-((x - mu) ** 2) / (2 * sg * sg)) / (sg * Math.sqrt(2 * Math.PI));
-  const logLik = (mu: number, sg: number) => data.reduce((s, x) => s + Math.log(pdf(x, mu, sg) + 1e-12), 0);
-  /** The sample mean, the MLE spread σ̂ (divides by n) and the sample std s (divides by n − 1). */
+  const pdf = (x: number, mu: number, sg: number) => Math.exp(-((x - mu) ** 2) / (2 * sg * sg)) / (sg * Math.sqrt(2 * Math.PI));
+  const logLik = (mu: number, sg: number) => data.reduce((s, x) => s + Math.log(pdf(x, mu, sg) + 1e-300), 0);
   const stats = () => {
     const n = data.length;
     const m = data.reduce((a, b) => a + b, 0) / n;
@@ -112,145 +140,366 @@ import Try from '../../../components/sim/Try.astro';
     return { m, sd: Math.sqrt(ss / n), s: Math.sqrt(ss / (n - 1)) };
   };
 
-  const sx = (x: number) => TOP.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - TOP.l - TOP.r);
-  const sy = (y: number) => TOP.bottom - TOP.b - (y / YMAX) * (TOP.bottom - TOP.t - TOP.b);
+  // ---------- geometry ----------
+  const XR = [-5, 5] as const;
+  const PX0 = 70, PX1 = 930;
+  const TOP = { base: 400, top: 205 };
+  const LOW = { y: 455, h: 150 };
+  const sx = (x: number) => PX0 + ((x - XR[0]) / (XR[1] - XR[0])) * (PX1 - PX0);
+  const xs = (p: number) => XR[0] + ((p - PX0) / (PX1 - PX0)) * (XR[1] - XR[0]);
+  let ymax = 0.6;
+  const sy = (y: number) => TOP.base - (y / ymax) * (TOP.base - TOP.top);
 
-  function drawFit() {
-    ctx.strokeStyle = ink(0.07);
-    ctx.lineWidth = 1;
-    for (let xv = XR[0]; xv <= XR[1]; xv++) {
-      ctx.beginPath();
-      ctx.moveTo(sx(xv), TOP.t);
-      ctx.lineTo(sx(xv), TOP.bottom - TOP.b);
-      ctx.stroke();
-      label(String(xv), sx(xv), TOP.bottom - TOP.b + 18, 0.3, 'center', 11.5);
+  // ---------- chapters ----------
+  const chapters = [
+    { dur: 6, title: 'Some measurements', body: 'Sixteen numbers someone measured. Suppose they came from a bell curve. Which bell?' },
+    { dur: 11, title: 'Every point votes', body: 'Put a candidate bell over the data. Each point votes with the height of the bell above it: how likely this bell says that point was. The likelihood is all the votes multiplied.' },
+    { dur: 12, title: 'Multiply, or add the logs', body: 'A product of sixteen small numbers is tiny and fragile. Take logs: each vote becomes a cost, −log of its height, and the costs simply add. A small vote is a long bar.' },
+    { dur: 11, title: 'Slide to the top', body: 'Move the bell to where the total cost is smallest, the top of log L. It stops exactly at the average of the data: μ̂ = x̄.' },
+    { dur: 12, title: 'Find the best width', body: 'Too narrow and the outer points barely vote. Too wide and no one votes strongly. The best width is the root mean square distance to x̄.' },
+    { dur: Infinity, title: 'Explore', body: 'Drag the bell or the points, or use the sliders. Snap jumps to the maximum.' },
+  ];
+
+  const st = story({
+    chapters,
+    enter(i) {
+      const { m } = stats();
+      if (i <= 2) { S.mu = -2.2; S.sg = 1; }
+      if (i === 3) { S.mu = -2.2; S.sg = 1; trace = []; }
+      if (i === 4) { S.mu = m; S.sg = 1; trace = []; }
+      syncSliders();
+    },
+    relevant: (i) => [[], ['mu', 'sg'], ['mu', 'sg'], ['mu'], ['sg'], null][i],
+    frame,
+  });
+
+  /** Points of the log L curve the bell has visited, for chapters 4 and 5. */
+  let trace: [number, number][] = [];
+
+  function frame(ch: number, t: number) {
+    const light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    const manual = st.manual();
+    const { m, sd } = stats();
+
+    // the scripted moves of the bell
+    if (!manual) {
+      if (ch === 1) S.mu = lerp(-2.2, 2.4, beat(t, 4.5, 8.5)) + (t > 8.5 ? lerp(0, m - 2.4, beat(t, 9, 10.5)) : 0);
+      if (ch === 2) S.mu = t < 6 ? m : lerp(m, -2.6, beat(t, 6.5, 8.5));
+      if (ch === 3) S.mu = lerp(-2.2, m, beat(t, 1.2, 7.5));
+      if (ch === 4) {
+        S.mu = m;
+        S.sg = t < 4 ? lerp(1, 0.35, beat(t, 1, 3.2)) : t < 8 ? lerp(0.35, 3, beat(t, 4.2, 7.2)) : lerp(3, sd, beat(t, 8.2, 10.2));
+      }
+      if (ch <= 4 && tick % 3 === 0) syncSliders();
     }
-    ctx.strokeStyle = ink(0.25);
-    ctx.beginPath();
-    ctx.moveTo(TOP.l, sy(0));
-    ctx.lineTo(W - TOP.r, sy(0));
-    ctx.stroke();
+    if ((ch === 3 || ch === 4) && (trace.length === 0 || Math.abs(trace[trace.length - 1][0] - (ch === 3 ? S.mu : S.sg)) > 0.004))
+      trace.push([ch === 3 ? S.mu : S.sg, logLik(S.mu, S.sg)]);
 
-    // each point's likelihood, as its height under the curve
-    ctx.strokeStyle = ink(0.22);
+    const peak = 1 / (S.sg * Math.sqrt(2 * Math.PI));
+    ymax = lerp(ymax, Math.max(0.5, peak * 1.15), 0.1);
+
+    axis();
+    const bellA = ch === 0 ? 0 : ch === 1 ? beat(t, 0.4, 1.4) : 1;
+    if (bellA > 0) bell(bellA, light);
+    const voteA = ch === 1 ? beat(t, 1.6, 2.6) : ch >= 2 ? 1 : 0;
+    if (voteA > 0) votes(voteA, ch === 1 ? t : 99);
+    points(ch, t);
+
+    if (ch === 1) productPanel(t, light);
+    if (ch === 2) costPanel(t, light);
+    if (ch === 3 || ch === 4) tracePanel(ch, light);
+    if (ch === 5) explorePanel(light);
+
+    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 540, accent: TEAL, manual });
+    panelText(ch, m, sd);
+    tick++;
+  }
+  let tick = 0;
+
+  function axis() {
+    ctx.strokeStyle = ink(0.25);
     ctx.lineWidth = 1;
-    for (const x of data) {
-      ctx.beginPath();
-      ctx.moveTo(sx(x), sy(0));
-      ctx.lineTo(sx(x), sy(pdf(x, state.mu, state.sg)));
-      ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(PX0 - 10, TOP.base + 0.5);
+    ctx.lineTo(PX1 + 10, TOP.base + 0.5);
+    ctx.stroke();
+    ctx.fillStyle = ink(0.35);
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    for (let x = XR[0]; x <= XR[1]; x++) ctx.fillText(String(x).replace('-', '−'), sx(x), TOP.base + 30);
+  }
+
+  function bell(a: number, light: boolean) {
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.beginPath();
+    for (let p = PX0; p <= PX1; p += 2) {
+      const y = sy(pdf(xs(p), S.mu, S.sg));
+      p === PX0 ? ctx.moveTo(p, y) : ctx.lineTo(p, y);
     }
     ctx.strokeStyle = TEAL;
     ctx.lineWidth = 2.6;
-    ctx.beginPath();
-    for (let i = 0; i <= 500; i++) {
-      const x = XR[0] + ((XR[1] - XR[0]) * i) / 500;
-      i === 0 ? ctx.moveTo(sx(x), sy(pdf(x, state.mu, state.sg))) : ctx.lineTo(sx(x), sy(pdf(x, state.mu, state.sg)));
-    }
+    if (!light) { ctx.shadowColor = withAlpha(TEAL, 0.5); ctx.shadowBlur = 10; }
     ctx.stroke();
-    // the sample, ringed in the background colour so overlapping points stay separate
-    for (const x of data) {
+    ctx.shadowBlur = 0;
+    ctx.lineTo(PX1, TOP.base);
+    ctx.lineTo(PX0, TOP.base);
+    ctx.fillStyle = withAlpha(TEAL, 0.06);
+    ctx.fill();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = withAlpha(ACCENT, 0.8);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx(S.mu), TOP.top - 6);
+    ctx.lineTo(sx(S.mu), TOP.base);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+    say(ctx, `μ = ${fixed(S.mu, 2)}`, sx(S.mu) + 6, TOP.top - 2, { colour: ACCENT, size: 13, weight: 600, alpha: a, halo: inv(0.8) });
+  }
+
+  /** A vote is weak when it is far below the strongest it could be at this width. */
+  const weak = (v: number) => v < 0.12 / S.sg;
+
+  function votes(a: number, t: number) {
+    for (let i = 0; i < data.length; i++) {
+      const x = data[i], v = pdf(x, S.mu, S.sg);
+      const grow = easeOut((t - 1.6 - i * 0.05) / 0.6);
+      ctx.strokeStyle = withAlpha(weak(v) ? RED : TEAL, 0.75 * a);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(sx(x), TOP.base);
+      ctx.lineTo(sx(x), lerp(TOP.base, sy(v), clamp01(grow)));
+      ctx.stroke();
+    }
+  }
+
+  function points(ch: number, t: number) {
+    for (let i = 0; i < data.length; i++) {
+      const u = ch === 0 ? easeOut((t - 0.4 - i * 0.22) / 0.5) : 1;
+      if (u <= 0) continue;
+      const y = lerp(TOP.top - 40, TOP.base, u);
       ctx.fillStyle = AMBER;
       ctx.strokeStyle = bg();
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(sx(x), sy(0), 5.5, 0, Math.PI * 2);
+      ctx.arc(sx(data[i]), y, i === dragPt ? 8 : 6, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
-    ctx.strokeStyle = ACCENT;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(sx(state.mu), TOP.t);
-    ctx.lineTo(sx(state.mu), sy(0));
-    ctx.stroke();
-    ctx.setLineDash([]);
-    label(`μ = ${fixed(state.mu, 2)}`, sx(state.mu) + 6, TOP.t + 12, 1, 'left', 11.5, ACCENT);
   }
 
-  function drawStrip() {
-    label('log-likelihood as μ slides, at this σ', STRIP.x, STRIP.y - 10, 0.45, 'left', 11.5);
-    const muMin = -3, muMax = 3;
-    const vals: number[] = [];
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i <= 120; i++) {
-      const v = logLik(muMin + ((muMax - muMin) * i) / 120, state.sg);
-      vals.push(v);
-      lo = Math.min(lo, v);
-      hi = Math.max(hi, v);
+  /** "1.2e-11" with a real times sign. */
+  const sci = (v: number) => {
+    if (v === 0) return '0';
+    const e = Math.floor(Math.log10(v)), m = v / 10 ** e;
+    return Math.abs(e) < 3 ? v.toPrecision(3) : `${m.toFixed(2)} × 10${sup(e)}`;
+  };
+  const sup = (e: number) => String(e).replace('-', '⁻').replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]);
+
+  /** Chapter 2: the votes side by side, and their product. */
+  function productPanel(t: number, light: boolean) {
+    const a = beat(t, 2.6, 3.4);
+    if (a <= 0) return;
+    const n = data.length, w = (PX1 - PX0 - 260) / n;
+    const vmax = 1 / (S.sg * Math.sqrt(2 * Math.PI));
+    say(ctx, 'the votes', PX0, LOW.y - 4, { colour: ink(0.55), size: 13, alpha: a });
+    let L = 1;
+    for (let i = 0; i < n; i++) {
+      const v = pdf(data[i], S.mu, S.sg);
+      L *= v;
+      const h = (v / vmax) * (LOW.h - 40);
+      const x = PX0 + i * w;
+      ctx.fillStyle = withAlpha(weak(v) ? RED : TEAL, 0.7 * a);
+      ctx.fillRect(x + 3, LOW.y + LOW.h - 20 - h, w - 6, h);
+      if (i < n - 1) say(ctx, '×', x + w, LOW.y + LOW.h - 30, { colour: ink(0.35), size: 12, align: 'center', alpha: a });
     }
-    if (hi - lo < 1e-6) hi = lo + 1;
-    const gx = (mu: number) => STRIP.x + ((mu - muMin) / (muMax - muMin)) * STRIP.w;
-    const gy = (v: number) => STRIP.y + (1 - (v - lo) / (hi - lo)) * STRIP.h;
-    ctx.strokeStyle = ink(0.12);
+    const x = PX1 - 230;
+    say(ctx, 'likelihood L =', x, LOW.y + 40, { colour: ink(0.6), size: 14, alpha: a });
+    say(ctx, sci(L), x, LOW.y + 70, { colour: light ? '#0d9488' : TEAL, size: 26, weight: 700, alpha: a });
+    const worst = Math.min(...data.map((d) => pdf(d, S.mu, S.sg)));
+    if (weak(worst)) say(ctx, 'one weak vote drags it all down', x, LOW.y + 100, { colour: RED, size: 13, weight: 600, alpha: a });
+  }
+
+  /** Chapter 3: each vote as a cost −log v, laid end to end. */
+  function costPanel(t: number, light: boolean) {
+    const n = data.length;
+    const costs = data.map((d) => -Math.log(pdf(d, S.mu, S.sg)));
+    const total = costs.reduce((p, c) => p + c, 0);
+    const scale = Math.min(26, (PX1 - PX0 - 30) / Math.max(total, 30));
+    const y = LOW.y + 50;
+    say(ctx, 'each vote as a cost, −log(vote), laid end to end', PX0, LOW.y + 14, { colour: ink(0.55), size: 13 });
+    let x = PX0;
+    for (let i = 0; i < n; i++) {
+      const g = beat(t, 0.8 + i * 0.18, 1.2 + i * 0.18);
+      const len = Math.max(0, costs[i]) * scale * g;
+      const v = Math.exp(-costs[i]);
+      ctx.fillStyle = withAlpha(weak(v) ? RED : i % 2 ? TEAL : '#2aa598', 0.85);
+      ctx.fillRect(x, y, Math.max(0, len - 1.5), 26);
+      x += len;
+    }
+    const a = beat(t, 4, 4.8);
+    // beside the bar while it is short, above its right end once it is long
+    const room = x + 12 < PX1 - 240;
+    say(ctx, `total cost −log L = ${total.toFixed(1)}`, room ? x + 12 : PX1, room ? y + 13 : y - 14, {
+      colour: ink(0.9), size: 16, weight: 700, align: room ? 'left' : 'right', alpha: a, halo: inv(0.8),
+    });
+    say(ctx, 'smaller is better: the same as a larger product', PX0, y + 58, { colour: ink(0.6), size: 13, alpha: a });
+    if (t > 7) {
+      const worst = costs.indexOf(Math.max(...costs));
+      say(ctx, `this point: vote ${sci(Math.exp(-costs[worst]))}, cost ${costs[worst].toFixed(1)}`, sx(data[worst]), TOP.base - 20, {
+        colour: RED, size: 14, weight: 650, align: data[worst] > 2 ? 'right' : 'left', halo: inv(0.85), alpha: beat(t, 8.4, 9),
+      });
+    }
+    void light;
+  }
+
+  /** Chapters 4 and 5: log L against μ or σ, traced as the bell moves. */
+  function tracePanel(ch: number, light: boolean) {
+    const byMu = ch === 3;
+    const lo = byMu ? -3 : 0.3, hi = byMu ? 3 : 3;
+    const f = (v: number) => (byMu ? logLik(v, S.sg) : logLik(S.mu, v));
+    curvePanel({ x: PX0, y: LOW.y, w: PX1 - PX0, h: LOW.h - 20 }, lo, hi, f, byMu ? S.mu : S.sg, byMu ? 'μ' : 'σ', trace, light);
+    const { m, sd } = stats();
+    const best = byMu ? m : sd;
+    const done = Math.abs((byMu ? S.mu : S.sg) - best) < 0.02;
+    if (done) {
+      const txt = byMu ? `the top: μ = x̄ = ${m.toFixed(2)}` : `the top: σ = σ̂ = ${sd.toFixed(2)}`;
+      say(ctx, txt, 930, 52, { colour: light ? '#0d9488' : TEAL, size: 22, weight: 700, align: 'right' });
+    }
+    if (!byMu) {
+      const tag = S.sg < 0.55 ? 'too narrow: the outer points barely vote' : S.sg > 2.2 ? 'too wide: nobody votes strongly' : '';
+      if (tag) say(ctx, tag, 930, 52, { colour: RED, size: 18, weight: 650, align: 'right' });
+    }
+  }
+
+  function curvePanel(
+    box: { x: number; y: number; w: number; h: number },
+    lo: number, hi: number, f: (v: number) => number, at: number, name: string,
+    visited: [number, number][] | null, light: boolean, title = `log-likelihood as ${name} changes`
+  ) {
+    const vals: number[] = [];
+    for (let i = 0; i <= 120; i++) vals.push(f(lo + ((hi - lo) * i) / 120));
+    const top = Math.max(...vals), bottom = Math.max(Math.min(...vals), top - 60);
+    const gx = (v: number) => box.x + ((v - lo) / (hi - lo)) * box.w;
+    const gy = (v: number) => box.y + 18 + (1 - (Math.max(v, bottom) - bottom) / (top - bottom || 1)) * (box.h - 18);
+    say(ctx, title, box.x, box.y + 4, { colour: ink(0.55), size: 13 });
+    ctx.strokeStyle = ink(0.15);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(STRIP.x, STRIP.y + STRIP.h);
-    ctx.lineTo(STRIP.x + STRIP.w, STRIP.y + STRIP.h);
+    ctx.moveTo(box.x, box.y + box.h);
+    ctx.lineTo(box.x + box.w, box.y + box.h);
     ctx.stroke();
-    for (const mu of [-3, -2, -1, 0, 1, 2, 3]) label(String(mu), gx(mu), STRIP.y + STRIP.h + 16, 0.3, 'center', 11);
-    ctx.strokeStyle = ACCENT;
+    ctx.strokeStyle = withAlpha(ACCENT, visited ? 0.25 : 0.9);
     ctx.lineWidth = 2;
     ctx.beginPath();
-    vals.forEach((v, i) => {
-      const mu = muMin + ((muMax - muMin) * i) / 120;
-      i === 0 ? ctx.moveTo(gx(mu), gy(v)) : ctx.lineTo(gx(mu), gy(v));
-    });
+    vals.forEach((v, i) => { const x = gx(lo + ((hi - lo) * i) / 120); i ? ctx.lineTo(x, gy(v)) : ctx.moveTo(x, gy(v)); });
     ctx.stroke();
-    const here = logLik(state.mu, state.sg);
-    ctx.strokeStyle = ink(0.4);
-    ctx.setLineDash([4, 4]);
+    if (visited && visited.length > 1) {
+      ctx.strokeStyle = ACCENT;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      visited.forEach(([v], i) => { const x = gx(v), y = gy(f(v)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+    const y = gy(f(at));
+    ctx.fillStyle = light ? '#5462e6' : '#fff';
     ctx.beginPath();
-    ctx.moveTo(gx(state.mu), STRIP.y);
-    ctx.lineTo(gx(state.mu), STRIP.y + STRIP.h);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = ACCENT;
-    ctx.beginPath();
-    ctx.arc(gx(state.mu), gy(here), 4, 0, Math.PI * 2);
+    ctx.arc(gx(at), y, 5.5, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = ink(0.4);
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    const step = hi - lo > 4 ? 1 : 0.5;
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ctx.fillText(String(v).replace('-', '−'), gx(v), box.y + box.h + 14);
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    drawFit();
-    drawStrip();
-    const { m, sd, s } = stats();
-    const ll = logLik(state.mu, state.sg);
-    const atBest = Math.abs(state.mu - m) < 0.03 && Math.abs(state.sg - sd) < 0.03;
+  function explorePanel(light: boolean) {
+    const w = (PX1 - PX0 - 40) / 2;
+    curvePanel({ x: PX0, y: LOW.y, w, h: LOW.h - 20 }, -3, 3, (v) => logLik(v, S.sg), S.mu, 'μ', null, light, 'log L as μ changes, at this σ');
+    curvePanel({ x: PX0 + w + 40, y: LOW.y, w, h: LOW.h - 20 }, 0.3, 3, (v) => logLik(S.mu, v), S.sg, 'σ', null, light, 'log L as σ changes, at this μ');
+  }
+
+  // ---------- panel ----------
+  function panelText(ch: number, m: number, sd: number) {
+    if (tick % 6) return;
+    const ll = logLik(S.mu, S.sg);
+    const { s } = stats();
+    const atBest = Math.abs(S.mu - m) < 0.03 && Math.abs(S.sg - sd) < 0.03;
+    const A = `\\textcolor{${AMBER}}{x_i}`;
+    const rules = [
+      ['x_1, \\dots, x_n \\sim \\mathcal N(\\mu, \\sigma^2)\\;?'],
+      [['L(\\mu,\\sigma)', TEAL], `= \\prod_i f(${A}\\mid\\mu,\\sigma)`],
+      [['\\log L', TEAL], `= \\sum_i \\log f(${A}\\mid\\mu,\\sigma)`],
+      ['\\hat\\mu = \\arg\\max_\\mu', ['\\log L', TEAL], `= \\bar x = \\tfrac1n\\sum_i ${A}`],
+      ['\\hat\\sigma^2 = \\arg\\max_\\sigma', ['\\log L', TEAL], `= \\tfrac1n\\sum_i (${A} - \\bar x)^2`],
+      [['\\log L(\\mu,\\sigma)', TEAL], `= \\sum_i \\log f(${A}\\mid\\mu,\\sigma)`],
+    ];
     setEq({
-      rule: [['\\log L(\\mu,\\sigma)', TEAL], `= \\sum_i \\log f(\\textcolor{${AMBER}}{x_i}\\mid\\mu,\\sigma)`],
-      live: [`\\mu = ${fixed(state.mu, 2)}`, `\\quad\\sigma = ${state.sg.toFixed(2)}`, [`\\quad\\log L = ${fixed(ll, 3)}`, TEAL]],
+      rule: rules[ch] as never,
+      live: [`\\mu = ${fixed(S.mu, 2)}`, `\\quad\\sigma = ${S.sg.toFixed(2)}`, [`\\quad\\log L = ${fixed(ll, 2)}`, TEAL]],
     });
     setResult({
-      value: fixed(ll, 3),
+      value: fixed(ll, 2),
       colour: TEAL,
-      status: atBest ? 'At the maximum: μ = x̄ and σ = σ̂' : `μ = ${fixed(state.mu, 2)} · σ = ${state.sg.toFixed(2)} · best would be μ = ${fixed(m, 2)}, σ̂ = ${sd.toFixed(2)}`,
-      note: 'Each amber dot votes with its own height under the curve; the log turns their product into a sum.',
+      status: atBest ? 'at the maximum: μ = x̄ and σ = σ̂' : `best would be μ = ${fixed(m, 2)}, σ̂ = ${sd.toFixed(2)}`,
+      note: 'Each amber point votes with the height of the bell above it; the log turns their product into a sum.',
     });
-    setRows({ 'r-mean': fixed(m, 3), 'r-std': sd.toFixed(3), 'r-s': s.toFixed(3) });
+    setRows({ 'r-mean': fixed(m, 3), 'r-std': sd.toFixed(3), 'r-s': s.toFixed(3), 'r-L': sci(Math.exp(ll)) });
   }
 
-  const setMu = slider('mu', (v) => { state.mu = v; draw(); }, (v) => v.toFixed(2));
-  const setSg = slider('sg', (v) => { state.sg = v; draw(); }, (v) => v.toFixed(2));
+  const setMu = slider('mu', (v) => { S.mu = v; }, (v) => v.toFixed(2));
+  const setSg = slider('sg', (v) => { S.sg = v; }, (v) => v.toFixed(2));
+  function syncSliders() {
+    setMu(Math.max(-3, Math.min(3, S.mu)));
+    setSg(Math.max(0.3, Math.min(3, S.sg)));
+  }
   function set(mu: number, sg: number) {
-    // onto the sliders' 0.02 grid, so the knobs show exactly the values in use
-    const grid = (v: number, lo: number, hi: number) => +(Math.round(Math.max(lo, Math.min(hi, v)) / 0.02) * 0.02).toFixed(2);
-    state.mu = grid(mu, -3, 3);
-    state.sg = grid(sg, 0.4, 2.5);
-    setMu(state.mu);
-    setSg(state.sg);
-    draw();
+    S.mu = Math.max(-3, Math.min(3, mu));
+    S.sg = Math.max(0.3, Math.min(3, sg));
+    syncSliders();
   }
   const snap = () => { const { m, sd } = stats(); set(m, sd); };
   el('snap').addEventListener('click', snap);
-  tries({
-    off: () => set(-2.4, 1),
-    snap,
-    steep: () => set(stats().m, 0.5),
+  el('regen').addEventListener('click', regen);
+
+  // drag a point, or the bell
+  const toLocal = (e: PointerEvent) => {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
+  };
+  let dragPt = -1;
+  let dragBell: { x: number; y: number; mu: number; sg: number } | null = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = toLocal(e);
+    if (p.y > TOP.base + 40 || p.y < TOP.top - 60) return;
+    let best = -1, bd = 14;
+    data.forEach((d, i) => { const dd = Math.hypot(sx(d) - p.x, TOP.base - p.y); if (dd < bd) { bd = dd; best = i; } });
+    st.touch();
+    if (best >= 0) dragPt = best;
+    else dragBell = { ...p, mu: S.mu, sg: S.sg };
+    canvas.setPointerCapture(e.pointerId);
   });
-  el('regen').addEventListener('click', () => { regen(); draw(); });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = toLocal(e);
+    if (dragPt >= 0) data[dragPt] = Math.max(-4.9, Math.min(4.9, xs(p.x)));
+    else if (dragBell) set(dragBell.mu + xs(p.x) - xs(dragBell.x), dragBell.sg * Math.exp((p.y - dragBell.y) * -0.006));
+  });
+  canvas.addEventListener('pointerup', () => {
+    if (dragPt >= 0) { data.sort((a, b) => a - b); }
+    dragPt = -1;
+    dragBell = null;
+  });
+
+  tries({
+    off: () => { st.go(5); set(-2.4, 1); },
+    logs: () => { st.go(2); st.play(true); },
+    snap: () => { st.go(5); snap(); },
+    width: () => { st.go(4); st.play(true); },
+    outlier: () => { st.go(5); data[data.length - 1] = 4.6; snap(); },
+  });
 
   regen();
-  draw();
+  st.start();
 </script>
