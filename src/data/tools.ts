@@ -408,6 +408,14 @@ export const AREAS: Area[] = [
         href: '/simulations/machine-learning/perplexity',
         status: 'live',
       },
+      {
+        slug: 'tsne',
+        title: 't-SNE',
+        description:
+          'Squeeze 784-pixel digits onto a page and keep who is next to whom. Watch the map pull itself apart live, and see what perplexity and early exaggeration do, and what the picture does not mean.',
+        href: '/simulations/machine-learning/tsne',
+        status: 'live',
+      },
     ],
   },
   {

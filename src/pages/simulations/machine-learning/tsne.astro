@@ -1,0 +1,600 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="t-SNE"
+  description="Points in hundreds of dimensions, laid out on a page so that neighbours stay neighbours. Each point's neighbours in the data become probabilities, the map gets probabilities of its own, and the points move until the two agree. Watch it happen, then see what perplexity and early exaggeration change and what the picture does not mean."
+  shortcuts={['run', 'step', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ts"
+          width="1000"
+          height="640"
+          role="img"
+          aria-label="A 2D t-SNE map of the data, coloured by class, with the chosen point linked to its nearest neighbours in the original space. On the right, that point's neighbour probabilities in the data and in the map, and the KL divergence over the iterations."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'p: neighbours in the data', color: '#7c8cff' },
+          { label: 'q: neighbours on the map', color: '#fbbf24' },
+          { label: 'early exaggeration', color: '#f9736a' },
+        ]}
+        hint="Hover a point to see its neighbours · click to keep it"
+      />
+      <Result label="KL(P ‖ Q)" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="data"
+        label="Data"
+        attr="d"
+        options={[
+          { value: 'digits', label: 'Digits, 784-D' },
+          { value: 'blobs', label: 'Blobs, 10-D' },
+          { value: 'roll', label: 'Swiss roll, 3-D' },
+          { value: 'noise', label: 'Pure noise, 10-D' },
+        ]}
+      />
+      <Slider id="perp" label="Perplexity" min={0} max={100} value={58} display="30" hint={['local', 'global']} />
+      <Transport running step />
+      <Actions>
+        <button type="button" class="btn ghost" id="again">New random start</button>
+      </Actions>
+      <Slider id="sp" label="Steps per frame" min={1} max={12} value={4} />
+      <Checks
+        label="Optimizer"
+        items={[{ id: 'ex', label: 'Early exaggeration (P × 12 for 250 steps)', checked: true }]}
+      />
+      <Checks
+        label="Show"
+        items={[{ id: 'links', label: 'Links to the 12 nearest in the data', checked: true }]}
+      />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-n', label: 'points × dimensions' },
+          { id: 'r-iter', label: 'iteration' },
+          { id: 'r-kl', label: 'KL(P ‖ Q)' },
+          { id: 'r-sig', label: 'σ, smallest to largest' },
+          { id: 'r-keep', label: 'nearest neighbours kept' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The map starts as a tiny random speck. In the first 250 steps P is blown up 12 times, so groups pull together
+      hard and <b>drift apart as whole clusters</b>; then the exaggeration stops and each cluster relaxes. Watch the
+      KL curve jump when it does. <Try id="restart" />
+    </li>
+    <li>
+      Hover a digit: its 12 nearest images in the 784 pixel dimensions are linked. Most land next to it on the map.
+      t-SNE is built to keep <b>who is next to whom</b>, and the readout counts how many it kept. <Try id="digits" />
+    </li>
+    <li>
+      The blobs have very different spreads in 10-D, but on the map they come out <b>about the same size</b>, and the
+      gaps between them say little. Cluster size and distance between clusters are not to be read off a t-SNE map.
+      <Try id="blobs" />
+    </li>
+    <li>
+      Pure noise has no clusters at all. At a low perplexity t-SNE still draws <b>clumps</b> out of chance
+      fluctuations; at a high one it shows the honest round blob. <Try id="noise" />
+    </li>
+    <li>
+      The Swiss roll is a sheet rolled up in 3-D. With a small perplexity t-SNE only sees neighbours along the sheet
+      and unrolls it, in pieces; a large one starts to see across the gap between layers. <Try id="roll" />
+    </li>
+    <li>
+      Turn off early exaggeration and start again: the clusters form inside each other and some get
+      <b>split in two</b>, stuck in a worse layout with a higher KL. <Try id="noex" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { digitSet } from '../../../lib/digits';
+  import { sqDistances, jointP, Embedding, EXAGGERATION_ITERS } from '../../../lib/tsne';
+
+  // Exact t-SNE on a few hundred points, live: affinities P in the data from a
+  // Gaussian per point (its σ set by the perplexity), a Student-t kernel Q on
+  // the map, and gradient descent on KL(P‖Q).
+  const PP = '#7c8cff', QQ = '#fbbf24', EX = '#f9736a';
+  const CLASS = ['#7c8cff', '#f9736a', '#34d399', '#fbbf24', '#c084fc', '#5eead4', '#f472b6', '#a3e635', '#fb923c', '#93c5fd'];
+  const MAX_ITER = 1000;
+
+  type Data = { X: ArrayLike<number>[]; label: number[]; colour: string[]; dim: number; img?: Float64Array[]; classes: string[] };
+
+  const state = { data: 'digits', perp: 30, running: true, speed: 4, ex: true, links: true, seed: 1, hover: -1, pinned: -1 };
+  let data: Data | null = null;
+  let D = new Float64Array(0);
+  let cond = new Float64Array(0);
+  let sigma = new Float64Array(0);
+  let emb: Embedding | null = null;
+  /** Each point's 12 nearest in the data, by distance. */
+  let knn: number[][] = [];
+
+  const canvas = el('ts') as HTMLCanvasElement;
+  const { ctx } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const MAP = { x: 16, y: 16, w: 608, h: 608 };
+  const NBR = { x: 652, y: 40, w: 330, h: 300 };
+  const KLP = { x: 676, y: 402, w: 306, h: 196 };
+
+  // --- the data sets ------------------------------------------------------------
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const g = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
+    return { rnd, g };
+  }
+  /**
+   * What the distances are measured on: the image blurred a little more and
+   * scaled to unit length, so a thick 1 and a thin 1 count as close. The
+   * generated digits vary their stroke width far more than MNIST does.
+   */
+  function features(img: Float64Array) {
+    let a = img.slice();
+    for (let pass = 0; pass < 2; pass++) {
+      const b = new Float64Array(784);
+      for (let y = 0; y < 28; y++)
+        for (let x = 0; x < 28; x++) {
+          let s = 0, w = 0;
+          for (let dy = -1; dy <= 1; dy++)
+            for (let dx = -1; dx <= 1; dx++) {
+              const yy = y + dy, xx = x + dx;
+              if (yy < 0 || xx < 0 || yy > 27 || xx > 27) continue;
+              s += a[yy * 28 + xx];
+              w++;
+            }
+          b[y * 28 + x] = s / w;
+        }
+      a = b;
+    }
+    let n = 0;
+    for (const v of a) n += v * v;
+    n = Math.sqrt(n) || 1;
+    return a.map((v) => v / n);
+  }
+
+  function makeData(kind: string): Data {
+    const { rnd, g } = rng(5);
+    if (kind === 'digits') {
+      const ds = digitSet(500, 28, 4);
+      return {
+        X: ds.map((d) => features(d.img)), label: ds.map((d) => d.label), colour: ds.map((d) => CLASS[d.label]),
+        dim: 784, img: ds.map((d) => d.img), classes: ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+      };
+    }
+    if (kind === 'blobs') {
+      // five groups: spreads from tight to loose, and two of them near each other
+      const spec = [
+        { n: 100, sd: 0.25, c: 0 }, { n: 100, sd: 0.6, c: 1 }, { n: 100, sd: 1.5, c: 2 },
+        { n: 100, sd: 0.6, c: 3 }, { n: 100, sd: 0.6, c: 4 },
+      ];
+      const centre = (c: number) => Array.from({ length: 10 }, (_, d) => (c === 4 ? (d === 3 ? 2.2 : 0) : d === c ? 7 : 0));
+      const X: number[][] = [], label: number[] = [];
+      for (const s of spec) for (let k = 0; k < s.n; k++) { const m = centre(s.c); X.push(m.map((v) => v + g() * s.sd)); label.push(s.c); }
+      return {
+        X, label, colour: label.map((l) => CLASS[l]), dim: 10,
+        classes: ['spread 0.25', 'spread 0.6', 'spread 1.5', 'spread 0.6, half as far from purple', 'spread 0.6, half as far from yellow'],
+      };
+    }
+    if (kind === 'roll') {
+      const X: number[][] = [], label: number[] = [], colour: string[] = [];
+      for (let k = 0; k < 500; k++) {
+        const t = 1.5 * Math.PI * (1 + 2 * rnd()), h = 21 * rnd();
+        X.push([t * Math.cos(t), h, t * Math.sin(t)].map((v) => v + g() * 0.15));
+        const u = (t - 1.5 * Math.PI) / (3 * Math.PI);
+        label.push(Math.min(9, Math.floor(u * 10)));
+        colour.push(`hsl(${Math.round(260 - 240 * u)},80%,65%)`);
+      }
+      return { X, label, colour, dim: 3, classes: [] };
+    }
+    const X = Array.from({ length: 400 }, () => Array.from({ length: 10 }, g));
+    return { X, label: X.map(() => 0), colour: X.map(() => '#a5b4fc'), dim: 10, classes: [] };
+  }
+
+  function nearestK(N: number, k: number) {
+    const out: number[][] = [];
+    const idx = Array.from({ length: N }, (_, j) => j);
+    for (let i = 0; i < N; i++) {
+      out.push(idx.filter((j) => j !== i).sort((a, b) => D[i * N + a] - D[i * N + b]).slice(0, k));
+    }
+    return out;
+  }
+
+  let busy = '';
+  function load(kind: string) {
+    state.data = kind;
+    busy = 'Measuring every distance…';
+    draw();
+    setTimeout(() => {
+      data = makeData(kind);
+      D = sqDistances(data.X);
+      knn = nearestK(data.X.length, 12);
+      busy = '';
+      affinities();
+    }, 20);
+  }
+  function affinities() {
+    if (!data) return;
+    const r = jointP(D, data.X.length, state.perp);
+    cond = r.cond;
+    sigma = r.sigma;
+    restart(r.P);
+  }
+  let lastP: Float64Array | null = null;
+  function restart(P = lastP) {
+    if (!data || !P) return;
+    lastP = P;
+    emb = new Embedding(P, data.X.length, state.seed);
+    emb.exaggerate = state.ex;
+    fit = null;
+    draw();
+  }
+
+  // --- the map's frame: follows the points, smoothly ------------------------------
+  let fit: { cx: number; cy: number; s: number } | null = null;
+  function frameTo() {
+    if (!emb) return;
+    const N = emb.N, Y = emb.Y;
+    const xs: number[] = [], ys: number[] = [];
+    for (let i = 0; i < N; i++) { xs.push(Y[2 * i]); ys.push(Y[2 * i + 1]); }
+    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+    const q = (a: number[], f: number) => a[Math.floor(f * (a.length - 1))];
+    const x0 = q(xs, 0.005), x1 = q(xs, 0.995), y0 = q(ys, 0.005), y1 = q(ys, 0.995);
+    const want = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s: Math.min(MAP.w, MAP.h) * 0.86 / Math.max(1e-6, x1 - x0, y1 - y0) };
+    if (!fit) fit = want;
+    else {
+      const k = 0.12;
+      fit.cx += (want.cx - fit.cx) * k;
+      fit.cy += (want.cy - fit.cy) * k;
+      fit.s *= Math.exp(Math.log(want.s / fit.s) * k);
+    }
+  }
+  const mx = (x: number) => MAP.x + MAP.w / 2 + (x - fit!.cx) * fit!.s;
+  const my = (y: number) => MAP.y + MAP.h / 2 - (y - fit!.cy) * fit!.s;
+
+  // --- drawing ------------------------------------------------------------------
+  function hexA(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  const UI = (size: number, weight = 400) => `${weight} ${size}px 'Inter', system-ui, sans-serif`;
+  function text(s: string, x: number, y: number, size: number, col: string, align: CanvasTextAlign = 'left', weight = 400) {
+    ctx.font = UI(size, weight);
+    ctx.fillStyle = col;
+    ctx.textAlign = align;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
+  }
+  const focus = () => (state.hover >= 0 ? state.hover : state.pinned);
+
+  function drawMap() {
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(MAP.x + 0.5, MAP.y + 0.5, MAP.w - 1, MAP.h - 1);
+    if (!emb || !data || !fit) return;
+    const N = emb.N, Y = emb.Y, f = focus();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.clip();
+    if (f >= 0 && state.links) {
+      ctx.strokeStyle = hexA(PP, 0.75);
+      ctx.lineWidth = 1.3;
+      for (const j of knn[f]) {
+        ctx.beginPath();
+        ctx.moveTo(mx(Y[2 * f]), my(Y[2 * f + 1]));
+        ctx.lineTo(mx(Y[2 * j]), my(Y[2 * j + 1]));
+        ctx.stroke();
+      }
+    }
+    const dim = f >= 0 && state.links;
+    const near = new Set(f >= 0 ? knn[f] : []);
+    for (let i = 0; i < N; i++) {
+      ctx.globalAlpha = dim && i !== f && !near.has(i) ? 0.35 : 0.92;
+      ctx.fillStyle = data.colour[i];
+      ctx.beginPath();
+      ctx.arc(mx(Y[2 * i]), my(Y[2 * i + 1]), near.has(i) ? 4.2 : 3, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (f >= 0) {
+      ctx.strokeStyle = ink(0.95);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mx(Y[2 * f]), my(Y[2 * f + 1]), 7, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // digit glyphs as labels, at the centre of each class
+    if (data.classes.length) {
+      const cx = new Array(data.classes.length).fill(0), cy = [...cx], n = [...cx];
+      for (let i = 0; i < N; i++) { const l = data.label[i]; cx[l] += Y[2 * i]; cy[l] += Y[2 * i + 1]; n[l]++; }
+      if (state.data === 'digits' && emb.iter > 60)
+        data.classes.forEach((c, l) => {
+          if (!n[l]) return;
+          const x = mx(cx[l] / n[l]), y = my(cy[l] / n[l]);
+          if (x < MAP.x || x > MAP.x + MAP.w || y < MAP.y || y > MAP.y + MAP.h) return;
+          ctx.fillStyle = inv(0.7);
+          ctx.beginPath();
+          ctx.arc(x, y, 11, 0, 2 * Math.PI);
+          ctx.fill();
+          text(c, x, y + 5, 14, CLASS[l], 'center', 700);
+        });
+    }
+    if (emb.exaggerating) text(`early exaggeration · step ${emb.iter} of ${EXAGGERATION_ITERS}`, MAP.x + 12, MAP.y + 22, 12, EX);
+  }
+
+  function drawLegend() {
+    if (!data || state.data !== 'blobs') return;
+    data.classes.forEach((c, l) => {
+      const y = MAP.y + MAP.h - 14 - (data!.classes.length - 1 - l) * 17;
+      ctx.fillStyle = CLASS[l];
+      ctx.beginPath();
+      ctx.arc(MAP.x + 18, y - 4, 4, 0, 2 * Math.PI);
+      ctx.fill();
+      text(c, MAP.x + 28, y, 11.5, ink(0.7));
+    });
+  }
+
+  function drawNeighbours() {
+    const B = NBR;
+    if (!emb || !data) return;
+    const f = focus();
+    if (f < 0) {
+      text('Hover a point on the map', B.x, B.y + 20, 13, ink(0.6));
+      text('to compare its neighbours in the data (p)', B.x, B.y + 40, 12, ink(0.45));
+      text('with its neighbours on the map (q).', B.x, B.y + 58, 12, ink(0.45));
+      return;
+    }
+    const N = emb.N;
+    let y = B.y;
+    let x0 = B.x;
+    if (data.img) {
+      // the image itself
+      const s = 2.4;
+      const img = data.img[f];
+      for (let r = 0; r < 28; r++)
+        for (let c = 0; c < 28; c++) {
+          const v = img[r * 28 + c];
+          if (v < 0.04) continue;
+          ctx.fillStyle = `rgba(232,233,236,${v})`;
+          ctx.fillRect(B.x + c * s, y + r * s, s, s);
+        }
+      ctx.strokeStyle = ink(0.2);
+      ctx.strokeRect(B.x - 0.5, y - 0.5, 28 * s + 1, 28 * s + 1);
+      x0 = B.x + 28 * s + 14;
+    }
+    text(`point ${f}${data.classes.length ? ` · ${state.data === 'digits' ? 'a ' + data.classes[data.label[f]] : data.classes[data.label[f]]}` : ''}`, x0, y + 14, 13, ink(0.9), 'left', 600);
+    text(`σ = ${sigma[f].toFixed(3)} in the data`, x0, y + 33, 12, ink(0.55));
+    text('its 12 nearest, in the data', x0, y + 51, 12, ink(0.55));
+    // q(j|i) on the map, for the same j
+    let qs = 0;
+    for (let j = 0; j < N; j++) if (j !== f) qs += emb.num[f * N + j];
+    y += data.img ? 84 : 72;
+    const rows = knn[f];
+    const ps = rows.map((j) => cond[f * N + j]), qv = rows.map((j) => emb!.num[f * N + j] / qs);
+    const top = Math.max(...ps, ...qv) * 1.05;
+    const rh = 17, bx = B.x + 34, bw = B.w - 34 - 50;
+    rows.forEach((j, k) => {
+      const yy = y + k * rh;
+      ctx.fillStyle = data!.colour[j];
+      ctx.beginPath();
+      ctx.arc(B.x + 6, yy + 7, 4, 0, 2 * Math.PI);
+      ctx.fill();
+      text(data!.classes.length && state.data === 'digits' ? data!.classes[data!.label[j]] : String(k + 1), B.x + 16, yy + 11, 11, ink(0.55));
+      ctx.fillStyle = hexA(PP, 0.85);
+      ctx.fillRect(bx, yy + 1, (ps[k] / top) * bw, 6);
+      ctx.fillStyle = hexA(QQ, 0.85);
+      ctx.fillRect(bx, yy + 8, (qv[k] / top) * bw, 6);
+      text(`${(ps[k] * 100).toFixed(1)}%`, B.x + B.w, yy + 11, 10.5, ink(0.5), 'right');
+    });
+    const sumP = ps.reduce((a, b) => a + b, 0), sumQ = qv.reduce((a, b) => a + b, 0);
+    text(`these 12 hold ${(sumP * 100).toFixed(0)}% of p(·|i) and ${(sumQ * 100).toFixed(0)}% of q(·|i)`, B.x, y + rows.length * rh + 14, 11.5, ink(0.6));
+  }
+
+  function drawKL() {
+    const B = KLP;
+    text('KL(P ‖ Q) as the map is optimized', B.x - 24, B.y - 16, 12, ink(0.55));
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(B.x, B.y, B.w, B.h);
+    if (!emb) return;
+    const X = (it: number) => B.x + (it / MAX_ITER) * B.w;
+    if (state.ex) {
+      ctx.fillStyle = hexA(EX, 0.1);
+      ctx.fillRect(B.x, B.y, X(EXAGGERATION_ITERS) - B.x, B.h);
+      text('× 12', B.x + 4, B.y + 14, 10.5, hexA(EX, 0.8));
+    }
+    const h = emb.history;
+    if (!h.length) return;
+    const top = Math.max(...h.map((p) => p.kl)) * 1.08;
+    const Y = (v: number) => B.y + B.h - (v / top) * B.h;
+    for (const v of [0.5, 1, 1.5, 2, 2.5, 3, 4]) {
+      if (v > top) break;
+      text(v.toFixed(1), B.x - 4, Y(v) + 4, 10, ink(0.4), 'right');
+    }
+    ctx.strokeStyle = QQ;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    h.forEach((p, k) => (k ? ctx.lineTo(X(p.iter), Y(p.kl)) : ctx.moveTo(X(p.iter), Y(p.kl))));
+    ctx.stroke();
+    text('0', B.x, B.y + B.h + 14, 10, ink(0.4), 'center');
+    text(`${MAX_ITER} steps`, B.x + B.w, B.y + B.h + 14, 10, ink(0.4), 'right');
+  }
+
+  /** Share of the 12 nearest in the data that are also among the 12 nearest on the map. */
+  function kept() {
+    if (!emb) return 0;
+    const N = emb.N, Y = emb.Y;
+    let hit = 0;
+    const idx = Array.from({ length: N }, (_, j) => j);
+    for (let i = 0; i < N; i += 5) {
+      const d = (j: number) => (Y[2 * i] - Y[2 * j]) ** 2 + (Y[2 * i + 1] - Y[2 * j + 1]) ** 2;
+      const m = new Set(idx.filter((j) => j !== i).sort((a, b) => d(a) - d(b)).slice(0, 12));
+      for (const j of knn[i]) if (m.has(j)) hit++;
+    }
+    return hit / (Math.ceil(N / 5) * 12);
+  }
+  let keptShare = 0, keptAt = -1;
+
+  function update() {
+    if (!emb || !data) return;
+    const kl = emb.history.length ? emb.history[emb.history.length - 1].kl : NaN;
+    if (emb.iter !== keptAt && (emb.iter % 20 === 0 || !state.running)) { keptShare = kept(); keptAt = emb.iter; }
+    let smin = Infinity, smax = 0;
+    for (const s of sigma) { smin = Math.min(smin, s); smax = Math.max(smax, s); }
+    setRows({
+      'r-n': `${emb.N} × ${data.dim}`,
+      'r-iter': `${emb.iter}${emb.iter >= MAX_ITER ? ' (done)' : ''}`,
+      'r-kl': isFinite(kl) ? kl.toFixed(3) : '—',
+      'r-sig': `${smin.toFixed(2)} … ${smax.toFixed(2)}`,
+      'r-keep': `${(keptShare * 100).toFixed(0)}%`,
+    });
+    setEq({
+      rule: [
+        [`p_{ij}=\\tfrac{p_{j|i}+p_{i|j}}{2N}`, PP], '\\qquad',
+        [`q_{ij}=\\frac{(1+\\|y_i-y_j\\|^2)^{-1}}{\\sum_{k\\ne l}(1+\\|y_k-y_l\\|^2)^{-1}}`, QQ], '\\qquad',
+        `C=\\mathrm{KL}(P\\,\\|\\,Q)=\\textstyle\\sum p_{ij}\\log\\frac{p_{ij}}{q_{ij}}`,
+      ],
+      live: [
+        [`\\mathrm{Perp} = ${state.perp.toFixed(0)}`, PP], `\\quad t = ${emb.iter}`,
+        [emb.exaggerating ? '\\quad P\\times 12' : '', EX], `\\quad C = ${isFinite(kl) ? kl.toFixed(3) : '-'}`,
+      ],
+    });
+    setResult({
+      value: isFinite(kl) ? kl.toFixed(3) : '—',
+      colour: QQ,
+      status: `step ${emb.iter} · ${(keptShare * 100).toFixed(0)}% of each point's 12 nearest neighbours are still among its 12 nearest on the map`,
+      note: emb.exaggerating
+        ? 'Early exaggeration: attraction is 12 times too strong, so whole groups gather and move apart before the fine detail is settled.'
+        : emb.iter >= MAX_ITER
+          ? 'Done. Distances within a cluster mean something; sizes of clusters and gaps between them mostly do not.'
+          : 'Attraction pulls together what is near in the data; the heavy tail of q pushes everything else far apart.',
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, 1000, 640);
+    if (busy || !emb) {
+      text(busy || 'Preparing…', MAP.x + MAP.w / 2, MAP.y + MAP.h / 2, 14, ink(0.6), 'center');
+      drawKL();
+      return;
+    }
+    frameTo();
+    drawMap();
+    drawLegend();
+    drawNeighbours();
+    drawKL();
+    update();
+  }
+
+  // --- controls -------------------------------------------------------------------
+  const perpOf = (v: number) => Math.round(Math.exp(Math.log(2) + (v / 100) * (Math.log(100) - Math.log(2))));
+  const vOf = (p: number) => Math.round((100 * (Math.log(p) - Math.log(2))) / (Math.log(100) - Math.log(2)));
+  let perpTimer = 0;
+  const setPerp = slider('perp', (v) => {
+    state.perp = perpOf(v);
+    clearTimeout(perpTimer);
+    perpTimer = window.setTimeout(affinities, 120);
+  }, (v) => String(perpOf(v)));
+  const dataSeg = segmented('data', (v) => load(v));
+  const run = transport({
+    onRun: (on) => { state.running = on; if (on && emb && emb.iter >= MAX_ITER) restart(); },
+    onStep: () => { emb?.step(); draw(); },
+    onReset: () => restart(),
+  });
+  el('again').addEventListener('click', () => { state.seed++; restart(); });
+  slider('sp', (v) => (state.speed = v));
+  const setEx = check('ex', (on) => { state.ex = on; restart(); });
+  check('links', (on) => { state.links = on; draw(); });
+
+  function go(kind: string, perp: number, ex = true) {
+    state.perp = perp;
+    setPerp(vOf(perp));
+    state.ex = ex;
+    setEx(ex);
+    state.running = true;
+    run.setRunning(true);
+    state.pinned = -1;
+    if (kind !== state.data || !data) { dataSeg.select(kind); load(kind); }
+    else affinities();
+  }
+  tries({
+    restart: () => go(state.data, state.perp),
+    digits: () => { go('digits', 30); },
+    blobs: () => go('blobs', 30),
+    noise: () => go('noise', 3),
+    roll: () => go('roll', 8),
+    noex: () => go(state.data, state.perp, false),
+  });
+
+  // --- pointer --------------------------------------------------------------------
+  const local = (e: PointerEvent) => {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * 1000, y: ((e.clientY - b.top) / b.height) * 640 };
+  };
+  function pick(x: number, y: number) {
+    if (!emb || !fit) return -1;
+    let best = -1, bd = 10 * 10;
+    for (let i = 0; i < emb.N; i++) {
+      const d = (mx(emb.Y[2 * i]) - x) ** 2 + (my(emb.Y[2 * i + 1]) - y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+  canvas.addEventListener('pointermove', (e) => {
+    const p = local(e);
+    const i = pick(p.x, p.y);
+    if (i !== state.hover) { state.hover = i; if (!state.running) draw(); }
+    canvas.style.cursor = i >= 0 ? 'pointer' : '';
+  });
+  canvas.addEventListener('pointerleave', () => { state.hover = -1; if (!state.running) draw(); });
+  canvas.addEventListener('click', (e) => {
+    const p = local(e);
+    state.pinned = pick(p.x, p.y);
+    draw();
+  });
+
+  function loop() {
+    if (emb && state.running && emb.iter < MAX_ITER) {
+      for (let k = 0; k < state.speed && emb.iter < MAX_ITER; k++) emb.step();
+      if (emb.iter >= MAX_ITER) { state.running = false; run.setRunning(false); keptAt = -1; }
+      draw();
+    } else if (emb && fit) {
+      // keep easing the frame after a stop
+      draw();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  load('digits');
+  requestAnimationFrame(loop);
+</script>
