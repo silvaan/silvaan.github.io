@@ -1,0 +1,572 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="statistics"
+  title="KL Divergence"
+  description="How badly does Q stand in for P? KL(P‖Q) averages log(p/q) over P: the extra cost of believing Q when the truth is P. It is zero only when the two agree, it is not symmetric, and which way round you minimise it decides whether a fitted bell covers every hump or picks one."
+  shortcuts={['animate', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="kl"
+          width="1000"
+          height="620"
+          role="img"
+          aria-label="Two distributions P and Q, the integrand of the KL divergence with its positive and negative parts shaded, the KL divergence over every mean and width of Q as a map, and both directions of the divergence as bars."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'P, the truth', color: '#5eead4' },
+          { label: 'Q, the stand-in', color: '#fbbf24' },
+          { label: 'where log(p/q) > 0', color: '#f9736a' },
+          { label: 'where log(p/q) < 0', color: '#7c8cff' },
+        ]}
+        hint="Drag on the map to move Q · or use the sliders"
+      />
+      <Result label="KL(P ‖ Q)" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg id="mode" label="What to compare" attr="m" options={[{ value: 'fit', label: 'Fit a bell' }, { value: 'letters', label: 'Letters of two languages' }]} />
+      <div id="fitwrap">
+        <Seg
+          id="truth"
+          label="P, the truth"
+          attr="p"
+          options={[
+            { value: 'two', label: 'Two humps' },
+            { value: 'unequal', label: 'Big and small hump' },
+            { value: 'skew', label: 'Skewed' },
+            { value: 'bell', label: 'A bell' },
+          ]}
+        />
+        <Seg id="dir" label="Divergence to minimise" attr="k" options={[{ value: 'fwd', label: 'KL(P ‖ Q)' }, { value: 'rev', label: 'KL(Q ‖ P)' }]} />
+        <Slider id="mu" label="Q: mean μ" min={-500} max={600} value={-150} display="−1.50" />
+        <Slider id="sg" label="Q: spread σ" min={0} max={1000} value={300} display="0.50" />
+        <Transport animate="Fit Q by gradient descent" />
+      </div>
+      <div id="letwrap" hidden>
+        <Seg id="lp" label="P, the text" attr="a" options={[{ value: 'en', label: 'English' }, { value: 'pt', label: 'Portuguese' }, { value: 'uni', label: 'All letters equal' }]} />
+        <Seg id="lq" label="Q, the code built for" attr="b" options={[{ value: 'en', label: 'English' }, { value: 'pt', label: 'Portuguese' }, { value: 'uni', label: 'All letters equal' }]} />
+      </div>
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-f', label: 'KL(P ‖ Q)' },
+          { id: 'r-r', label: 'KL(Q ‖ P)' },
+          { id: 'r-h', label: 'entropy H(P)' },
+          { id: 'r-x', label: 'cross-entropy H(P, Q)' },
+          { id: 'r-q', label: 'Q' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      On <b>A bell</b>, Q can be exactly P. Move it there and both divergences fall to <b>zero</b>; anywhere else they are
+      positive. The red and blue parts of the integrand never cancel to below zero. <Try id="bell" />
+    </li>
+    <li>
+      The two bars on the right are almost never equal: KL is <b>not a distance</b>. KL(P‖Q) averages over where P lives,
+      KL(Q‖P) over where Q lives. <Try id="asym" />
+    </li>
+    <li>
+      Minimise <b>KL(P‖Q)</b> on two humps: Q gets wide and covers both, because wherever P has mass and Q has almost
+      none, log(p/q) explodes. This is what maximum likelihood does. <Try id="forward" />
+    </li>
+    <li>
+      Minimise <b>KL(Q‖P)</b> instead and Q settles on <b>one hump</b> and ignores the other: Q is only punished where
+      it puts mass that P lacks. Which hump depends on where it starts. <Try id="reverse" />
+    </li>
+    <li>
+      Make Q narrow and park it on one hump. KL(P‖Q) shoots up, and the integrand shows where: the other hump, where
+      q is tiny. <Try id="narrow" />
+    </li>
+    <li>
+      Encode English with a code built for Portuguese and every letter costs on average <b>KL extra bits</b> over the
+      best code for English. The big contributions are the letters the two languages disagree on, like h, t, w and y.
+      <Try id="letters" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
+
+  // KL(P‖Q) = ∫ p log(p/q): the average, under P, of how much more likely P
+  // says each outcome is than Q does. Two settings: a fixed P with a normal Q
+  // to slide and fit, and the letter frequencies of two languages.
+  const PC = '#5eead4', QC = '#fbbf24', POS = '#f9736a', NEG = '#7c8cff';
+
+  const state = {
+    mode: 'fit' as 'fit' | 'letters', truth: 'two', dir: 'fwd' as 'fwd' | 'rev',
+    mu: -1.5, sg: 0.5, lp: 'en', lq: 'pt',
+  };
+
+  const canvas = el('kl') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const fmt = (v: number, n = 3) => (!isFinite(v) ? '∞' : (Math.abs(v) < 0.5 * 10 ** -n ? 0 : v).toFixed(n).replace('-', '−'));
+
+  // --- P: mixtures of bells, so every P has the whole line as support ------------
+  type Mix = [number, number, number][]; // weight, mean, sd
+  const TRUTH: Record<string, { name: string; mix: Mix }> = {
+    two: { name: 'two equal humps', mix: [[0.5, -2.5, 0.6], [0.5, 2.5, 0.7]] },
+    unequal: { name: 'a big hump and a small one', mix: [[0.7, -2, 0.7], [0.3, 2.8, 0.6]] },
+    skew: { name: 'skewed, with a long right tail', mix: [[0.55, -1, 0.6], [0.3, 0.5, 1], [0.15, 2.5, 1.6]] },
+    bell: { name: 'a single bell, N(0.8, 1.3²)', mix: [[1, 0.8, 1.3]] },
+  };
+  const LN2PI = Math.log(2 * Math.PI);
+  const logN = (x: number, m: number, s: number) => -0.5 * ((x - m) / s) ** 2 - Math.log(s) - 0.5 * LN2PI;
+  function logMix(x: number, mix: Mix) {
+    let mx = -Infinity;
+    const t = mix.map(([w, m, s]) => { const v = Math.log(w) + logN(x, m, s); mx = Math.max(mx, v); return v; });
+    return mx + Math.log(t.reduce((a, v) => a + Math.exp(v - mx), 0));
+  }
+  const X0 = -7, X1 = 9, NG = 800, DX = (X1 - X0) / NG;
+  const xs = Array.from({ length: NG }, (_, i) => X0 + (i + 0.5) * DX);
+  let logp = new Float64Array(NG);
+  function setTruth() {
+    const mix = TRUTH[state.truth].mix;
+    logp = Float64Array.from(xs, (x) => logMix(x, mix));
+    landscape = null;
+  }
+  /** Both divergences, entropies and the integrand for a normal Q, in nats. */
+  function measure(mu: number, sg: number) {
+    let f = 0, r = 0, h = 0;
+    for (let i = 0; i < NG; i++) {
+      const lp = logp[i], lq = logN(xs[i], mu, sg), p = Math.exp(lp), q = Math.exp(lq);
+      f += p * (lp - lq) * DX;
+      r += q * (lq - lp) * DX;
+      h -= p * lp * DX;
+    }
+    return { f, r, h };
+  }
+  const klAt = (mu: number, s: number) => { const m = measure(mu, Math.exp(s)); return state.dir === 'fwd' ? m.f : m.r; };
+
+  // the map of KL over every Q: μ across, log σ up
+  const MU0 = -5, MU1 = 6, S0 = Math.log(0.15), S1 = Math.log(5);
+  const LW = 66, LH = 50;
+  let landscape: { v: Float64Array; min: [number, number]; img: HTMLCanvasElement } | null = null;
+  function buildLandscape() {
+    const v = new Float64Array(LW * LH);
+    let best = Infinity, min: [number, number] = [0, 0];
+    for (let j = 0; j < LH; j++)
+      for (let i = 0; i < LW; i++) {
+        const mu = MU0 + ((i + 0.5) / LW) * (MU1 - MU0), s = S1 - ((j + 0.5) / LH) * (S1 - S0);
+        const k = klAt(mu, s);
+        v[j * LW + i] = k;
+        if (k < best) { best = k; min = [mu, s]; }
+      }
+    // refine the minimum a little by descent from the best cell
+    let [mu, s] = min;
+    for (let it = 0; it < 200; it++) {
+      const g = grad(mu, s);
+      mu -= 0.05 * g[0];
+      s -= 0.05 * g[1];
+    }
+    if (klAt(mu, s) < best) min = [mu, s];
+    const img = document.createElement('canvas');
+    img.width = LW;
+    img.height = LH;
+    const c = img.getContext('2d')!, d = c.createImageData(LW, LH);
+    const lo = Math.log(Math.max(1e-3, best)), hi = Math.log(20);
+    for (let k = 0; k < LW * LH; k++) {
+      const t = 1 - Math.max(0, Math.min(1, (Math.log(Math.max(1e-3, v[k])) - lo) / (hi - lo)));
+      // low KL bright amber, high KL dark
+      d.data[k * 4] = 14 + 237 * t ** 1.4;
+      d.data[k * 4 + 1] = 15 + 176 * t ** 1.8;
+      d.data[k * 4 + 2] = 22 + 14 * t;
+      d.data[k * 4 + 3] = 255;
+    }
+    c.putImageData(d, 0, 0);
+    landscape = { v, min, img };
+  }
+  function grad(mu: number, s: number): [number, number] {
+    const e = 1e-3;
+    return [(klAt(mu + e, s) - klAt(mu - e, s)) / (2 * e), (klAt(mu, s + e) - klAt(mu, s - e)) / (2 * e)];
+  }
+
+  // --- letters -------------------------------------------------------------------
+  // Letter frequencies in running text, in percent; accents folded into the bare letter.
+  const ABC = 'abcdefghijklmnopqrstuvwxyz'.split('');
+  const FREQ: Record<string, number[]> = {
+    en: [8.17, 1.49, 2.78, 4.25, 12.7, 2.23, 2.02, 6.09, 6.97, 0.15, 0.77, 4.03, 2.41, 6.75, 7.51, 1.93, 0.1, 5.99, 6.33, 9.06, 2.76, 0.98, 2.36, 0.15, 1.97, 0.07],
+    pt: [14.63, 1.04, 3.88, 4.99, 12.57, 1.02, 1.3, 1.28, 6.18, 0.4, 0.02, 2.78, 4.74, 5.05, 10.73, 2.52, 1.2, 6.53, 7.81, 4.34, 4.63, 1.67, 0.01, 0.21, 0.01, 0.47],
+    uni: ABC.map(() => 1),
+  };
+  const LNAME: Record<string, string> = { en: 'English', pt: 'Portuguese', uni: 'all letters equal' };
+  const dist = (k: string) => { const f = FREQ[k], s = f.reduce((a, b) => a + b, 0); return f.map((v) => v / s); };
+
+  // --- drawing ---------------------------------------------------------------------
+  const DEN = { x: 60, y: 44, w: 540, h: 230 };
+  const INT = { x: 60, y: 340, w: 540, h: 220 };
+  const MAP = { x: 690, y: 44, w: 290, h: 300 };
+  const BAR = { x: 690, y: 420, w: 290 };
+  function frame(B: { x: number; y: number; w: number; h: number }, title: string) {
+    label(title, B.x, B.y - 12, 0.55, 'left', 11.5);
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(B.x + 0.5, B.y + 0.5, B.w - 1, B.h - 1);
+  }
+
+  function drawFit() {
+    const mu = state.mu, sg = state.sg;
+    const sx = (x: number) => DEN.x + ((x - X0) / (X1 - X0)) * DEN.w;
+    // the two densities
+    let top = 0;
+    const ps = xs.map((_, i) => Math.exp(logp[i])), qs = xs.map((x) => Math.exp(logN(x, mu, sg)));
+    for (let i = 0; i < NG; i++) top = Math.max(top, ps[i], Math.min(qs[i], 1.6));
+    top *= 1.12;
+    const sy = (v: number) => DEN.y + DEN.h - (Math.min(v, top) / top) * DEN.h;
+    frame(DEN, `p(x): ${TRUTH[state.truth].name}   ·   q(x) = N(μ, σ²)`);
+    ctx.fillStyle = 'rgba(94,234,212,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(sx(X0), sy(0));
+    xs.forEach((x, i) => ctx.lineTo(sx(x), sy(ps[i])));
+    ctx.lineTo(sx(X1), sy(0));
+    ctx.fill();
+    for (const [arr, col] of [[ps, PC], [qs, QC]] as [number[], string][]) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      xs.forEach((x, i) => (i ? ctx.lineTo(sx(x), sy(arr[i])) : ctx.moveTo(sx(x), sy(arr[i]))));
+      ctx.stroke();
+    }
+    for (let x = -6; x <= 8; x += 2) label(String(x).replace('-', '−'), sx(x), DEN.y + DEN.h + 15, 0.35, 'center', 10);
+
+    // the integrand, signed
+    const fwd = state.dir === 'fwd';
+    const g = xs.map((x, i) => {
+      const lp = logp[i], lq = logN(x, mu, sg);
+      return fwd ? ps[i] * (lp - lq) : qs[i] * (lq - lp);
+    });
+    let gmax = 1e-6;
+    for (const v of g) gmax = Math.max(gmax, Math.abs(v));
+    gmax = Math.min(gmax, 6) * 1.1;
+    const z0 = INT.y + INT.h * 0.62;
+    const gy = (v: number) => z0 - (Math.max(-gmax, Math.min(gmax, v)) / gmax) * (v > 0 ? INT.h * 0.58 : INT.h * 0.34);
+    frame(INT, fwd ? 'the integrand  p(x) · log( p(x) / q(x) ):  its area is KL(P ‖ Q)' : 'the integrand  q(x) · log( q(x) / p(x) ):  its area is KL(Q ‖ P)');
+    for (const sign of [1, -1]) {
+      ctx.fillStyle = sign > 0 ? 'rgba(249,115,106,0.55)' : 'rgba(124,140,255,0.55)';
+      ctx.beginPath();
+      ctx.moveTo(sx(X0), z0);
+      xs.forEach((x, i) => ctx.lineTo(sx(x), gy(sign > 0 ? Math.max(0, g[i]) : Math.min(0, g[i]))));
+      ctx.lineTo(sx(X1), z0);
+      ctx.fill();
+    }
+    ctx.strokeStyle = ink(0.3);
+    ctx.beginPath();
+    ctx.moveTo(INT.x, z0);
+    ctx.lineTo(INT.x + INT.w, z0);
+    ctx.stroke();
+    let pos = 0, neg = 0;
+    for (const v of g) (v > 0 ? (pos += v * DX) : (neg += v * DX));
+    label(`red area ${fmt(pos)}`, INT.x + 10, INT.y + 18, 1, 'left', 10.5, POS);
+    label(`blue area ${fmt(neg)}`, INT.x + 10, INT.y + 34, 1, 'left', 10.5, NEG);
+    label(`total ${fmt(pos + neg)} nats, never below 0`, INT.x + INT.w - 10, INT.y + 18, 0.8, 'right', 10.5);
+
+    // the map
+    if (!landscape) buildLandscape();
+    const L = landscape!;
+    frame(MAP, `${fwd ? 'KL(P ‖ Q)' : 'KL(Q ‖ P)'} for every Q: bright = small`);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(L.img, MAP.x, MAP.y, MAP.w, MAP.h);
+    const mxp = (m: number) => MAP.x + ((m - MU0) / (MU1 - MU0)) * MAP.w;
+    const myp = (s: number) => MAP.y + ((S1 - s) / (S1 - S0)) * MAP.h;
+    for (const m of [-4, -2, 0, 2, 4]) label(String(m).replace('-', '−'), mxp(m), MAP.y + MAP.h + 15, 0.35, 'center', 10);
+    for (const s of [0.5, 1, 2, 4]) label(String(s), MAP.x - 6, myp(Math.log(s)) + 4, 0.35, 'right', 10);
+    label('μ →', MAP.x + MAP.w, MAP.y + MAP.h + 30, 0.45, 'right', 10);
+    label('σ', MAP.x - 22, MAP.y + 10, 0.45, 'right', 10);
+    // the descent path
+    if (path.length > 1) {
+      ctx.strokeStyle = ink(0.85);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      path.forEach(([m, s], k) => (k ? ctx.lineTo(mxp(m), myp(s)) : ctx.moveTo(mxp(m), myp(s))));
+      ctx.stroke();
+    }
+    // the best Q
+    const [bm, bs] = L.min;
+    ctx.strokeStyle = ink(0.9);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(mxp(bm) - 6, myp(bs) - 6); ctx.lineTo(mxp(bm) + 6, myp(bs) + 6);
+    ctx.moveTo(mxp(bm) + 6, myp(bs) - 6); ctx.lineTo(mxp(bm) - 6, myp(bs) + 6);
+    ctx.stroke();
+    // Q now
+    ctx.fillStyle = QC;
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mxp(mu), myp(Math.log(sg)), 6, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    label('× lowest', mxp(bm) + 9, myp(bs) - 8, 0.85, 'left', 10);
+
+    const m = measure(mu, sg);
+    drawBars(m.f, m.r, 'nats');
+    return { ...m, cross: m.h + m.f };
+  }
+
+  function drawBars(f: number, r: number, unit: string) {
+    label('both directions', BAR.x, BAR.y - 12, 0.55, 'left', 11.5);
+    const top = Math.max(0.5, Math.min(Math.max(f, r), 50)) * 1.1;
+    const rows: [string, number, string][] = [['KL(P ‖ Q)', f, PC], ['KL(Q ‖ P)', r, QC]];
+    rows.forEach(([name, v, col], k) => {
+      const y = BAR.y + 8 + k * 46;
+      const on = (state.mode === 'fit' && (state.dir === 'fwd') === (k === 0)) || state.mode === 'letters';
+      label(name, BAR.x, y + 12, on ? 0.95 : 0.55, 'left', 10.5);
+      ctx.fillStyle = ink(0.07);
+      ctx.fillRect(BAR.x, y + 18, BAR.w, 14);
+      ctx.fillStyle = col;
+      ctx.globalAlpha = on ? 0.9 : 0.5;
+      ctx.fillRect(BAR.x, y + 18, Math.max(1, (Math.min(v, top) / top) * BAR.w), 14);
+      ctx.globalAlpha = 1;
+      label(`${fmt(v)} ${unit}`, BAR.x + BAR.w, y + 12, 0.8, 'right', 10.5);
+    });
+    label(f > r * 1.05 || r > f * 1.05 ? `they differ by ${fmt(Math.abs(f - r))} ${unit}: KL is not symmetric` : 'nearly equal here, but not in general', BAR.x, BAR.y + 112, 0.5, 'left', 10);
+  }
+
+  function drawLetters() {
+    const p = dist(state.lp), q = dist(state.lq);
+    const bw = DEN.w / 26;
+    let top = 0;
+    for (let i = 0; i < 26; i++) top = Math.max(top, p[i], q[i]);
+    top *= 1.12;
+    frame(DEN, `letter frequencies: P = ${LNAME[state.lp]}, Q = ${LNAME[state.lq]}`);
+    for (let i = 0; i < 26; i++) {
+      const x = DEN.x + i * bw;
+      ctx.fillStyle = PC;
+      ctx.fillRect(x + bw * 0.12, DEN.y + DEN.h - (p[i] / top) * DEN.h, bw * 0.36, (p[i] / top) * DEN.h);
+      ctx.fillStyle = QC;
+      ctx.fillRect(x + bw * 0.5, DEN.y + DEN.h - (q[i] / top) * DEN.h, bw * 0.36, (q[i] / top) * DEN.h);
+      label(ABC[i], x + bw / 2, DEN.y + DEN.h + 15, 0.6, 'center', 10.5);
+    }
+    // each letter's share of KL(P‖Q), in bits
+    const c = p.map((v, i) => v * Math.log2(v / q[i]));
+    let cmax = 1e-6;
+    for (const v of c) cmax = Math.max(cmax, Math.abs(v));
+    cmax *= 1.15;
+    const z0 = INT.y + INT.h * 0.6;
+    frame(INT, 'each letter’s part of KL(P ‖ Q):  p · log₂(p / q)  bits');
+    ctx.strokeStyle = ink(0.3);
+    ctx.beginPath();
+    ctx.moveTo(INT.x, z0);
+    ctx.lineTo(INT.x + INT.w, z0);
+    ctx.stroke();
+    c.forEach((v, i) => {
+      const x = INT.x + i * bw, h = (v / cmax) * (v > 0 ? INT.h * 0.55 : INT.h * 0.37);
+      ctx.fillStyle = v > 0 ? POS : NEG;
+      ctx.fillRect(x + bw * 0.15, v > 0 ? z0 - h : z0, bw * 0.7, Math.abs(h));
+      label(ABC[i], x + bw / 2, INT.y + INT.h - 8, 0.55, 'center', 10.5);
+      if (Math.abs(v) > cmax * 0.35) label(fmt(v, 3), x + bw / 2, v > 0 ? z0 - h - 6 : z0 - h + 14, 1, 'center', 8.5, v > 0 ? POS : NEG);
+    });
+    const f = c.reduce((a, b) => a + b, 0);
+    const r = q.reduce((a, v, i) => a + v * Math.log2(v / p[i]), 0);
+    const h = -p.reduce((a, v) => a + v * Math.log2(v), 0);
+    // the coding picture
+    label('bits per letter, coding P', MAP.x, MAP.y - 12, 0.55, 'left', 11.5);
+    const sc = MAP.w / 6;
+    const rows: [string, number, number, string][] = [
+      ['the best code for P', h, 0, PC],
+      ['a code built for Q', h, f, QC],
+    ];
+    rows.forEach(([name, base, extra], k) => {
+      const y = MAP.y + 14 + k * 70;
+      label(name, MAP.x, y, 0.85, 'left', 10.5);
+      ctx.fillStyle = 'rgba(94,234,212,0.75)';
+      ctx.fillRect(MAP.x, y + 10, base * sc, 22);
+      if (extra > 0) {
+        ctx.fillStyle = POS;
+        ctx.fillRect(MAP.x + base * sc, y + 10, extra * sc, 22);
+      }
+      label(`${fmt(base + extra, 3)} bits`, MAP.x + (base + extra) * sc + 6, y + 26, 0.85, 'left', 10);
+    });
+    label(`H(P) = ${fmt(h, 3)}`, MAP.x, MAP.y + 176, 1, 'left', 10.5, PC);
+    label(`+ KL(P ‖ Q) = ${fmt(f, 3)} wasted`, MAP.x, MAP.y + 194, 1, 'left', 10.5, POS);
+    label(`= H(P, Q) = ${fmt(h + f, 3)}`, MAP.x, MAP.y + 212, 1, 'left', 10.5, QC);
+    label(`over 1,000 letters: ${Math.round(1000 * f)} extra bits`, MAP.x, MAP.y + 240, 0.6, 'left', 10.5);
+    drawBars(f, r, 'bits');
+    return { f, r, h, cross: h + f };
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (state.mode === 'fit') {
+      const m = drawFit();
+      const fwd = state.dir === 'fwd';
+      const v = fwd ? m.f : m.r;
+      setEq({
+        rule: [[`\\mathrm{KL}(P\\,\\|\\,Q)`, PC], '=\\displaystyle\\int p(x)\\log\\frac{p(x)}{q(x)}\\,dx', '= H(P,Q) - H(P) \\;\\ge\\; 0'],
+        live: [[`q = \\mathcal{N}(${fmt(state.mu, 2)},\\ ${fmt(state.sg, 2)}^2)`, QC], [`\\quad \\mathrm{KL}(P\\|Q) = ${fmt(m.f)}`, PC], [`\\quad \\mathrm{KL}(Q\\|P) = ${fmt(m.r)}`, QC]],
+      });
+      el('result-label').textContent = fwd ? 'KL(P ‖ Q)' : 'KL(Q ‖ P)';
+      const [bm, bs] = landscape!.min;
+      setResult({
+        value: `${fmt(v)} nats`,
+        colour: fwd ? PC : QC,
+        status: `Q = N(${fmt(state.mu, 2)}, ${fmt(state.sg, 2)}²) · the lowest ${fwd ? 'KL(P‖Q)' : 'KL(Q‖P)'} is ${fmt(klAt(bm, bs))} at μ = ${fmt(bm, 2)}, σ = ${fmt(Math.exp(bs), 2)}`,
+        note: fwd
+          ? 'Averaged over P: every place P has mass and Q has little costs a lot, so the best Q spreads to cover all of P.'
+          : 'Averaged over Q: Q is only punished for putting mass where P has none, so the best Q hides inside one part of P.',
+      });
+      setRows({ 'r-f': `${fmt(m.f)} nats`, 'r-r': `${fmt(m.r)} nats`, 'r-h': `${fmt(m.h)} nats`, 'r-x': `${fmt(m.cross)} nats`, 'r-q': `N(${fmt(state.mu, 2)}, ${fmt(state.sg, 2)}²)` });
+    } else {
+      const m = drawLetters();
+      setEq({
+        rule: [[`\\mathrm{KL}(P\\,\\|\\,Q)`, PC], '=\\displaystyle\\sum_{\\text{letters}} p\\log_2\\frac{p}{q}', '= H(P,Q) - H(P)'],
+        live: [[`H(P) = ${fmt(m.h)}`, PC], [`\\quad H(P,Q) = ${fmt(m.cross)}`, QC], [`\\quad \\mathrm{KL} = ${fmt(m.f)}\\text{ bits}`, POS]],
+      });
+      el('result-label').textContent = 'KL(P ‖ Q)';
+      setResult({
+        value: `${fmt(m.f)} bits`,
+        colour: POS,
+        status: `per letter, coding ${LNAME[state.lp]} with a code built for ${LNAME[state.lq]} · the other way round: ${fmt(m.r)} bits`,
+        note: 'The best code gives each letter about −log₂ p bits. Use −log₂ q instead and the average length grows by exactly KL(P‖Q).',
+      });
+      setRows({ 'r-f': `${fmt(m.f)} bits`, 'r-r': `${fmt(m.r)} bits`, 'r-h': `${fmt(m.h)} bits`, 'r-x': `${fmt(m.cross)} bits`, 'r-q': LNAME[state.lq] });
+    }
+  }
+
+  // --- controls ----------------------------------------------------------------------
+  const sgOf = (v: number) => 0.15 * (5 / 0.15) ** (v / 1000);
+  const sgPos = (s: number) => Math.round((1000 * Math.log(s / 0.15)) / Math.log(5 / 0.15));
+  const setMu = slider('mu', (v) => { state.mu = v / 100; path = []; draw(); }, (v) => fmt(v / 100, 2));
+  const setSg = slider('sg', (v) => { state.sg = sgOf(v); path = []; draw(); }, (v) => fmt(sgOf(v), 2));
+  const push = () => { setMu(Math.round(state.mu * 100)); setSg(sgPos(state.sg)); };
+  const modeSeg = segmented('mode', (v) => setMode(v as typeof state.mode));
+  function setMode(m: typeof state.mode) {
+    state.mode = m;
+    modeSeg.select(m);
+    el('fitwrap').hidden = m !== 'fit';
+    el('letwrap').hidden = m !== 'letters';
+    fitting = false;
+    draw();
+  }
+  const truthSeg = segmented('truth', (v) => { state.truth = v; setTruth(); path = []; draw(); });
+  const dirSeg = segmented('dir', (v) => { state.dir = v as typeof state.dir; landscape = null; path = []; draw(); });
+  const lpSeg = segmented('lp', (v) => { state.lp = v; draw(); });
+  const lqSeg = segmented('lq', (v) => { state.lq = v; draw(); });
+
+  // the fit: gradient descent in (μ, log σ), drawn as a path on the map
+  let path: [number, number][] = [];
+  let fitting = false;
+  el('run').addEventListener('click', () => {
+    path = [[state.mu, Math.log(state.sg)]];
+    lr = 0.06;
+    fitting = true;
+  });
+  document.getElementById('reset')?.addEventListener('click', () => {
+    fitting = false;
+    path = [];
+    state.mu = -1.5;
+    state.sg = 0.5;
+    push();
+    draw();
+  });
+
+  function q(mu: number, sg: number) {
+    state.mu = mu;
+    state.sg = sg;
+    push();
+    path = [];
+  }
+  function fitFrom(truth: string, dir: 'fwd' | 'rev', mu: number, sg: number) {
+    setMode('fit');
+    state.truth = truth;
+    truthSeg.select(truth);
+    state.dir = dir;
+    dirSeg.select(dir);
+    setTruth();
+    q(mu, sg);
+    draw();
+  }
+  tries({
+    bell: () => { fitFrom('bell', 'fwd', -1, 0.6); el('run').click(); },
+    asym: () => fitFrom('unequal', 'fwd', 0.5, 1.2),
+    forward: () => { fitFrom('two', 'fwd', -1.5, 0.5); el('run').click(); },
+    reverse: () => { fitFrom('two', 'rev', -1.2, 1.4); el('run').click(); },
+    narrow: () => fitFrom('two', 'fwd', -2.5, 0.35),
+    letters: () => { setMode('letters'); state.lp = 'en'; state.lq = 'pt'; lpSeg.select('en'); lqSeg.select('pt'); draw(); },
+  });
+
+  // drag on the map to move Q
+  let drag = false;
+  const mouse = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const onMap = (x: number, y: number) => x >= MAP.x && x <= MAP.x + MAP.w && y >= MAP.y && y <= MAP.y + MAP.h;
+  function moveTo(x: number, y: number) {
+    const mu = MU0 + ((x - MAP.x) / MAP.w) * (MU1 - MU0);
+    const s = S1 - ((y - MAP.y) / MAP.h) * (S1 - S0);
+    q(Math.max(-5, Math.min(6, mu)), Math.exp(Math.max(S0, Math.min(S1, s))));
+    fitting = false;
+    draw();
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state.mode !== 'fit') return;
+    const { x, y } = mouse(e);
+    if (!onMap(x, y)) return;
+    drag = true;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    moveTo(x, y);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const { x, y } = mouse(e);
+    canvas.style.cursor = state.mode === 'fit' && onMap(x, y) ? 'crosshair' : '';
+    if (drag) moveTo(x, y);
+  });
+  const up = () => (drag = false);
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+
+  /** Step length in (μ, log σ): fixed, halved whenever a step would raise the KL. */
+  let lr = 0.06;
+  function loop() {
+    if (fitting) {
+      let mu = state.mu, s = Math.log(state.sg);
+      for (let k = 0; k < 3 && fitting; k++) {
+        const g = grad(mu, s), n = Math.hypot(...g);
+        if (n < 1e-6) { fitting = false; break; }
+        const before = klAt(mu, s);
+        const m2 = mu - (lr * g[0]) / n, s2 = Math.max(S0, Math.min(S1, s - (lr * g[1]) / n));
+        if (klAt(m2, s2) < before) { mu = m2; s = s2; }
+        else { lr *= 0.5; if (lr < 1e-3) fitting = false; }
+      }
+      state.mu = mu;
+      state.sg = Math.exp(s);
+      path.push([mu, s]);
+      if (path.length > 1500) fitting = false;
+      setMu(Math.round(mu * 100));
+      setSg(sgPos(state.sg));
+      draw();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  setTruth();
+  draw();
+  requestAnimationFrame(loop);
+</script>

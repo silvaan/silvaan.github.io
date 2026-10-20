@@ -320,6 +320,14 @@ export const AREAS: Area[] = [
         href: '/simulations/statistics/wasserstein',
         status: 'live',
       },
+      {
+        slug: 'kl-divergence',
+        title: 'KL Divergence',
+        description:
+          'How badly Q stands in for P: the average of log(p/q) under P. Fit a bell to two humps both ways round and watch one direction cover everything and the other pick a hump, then count the extra bits of coding English with a Portuguese code.',
+        href: '/simulations/statistics/kl-divergence',
+        status: 'live',
+      },
     ],
   },
   {
