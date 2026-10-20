@@ -15,11 +15,12 @@ import Try from '../../../components/sim/Try.astro';
   areaSlug="physics"
   title="Entropy"
   description="Lift the wall and a gas fills its box. Every collision could run backwards, and flipping every velocity really does send the gas home. Entropy counts the arrangements that look alike, S = k ln Ω, and chaos is why that count wins."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="ent" width="900" height="600" role="img" aria-label="A gas of colliding particles in a box divided into cells, held in one half by a wall, with the entropy of the cell counts plotted over time below."></canvas>
+        <canvas id="ent" width="1000" height="660" role="img" aria-label="A gas of colliding particles in a box divided into cells, held in one half by a wall, the number of ways to split particles between the halves, and the entropy of the cell counts plotted over time below."></canvas>
       </div>
       <Caption
         legend={[
@@ -33,8 +34,24 @@ import Try from '../../../components/sim/Try.astro';
     </div>
 
     <div class="sim-panel">
-      <Transport step running />
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · The wall' },
+          { value: '1', label: '2 · Lift it' },
+          { value: '2', label: '3 · Count the ways' },
+          { value: '3', label: '4 · S = k ln Ω' },
+          { value: '4', label: '5 · Backwards' },
+          { value: '5', label: '6 · Explore' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
       <Actions>
+        <button type="button" class="btn ghost" id="restart">Start over</button>
         <button type="button" class="btn" id="lift">Lift the wall</button>
         <button type="button" class="btn ghost" id="flip">Flip velocities</button>
         <button type="button" class="btn ghost" id="nudge">Flip + nudge 10⁻⁹</button>
@@ -88,7 +105,8 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
+  import { story, headline, say, withAlpha, beat, easeOut, lerp } from '../../../lib/story';
 
   // --- physics -------------------------------------------------------------
   // Soft disks in a 2.25 × 1 box, integrated with integer leapfrog
@@ -284,16 +302,18 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- drawing -------------------------------------------------------------
   const canvas = document.getElementById('ent') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ctx, W, H } = setupCanvas(canvas);
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
   const light = () => css('--stage-light') === '1';
   const ACC = '#7c8cff', WARM = '#f59e0b';
   const RGB = [[124, 140, 255], [245, 158, 11]];
 
-  const BOX = { x: 22, y: 18, w: W - 44, h: (W - 44) / LX };
+  // the box under the headline, the counting panel to its right, the trace below
+  const BOX = { x: 22, y: 172, w: 600, h: 600 / LX };
   const PXU = BOX.w / LX; // pixels per box unit
-  const TR = { x: 60, y: BOX.y + BOX.h + 58, w: W - 90, h: H - (BOX.y + BOX.h + 58) - 26 };
+  const TR = { x: 60, y: BOX.y + BOX.h + 52, w: W - 90, h: 128 };
+  const SIDE = { x: 660, y: 172, w: 320, h: 267 };
 
   /** A soft round glow, drawn additively behind each particle on dark stages. */
   function sprite(rgb: number[]) {
@@ -355,7 +375,7 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.stroke();
     // the macrostate itself, printed while the cells are big enough to read
-    if (c * r <= 32) {
+    if (c * r <= 32 && state.grid) {
       ctx.font = `${c * r <= 8 ? 15 : 12}px ui-monospace, monospace`;
       ctx.textAlign = 'right';
       for (let k = 0; k < counts.length; k++) {
@@ -545,11 +565,6 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   let S = 0;
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    drawBox();
-    drawTrace();
-  }
 
   // --- readouts ------------------------------------------------------------
   const pow10 = (ln: number) => {
@@ -606,19 +621,127 @@ import Try from '../../../components/sim/Try.astro';
     });
   }
 
-  // --- loop ----------------------------------------------------------------
-  let last = performance.now();
+  // --- the counting panel ----------------------------------------------------
+  const inkA = (a: number) => `rgba(${ink()},${a})`;
+  const lnC = (n: number, k: number) => lnFact[n] - lnFact[k] - lnFact[n - k];
+  const DOTS = ['#7c8cff', '#f59e0b', '#5eead4', '#f472b6'];
+
+  /** Chapter 3: every way to put 4 particles in two halves, then the same count for many particles. */
+  function waysPanel(t: number) {
+    const { x, y, w, h } = SIDE;
+    const small = 1 - beat(t, 6.2, 6.8);
+    if (small > 0) {
+      ctx.globalAlpha = small;
+      say(ctx, '4 particles, left | right: all 16 ways', x, y + 4, { colour: inkA(0.6), size: 13 });
+      const order = Array.from({ length: 16 }, (_, m) => m).sort((a, b) => popcount(b) - popcount(a) || a - b);
+      const used = [0, 0, 0, 0, 0];
+      order.forEach((m, k) => {
+        const left = popcount(m), col = 4 - left, row = used[left]++;
+        const a = easeOut((t - 0.5 - k * 0.18) / 0.4);
+        if (a <= 0) return;
+        const bx = x + 6 + col * 63, by = y + h - 52 - row * 24;
+        const hot = left === 2 && t > 4;
+        ctx.globalAlpha = small * a;
+        ctx.strokeStyle = hot ? '#5eead4' : inkA(0.3);
+        ctx.lineWidth = hot ? 1.6 : 1;
+        ctx.strokeRect(bx, by, 52, 18);
+        ctx.beginPath();
+        ctx.moveTo(bx + 26, by);
+        ctx.lineTo(bx + 26, by + 18);
+        ctx.stroke();
+        for (let p = 0; p < 4; p++) {
+          const inLeft = (m >> p) & 1;
+          ctx.fillStyle = DOTS[p];
+          ctx.beginPath();
+          ctx.arc(bx + (inLeft ? 6 + p * 5 : 32 + p * 5), by + 9, 2.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      ctx.globalAlpha = small;
+      for (let left = 4; left >= 0; left--) {
+        const cx = x + 6 + (4 - left) * 63 + 26;
+        say(ctx, `${left} | ${4 - left}`, cx, y + h - 22, { colour: inkA(0.6), size: 13, align: 'center' });
+        const n = [1, 4, 6, 4, 1][left];
+        say(ctx, `${n} way${n > 1 ? 's' : ''}`, cx, y + h - 60 - n * 24, { colour: left === 2 && t > 4 ? '#5eead4' : inkA(0.75), size: 13, weight: 600, align: 'center', alpha: beat(t, 3.2, 3.8) });
+      }
+      ctx.globalAlpha = 1;
+    }
+    // many particles: the count of ways for every split, relative to the most
+    const big = beat(t, 6.6, 7.2);
+    if (big <= 0) return;
+    const Ns = [10, 50, 240];
+    const shown = Ns.map((_, k) => beat(t, 6.8 + k * 2, 7.6 + k * 2));
+    const gx = (f: number) => x + 10 + (1 - f) * (w - 20);
+    const top = y + 40, bot = y + h - 40;
+    ctx.globalAlpha = big;
+    say(ctx, 'ways to split N particles, for each share on the left', x, y + 4, { colour: inkA(0.6), size: 13 });
+    ctx.strokeStyle = inkA(0.25);
+    ctx.beginPath();
+    ctx.moveTo(x + 10, bot + 0.5);
+    ctx.lineTo(x + w - 10, bot + 0.5);
+    ctx.stroke();
+    say(ctx, 'all left', gx(1), bot + 16, { colour: inkA(0.5), size: 12, align: 'center' });
+    say(ctx, 'half', gx(0.5), bot + 16, { colour: inkA(0.5), size: 12, align: 'center' });
+    say(ctx, 'all right', gx(0), bot + 16, { colour: inkA(0.5), size: 12, align: 'center' });
+    Ns.forEach((N, k) => {
+      if (shown[k] <= 0) return;
+      const latest = k === Ns.length - 1 || shown[k + 1] <= 0;
+      const peak = lnC(N, N >> 1);
+      ctx.globalAlpha = big * shown[k] * (latest ? 1 : 0.3);
+      ctx.strokeStyle = latest ? ACC : inkA(0.6);
+      ctx.lineWidth = latest ? 2.5 : 1.5;
+      ctx.beginPath();
+      for (let kk = 0; kk <= N; kk++) {
+        const X1 = gx(kk / N), Y1 = bot - Math.exp(lnC(N, kk) - peak) * (bot - top);
+        kk ? ctx.lineTo(X1, Y1) : ctx.moveTo(X1, Y1);
+      }
+      ctx.stroke();
+      if (latest) {
+        ctx.globalAlpha = big * shown[k];
+        say(ctx, `N = ${N}`, x + w - 10, top - 10, { colour: ACC, size: 18, weight: 700, align: 'right' });
+        say(ctx, `even split: 10^${(peak / Math.LN10).toFixed(1)} ways`, gx(0.5), top - 8, { colour: '#5eead4', size: 13, weight: 650, align: 'center', halo: `rgba(${css('--stage-ink-inv') || '13,14,18'},0.85)` });
+        say(ctx, 'all left: 1 way', gx(1) + 4, bot - 14, { colour: WARM, size: 13, weight: 650 });
+      }
+    });
+    ctx.globalAlpha = 1;
+  }
+  function popcount(m: number) { let c = 0; while (m) { c += m & 1; m >>= 1; } return c; }
+
+  /** The other chapters: the entropy now, as a number and a bar to its ceiling. */
+  function meterPanel() {
+    const { x, y, w } = SIDE;
+    say(ctx, 'entropy now', x, y + 4, { colour: inkA(0.55), size: 13 });
+    say(ctx, `S/k = ${S.toFixed(1)}`, x, y + 40, { colour: ACC, size: 30, weight: 700 });
+    say(ctx, `Ω ≈ ${pow10(S)} arrangements`, x, y + 76, { colour: inkA(0.8), size: 15 });
+    const f = Math.max(0, Math.min(1, S / (sMax || 1)));
+    ctx.fillStyle = inkA(0.08);
+    ctx.fillRect(x, y + 100, w, 14);
+    ctx.fillStyle = ACC;
+    ctx.fillRect(x, y + 100, w * f, 14);
+    say(ctx, `${(100 * f).toFixed(0)}% of the ceiling ${sMax.toFixed(0)}`, x, y + 130, { colour: inkA(0.6), size: 13 });
+    const [c, r] = CELLS[state.cells];
+    say(ctx, `counted in ${c * r} cells`, x, y + 152, { colour: inkA(0.45), size: 12 });
+    // the plainest summary of all: how many on each side
+    let left = 0;
+    for (let i = 0; i < state.N; i++) if (X[i] / Q < LX / 2) left++;
+    say(ctx, `left ${left}  ·  right ${state.N - left}`, x, y + 196, { colour: inkA(0.85), size: 18, weight: 650 });
+    ctx.fillStyle = withAlpha(ACC, 0.8);
+    ctx.fillRect(x, y + 214, (w * left) / state.N, 10);
+    ctx.fillStyle = withAlpha(WARM, 0.6);
+    ctx.fillRect(x + (w * left) / state.N, y + 214, w - (w * left) / state.N, 10);
+  }
+
+  // --- the story -------------------------------------------------------------
+  let pending: { at: number; nudge: boolean } | null = null;
   function advance(n: number) {
     for (let k = 0; k < n; k++) {
       step();
       if (state.hold > performance.now()) break;
     }
   }
-  function frame(now: number) {
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    if (!state.wall && state.wallFade > 0) state.wallFade = Math.max(0, state.wallFade - dt * 2.5);
-    if (state.running && state.hold <= now) {
+  function physics(live: number) {
+    if (!state.wall && state.wallFade > 0) state.wallFade = Math.max(0, state.wallFade - Math.max(live, 0.016) * 2.5);
+    if (live > 0 && state.hold <= performance.now()) {
       advance(state.speed);
       if (pending && state.t - state.t0 >= pending.at && state.dir > 0) {
         flip(pending.nudge);
@@ -629,51 +752,20 @@ import Try from '../../../components/sim/Try.astro';
       trace.push(S);
       if (trace.length > SPAN) trace.shift();
     } else S = entropy();
-    draw();
-    updateText();
-    requestAnimationFrame(frame);
   }
 
-  // --- controls ------------------------------------------------------------
-  let pending: { at: number; nudge: boolean } | null = null;
-  const tp = transport({
-    onRun: (on) => { state.running = on; },
-    onStep: () => {
-      state.running = false;
-      tp.setRunning(false);
-      state.hold = 0;
-      advance(state.speed);
-      S = entropy();
-      frameNo++;
-      trace.push(S);
-      if (trace.length > SPAN) trace.shift();
-    },
-    onReset: () => { pending = null; build(); },
-  });
-  el('lift').addEventListener('click', lift);
-  el('flip').addEventListener('click', () => { pending = null; flip(false); });
-  el('nudge').addEventListener('click', () => { pending = null; flip(true); });
+  const chapters = [
+    { dur: 6, title: 'A gas behind a wall', body: 'Two hundred and forty particles, bouncing off each other and the walls, all held in the left half of a box.' },
+    { dur: 9, title: 'Lift the wall', body: 'Nothing pushes the gas to the right. Each particle just wanders. Yet the gas spreads through the whole box, and never gathers back.' },
+    { dur: 14, title: 'Count the ways', body: 'Only count how many are on each side. All 4 on the left: 1 way. Two and two: 6 ways. With 240 particles the even split has about 10⁷⁰ times more ways. The gas lands where the ways are.' },
+    { dur: 10, title: 'Entropy counts the ways', body: 'Split the box into cells and count the arrangements Ω that give the same cell counts. Entropy is its log, S = k ln Ω. It climbs to its ceiling and jitters there.' },
+    { dur: Infinity, title: 'Run it backwards', body: 'Every collision can run in reverse. Flip all the velocities and the gas really goes home. Now move one particle by a billionth first.' },
+    { dur: Infinity, title: 'Explore', body: 'Lift, flip, nudge, mix two gases, change the number of particles or the cells.' },
+  ];
 
-  const legB = el('leg-b');
-  const mode = segmented('mode', (v) => {
-    state.mode = v;
-    legB.hidden = v !== 'two';
-    pending = null;
-    build();
-  });
-  legB.hidden = true;
-  const setN = slider('np', (v) => { state.N = v; pending = null; build(); });
-  const cellText = (v: number) => String(CELLS[v][0] * CELLS[v][1]);
-  const setCells = slider('cells', (v) => {
-    state.cells = v;
-    cellsChanged();
-    trace.length = 0;
-  }, cellText);
-  const setSpeed = slider('spd', (v) => { state.speed = v; }, (v) => `${v} steps / frame`);
-  check('grid', (on) => { state.grid = on; });
-
-  /** Start over, lift the wall, and optionally flip after `flipAt` steps. */
-  function scene(o: { N?: number; cells?: number; speed?: number; mode?: string; flipAt?: number; nudge?: boolean }) {
+  let userSet = false;
+  let phase = 0, backAt = -1, done4 = false;
+  function config(o: { N?: number; cells?: number; speed?: number; mode?: string; grid?: boolean }) {
     state.mode = o.mode ?? 'one';
     mode.select(state.mode);
     legB.hidden = state.mode !== 'two';
@@ -683,11 +775,85 @@ import Try from '../../../components/sim/Try.astro';
     setCells(state.cells);
     state.speed = o.speed ?? 10;
     setSpeed(state.speed);
+    state.grid = o.grid ?? false;
+    setGrid(state.grid);
+  }
+
+  const st = story({
+    chapters,
+    enter(i) {
+      if (i < 5 && !userSet) config({ grid: i === 3, speed: i === 4 ? 14 : 10 });
+      pending = null;
+      if (i === 0 || i === 1) build();
+      if ((i === 2 || i === 3) && state.wall) { build(); lift(); }
+      if (i === 4) { phase = 0; backAt = -1; done4 = false; build(); lift(); pending = { at: 1500, nudge: false }; }
+    },
+    done: (i, t) => (i === 4 ? done4 : t >= chapters[i].dur),
+    relevant: (i) => [['np'], ['lift'], [], ['cells', 'grid'], ['flip', 'nudge'], null][i],
+    frame,
+  });
+
+  function frame(ch: number, t: number, _dt: number, live: number) {
+    if (ch === 1 && state.wall && t > 1.2 && !st.manual()) lift();
+    if (ch === 4 && !st.manual()) {
+      if (state.back && backAt < 0) backAt = t;
+      if (phase === 0 && backAt >= 0 && t > backAt + 4) {
+        phase = 1;
+        backAt = -1;
+        build();
+        lift();
+        pending = { at: 1500, nudge: true };
+      } else if (phase === 1 && backAt >= 0 && t > backAt + 5) done4 = true;
+    }
+    physics(live);
+    ctx.clearRect(0, 0, W, H);
+    drawBox();
+    drawTrace();
+    if (ch === 2) waysPanel(t);
+    else meterPanel();
+    if (ch === 4) {
+      const msg = state.dir < 0
+        ? phase ? 'velocities flipped, one particle a billionth off' : 'every velocity flipped: the film runs backwards'
+        : phase ? 'again, but this time a nudge of 10⁻⁹ comes with the flip' : 'running forwards…';
+      say(ctx, msg, BOX.x + 10, BOX.y - 14, { colour: phase && state.dir < 0 ? WARM : ACC, size: 14, weight: 650 });
+    }
+    headline(ctx, inkA, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 620, accent: ACC, manual: st.manual() });
+    updateText();
+  }
+
+  // --- controls ------------------------------------------------------------
+  el('lift').addEventListener('click', lift);
+  el('flip').addEventListener('click', () => { pending = null; flip(false); });
+  el('nudge').addEventListener('click', () => { pending = null; flip(true); });
+  el('restart').addEventListener('click', () => { pending = null; build(); });
+
+  const legB = el('leg-b');
+  const mode = segmented('mode', (v) => {
+    state.mode = v;
+    legB.hidden = v !== 'two';
+    pending = null;
+    userSet = true;
+    build();
+  });
+  legB.hidden = true;
+  const setN = slider('np', (v) => { state.N = v; pending = null; userSet = true; build(); });
+  const cellText = (v: number) => String(CELLS[v][0] * CELLS[v][1]);
+  const setCells = slider('cells', (v) => {
+    state.cells = v;
+    cellsChanged();
+    trace.length = 0;
+  }, cellText);
+  const setSpeed = slider('spd', (v) => { state.speed = v; }, (v) => `${v} steps / frame`);
+  const setGrid = check('grid', (on) => { state.grid = on; });
+
+  /** Start over, lift the wall, and optionally flip after `flipAt` steps. */
+  function scene(o: { N?: number; cells?: number; speed?: number; mode?: string; flipAt?: number; nudge?: boolean }) {
+    st.go(5);
+    config({ ...o, grid: true });
     build();
     lift();
     pending = o.flipAt ? { at: o.flipAt, nudge: !!o.nudge } : null;
-    state.running = true;
-    tp.setRunning(true);
+    st.play(true);
   }
   tries({
     lift: () => scene({}),
@@ -697,5 +863,5 @@ import Try from '../../../components/sim/Try.astro';
   });
 
   build();
-  requestAnimationFrame(frame);
+  st.start();
 </script>
