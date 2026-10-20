@@ -1,0 +1,539 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="Perplexity of a Neighbourhood"
+  description="Give a point a Gaussian and its neighbours become probabilities. Perplexity, two to the entropy, counts how many neighbours that really is, and t-SNE picks a width for every point so the count comes out the same: narrow in a crowd, wide out on its own."
+  shortcuts={['animate', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="pp"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A cloud of points with a Gaussian around the chosen point; each neighbour drawn as large as its probability. On the right, the probabilities sorted with a flat distribution of the same perplexity, and the search for the width that gives the perplexity asked for."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the chosen point i and its σᵢ', color: '#fbbf24' },
+          { label: 'neighbours, sized by p(j | i)', color: '#7c8cff' },
+          { label: 'a flat spread over Perp neighbours', color: '#5eead4' },
+          { label: 'the binary search', color: '#f9736a' },
+        ]}
+        hint="Click a point to choose it · drag points to move them"
+      />
+      <Result label="Width of the Gaussian" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="data"
+        label="Points"
+        attr="d"
+        options={[
+          { value: 'density', label: 'Dense and sparse' },
+          { value: 'outlier', label: 'An outlier' },
+          { value: 'line', label: 'Thinning curve' },
+          { value: 'uniform', label: 'Even' },
+        ]}
+      />
+      <Slider id="perp" label="Perplexity" min={0} max={100} value={45} display="10" hint={['few neighbours', 'everyone']} />
+      <Transport animate="Search for σᵢ" />
+      <Checks
+        label="Show"
+        items={[
+          { id: 'lines', label: 'Links to the neighbours', checked: true },
+          { id: 'all', label: 'σ of every point, at this perplexity' },
+        ]}
+      />
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'r-sigma', label: 'σᵢ' },
+          { id: 'r-near', label: 'distance to the nearest point' },
+          { id: 'r-h', label: 'entropy H(Pᵢ)' },
+          { id: 'r-perp', label: 'perplexity 2^H' },
+          { id: 'r-90', label: 'points holding 90% of p' },
+          { id: 'r-steps', label: 'search steps' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Perplexity is a <b>smooth count of neighbours</b>. At 5 the sorted bars hold about five big ones and a tail;
+      the teal box is a flat spread over exactly 5 that has the same entropy. <Try id="five" />
+    </li>
+    <li>
+      Turn on σ for every point. Inside the dense group the circles are small, in the sparse one they are wide:
+      the same perplexity means the <b>same number of neighbours, not the same distance</b>. This is how t-SNE
+      copes with clusters of different density. <Try id="density" />
+    </li>
+    <li>
+      The outlier has no near neighbours, so its σ grows until it takes in about Perp points from the group,
+      however far away they are. Every point gets its share, <b>even the lonely ones</b>. <Try id="outlier" />
+    </li>
+    <li>
+      Wider σ always means a flatter spread and a higher perplexity, so σ can be found by <b>halving an interval</b>:
+      too few neighbours, widen; too many, narrow. Each red dot is one guess. <Try id="search" />
+    </li>
+    <li>
+      Perplexity can never pass N − 1, every other point equally likely. Push it to the top and σ shoots off:
+      the neighbourhood <b>stops being local</b>, and the structure t-SNE would keep is gone. <Try id="max" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { sqDistances, searchSigma, rowAt, type Search } from '../../../lib/tsne';
+
+  // One point's view of the others, as t-SNE builds it: a Gaussian of width
+  // σ_i turns distances into probabilities p(j|i), and σ_i is searched for so
+  // the distribution's perplexity matches the one asked for.
+  type P = [number, number];
+  const SEL = '#fbbf24', NB = '#7c8cff', FLAT = '#5eead4', SEARCH = '#f9736a';
+
+  const state = { data: 'density', perp: 10, sel: 0, lines: true, all: false };
+  let pts: P[] = [];
+  let D = new Float64Array(0);
+  let sr: Search;
+  let sigmas: number[] = [];
+  /** How many steps of the search are shown; Infinity when it is done. */
+  let shown = Infinity;
+  let stepClock = 0;
+
+  const canvas = el('pp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const { label } = makeText(ctx, ink);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  void W; void H;
+
+  const PLOT = { x: 16, y: 16, w: 600, h: 568 };
+  const BARS = { x: 652, y: 46, w: 330, h: 210 };
+  const SRCH = { x: 652, y: 330, w: 330, h: 222 };
+
+  // --- the points ---------------------------------------------------------------
+  function sample(kind: string): { pts: P[]; sel: number } {
+    let s = 11;
+    const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const g = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
+    const blob = (n: number, cx: number, cy: number, sd: number): P[] =>
+      Array.from({ length: n }, () => [cx + g() * sd, cy + g() * sd]);
+    switch (kind) {
+      case 'outlier': {
+        const ps = blob(70, -0.8, -0.4, 0.9);
+        ps.push([3.6, 3.0]);
+        return { pts: ps, sel: ps.length - 1 };
+      }
+      case 'line': {
+        const ps: P[] = [];
+        for (let k = 0; k < 64; k++) {
+          const u = (k / 63) ** 1.9;
+          const x = -4 + 8 * u;
+          ps.push([x + g() * 0.05, 1.6 * Math.sin(x * 0.8) + g() * 0.05]);
+        }
+        return { pts: ps, sel: 4 };
+      }
+      case 'uniform': {
+        const ps: P[] = [];
+        for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) ps.push([-3.6 + a * 0.9 + (rnd() - 0.5) * 0.5, -3.6 + b * 0.9 + (rnd() - 0.5) * 0.5]);
+        return { pts: ps, sel: 40 };
+      }
+      default: {
+        const ps = [...blob(45, -1.8, 0.5, 0.45), ...blob(45, 1.7, -0.4, 1.1)];
+        return { pts: ps, sel: 0 };
+      }
+    }
+  }
+
+  // world → screen: a fixed frame per data set, so dragging does not rescale it
+  let view = { cx: 0, cy: 0, s: 60 };
+  function frame() {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    const s = Math.min((PLOT.w - 80) / (x1 - x0 || 1), (PLOT.h - 80) / (y1 - y0 || 1));
+    view = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s };
+  }
+  const sx = (x: number) => PLOT.x + PLOT.w / 2 + (x - view.cx) * view.s;
+  const sy = (y: number) => PLOT.y + PLOT.h / 2 - (y - view.cy) * view.s;
+
+  const maxPerp = () => pts.length - 1.01;
+
+  function recompute() {
+    D = sqDistances(pts);
+    state.perp = Math.min(state.perp, maxPerp());
+    sr = searchSigma(D, pts.length, state.sel, state.perp);
+    sigmas = state.all ? pts.map((_, i) => searchSigma(D, pts.length, i, state.perp).sigma) : [];
+  }
+
+  function load(kind: string) {
+    state.data = kind;
+    const s = sample(kind);
+    pts = s.pts;
+    state.sel = s.sel;
+    frame();
+    shown = Infinity;
+    recompute();
+  }
+
+  /** What is on screen: the finished search, or the guess the animation is at. */
+  function current() {
+    const N = pts.length;
+    if (shown >= sr.steps.length) return { sigma: sr.sigma, p: sr.p, perp: sr.perp, H: sr.H };
+    const st = sr.steps[Math.max(0, shown - 1)];
+    const r = rowAt(D, N, state.sel, st.sigma);
+    return { sigma: st.sigma, p: r.p, perp: r.perp, H: r.H };
+  }
+
+  // --- drawing ------------------------------------------------------------------
+  function hexA(hex: string, a: number) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  const UI = (size: number, weight = 400) => `${weight} ${size}px 'Inter', system-ui, sans-serif`;
+  function text(s: string, x: number, y: number, size: number, col: string, align: CanvasTextAlign = 'left') {
+    ctx.font = UI(size);
+    ctx.fillStyle = col;
+    ctx.textAlign = align;
+    ctx.fillText(s, x, y);
+    ctx.textAlign = 'left';
+  }
+
+  function drawPlot(cur: ReturnType<typeof current>) {
+    const N = pts.length, [xi, yi] = pts[state.sel];
+    const px = sx(xi), py = sy(yi), sp = cur.sigma * view.s;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PLOT.x, PLOT.y, PLOT.w, PLOT.h);
+    ctx.clip();
+    // the Gaussian itself, as a glow
+    const R = Math.min(3 * sp, 2000);
+    const grd = ctx.createRadialGradient(px, py, 0, px, py, R);
+    for (let k = 0; k <= 8; k++) {
+      const r = (k / 8) * 3;
+      grd.addColorStop(k / 8, hexA(SEL, 0.2 * Math.exp((-r * r) / 2)));
+    }
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(px, py, R, 0, 2 * Math.PI);
+    ctx.fill();
+    // every point's own σ, faintly
+    if (state.all)
+      sigmas.forEach((s, j) => {
+        ctx.strokeStyle = ink(0.13);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(sx(pts[j][0]), sy(pts[j][1]), s * view.s, 0, 2 * Math.PI);
+        ctx.stroke();
+      });
+    // σ and 2σ
+    ctx.strokeStyle = hexA(SEL, 0.85);
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    for (const m of [1, 2]) {
+      ctx.globalAlpha = m === 1 ? 1 : 0.45;
+      ctx.beginPath();
+      ctx.arc(px, py, m * sp, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+    let pmax = 0;
+    for (let j = 0; j < N; j++) pmax = Math.max(pmax, cur.p[j]);
+    if (state.lines)
+      for (let j = 0; j < N; j++) {
+        const f = cur.p[j] / pmax;
+        if (f < 0.01) continue;
+        ctx.strokeStyle = hexA(NB, 0.6 * f);
+        ctx.lineWidth = 0.6 + 2 * f;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(sx(pts[j][0]), sy(pts[j][1]));
+        ctx.stroke();
+      }
+    for (let j = 0; j < N; j++) {
+      if (j === state.sel) continue;
+      const f = cur.p[j] / pmax;
+      ctx.fillStyle = hexA(NB, 0.28 + 0.72 * Math.sqrt(f));
+      ctx.beginPath();
+      ctx.arc(sx(pts[j][0]), sy(pts[j][1]), 2.6 + 9 * Math.sqrt(f), 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    ctx.fillStyle = SEL;
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(px, py, 6.5, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    // σ label on the ring
+    const lx = px + sp * Math.cos(-0.6), ly = py + sp * Math.sin(-0.6);
+    if (sp > 14 && lx < PLOT.x + PLOT.w - 40 && ly > PLOT.y + 14) {
+      ctx.fillStyle = inv(0.75);
+      ctx.fillRect(lx + 3, ly - 13, 86, 18);
+      label(`σ_i = ${cur.sigma.toFixed(2)}`, lx + 7, ly, 1, 'left', 8.5, SEL);
+    }
+    ctx.restore();
+    text('i', px + 9, py - 8, 13, SEL);
+  }
+
+  function drawBars(cur: ReturnType<typeof current>) {
+    const N = pts.length, B = BARS;
+    text('p(j | i), largest first', B.x, B.y - 18, 12, ink(0.55));
+    const sorted = Array.from(cur.p).filter((_, j) => j !== state.sel).sort((a, b) => b - a);
+    const flat = 1 / cur.perp;
+    const top = Math.max(sorted[0], flat) * 1.08;
+    const bw = B.w / (N - 1);
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(B.x, B.y + B.h + 0.5);
+    ctx.lineTo(B.x + B.w, B.y + B.h + 0.5);
+    ctx.stroke();
+    sorted.forEach((p, k) => {
+      const h = (p / top) * B.h;
+      ctx.fillStyle = hexA(NB, 0.85);
+      ctx.fillRect(B.x + k * bw + bw * 0.12, B.y + B.h - h, Math.max(1, bw * 0.76), h);
+    });
+    // the flat distribution with the same entropy
+    const fw = cur.perp * bw, fh = (flat / top) * B.h;
+    ctx.strokeStyle = FLAT;
+    ctx.fillStyle = hexA(FLAT, 0.1);
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.fillRect(B.x, B.y + B.h - fh, fw, fh);
+    ctx.strokeRect(B.x, B.y + B.h - fh, fw, fh);
+    ctx.setLineDash([]);
+    const tx = Math.min(B.x + fw + 6, B.x + B.w - 150);
+    text(`flat over ${cur.perp.toFixed(1)} points`, tx, Math.max(B.y + 12, B.y + B.h - fh - 6), 11.5, FLAT);
+    text('same entropy, same perplexity', tx, Math.max(B.y + 27, B.y + B.h - fh + 9), 11, ink(0.45));
+    text('neighbours, nearest in probability first →', B.x, B.y + B.h + 16, 11, ink(0.4));
+  }
+
+  function drawSearch(cur: ReturnType<typeof current>) {
+    const N = pts.length, B = SRCH;
+    text('finding σᵢ: perplexity rises with σ, so halve the gap', B.x, B.y - 18, 12, ink(0.55));
+    // the σ range: from a fraction of the nearest distance to well past the farthest
+    let dmin = Infinity, dmax = 0;
+    for (let j = 0; j < N; j++) if (j !== state.sel) { const d = Math.sqrt(D[state.sel * N + j]); dmin = Math.min(dmin, d); dmax = Math.max(dmax, d); }
+    const l0 = Math.log(Math.max(1e-3, dmin * 0.15)), l1 = Math.log(dmax * 3);
+    const X = (s: number) => B.x + ((Math.log(s) - l0) / (l1 - l0)) * B.w;
+    const Y = (p: number) => B.y + B.h - (Math.log(p) / Math.log(N - 1)) * B.h;
+    ctx.strokeStyle = ink(0.18);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(B.x, B.y, B.w, B.h);
+    for (const v of [1, 3, 10, 30, 100].filter((v) => v < N)) {
+      ctx.strokeStyle = ink(0.06);
+      ctx.beginPath();
+      ctx.moveTo(B.x, Y(v));
+      ctx.lineTo(B.x + B.w, Y(v));
+      ctx.stroke();
+      text(String(v), B.x - 4, Y(v) + 4, 10, ink(0.4), 'right');
+    }
+    text(`${N - 1}`, B.x - 4, B.y + 10, 10, ink(0.4), 'right');
+    // the curve
+    ctx.strokeStyle = ink(0.75);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    const buf = new Float64Array(N);
+    for (let k = 0; k <= 120; k++) {
+      const s = Math.exp(l0 + ((l1 - l0) * k) / 120);
+      const p = rowAt(D, N, state.sel, s, buf).perp;
+      if (k) ctx.lineTo(X(s), Y(p)); else ctx.moveTo(X(s), Y(p));
+    }
+    ctx.stroke();
+    // the target
+    ctx.strokeStyle = hexA(SEL, 0.8);
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(B.x, Y(state.perp));
+    ctx.lineTo(B.x + B.w, Y(state.perp));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    text(`asked for ${state.perp.toFixed(state.perp < 10 ? 1 : 0)}`, B.x + B.w - 4, Y(state.perp) - 5, 11, SEL, 'right');
+    // the guesses
+    const steps = sr.steps.slice(0, Math.min(shown, sr.steps.length));
+    ctx.strokeStyle = hexA(SEARCH, 0.5);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    steps.forEach((st, k) => (k ? ctx.lineTo(X(st.sigma), Y(st.perp)) : ctx.moveTo(X(st.sigma), Y(st.perp))));
+    ctx.stroke();
+    steps.forEach((st, k) => {
+      const last = k === steps.length - 1;
+      ctx.fillStyle = last ? SEARCH : hexA(SEARCH, 0.55);
+      ctx.beginPath();
+      ctx.arc(X(st.sigma), Y(st.perp), last ? 5 : 3.2, 0, 2 * Math.PI);
+      ctx.fill();
+      if (k < 5) text(String(k + 1), X(st.sigma) + 6, Y(st.perp) + (k % 2 ? 14 : -6), 10, hexA(SEARCH, 0.9));
+    });
+    // σ found
+    ctx.strokeStyle = hexA(SEL, 0.5);
+    ctx.beginPath();
+    ctx.moveTo(X(cur.sigma), B.y);
+    ctx.lineTo(X(cur.sigma), B.y + B.h);
+    ctx.stroke();
+    text('σ, log scale →', B.x + B.w, B.y + B.h + 15, 11, ink(0.4), 'right');
+    // the empty corners: the curve runs from bottom left to top right
+    text('above the line: too many, narrow σ', B.x + 6, B.y + 14, 10.5, ink(0.38));
+    text('below: too few, widen σ', B.x + B.w - 6, B.y + B.h - 8, 10.5, ink(0.38), 'right');
+  }
+
+  function update(cur: ReturnType<typeof current>) {
+    const N = pts.length, i = state.sel;
+    let near = Infinity;
+    for (let j = 0; j < N; j++) if (j !== i) near = Math.min(near, Math.sqrt(D[i * N + j]));
+    const sorted = Array.from(cur.p).sort((a, b) => b - a);
+    let acc = 0, k90 = 0;
+    while (acc < 0.9 && k90 < sorted.length) acc += sorted[k90++];
+    const steps = Math.min(shown, sr.steps.length);
+    setRows({
+      'r-sigma': cur.sigma.toFixed(3),
+      'r-near': near.toFixed(3),
+      'r-h': `${cur.H.toFixed(2)} bits`,
+      'r-perp': cur.perp.toFixed(2),
+      'r-90': `${k90} of ${N - 1}`,
+      'r-steps': shown >= sr.steps.length ? String(sr.steps.length) : `${steps} of ${sr.steps.length}`,
+    });
+    setEq({
+      rule: [[`p_{j|i}\\propto e^{-\\|x_i-x_j\\|^2/2\\sigma_i^2}`, NB], '\\qquad', [`\\mathrm{Perp}(P_i)=2^{H(P_i)}`, FLAT], '\\quad', `H(P_i)=-\\textstyle\\sum_j p_{j|i}\\log_2 p_{j|i}`],
+      live: [[`\\sigma_i = ${cur.sigma.toFixed(3)}`, SEL], [`\\quad H = ${cur.H.toFixed(2)}\\text{ bits}`, ink(0.9)], [`\\quad 2^H = ${cur.perp.toFixed(2)}`, FLAT]],
+    });
+    const ratio = cur.sigma / near;
+    setResult({
+      value: `σᵢ = ${cur.sigma.toFixed(2)}`,
+      colour: SEL,
+      status: `${cur.perp.toFixed(1)} effective neighbours · ${k90} points hold 90% of the probability`,
+      note:
+        shown < sr.steps.length
+          ? `Guess ${steps}: perplexity ${cur.perp.toFixed(1)} against ${state.perp.toFixed(1)} asked for, so the next guess goes ${cur.perp < state.perp ? 'wider' : 'narrower'}.`
+          : ratio > 4
+            ? `σᵢ is ${ratio.toFixed(0)} times the distance to the nearest point: this point is alone, and has to reach far to find its neighbours.`
+            : `σᵢ is ${ratio.toFixed(1)} times the distance to the nearest point. Pick a point somewhere else and the width changes, but the count of neighbours does not.`,
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, 1000, 600);
+    const cur = current();
+    drawPlot(cur);
+    drawBars(cur);
+    drawSearch(cur);
+    update(cur);
+  }
+
+  // --- controls -----------------------------------------------------------------
+  const perpOf = (v: number) => Math.exp(Math.log(1.5) + (v / 100) * (Math.log(maxPerp()) - Math.log(1.5)));
+  const vOf = (p: number) => Math.round((100 * (Math.log(p) - Math.log(1.5))) / (Math.log(maxPerp()) - Math.log(1.5)));
+  const fmtPerp = (p: number) => (p < 10 ? p.toFixed(1) : p.toFixed(0));
+  const setPerp = slider('perp', (v) => { state.perp = perpOf(v); shown = Infinity; recompute(); draw(); }, (v) => fmtPerp(perpOf(v)));
+  const dataSeg = segmented('data', (v) => { load(v); setPerp(vOf(state.perp)); draw(); });
+  check('lines', (on) => { state.lines = on; draw(); });
+  const setAll = check('all', (on) => { state.all = on; recompute(); draw(); });
+
+  let animating = false;
+  function search() {
+    shown = 1;
+    stepClock = 0;
+    animating = true;
+  }
+  transport({ onRun: () => search(), onReset: () => { load(state.data); setPerp(vOf(state.perp)); draw(); } });
+
+  /** Set a perplexity from code, through the slider so its label agrees. */
+  function perp(p: number) {
+    state.perp = Math.min(p, maxPerp());
+    setPerp(vOf(state.perp));
+    state.perp = perpOf(vOf(state.perp));
+    shown = Infinity;
+    recompute();
+  }
+  function data(kind: string) {
+    dataSeg.select(kind);
+    load(kind);
+  }
+  tries({
+    five: () => { data('density'); perp(5); draw(); },
+    density: () => { data('density'); state.all = true; setAll(true); perp(8); draw(); },
+    outlier: () => { data('outlier'); state.all = false; setAll(false); perp(10); draw(); },
+    search: () => { perp(12); search(); },
+    max: () => { perp(maxPerp()); draw(); },
+  });
+
+  // --- pointer: pick and drag ----------------------------------------------------
+  let drag = -1;
+  const local = (e: PointerEvent) => {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * 1000, y: ((e.clientY - b.top) / b.height) * 600 };
+  };
+  const nearest = (x: number, y: number) => {
+    let best = -1, bd = 14 * 14;
+    pts.forEach(([px, py], j) => {
+      const d = (sx(px) - x) ** 2 + (sy(py) - y) ** 2;
+      if (d < bd) { bd = d; best = j; }
+    });
+    return best;
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = local(e);
+    const j = nearest(p.x, p.y);
+    if (j < 0) return;
+    drag = j;
+    canvas.setPointerCapture(e.pointerId);
+    if (j !== state.sel) { state.sel = j; shown = Infinity; recompute(); draw(); }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = local(e);
+    if (drag < 0) {
+      canvas.style.cursor = nearest(p.x, p.y) >= 0 ? 'grab' : '';
+      return;
+    }
+    pts[drag] = [view.cx + (p.x - PLOT.x - PLOT.w / 2) / view.s, view.cy - (p.y - PLOT.y - PLOT.h / 2) / view.s];
+    recompute();
+    draw();
+  });
+  const up = () => { drag = -1; };
+  canvas.addEventListener('pointerup', up);
+  canvas.addEventListener('pointercancel', up);
+
+  let last = 0;
+  function loop(ts: number) {
+    const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0;
+    last = ts;
+    if (animating) {
+      stepClock += dt;
+      if (stepClock > 0.5) {
+        stepClock = 0;
+        shown++;
+        if (shown >= sr.steps.length) { shown = Infinity; animating = false; }
+      }
+      draw();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  load('density');
+  perp(10);
+  draw();
+  requestAnimationFrame(loop);
+</script>

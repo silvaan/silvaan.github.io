@@ -400,6 +400,14 @@ export const AREAS: Area[] = [
         href: '/simulations/machine-learning/pca',
         status: 'live',
       },
+      {
+        slug: 'perplexity',
+        title: 'Perplexity of a Neighbourhood',
+        description:
+          'Put a Gaussian on one point and its neighbours become probabilities. Perplexity counts how many of them really count, and a binary search finds the width that makes the count come out right: narrow in a crowd, wide for a loner.',
+        href: '/simulations/machine-learning/perplexity',
+        status: 'live',
+      },
     ],
   },
   {
