@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Central Limit Theorem"
-  description="Add up n draws from any distribution, over and over. The sums and the means pile into a bell whatever the source looked like, and with ±1 coin steps each sum is a random walk."
+  description="Draw a few numbers from any lopsided distribution and average them. Do it again and again: the averages pile into a bell, whatever the source looked like. The middle wins because there are many more ways to land there, and every four times the draws halves the spread."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -21,27 +21,44 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="clt"
           width="1000"
-          height="600"
+          height="640"
           role="img"
-          aria-label="A histogram of sample means or sums with the predicted Gaussian drawn over it, above it either the source distribution or the paths of the running sums."
+          aria-label="Draws from a source distribution flying together into averages that pile up into a histogram, dice combinations stacking by their sum, and the predicted bell narrowing as the sample size grows."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'source distribution', color: 'rgba(154,160,172,0.6)', id: 'lg-top' },
-          { label: 'sample means', color: '#7c8cff', id: 'lg-hist' },
+          { label: 'source distribution', color: 'rgba(154,160,172,0.7)', id: 'lg-top' },
+          { label: 'averages of n draws', color: '#7c8cff', id: 'lg-hist' },
           { label: 'predicted bell', color: '#5eead4' },
         ]}
+        hint="Pick a source or move n to take over · Run resumes the tour"
       />
       <Result label="Spread of the mean σ/√n" />
     </div>
 
     <div class="sim-panel">
-      <Transport />
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · One draw' },
+          { value: '1', label: '2 · Average two' },
+          { value: '2', label: '3 · Count the ways' },
+          { value: '3', label: '4 · Average more' },
+          { value: '4', label: '5 · √n' },
+          { value: '5', label: '6 · Explore' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
       <Seg
         id="src"
         label="Source distribution"
         attr="src"
+        active="exponential"
         options={[
           { value: 'uniform', label: 'Uniform' },
           { value: 'exponential', label: 'Exponential' },
@@ -52,7 +69,7 @@ import Try from '../../../components/sim/Try.astro';
       />
       <Seg
         id="stat"
-        label="Show"
+        label="Show (Explore)"
         attr="k"
         options={[
           { value: 'mean', label: 'Mean X̄' },
@@ -60,9 +77,10 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Slider id="n" label="Sample size n" min={1} max={100} value={5} />
+      <button type="button" class="btn ghost" id="clear">Clear the pile</button>
       <Readout
         rows={[
-          { id: 'r-count', label: 'trials collected' },
+          { id: 'r-count', label: 'averages collected' },
           { id: 'r-sigma', label: 'σ of the source' },
           { id: 'r-pred', label: 'predicted spread' },
           { id: 'r-meas', label: 'measured spread' },
@@ -73,17 +91,24 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      At <b>n = 1</b> the big histogram is just the raw source, and Exponential
-      looks nothing like a bell. <Try id="raw" />
+      With one draw the pile is just the source, lopsided. Averaging only two already pulls in the extremes: both
+      draws would have to be extreme together. <Try id="two" />
     </li>
     <li>
-      Raise n to 30. However skewed the source, the means pile into the
-      <b>same Gaussian</b>, narrower by a factor of √n. <Try id="bell" />
+      Two dice make 7 in six ways and 2 in one way. With three dice the counts already trace a bell: the middle can
+      be reached in far more ways. <Try id="ways" />
     </li>
     <li>
-      With <b>±1 steps</b> and the Sum view, each trial is a <b>random walk</b>
-      and the sum is where it ends. The paths fan out inside ±√k, so going twice as
-      far takes four times the steps. <Try id="walk" />
+      Switch the source to Bimodal: two humps with nothing in the middle, yet the averages of 30 draws pile up
+      exactly in that empty middle. <Try id="bimodal" />
+    </li>
+    <li>
+      Each four times the draws halves the spread: σ/√n. To be twice as precise you need four times the data.
+      <Try id="sqrt" />
+    </li>
+    <li>
+      With <b>±1 steps</b> and the Sum view, each trial is a <b>random walk</b> and the sum is where it ends. The
+      paths fan out inside ±√k. <Try id="walk" />
     </li>
   </Fragment>
 </SimLayout>
@@ -92,12 +117,19 @@ import Try from '../../../components/sim/Try.astro';
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
+  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
+  import { story, headline, say, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
 
-  const MEANS = '#7c8cff', BELL = '#5eead4', WALK = '#f59e0b';
+  // The theorem as a story: draws fly out of a lopsided source, merge into
+  // their average and drop onto a pile; dice combinations stack by their sum
+  // to show why the middle wins; the pile turns into the bell as n grows, and
+  // the bells narrow like 1/√n. Explore is the old lab, with the random walks.
+  const MEANS = '#7c8cff', BELL = '#5eead4', WALK = '#f59e0b', DRAW = '#e8e9ec', ACC = '#7c8cff';
+
   type Lattice = { o: number; d: number };
   type Src = {
     sample: () => number;
+    pdf: (x: number) => number;
     mean: number;
     var: number;
     range: [number, number];
@@ -105,21 +137,22 @@ import Try from '../../../components/sim/Try.astro';
     lat?: Lattice;
   };
   const SOURCES: Record<string, Src> = {
-    uniform: { sample: () => Math.random(), mean: 0.5, var: 1 / 12, range: [0, 1], support: [0, 1] },
-    exponential: { sample: () => -Math.log(1 - Math.random()), mean: 1, var: 1, range: [0, 4], support: [0, Infinity] },
+    uniform: { sample: () => Math.random(), pdf: (x) => (x >= 0 && x <= 1 ? 1 : 0), mean: 0.5, var: 1 / 12, range: [0, 1], support: [0, 1] },
+    exponential: { sample: () => -Math.log(1 - Math.random()), pdf: (x) => (x >= 0 ? Math.exp(-x) : 0), mean: 1, var: 1, range: [0, 4], support: [0, Infinity] },
     bimodal: {
       sample: () => (Math.random() < 0.5 ? Math.random() * 0.2 : 0.8 + Math.random() * 0.2),
+      pdf: (x) => ((x >= 0 && x <= 0.2) || (x >= 0.8 && x <= 1) ? 2.5 : 0),
       mean: 0.5,
       var: 0.16 + (1 / 12) * 0.04,
       range: [0, 1],
       support: [0, 1],
     },
     dice: {
-      sample: () => 1 + Math.floor(Math.random() * 6),
+      sample: () => 1 + Math.floor(Math.random() * 6), pdf: () => 0,
       mean: 3.5, var: 35 / 12, range: [0.5, 6.5], support: [1, 6], lat: { o: 1, d: 1 },
     },
     coin: {
-      sample: () => (Math.random() < 0.5 ? -1 : 1),
+      sample: () => (Math.random() < 0.5 ? -1 : 1), pdf: () => 0,
       mean: 0, var: 1, range: [-1.25, 1.25], support: [-1, 1], lat: { o: -1, d: 2 },
     },
   };
@@ -127,7 +160,7 @@ import Try from '../../../components/sim/Try.astro';
   type Stat = 'mean' | 'sum';
   type Bins = { lo: number; w: number; nb: number };
   const BINS = 64, PATHS = 60;
-  const state = { src: 'uniform', stat: 'mean' as Stat, n: 5, running: false };
+  const state = { src: 'exponential', stat: 'mean' as Stat, n: 5, userN: 5 };
   let hist = new Float64Array(BINS);
   let srcHist = new Float64Array(BINS);
   let count = 0, sum1 = 0, sum2 = 0;
@@ -137,15 +170,14 @@ import Try from '../../../components/sim/Try.astro';
   let sb: Bins = { lo: 0, w: 1, nb: BINS };
 
   const canvas = el('clt') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink } = stageInk(canvas);
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
-  const PAD = { l: 50, r: 30, b: 40 };
-  const topOf = () => (state.stat === 'sum' ? 300 : 110);
-  const WALKBOX = { y0: 34, y1: 250 };
+  const PAD = { l: 70, r: 70, b: 40 };
+  const plotW = W - PAD.l - PAD.r;
 
   /**
    * Histogram bins over [lo, hi]. A discrete source puts every value on a
@@ -162,9 +194,9 @@ import Try from '../../../components/sim/Try.astro';
   const binOf = (b: Bins, v: number) => Math.floor((v - b.lo) / b.w);
 
   /** The statistic's spread: σ/√n for the mean, σ√n for the sum. */
-  const spread = () => {
+  const spread = (n = state.n) => {
     const s = SOURCES[state.src];
-    return state.stat === 'mean' ? Math.sqrt(s.var / state.n) : Math.sqrt(s.var * state.n);
+    return state.stat === 'mean' ? Math.sqrt(s.var / n) : Math.sqrt(s.var * n);
   };
   /** Where the bell is centred: μ for the mean, 0 for the centred sum Sₙ − nμ. */
   const centre = () => (state.stat === 'mean' ? SOURCES[state.src].mean : 0);
@@ -173,6 +205,7 @@ import Try from '../../../components/sim/Try.astro';
     const s = SOURCES[state.src], n = state.n;
     count = sum1 = sum2 = 0;
     paths = [];
+    flights = [];
     if (state.stat === 'mean') {
       axis = s.range;
       hb = binsFor(axis[0], axis[1], s.lat && { o: s.lat.o, d: s.lat.d / n });
@@ -185,7 +218,6 @@ import Try from '../../../components/sim/Try.astro';
       hb = binsFor(lo, hi, s.lat && { o: n * (s.lat.o - s.mean), d: s.lat.d });
     }
     hist = new Float64Array(hb.nb);
-    // a preview of the source, binned once per reset instead of every frame
     sb = binsFor(s.range[0], s.range[1], s.lat);
     srcHist = new Float64Array(sb.nb);
     for (let i = 0; i < 6000; i++) {
@@ -194,21 +226,24 @@ import Try from '../../../components/sim/Try.astro';
     }
   }
 
-  /** One sample of size n. `record` keeps its path for the walk picture. */
-  function trial(record: boolean) {
-    const s = SOURCES[state.src], n = state.n;
-    const walk = record && state.stat === 'sum' ? new Float32Array(n + 1) : null;
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      sum += s.sample();
-      if (walk) walk[i + 1] = sum - (i + 1) * s.mean;
-    }
-    const v = state.stat === 'mean' ? sum / n : sum - n * s.mean;
+  function record(v: number) {
     const bi = binOf(hb, v);
     if (bi >= 0 && bi < hb.nb) hist[bi]++;
     count++;
     sum1 += v;
     sum2 += v * v;
+  }
+
+  /** One sample of size n. `keep` keeps its path for the walk picture. */
+  function trial(keep: boolean) {
+    const s = SOURCES[state.src], n = state.n;
+    const walk = keep && state.stat === 'sum' ? new Float32Array(n + 1) : null;
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += s.sample();
+      if (walk) walk[i + 1] = sum - (i + 1) * s.mean;
+    }
+    record(state.stat === 'mean' ? sum / n : sum - n * s.mean);
     if (walk) {
       paths.push(walk);
       if (paths.length > PATHS) paths.shift();
@@ -221,7 +256,6 @@ import Try from '../../../components/sim/Try.astro';
     return Math.sqrt(Math.max(0, sum2 / count - m * m));
   }
 
-  const plotW = W - PAD.l - PAD.r;
   const xOf = (v: number) => PAD.l + ((v - axis[0]) / (axis[1] - axis[0])) * plotW;
 
   /** One bar per bin, at most 18 px wide so a lattice histogram reads as sticks. */
@@ -236,13 +270,297 @@ import Try from '../../../components/sim/Try.astro';
     }
   }
 
-  function drawSource(yTop: number) {
+  // ---------- the story's picture: source strip, merge line, pile ----------
+  const STRIP = { base: 300, h: 74 };
+  const MERGE = 352;
+  const PILE = { base: 600, top: 380 };
+  let pileTop = 1;
+
+  /** A trial on its way: its draws pop out of the source, meet at their average, and drop onto the pile. */
+  type Flight = { xs: number[]; v: number; t0: number; life: number; tag: boolean };
+  let flights: Flight[] = [];
+  let clock = 0;
+
+  function launch(life: number, tag = false) {
+    const s = SOURCES[state.src], xs: number[] = [];
+    for (let i = 0; i < state.n; i++) xs.push(s.sample());
+    flights.push({ xs, v: xs.reduce((a, b) => a + b, 0) / xs.length, t0: clock, life, tag });
+  }
+
+  function sourceStrip(a = 1) {
     let mx = 1;
     for (const v of srcHist) if (v > mx) mx = v;
-    ctx.fillStyle = 'rgba(154,160,172,0.28)';
-    const base = yTop - 22;
-    bars(sb, srcHist, (d) => base - (d / mx) * 54, base, 1);
-    label('one draw from the source', PAD.l, yTop - 84, 0.45, 'left', 11.5);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(154,160,172,0.32)';
+    bars(sb, srcHist, (d) => STRIP.base - (d / mx) * STRIP.h, STRIP.base, 1);
+    ctx.fillStyle = ink(0.2);
+    ctx.fillRect(PAD.l, STRIP.base, plotW, 1);
+    ctx.globalAlpha = 1;
+    say(ctx, 'the source: where one draw lands', PAD.l, STRIP.base - STRIP.h - 14, { colour: ink(0.5), size: 13, alpha: a });
+  }
+
+  function pile(showBell: number, light: boolean) {
+    const sd = spread(), mu = centre();
+    const gPeak = 1 / (sd * Math.sqrt(2 * Math.PI));
+    let histMax = 1e-9;
+    if (count) for (let i = 0; i < hb.nb; i++) histMax = Math.max(histMax, hist[i] / (count * hb.w));
+    const want = Math.max(histMax, showBell > 0 ? gPeak : 0) * 1.1;
+    pileTop = lerp(pileTop, want, 0.08);
+    const yOf = (d: number) => PILE.base - (d / pileTop) * (PILE.base - PILE.top);
+    ctx.fillStyle = ink(0.25);
+    ctx.fillRect(PAD.l, PILE.base, plotW, 1);
+    ctx.fillStyle = withAlpha(MEANS, light ? 0.6 : 0.65);
+    if (count) bars(hb, hist, yOf, PILE.base, count * hb.w);
+    if (showBell > 0) {
+      ctx.save();
+      ctx.globalAlpha = showBell;
+      ctx.strokeStyle = BELL;
+      ctx.lineWidth = 2.5;
+      if (!light) { ctx.shadowColor = withAlpha(BELL, 0.6); ctx.shadowBlur = 8; }
+      ctx.beginPath();
+      for (let px = 0; px <= plotW; px += 2) {
+        const val = axis[0] + (px / plotW) * (axis[1] - axis[0]);
+        const d = gPeak * Math.exp(-((val - mu) ** 2) / (2 * sd * sd));
+        px === 0 ? ctx.moveTo(PAD.l + px, yOf(d)) : ctx.lineTo(PAD.l + px, yOf(d));
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    ticks(PILE.base);
+    return yOf;
+  }
+
+  function ticks(yBase: number) {
+    const raw = (axis[1] - axis[0]) / 6, mag = 10 ** Math.floor(Math.log10(raw));
+    const step = mag * (raw / mag < 1.5 ? 1 : raw / mag < 3.5 ? 2 : 5);
+    const dec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+    for (let val = Math.ceil(axis[0] / step) * step; val <= axis[1] + 1e-9; val += step)
+      label((Math.abs(val) < step / 2 ? 0 : val).toFixed(dec).replace('-', '−'), xOf(val), yBase + 18, 0.3, 'center', 11.5);
+  }
+
+  /** Draw and land every trial in flight. */
+  function flightsDraw(yOf: (d: number) => number, light: boolean) {
+    const keep: Flight[] = [];
+    for (const f of flights) {
+      const u = (clock - f.t0) / f.life;
+      if (u >= 1) {
+        record(f.v);
+        continue;
+      }
+      keep.push(f);
+      const mx = xOf(f.v);
+      // phase 1: the draws appear on the source; 2: they fly to their average; 3: it drops
+      const a = clamp01(u / 0.25), b = easeOut((u - 0.3) / 0.35), c = clamp01((u - 0.68) / 0.32);
+      if (c <= 0) {
+        for (const x of f.xs) {
+          const sx = xOf(x), sy = STRIP.base;
+          const px = lerp(sx, mx, b), py = lerp(sy, MERGE, b);
+          ctx.fillStyle = withAlpha(light ? '#1c1e24' : DRAW, 0.9 * a);
+          ctx.beginPath();
+          ctx.arc(px, py, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+          if (b > 0 && b < 1 && f.xs.length > 1) {
+            ctx.strokeStyle = withAlpha(light ? '#1c1e24' : DRAW, 0.18);
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(px, py);
+            ctx.stroke();
+          }
+        }
+        if (b >= 1) {
+          ctx.fillStyle = MEANS;
+          ctx.beginPath();
+          ctx.arc(mx, MERGE, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        const bi = binOf(hb, f.v);
+        const top = bi >= 0 && bi < hb.nb && count ? yOf(hist[bi] / (count * hb.w)) : PILE.base;
+        const y = lerp(MERGE, top, c * c);
+        ctx.fillStyle = MEANS;
+        ctx.beginPath();
+        ctx.arc(mx, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // the first few say what happened
+      if (f.tag && b > 0.6 && c < 1) {
+        const xs = f.xs.map((x) => x.toFixed(2)).join(f.xs.length === 2 ? ' and ' : ', ');
+        say(ctx, f.xs.length === 1 ? `one draw: ${xs}` : `${xs}  →  average ${f.v.toFixed(2)}`, mx, MERGE - 20, {
+          colour: ink(0.9), size: 14, weight: 600, align: 'center', halo: inv(0.85), alpha: Math.min(1, 3 * (1 - c)),
+        });
+      }
+    }
+    flights = keep;
+  }
+
+  // ---------- chapter 3: dice combinations ----------
+  function diceScene(t: number, light: boolean) {
+    const tc = light ? '#5462e6' : MEANS;
+    // two dice: a 6 × 6 table of pairs flies into columns by sum
+    const two = 1 - beat(t, 6, 6.8);
+    if (two > 0) {
+      const colX = (s: number) => 380 + (s - 2) * 50;
+      const used = new Array(13).fill(0);
+      for (let k = 0; k < 36; k++) {
+        const a = Math.floor(k / 6) + 1, b = (k % 6) + 1, s = a + b;
+        const slot = used[s]++;
+        const u = easeOut((t - 0.6 - k * 0.09) / 0.7);
+        const gx = 90 + (b - 1) * 36, gy = 262 + (a - 1) * 26;
+        const cx = colX(s), cy = PILE.base - 12 - slot * 24;
+        const x = lerp(gx, cx - 21, u), y = lerp(gy, cy - 10, u);
+        ctx.globalAlpha = two;
+        ctx.fillStyle = withAlpha(tc, s === 7 ? 0.45 : 0.25);
+        ctx.strokeStyle = withAlpha(tc, 0.7);
+        ctx.beginPath();
+        ctx.roundRect(x, y, 42, 20, 4);
+        ctx.fill();
+        ctx.stroke();
+        say(ctx, `${a}+${b}`, x + 21, y + 10, { colour: ink(0.9), size: 12, weight: 600, align: 'center', alpha: two });
+      }
+      ctx.globalAlpha = 1;
+      for (let s = 2; s <= 12; s++) say(ctx, String(s), colX(s), PILE.base + 16, { colour: ink(0.55), size: 13, align: 'center', alpha: two });
+      say(ctx, 'two dice: the 36 pairs', 90, 244, { colour: ink(0.55), size: 13, alpha: two * beat(t, 0.3, 0.8) });
+      const a = beat(t, 4.2, 4.8) * two;
+      say(ctx, '6 ways to make 7', colX(7), PILE.base - 170, { colour: tc, size: 16, weight: 700, align: 'center', alpha: a, halo: inv(0.8) });
+      say(ctx, '1 way to make 2', colX(2), PILE.base - 80, { colour: ink(0.75), size: 14, align: 'center', alpha: a, halo: inv(0.8) });
+      say(ctx, '1 way to make 12', colX(12), PILE.base - 80, { colour: ink(0.75), size: 14, align: 'center', alpha: a, halo: inv(0.8) });
+    }
+    // three dice: 216 triples, already a bell
+    const three = beat(t, 6.6, 7.2);
+    if (three > 0) {
+      const colX = (s: number) => 230 + (s - 3) * 36;
+      const used = new Array(19).fill(0);
+      for (let k = 0; k < 216; k++) {
+        const a = Math.floor(k / 36) + 1, b = Math.floor(k / 6) % 6 + 1, c = (k % 6) + 1, s = a + b + c;
+        const slot = used[s]++;
+        const u = easeOut((t - 7 - k * 0.016) / 0.6);
+        if (u <= 0) continue;
+        const x = colX(s) - 15, y = lerp(250, PILE.base - 8 - slot * 8.4, u);
+        ctx.fillStyle = withAlpha(tc, 0.25 + 0.45 * u);
+        ctx.fillRect(x, y, 30, 7);
+      }
+      for (let s = 3; s <= 18; s++) say(ctx, String(s), colX(s), PILE.base + 16, { colour: ink(0.55), size: 12, align: 'center', alpha: three });
+      const a = beat(t, 10.6, 11.2);
+      say(ctx, 'three dice: 216 triples', colX(3) - 15, 244, { colour: ink(0.55), size: 13, alpha: three });
+      say(ctx, '27 ways to make 10', colX(10), PILE.base - 248, { colour: tc, size: 16, weight: 700, align: 'center', alpha: a, halo: inv(0.8) });
+      say(ctx, '1 way to make 3', colX(3), PILE.base - 60, { colour: ink(0.75), size: 13, align: 'center', alpha: a, halo: inv(0.8) });
+    }
+  }
+
+  // ---------- chapter 5: the bells narrow like 1/√n ----------
+  function sqrtScene(t: number, light: boolean) {
+    const s = SOURCES[state.src];
+    const ns = [1, 4, 16, 64];
+    const shown = ns.map((_, k) => beat(t, 0.6 + k * 2.2, 1.4 + k * 2.2));
+    const peaks = ns.map((n) => (n === 1 ? srcPeak() : Math.sqrt(n) / (Math.sqrt(s.var) * Math.sqrt(2 * Math.PI))));
+    let want = 0;
+    ns.forEach((_, k) => { if (shown[k] > 0) want = Math.max(want, peaks[k] * 1.12); });
+    pileTop = lerp(pileTop, want || 1, 0.06);
+    const yOf = (d: number) => PILE.base - (d / pileTop) * (PILE.base - 250);
+    ctx.fillStyle = ink(0.25);
+    ctx.fillRect(PAD.l, PILE.base, plotW, 1);
+    ticks(PILE.base);
+    const cols = ['rgba(154,160,172,0.9)', '#7c8cff', '#a78bfa', BELL];
+    ns.forEach((n, k) => {
+      if (shown[k] <= 0) return;
+      const sd = Math.sqrt(s.var / n);
+      const f = (x: number) => (n === 1 ? srcDensity(x) : Math.exp(-((x - s.mean) ** 2) / (2 * sd * sd)) / (sd * Math.sqrt(2 * Math.PI)));
+      ctx.save();
+      ctx.globalAlpha = shown[k];
+      ctx.strokeStyle = cols[k];
+      ctx.lineWidth = k === 3 ? 2.6 : 2;
+      ctx.beginPath();
+      for (let px = 0; px <= plotW; px += 2) {
+        const v = axis[0] + (px / plotW) * (axis[1] - axis[0]);
+        px === 0 ? ctx.moveTo(PAD.l + px, yOf(f(v))) : ctx.lineTo(PAD.l + px, yOf(f(v)));
+      }
+      ctx.stroke();
+      ctx.fillStyle = withAlpha(cols[k].startsWith('#') ? cols[k] : '#9aa0ac', 0.08);
+      ctx.lineTo(PAD.l + plotW, PILE.base);
+      ctx.lineTo(PAD.l, PILE.base);
+      ctx.fill();
+      // its spread as a bracket at half height
+      if (n > 1) {
+        const yh = yOf(peaks[k] * 0.6065);
+        const x0 = xOf(s.mean - sd), x1 = xOf(s.mean + sd);
+        ctx.strokeStyle = cols[k];
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0, yh - 5); ctx.lineTo(x0, yh); ctx.lineTo(x1, yh); ctx.lineTo(x1, yh - 5);
+        ctx.stroke();
+        say(ctx, `n = ${n}: ±${sd.toFixed(sd < 0.1 ? 3 : 2)}`, x1 + 10, yh, { colour: cols[k], size: 14, weight: 650, halo: inv(0.85) });
+      } else say(ctx, 'n = 1: the source', PAD.l + 8, yOf(peaks[0]) - 16, { colour: ink(0.7), size: 14, weight: 600, halo: inv(0.85) });
+      ctx.restore();
+    });
+    const a = beat(t, 3.4, 4.2);
+    say(ctx, '× 4 draws  →  ½ the spread', 930, 240, { colour: light ? '#0d9488' : BELL, size: 20, weight: 700, align: 'right', alpha: a });
+  }
+  const srcDensity = (x: number) => {
+    const s = SOURCES[state.src];
+    if (!s.lat) return s.pdf(x);
+    // a discrete source, smeared over its lattice cells for the picture
+    const k = Math.round((x - s.lat.o) / s.lat.d);
+    const v = s.lat.o + k * s.lat.d;
+    return v >= s.support[0] && v <= s.support[1] && Math.abs(x - v) < 0.18 * s.lat.d ? 1 / ((s.support[1] - s.support[0]) / s.lat.d + 1) / (0.36 * s.lat.d) : 0;
+  };
+  const srcPeak = () => {
+    let m = 0;
+    for (let px = 0; px <= plotW; px += 1) m = Math.max(m, srcDensity(axis[0] + (px / plotW) * (axis[1] - axis[0])));
+    return m;
+  };
+
+  // ---------- Explore: the lab, with the walks ----------
+  const WALKBOX = { y0: 160, y1: 360 };
+  function exploreScene(light: boolean) {
+    const s = SOURCES[state.src];
+    const isSum = state.stat === 'sum';
+    const top = isSum ? 400 : 260;
+    const plotH = H - top - PAD.b, yBase = H - PAD.b;
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.l, yBase);
+    ctx.lineTo(PAD.l + plotW, yBase);
+    ctx.stroke();
+    ticks(yBase);
+
+    if (isSum) drawWalks();
+    else {
+      let mx = 1;
+      for (const v of srcHist) if (v > mx) mx = v;
+      ctx.fillStyle = 'rgba(154,160,172,0.28)';
+      const base = top - 24;
+      bars(sb, srcHist, (d) => base - (d / mx) * 60, base, 1);
+      label('one draw from the source', PAD.l, base - 74, 0.45, 'left', 11.5);
+    }
+    label(isSum ? `where the walk ends: Sₙ − nμ after ${state.n} draws` : state.n === 1 ? 'the mean of a single draw' : `the mean of ${state.n} draws`, PAD.l, top - 4, 0.45, 'left', 11.5);
+
+    const sd = spread(), mu = centre();
+    const gPeak = 1 / (sd * Math.sqrt(2 * Math.PI));
+    let histMax = 1e-9;
+    if (count) for (let i = 0; i < hb.nb; i++) histMax = Math.max(histMax, hist[i] / (count * hb.w));
+    const yMax = Math.max(histMax, gPeak) * 1.1;
+    const yOf = (d: number) => yBase - (d / yMax) * plotH;
+    ctx.fillStyle = withAlpha(MEANS, 0.55);
+    if (count) bars(hb, hist, yOf, yBase, count * hb.w);
+    ctx.strokeStyle = BELL;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    for (let px = 0; px <= plotW; px += 2) {
+      const val = axis[0] + (px / plotW) * (axis[1] - axis[0]);
+      const d = gPeak * Math.exp(-((val - mu) ** 2) / (2 * sd * sd));
+      px === 0 ? ctx.moveTo(PAD.l + px, yOf(d)) : ctx.lineTo(PAD.l + px, yOf(d));
+    }
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.4);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(xOf(mu), top);
+    ctx.lineTo(xOf(mu), yBase);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (!isSum) label(`μ = ${s.mean}`, xOf(mu) + 6, top + 12, 0.5, 'left', 11.5);
+    void light;
   }
 
   function drawWalks() {
@@ -258,7 +576,6 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(xOf(0), WALKBOX.y0);
     ctx.lineTo(xOf(0), H - PAD.b);
     ctx.stroke();
-
     // the ±σ√k and ±2σ√k envelope: it curves, so twice as far takes four times the steps
     const sg = Math.sqrt(s.var);
     ctx.save();
@@ -279,7 +596,6 @@ import Try from '../../../components/sim/Try.astro';
       }
     }
     ctx.setLineDash([]);
-
     paths.forEach((p, idx) => {
       const last = idx === paths.length - 1;
       ctx.strokeStyle = last ? WALK : 'rgba(124,140,255,0.18)';
@@ -302,61 +618,93 @@ import Try from '../../../components/sim/Try.astro';
     label(`k = n = ${n}`, xOf(0) + 6, WALKBOX.y1 + 14, 0.5, 'left', 11.5);
   }
 
-  function draw() {
+  // ---------- chapters ----------
+  const chapters = [
+    { dur: 10, title: 'One draw at a time', body: 'Draw a number from a lopsided source and drop it on a pile. Do it again and again. With one draw per trial, the pile just copies the source.' },
+    { dur: 12, title: 'Average two', body: 'Now draw two and drop their average. Extremes need both draws to be extreme at once, which is rare, so the pile pulls in toward the middle.' },
+    { dur: 13, title: 'Count the ways', body: 'Why the middle? Two dice make 7 in six ways but 2 in only one. With three dice the counts already trace a bell: each extra draw multiplies the ways to land near the middle.' },
+    { dur: 14, title: 'Average more', body: 'Average 2, 4, 10, then 30 draws. Whatever the source looked like, the pile turns into the same bell, centred on the source\u2019s mean.' },
+    { dur: 11, title: 'Narrower by √n', body: 'The more draws in each average, the narrower the bell: four times the draws, half the spread. That is σ/√n.' },
+    { dur: Infinity, title: 'Explore', body: 'Any source, any n. Run collects averages; switch to the Sum view to see each trial as a random walk.' },
+  ];
+
+  const SEQ = [1, 2, 4, 10, 30];
+  let seqAt = -1;
+  const st = story({
+    chapters,
+    enter(i) {
+      if (i < 5) state.stat = 'mean';
+      if (i === 0) setNum(1);
+      if (i === 1) setNum(2);
+      if (i === 3) { seqAt = -1; }
+      if (i === 5) { state.stat = stats.value() as Stat; setNum(state.userN); }
+      reset();
+      acc = 0;
+      tagged = 0;
+      pileTop = 1;
+      legend();
+    },
+    relevant: (i) => [['src'], ['src'], [], ['src', 'n'], ['src'], null][i],
+    frame,
+  });
+
+  function setNum(n: number) {
+    state.n = n;
+    setN(n);
+  }
+
+  let acc = 0, tagged = 0;
+  function frame(ch: number, t: number, dt: number, live: number) {
+    const light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    clock += live;
+    const manual = st.manual();
+
+    if (ch === 0 || ch === 1) {
+      // a slow start that turns into a shower
+      const slow = ch === 0 ? 3.5 : 5;
+      const rate = t < slow ? (ch === 0 ? 1.3 : 0.75) : Math.min(90, 1.3 + (t - slow) ** 2 * 6);
+      acc += rate * live;
+      while (acc >= 1) {
+        acc -= 1;
+        const tag = tagged < 3 && t < slow + 0.5;
+        if (tag) tagged++;
+        launch(rate > 8 ? 0.7 : 1.6, tag);
+      }
+      sourceStrip();
+      const yOf = pile(ch === 1 ? beat(t, 9, 10.5) * 0.8 : 0, light);
+      flightsDraw(yOf, light);
+      say(ctx, `${count} ${ch === 0 ? 'draws' : 'averages'} on the pile`, 930, 40, { colour: MEANS, size: 22, weight: 700, align: 'right' });
+    } else if (ch === 2) {
+      diceScene(t, light);
+    } else if (ch === 3) {
+      if (!manual) {
+        const j = Math.min(SEQ.length - 1, Math.floor((t - 0.3) / 2.6));
+        if (j !== seqAt && j >= 0) { seqAt = j; setNum(SEQ[j]); reset(); }
+      }
+      if (live > 0) for (let k = 0; k < Math.min(120, Math.round(2000 * live)); k++) trial(false);
+      sourceStrip(0.8);
+      pile(clamp01((t - 0.3 - Math.max(0, seqAt) * 2.6) / 1.2) * (state.n > 1 ? 1 : 0) || (manual ? 1 : 0), light);
+      say(ctx, `n = ${state.n}`, 930, 44, { colour: MEANS, size: 30, weight: 700, align: 'right' });
+      say(ctx, state.n === 1 ? 'one draw: the source itself' : `each bar: the average of ${state.n} draws`, 930, 74, { colour: ink(0.6), size: 14, align: 'right' });
+    } else if (ch === 4) {
+      sqrtScene(t, light);
+    } else {
+      if (live > 0) for (let k = 0; k < 24; k++) trial(k === 0);
+      exploreScene(light);
+    }
+
+    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 520, accent: ACC, manual });
+    numbers(ch);
+  }
+
+  // ---------- panel ----------
+  let tick = 0;
+  function numbers(ch: number) {
+    if (tick++ % 6) return;
     const s = SOURCES[state.src];
     const isSum = state.stat === 'sum';
-    ctx.clearRect(0, 0, W, H);
-
-    const top = topOf();
-    const plotH = H - top - PAD.b, yBase = H - PAD.b;
-
-    ctx.strokeStyle = ink(0.14);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(PAD.l, yBase);
-    ctx.lineTo(PAD.l + plotW, yBase);
-    ctx.stroke();
-    // ticks on round numbers: 1, 2 or 5 times a power of ten
-    const raw = (axis[1] - axis[0]) / 6, mag = 10 ** Math.floor(Math.log10(raw));
-    const step = mag * (raw / mag < 1.5 ? 1 : raw / mag < 3.5 ? 2 : 5);
-    const dec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
-    for (let val = Math.ceil(axis[0] / step) * step; val <= axis[1] + 1e-9; val += step)
-      label((Math.abs(val) < step / 2 ? 0 : val).toFixed(dec).replace('-', '−'), xOf(val), yBase + 18, 0.3, 'center', 11.5);
-
-    if (isSum) drawWalks();
-    else drawSource(top);
-    label(isSum ? `where the walk ends: Sₙ − nμ after ${state.n} draws` : (state.n === 1 ? 'the mean of a single draw' : `the mean of ${state.n} draws`), PAD.l, top - 4, 0.45, 'left', 11.5);
-
-    // the statistic, as a density, and the bell the theorem predicts
-    const sd = spread(), mu = centre();
-    const gPeak = 1 / (sd * Math.sqrt(2 * Math.PI));
-    let histMax = 1e-9;
-    if (count) for (let i = 0; i < hb.nb; i++) histMax = Math.max(histMax, hist[i] / (count * hb.w));
-    const yMax = Math.max(histMax, gPeak) * 1.1;
-    const yOf = (d: number) => yBase - (d / yMax) * plotH;
-
-    ctx.fillStyle = 'rgba(124,140,255,0.55)';
-    if (count) bars(hb, hist, yOf, yBase, count * hb.w);
-    ctx.strokeStyle = BELL;
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    for (let px = 0; px <= plotW; px += 2) {
-      const val = axis[0] + (px / plotW) * (axis[1] - axis[0]);
-      const d = gPeak * Math.exp(-((val - mu) ** 2) / (2 * sd * sd));
-      px === 0 ? ctx.moveTo(PAD.l + px, yOf(d)) : ctx.lineTo(PAD.l + px, yOf(d));
-    }
-    ctx.stroke();
-
-    ctx.strokeStyle = ink(0.4);
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(xOf(mu), top);
-    ctx.lineTo(xOf(mu), yBase);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    if (!isSum) label(`μ = ${s.mean}`, xOf(mu) + 6, top + 12, 0.5, 'left', 11.5);
-
-    const sigma = Math.sqrt(s.var), meas = measured();
+    const sd = spread(), sigma = Math.sqrt(s.var), meas = measured();
     const measTxt = isNaN(meas) ? '—' : meas.toFixed(isSum ? 2 : 4);
     if (isSum) {
       setEq({
@@ -366,66 +714,64 @@ import Try from '../../../components/sim/Try.astro';
     } else {
       setEq({
         rule: [['\\bar X = \\frac{1}{n}\\sum_i X_i', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\Big(\\mu,\\;\\frac{\\sigma^2}{n}\\Big)', BELL]],
-        live: [`n = ${state.n}`, `\\quad\\sigma = ${sigma.toFixed(3)}`, [`\\quad\\sigma/\\sqrt n = ${sd.toFixed(4)}`, BELL]],
+        live: [`n = ${ch === 2 ? '2, 3' : ch === 4 ? '1, 4, 16, 64' : state.n}`, `\\quad\\sigma = ${sigma.toFixed(3)}`, [`\\quad\\sigma/\\sqrt n = ${ch === 4 ? '\\sigma, \\sigma/2, \\sigma/4, \\sigma/8' : sd.toFixed(4)}`, BELL]],
       });
     }
     el('result-label').textContent = isSum ? 'Spread of the sum σ√n' : 'Spread of the mean σ/√n';
-    setResult({
-      value: sd.toFixed(isSum ? 3 : 4),
-      colour: BELL,
-      status: `${count} trials of n = ${state.n} draws · measured spread ${measTxt}`,
-      note: isSum
-        ? state.src === 'coin'
-          ? 'Each trial is n coin-flip steps and the sum is where the walker ends up. Its spread grows like √n, not n.'
-          : 'The sum spreads like σ√n while the mean, the same sum divided by n, narrows like σ/√n.'
-        : 'Whatever the source looks like, the means pile into the bell the theorem predicts, and it narrows like 1/√n.',
-    });
-    setRows({
-      'r-count': String(count),
-      'r-sigma': sigma.toFixed(3),
-      'r-pred': sd.toFixed(isSum ? 3 : 4),
-      'r-meas': measTxt,
-    });
+    if (ch === 2)
+      setResult({ value: '6 of 36', colour: MEANS, status: 'ways for two dice to make 7', note: 'The middle sums can be built in many more ways than the extreme ones, and every extra die makes that gap bigger.' });
+    else if (ch === 4)
+      setResult({ value: '× 4 → ½', colour: BELL, status: 'draws in each average, and the spread', note: 'The spread of an average of n draws is σ/√n. To halve the error, take four times the data.' });
+    else
+      setResult({
+        value: sd.toFixed(isSum ? 3 : 4),
+        colour: BELL,
+        status: `${count} trials of n = ${state.n} draws · measured spread ${measTxt}`,
+        note: isSum
+          ? 'The sum spreads like σ√n while the mean, the same sum divided by n, narrows like σ/√n.'
+          : 'Whatever the source looks like, the averages pile into the bell the theorem predicts, and it narrows like 1/√n.',
+      });
+    setRows({ 'r-count': String(count), 'r-sigma': sigma.toFixed(3), 'r-pred': sd.toFixed(isSum ? 3 : 4), 'r-meas': measTxt });
   }
 
   function legend() {
     const top = el('lg-top'), hl = el('lg-hist');
     const isSum = state.stat === 'sum';
     top.textContent = isSum ? 'paths of the running sum' : 'source distribution';
-    top.style.setProperty('--dot', isSum ? 'rgba(124,140,255,0.5)' : 'rgba(154,160,172,0.6)');
-    hl.textContent = isSum ? 'where the walks end' : 'sample means';
-  }
-
-  function loop() {
-    if (state.running) for (let k = 0; k < 24; k++) trial(k === 0);
-    draw();
-    requestAnimationFrame(loop);
+    top.style.setProperty('--dot', isSum ? 'rgba(124,140,255,0.5)' : 'rgba(154,160,172,0.7)');
+    hl.textContent = isSum ? 'where the walks end' : 'averages of n draws';
   }
 
   const srcs = segmented('src', (src) => { state.src = src; reset(); });
-  const stats = segmented('stat', (k) => { state.stat = k as Stat; legend(); reset(); });
-  const setN = slider('n', (v) => { state.n = v; reset(); });
-  const tr = transport({ onRun: (running) => (state.running = running), onReset: reset });
+  const stats = segmented('stat', (k) => {
+    state.stat = k as Stat;
+    if (st.chapter() !== 5) st.go(5);
+    else { legend(); reset(); }
+  });
+  const setN = slider('n', (v) => {
+    state.n = v;
+    state.userN = v;
+    if (st.chapter() < 3 || st.chapter() === 4) st.go(5);
+    reset();
+  });
+  el('clear').addEventListener('click', () => reset());
 
   function show(src: string, stat: Stat, n: number) {
     state.src = src;
-    state.stat = stat;
-    state.n = n;
+    state.userN = n;
     srcs.select(src);
     stats.select(stat);
-    setN(n);
-    legend();
-    reset();
-    state.running = true;
-    tr.setRunning(true);
+    st.go(5);
+    st.play(true);
   }
   tries({
-    raw: () => show('exponential', 'mean', 1),
-    bell: () => show('exponential', 'mean', 30),
+    two: () => { st.go(1); st.play(true); },
+    ways: () => { st.go(2); st.play(true); },
+    bimodal: () => { state.src = 'bimodal'; srcs.select('bimodal'); st.go(3); st.play(true); },
+    sqrt: () => { st.go(4); st.play(true); },
     walk: () => show('coin', 'sum', 100),
   });
 
-  legend();
   reset();
-  loop();
+  st.start();
 </script>

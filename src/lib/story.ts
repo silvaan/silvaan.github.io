@@ -31,7 +31,8 @@ export type Chapter = {
  */
 export function story(o: {
   chapters: Chapter[];
-  frame: (i: number, t: number, dt: number) => void;
+  /** `live` is the real frame step, also while paused: for a chapter the reader has taken over. */
+  frame: (i: number, t: number, dt: number, live: number) => void;
   enter?: (i: number) => void;
   done?: (i: number, t: number) => boolean;
   segId?: string;
@@ -108,7 +109,7 @@ export function story(o: {
       t += dt;
       if (finished() && i < n - 1) go(i + 1);
     }
-    o.frame(i, t, run ? dt : 0);
+    o.frame(i, t, run ? dt : 0, run || manual ? dt : 0);
     dirty = false;
     requestAnimationFrame(loop);
   }
