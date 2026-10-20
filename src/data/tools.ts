@@ -284,7 +284,7 @@ export const AREAS: Area[] = [
         slug: 'probability-density',
         title: 'Probability Density',
         description:
-          'No single value has any probability, only stretches do, so a density is the height whose area is that probability. Eight real distributions with their parameters, a histogram of samples settling onto the curve, and the mean, median and mode pulling apart on a skew.',
+          'Grains of sand fall where a random quantity lands and pile up; per unit of width the pile becomes the density curve. Then the area is the share of grains, a squeezed pile climbs past 1, and one exact point catches nothing.',
         href: '/simulations/statistics/probability-density',
         status: 'live',
       },
@@ -324,7 +324,7 @@ export const AREAS: Area[] = [
         slug: 'kl-divergence',
         title: 'KL Divergence',
         description:
-          'How badly Q stands in for P: the average of log(p/q) under P. Fit a bell to two humps both ways round and watch one direction cover everything and the other pick a hump, then count the extra bits of coding English with a Portuguese code.',
+          'The extra surprise of believing Q while the world draws from P. Watch samples land and their surprise add up, see the gap as red and blue area, find why the two directions differ wildly, and fit a bell both ways.',
         href: '/simulations/statistics/kl-divergence',
         status: 'live',
       },
@@ -420,7 +420,7 @@ export const AREAS: Area[] = [
         slug: 'tsne',
         title: 't-SNE',
         description:
-          'Squeeze 784-pixel digits onto a page and keep who is next to whom. Watch the map pull itself apart live, and see what perplexity and early exaggeration do, and what the picture does not mean.',
+          'Tie each point of a 3D cloud to its neighbours with threads, throw everything on a flat page, and let the threads pull while all points push apart. The map that settles keeps who was next to whom.',
         href: '/simulations/machine-learning/tsne',
         status: 'live',
       },
