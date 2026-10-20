@@ -36,21 +36,55 @@ export function story(o: {
   done?: (i: number, t: number) => boolean;
   segId?: string;
   nextId?: string;
+  /**
+   * Ids of the controls that matter in chapter i (or null for all). The
+   * others are dimmed, never hidden, so the panel keeps its shape.
+   */
+  relevant?: (i: number) => string[] | null;
 }) {
   const n = o.chapters.length;
   let i = 0, t = 0, last = 0, dirty = true;
+  /** The reader took over: the tour is paused and the chapter follows the controls. */
+  let manual = false;
   const seg = segmented(o.segId ?? 'ch', (v) => go(+v));
   const tp = transport({
-    onRun: (on) => { if (on && i === n - 1 && finished()) go(0); },
+    onRun: (on) => {
+      if (on) manual = false;
+      if (on && i === n - 1 && finished()) go(0);
+    },
     onReset: () => { go(0); tp.setRunning(true); },
   });
+
+  // touching any control in the panel (other than the tour's own) hands it over
+  const panel = document.querySelector('.sim-panel');
+  const own = ['#' + (o.segId ?? 'ch'), '#run', '#next', '#reset'];
+  const ours = (e: Event) => own.some((sel) => (e.target as HTMLElement).closest(sel));
+  panel?.addEventListener('input', (e) => { if (!ours(e)) touch(); });
+  panel?.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('button') && !ours(e)) touch();
+  });
+  function touch() {
+    manual = true;
+    if (tp.running()) tp.setRunning(false);
+  }
+  function dim(k: number) {
+    const keep = o.relevant?.(k) ?? null;
+    panel?.querySelectorAll<HTMLElement>(':scope > .control, :scope > div > .control').forEach((c) => {
+      if (c.querySelector('#' + (o.segId ?? 'ch'))) return;
+      const on = !keep || keep.some((id) => c.querySelector('#' + id));
+      c.style.opacity = on ? '' : '0.45';
+      c.style.transition = 'opacity 0.3s';
+    });
+  }
   const finished = () => (o.done ? o.done(i, t) : t >= o.chapters[i].dur);
   document.getElementById(o.nextId ?? 'next')?.addEventListener('click', () => go(Math.min(n - 1, i + 1)));
 
   function go(k: number) {
     i = k;
     t = 0;
+    manual = false;
     seg.select(String(k));
+    dim(k);
     o.enter?.(k);
     dirty = true;
   }
@@ -83,6 +117,7 @@ export function story(o: {
     start() {
       o.enter?.(0);
       seg.select('0');
+      dim(0);
       requestAnimationFrame(loop);
     },
     go,
@@ -91,7 +126,10 @@ export function story(o: {
     /** Jump to a time inside the current chapter. */
     seek: (s: number) => { t = s; },
     playing: () => tp.running(),
-    play: (on: boolean) => tp.setRunning(on),
+    play: (on: boolean) => { if (on) manual = false; tp.setRunning(on); },
+    /** Hand the chapter to the reader: pause, and let the controls drive it. */
+    touch,
+    manual: () => manual,
     get dirty() { return dirty; },
   };
 }
@@ -184,7 +222,12 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, max: number) {
 export function headline(
   ctx: CanvasRenderingContext2D,
   ink: (a: number) => string,
-  o: { index: number; count: number; title: string; body: string; t: number; x?: number; y?: number; width?: number; accent?: string }
+  o: {
+    index: number; count: number; title: string; body: string; t: number;
+    x?: number; y?: number; width?: number; accent?: string;
+    /** Show that the reader has the controls, next to the chapter number. */
+    manual?: boolean;
+  }
 ) {
   const x = o.x ?? 28, y = o.y ?? 30, width = o.width ?? 560;
   const a = easeOut(o.t / 0.6), dy = (1 - a) * 8;
@@ -194,6 +237,18 @@ export function headline(
   ctx.font = `600 13px ${SANS}`;
   ctx.fillStyle = withAlpha(o.accent ?? '#7c8cff', 0.95 * a);
   ctx.fillText(`${o.index + 1} / ${o.count}`, x, y + dy);
+  if (o.manual) {
+    const w0 = ctx.measureText(`${o.index + 1} / ${o.count}`).width + 12;
+    ctx.font = `500 12px ${SANS}`;
+    const label = 'you are in control · Run resumes the tour';
+    const lw = ctx.measureText(label).width + 16;
+    ctx.fillStyle = withAlpha(o.accent ?? '#7c8cff', 0.16);
+    ctx.beginPath();
+    ctx.roundRect(x + w0, y + dy - 13, lw, 19, 9.5);
+    ctx.fill();
+    ctx.fillStyle = withAlpha(o.accent ?? '#7c8cff', 0.95);
+    ctx.fillText(label, x + w0 + 8, y + dy + 1);
+  }
   ctx.font = `650 26px ${SANS}`;
   ctx.fillStyle = ink(0.95 * a);
   ctx.fillText(o.title, x, y + 32 + dy);

@@ -2,6 +2,7 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Readout from '../../../components/sim/Readout.astro';
@@ -13,9 +14,8 @@ const TP = '#2dd4bf', FP = '#f87171';
 <SimLayout
   areaSlug="statistics"
   title="Bayes' Theorem"
-  description="A 90% accurate test can still be wrong most of the time it says positive. A thousand people as dots show why."
-  shortcuts={['fullscreen']}
-  standard
+  description="A 90% accurate test can still be wrong most of the time it says positive. Test a crowd of a thousand people, keep only the positives, and count who is really sick: the answer depends on how rare the disease was to begin with."
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -23,35 +23,57 @@ const TP = '#2dd4bf', FP = '#f87171';
         <canvas
           id="bayes"
           width="1000"
-          height="440"
+          height="600"
           role="img"
-          aria-label="One thousand dots, one per person, coloured by whether they are sick and whether the test caught them."
+          aria-label="One thousand dots, one per person, tested; the positive tests gathered into a block, coloured by whether each person is truly sick."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'truly sick, caught', color: TP },
+          { label: 'sick, test caught it', color: TP },
           { label: 'healthy, false alarm', color: FP },
-          { label: 'sick, missed', color: 'rgba(45,212,191,0.4)' },
-          { label: 'healthy, cleared', color: 'rgba(130,140,155,0.4)' },
+          { label: 'sick, test missed it', color: 'rgba(45,212,191,0.4)' },
+          { label: 'healthy, cleared', color: 'rgba(130,140,155,0.45)' },
         ]}
+        hint="Move any slider to take over · Run resumes the tour"
       />
-      <Result label="P(disease | positive)" />
+      <Result label="P(sick | positive)" />
     </div>
 
     <div class="sim-panel">
       <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · The crowd' },
+          { value: '1', label: '2 · Test' },
+          { value: '2', label: '3 · Positives' },
+          { value: '3', label: '4 · Base rate' },
+          { value: '4', label: '5 · Test again' },
+          { value: '5', label: '6 · Explore' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
+      <Seg
         id="view"
         label="Show"
-        options={[{ value: 'all', label: 'Everyone' }, { value: 'pos', label: 'Positive tests only' }]}
+        options={[
+          { value: 'all', label: 'Everyone' },
+          { value: 'pos', label: 'Positive tests only' },
+          { value: 'pos2', label: 'Positive twice' },
+        ]}
       />
       <Slider id="pr" label="Prevalence (base rate)" min={1} max={500} value={10} display="1.0%" />
       <Slider id="se" label="Sensitivity (true positive)" min={50} max={100} value={90} display="90%" />
       <Slider id="sp" label="Specificity (true negative)" min={50} max={100} value={90} display="90%" />
       <Readout
         rows={[
-          { id: 'r-post', label: 'P(disease | positive)' },
-          { id: 'r-postneg', label: 'P(disease | negative)' },
+          { id: 'r-post', label: 'P(sick | positive)' },
+          { id: 'r-post2', label: 'P(sick | positive twice)' },
+          { id: 'r-postneg', label: 'P(sick | negative)' },
         ]}
       />
       <div class="control">
@@ -63,18 +85,20 @@ const TP = '#2dd4bf', FP = '#f87171';
 
   <Fragment slot="observe">
     <li>
-      At <b>1% prevalence</b> with a 90% / 90% test, look at the positive tests
-      only: just 9 of the 108 are sick, about <b>8%</b>. <Try id="rare" />
+      At <b>1% prevalence</b> with a 90% / 90% test, only 9 of the 108 positive tests are sick, about <b>8%</b>. The
+      false alarms come from the 990 healthy people, so there are many more of them. <Try id="rare" />
     </li>
     <li>
-      The healthy outnumber the sick 99 to 1, so a 10% false-alarm rate makes a
-      <b>flood of red</b>. At 20% prevalence the same test is right most of the
-      time it says positive. <Try id="common" />
+      At 20% prevalence the same test is right most of the time it says positive. Nothing about the test changed,
+      only how many sick people there were to find. <Try id="common" />
     </li>
     <li>
-      Back at 1%, push <b>specificity</b> to 99% and the posterior jumps to about
-      48%. Sensitivity at 99% would barely move it: false alarms are the problem.
-      <Try id="spec" />
+      Back at 1%, push <b>specificity</b> to 99% and the answer jumps to about 48%. Sensitivity at 99% would barely
+      move it: the false alarms are the problem. <Try id="spec" />
+    </li>
+    <li>
+      A second positive test starts from the 8% the first one left, not from 1%, and lands near 44%. Yesterday's
+      answer is today's base rate. <Try id="twice" />
     </li>
   </Fragment>
 </SimLayout>
@@ -82,119 +106,330 @@ const TP = '#2dd4bf', FP = '#f87171';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
   import { segmented, slider, result, readout, el, tries } from '../../../lib/panel';
+  import { story, headline, say, withAlpha, isLight, beat, lerp, clamp01 } from '../../../lib/story';
 
-  const state = { prev: 0.01, sens: 0.9, spec: 0.9, view: 'all' };
-
-  const COL = {
-    tp: '#2dd4bf',
-    fp: '#f87171',
-    fnDark: 'rgba(45,212,191,0.30)',
-    tnDark: 'rgba(130,140,155,0.28)',
-  };
-  const COLS = 50, ROWS = 20, N = COLS * ROWS; // 1000 people
+  // A thousand people as dots. The story tests them, throws away every
+  // negative, and counts the sick among the positives; then lets the base rate
+  // move, and tests the positives a second time. Explore is the old lab: the
+  // three sliders and three views, with the dots flowing between layouts.
+  const TPC = '#2dd4bf', FPC = '#f87171', ACC = '#2dd4bf';
+  const COLS = 50, ROWS = 20, N = COLS * ROWS;
 
   const canvas = el('bayes') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  function counts() {
-    const diseased = state.prev * N;
-    const tp = Math.round(diseased * state.sens);
-    const fn = Math.round(diseased * (1 - state.sens));
-    const healthy = N - Math.round(diseased);
-    const fp = Math.round(healthy * (1 - state.spec));
-    return { tp, fn, fp, tn: Math.max(0, N - tp - fn - fp) };
+  const DEF = { prev: 0.01, sens: 0.9, spec: 0.9 };
+  const S = { ...DEF, view: 'pos' };
+
+  // ---------- who is who ----------
+  // Fixed random draws per person, so moving a slider changes as few dots as possible.
+  const rng = (seed: number) => {
+    let s = seed >>> 0 || 1;
+    return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  };
+  const r = rng(42);
+  const uSick = Array.from({ length: N }, () => r());
+  const uTest = Array.from({ length: N }, () => r());
+  const uTest2 = Array.from({ length: N }, () => r());
+  const bySick = Array.from({ length: N }, (_, i) => i).sort((a, b) => uSick[a] - uSick[b]);
+
+  type Kind = 'tp' | 'fn' | 'fp' | 'tn';
+  const kind: Kind[] = new Array(N).fill('tn');
+  const pos2 = new Array<boolean>(N).fill(false);
+  let C = { sick: 0, tp: 0, fn: 0, fp: 0, tn: 0, tp2: 0, fp2: 0 };
+
+  /** Exact counts for 1000 people, then which dots they are. */
+  function assign() {
+    const sick = Math.round(S.prev * N);
+    const tp = Math.round(sick * S.sens), fp = Math.round((N - sick) * (1 - S.spec));
+    const sickSet = new Set(bySick.slice(0, sick));
+    const ill = [...sickSet].sort((a, b) => uTest[a] - uTest[b]);
+    const well = Array.from({ length: N }, (_, i) => i).filter((i) => !sickSet.has(i)).sort((a, b) => uTest[a] - uTest[b]);
+    ill.forEach((i, k) => (kind[i] = k < tp ? 'tp' : 'fn'));
+    well.forEach((i, k) => (kind[i] = k < fp ? 'fp' : 'tn'));
+    // the second test, on the positives only
+    const tp2 = Math.round(tp * S.sens), fp2 = Math.round(fp * (1 - S.spec));
+    pos2.fill(false);
+    ill.filter((i) => kind[i] === 'tp').sort((a, b) => uTest2[a] - uTest2[b]).slice(0, tp2).forEach((i) => (pos2[i] = true));
+    well.filter((i) => kind[i] === 'fp').sort((a, b) => uTest2[a] - uTest2[b]).slice(0, fp2).forEach((i) => (pos2[i] = true));
+    C = { sick, tp, fn: sick - tp, fp, tn: N - sick - fp, tp2, fp2 };
   }
 
-  function draw() {
+  // ---------- layouts ----------
+  const GRID = { x: 100, y: 228, cell: 16 };
+  const crowdXY = (i: number) => ({
+    x: GRID.x + (i % COLS) * GRID.cell + GRID.cell / 2,
+    y: GRID.y + Math.floor(i / COLS) * GRID.cell + GRID.cell / 2,
+  });
+
+  /** A block of n dots, column by column, as big as fits in the box. */
+  function block(n: number, box = { x: 100, y: 236, w: 800, h: 300 }) {
+    // a few dots make a small, squarish block; many fill the box
+    const rowsFor = (cell: number) => Math.max(1, Math.min(Math.floor(box.h / cell), Math.ceil(Math.sqrt(n / 1.4))));
+    let cell = 26;
+    while (cell > 8 && Math.ceil(n / rowsFor(cell)) * cell > box.w) cell -= 1;
+    const rows = rowsFor(cell), cols = Math.ceil(n / rows);
+    const x0 = box.x + (box.w - cols * cell) / 2, y0 = box.y + (box.h - rows * cell) / 2;
+    return {
+      cell, cols, rows, x0, y0,
+      at: (k: number) => ({ x: x0 + Math.floor(k / rows) * cell + cell / 2, y: y0 + (k % rows) * cell + cell / 2 }),
+    };
+  }
+
+  const order: Record<Kind, number> = { tp: 0, fp: 1, fn: 2, tn: 3 };
+
+  // where every dot is heading, how it looks, and where it is now
+  const cx = new Float64Array(N), cy = new Float64Array(N), ca = new Float64Array(N).fill(0);
+  let placed = false;
+
+  // ---------- chapters ----------
+  const chapters = [
+    { dur: 8, title: 'A crowd of a thousand', body: 'One dot per person. The disease is rare: 1 in 100 has it. That is the base rate, and it is the number everyone forgets.' },
+    { dur: 9, title: 'Test everyone', body: 'The test is 90% accurate both ways: it catches 9 in 10 sick people, and wrongly flags 1 in 10 healthy ones. One in ten sounds small. Watch how many that is.' },
+    { dur: 9, title: 'Keep only the positives', body: 'You tested positive. So you are one of these dots, and only these. How many of them are sick?' },
+    { dur: 11, title: 'It hangs on the base rate', body: 'Same test, more sick people to find. As the disease gets common, the true catches outgrow the false alarms.' },
+    { dur: 12, title: 'Test the positives again', body: 'The first positive left an 8% chance. That is the new base rate for a second test, which raises it again: evidence piles up.' },
+    { dur: Infinity, title: 'Explore', body: 'All three numbers are yours. Switch between everyone, the positives, and the people positive twice.' },
+  ];
+
+  let prevBefore = DEF.prev;
+  let userSet = false;
+  const st = story({
+    chapters,
+    enter(i) {
+      if (!userSet && i < 5) Object.assign(S, DEF);
+      if (i === 3) prevBefore = S.prev;
+      if (i === 4 && !userSet) S.prev = DEF.prev;
+      syncSliders();
+      assign();
+    },
+    relevant: (i) => [['pr'], ['se', 'sp'], null, ['pr'], ['se', 'sp'], null][i],
+    frame,
+  });
+
+  function frame(ch: number, t: number) {
+    const light = isLight(canvas);
     ctx.clearRect(0, 0, W, H);
-    const { tp, fn, fp, tn } = counts();
+    const manual = st.manual();
 
-    // Positives (tp, fp) come first so they form one contiguous block that
-    // reads like a bar chart; the negatives fade behind them.
-    const seq: string[] = [];
-    const push = (n: number, c: string) => { for (let i = 0; i < n; i++) seq.push(c); };
-    push(tp, COL.tp);
-    push(fp, COL.fp);
-    if (state.view === 'all') {
-      push(fn, COL.fnDark);
-      push(tn, COL.tnDark);
+    // the base rate rises by itself in chapter 4
+    if (ch === 3 && !manual) {
+      const goal = prevBefore >= 0.15 ? 0.01 : 0.2;
+      const p = lerp(prevBefore, goal, beat(t, 1.5, 6.5));
+      if (Math.abs(p - S.prev) > 1e-4) { S.prev = p; assign(); syncSliders(); }
     }
 
-    const cell = 18, r = 5.5;
-    const gx0 = (W - COLS * cell) / 2, gy0 = (H - ROWS * cell) / 2;
-    for (let i = 0; i < seq.length; i++) {
-      const cx = gx0 + Math.floor(i / ROWS) * cell + cell / 2;
-      const cy = gy0 + (i % ROWS) * cell + cell / 2;
-      ctx.fillStyle = seq[i];
+    // ----- the plan for every dot this frame -----
+    const pos = Array.from({ length: N }, (_, i) => i).filter((i) => kind[i] === 'tp' || kind[i] === 'fp').sort((a, b) => order[kind[a]] - order[kind[b]] || a - b);
+    const twice = pos.filter((i) => pos2[i]);
+    const view = ch === 5 ? S.view : ch === 0 || ch === 1 ? 'crowd' : ch === 4 ? (t < 6 ? 'pos' : 'pos2') : ch === 2 ? (t < 0.6 ? 'crowd' : 'pos') : 'pos';
+    const bPos = block(pos.length), bTwice = block(Math.max(1, twice.length));
+    const rankPos = new Map(pos.map((i, k) => [i, k]));
+    const rankTwice = new Map(twice.map((i, k) => [i, k]));
+    const sorted = Array.from({ length: N }, (_, i) => i).sort((a, b) => order[kind[a]] - order[kind[b]] || a - b);
+    const rankAll = new Map(sorted.map((i, k) => [i, k]));
+
+    // the scan line of chapter 2 and of the second test
+    const scan = ch === 1 ? lerp(GRID.x - 30, GRID.x + COLS * GRID.cell + 30, beat(t, 1, 6)) : Infinity;
+    const scan2 = ch === 4 ? lerp(bPos.x0 - 30, bPos.x0 + bPos.cols * bPos.cell + 30, beat(t, 1.5, 4.5)) : ch === 5 && S.view === 'pos2' ? Infinity : -Infinity;
+
+    // dots appear in a ripple in chapter 1
+    const appear = (i: number) => (ch === 0 ? clamp01((t * 2.2 - Math.hypot((i % COLS) - 25, Math.floor(i / COLS) - 10) / 12)) : 1);
+    const sickShown = ch === 0 ? beat(t, 2.6, 3.6) : 1;
+
+    for (let i = 0; i < N; i++) {
+      const k = kind[i];
+      const positive = k === 'tp' || k === 'fp';
+      let tx: number, ty: number, ta = 1;
+      if (view === 'crowd') ({ x: tx, y: ty } = crowdXY(i));
+      else if (view === 'all') ({ x: tx, y: ty } = crowdXY(rankAll.get(i)!));
+      else if (view === 'pos') {
+        if (positive) ({ x: tx, y: ty } = bPos.at(rankPos.get(i)!));
+        else { ({ x: tx } = crowdXY(i)); ty = H + 40; ta = 0; }
+      } else {
+        if (pos2[i] && positive) ({ x: tx, y: ty } = bTwice.at(rankTwice.get(i)!));
+        else if (positive) { ({ x: tx, y: ty } = bPos.at(rankPos.get(i)!)); ty = H + 40; ta = 0; }
+        else { ({ x: tx } = crowdXY(i)); ty = H + 40; ta = 0; }
+      }
+      if (!placed) { cx[i] = tx; cy[i] = ty; }
+      // each dot moves at its own pace, so a crowd flows rather than jumps
+      const k8 = 0.07 + 0.08 * ((i * 7) % 11) / 11;
+      cx[i] = lerp(cx[i], tx, k8);
+      cy[i] = lerp(cy[i], ty, k8);
+      ca[i] = lerp(ca[i], ta, 0.1);
+    }
+    placed = true;
+
+    // ----- drawing -----
+    if (ch === 1 && isFinite(scan)) scanLine(scan, GRID.y - 14, GRID.y + ROWS * GRID.cell + 14, light);
+    if (ch === 4 && t > 1.2 && t < 5) scanLine(scan2, bPos.y0 - 14, bPos.y0 + bPos.rows * bPos.cell + 14, light);
+
+    const R = view === 'crowd' || view === 'all' ? 5.2 : Math.min(9, (view === 'pos' ? bPos.cell : bTwice.cell) * 0.36);
+    const grey = light ? 'rgba(110,118,130,' : 'rgba(150,158,170,';
+    for (let i = 0; i < N; i++) {
+      if (ca[i] < 0.01) continue;
+      const k = kind[i];
+      const sick = k === 'tp' || k === 'fn';
+      // has the test reached this dot yet?
+      const tested = ch === 0 ? 0 : ch === 1 ? clamp01((scan - cx[i]) / 30) : 1;
+      const tested2 = ch === 4 ? clamp01((scan2 - cx[i]) / 30) : view === 'pos2' ? 1 : 0;
+      let col: string;
+      if (tested < 0.5) col = sick && sickShown > 0.5 ? TPC : grey + (0.5 * appear(i)) + ')';
+      else if (k === 'tp') col = TPC;
+      else if (k === 'fp') col = FPC;
+      else if (k === 'fn') col = withAlpha(TPC, 0.35);
+      else col = grey + '0.22)';
+      if (tested2 > 0.5 && !pos2[i]) col = withAlpha(k === 'tp' ? TPC : FPC, 0.3);
+      ctx.globalAlpha = ca[i] * appear(i);
+      ctx.fillStyle = col;
       ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      const pulse = ch === 0 && sick ? 1 + 0.6 * Math.sin(Math.PI * beat(t, 2.6, 3.6)) : 1;
+      ctx.arc(cx[i], cy[i], R * pulse, 0, Math.PI * 2);
       ctx.fill();
+      // the moment the test flags someone, a ring flashes
+      const flash = ch === 1 ? Math.sin(Math.PI * tested) : 0;
+      if ((k === 'tp' || k === 'fp') && flash > 0.05) {
+        ctx.strokeStyle = withAlpha(k === 'tp' ? TPC : FPC, flash);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx[i], cy[i], R + 5 * flash, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
+    ctx.globalAlpha = 1;
 
-    const tpA = state.prev * state.sens;
-    const fpA = (1 - state.prev) * (1 - state.spec);
-    const post = tpA + fpA > 0 ? tpA / (tpA + fpA) : 0;
-    const fnA = state.prev * (1 - state.sens);
-    const tnA = (1 - state.prev) * state.spec;
-    const postNeg = fnA + tnA > 0 ? fnA / (fnA + tnA) : 0;
+    labels(ch, t, view, bPos, bTwice, light);
+    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 500, accent: ACC, manual });
+    numbers();
+  }
 
-    const T = (x: string) => `\\textcolor{${COL.tp}}{${x}}`;
-    const F = (x: string) => `\\textcolor{${COL.fp}}{${x}}`;
+  function scanLine(x: number, y0: number, y1: number, light: boolean) {
+    const g = ctx.createLinearGradient(x - 40, 0, x, 0);
+    g.addColorStop(0, withAlpha('#ffffff', 0));
+    g.addColorStop(1, withAlpha(light ? '#5462e6' : '#ffffff', 0.12));
+    ctx.fillStyle = g;
+    ctx.fillRect(x - 40, y0, 40, y1 - y0);
+    ctx.fillStyle = withAlpha(light ? '#5462e6' : '#ffffff', 0.6);
+    ctx.fillRect(x - 1, y0, 2, y1 - y0);
+  }
+
+  const pct = (v: number, d = 1) => `${(v * 100).toFixed(d)}%`;
+  /** The big numbers on the stage, top right, and the brackets over the blocks. */
+  function labels(ch: number, t: number, view: string, bPos: ReturnType<typeof block>, bTwice: ReturnType<typeof block>, light: boolean) {
+    const x = 960, tc = light ? '#0d9488' : TPC;
+    const big = (s: string, y: number, col: string, a = 1, size = 24) => say(ctx, s, x, y, { colour: col, size, weight: 700, align: 'right', alpha: a, halo: inv(0.8) });
+    const small = (s: string, y: number, a = 1) => say(ctx, s, x, y, { colour: ink(0.7), size: 14, align: 'right', alpha: a, halo: inv(0.8) });
+    if (ch === 0) {
+      big(`${N} people`, 44, ink(0.9), beat(t, 0.5, 1.5));
+      big(`${C.sick} sick (${pct(S.prev)})`, 76, tc, beat(t, 2.6, 3.6));
+      small(`${N - C.sick} healthy`, 102, beat(t, 3.2, 4.2));
+    } else if (ch === 1) {
+      big(`${C.tp} of ${C.sick} sick: caught`, 44, tc, beat(t, 2, 3));
+      big(`${C.fp} of ${N - C.sick} healthy: flagged`, 76, FPC, beat(t, 3.5, 4.5));
+      small(`10% of a big group is a big number`, 102, beat(t, 6, 7));
+    } else if (view === 'pos' || view === 'pos2') {
+      const b = view === 'pos' ? bPos : bTwice;
+      const tp = view === 'pos' ? C.tp : C.tp2, fp = view === 'pos' ? C.fp : C.fp2;
+      const a = ch === 2 ? beat(t, 2.4, 3.4) : ch === 4 ? (t < 6 ? 1 : beat(t, 6.8, 7.8)) : 1;
+      const post = tp + fp ? tp / (tp + fp) : 0;
+      big(`${tp} of ${tp + fp} are sick`, 44, ink(0.95), a);
+      big(`= ${pct(post)}`, 78, post >= 0.5 ? tc : FPC, a, 30);
+      if (view === 'pos2') small(`after two positive tests (one: ${pct(C.tp / Math.max(1, C.tp + C.fp))})`, 106, a);
+      else small(`a positive test means: you are one of these ${tp + fp}`, 106, a);
+      // brackets: the sick part and the false alarms
+      const cols = (n: number) => Math.ceil(n / b.rows);
+      const bracket = (from: number, to: number, col: string, text: string, align: CanvasTextAlign) => {
+        if (to <= from) return;
+        const x0 = b.x0 + from * b.cell + 2, x1 = b.x0 + to * b.cell - 2, y = b.y0 - 12;
+        ctx.globalAlpha = a;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x0, y + 6);
+        ctx.lineTo(x0, y);
+        ctx.lineTo(x1, y);
+        ctx.lineTo(x1, y + 6);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        // the two labels grow away from the line between the groups, so they never collide
+        say(ctx, text, align === 'right' ? x1 - 4 : x0 + 4, y - 12, { colour: col, size: 14, weight: 600, align, alpha: a, halo: inv(0.8) });
+      };
+      const ct = cols(tp);
+      bracket(0, ct, tc, `${tp} sick`, 'right');
+      bracket(Math.floor(tp / b.rows), cols(tp + fp), FPC, `${fp} healthy`, 'left');
+    } else if (view === 'all') {
+      big(`${C.tp + C.fp} positive tests`, 44, ink(0.9));
+      small(`${C.tp} sick + ${C.fp} healthy`, 72);
+    }
+  }
+
+  // ---------- panel ----------
+  const views = segmented('view', (v) => { S.view = v; if (st.chapter() !== 5) st.go(5); });
+  const setPr = slider('pr', (v) => { S.prev = v / 1000; changed(); }, (v) => `${(v / 10).toFixed(1)}%`);
+  const setSe = slider('se', (v) => { S.sens = v / 100; changed(); }, (v) => `${v}%`);
+  const setSp = slider('sp', (v) => { S.spec = v / 100; changed(); }, (v) => `${v}%`);
+  function changed() {
+    userSet = true;
+    assign();
+  }
+  function syncSliders() {
+    setPr(Math.round(S.prev * 1000));
+    setSe(Math.round(S.sens * 100));
+    setSp(Math.round(S.spec * 100));
+  }
+
+  let tick = 0;
+  function numbers() {
+    if (tick++ % 6) return;
+    const tpA = S.prev * S.sens, fpA = (1 - S.prev) * (1 - S.spec);
+    const post = tpA / (tpA + fpA || 1);
+    const tp2 = post * S.sens, fp2 = (1 - post) * (1 - S.spec);
+    const post2 = tp2 / (tp2 + fp2 || 1);
+    const fnA = S.prev * (1 - S.sens), tnA = (1 - S.prev) * S.spec;
+    const T = (x: string) => `\\textcolor{${TPC}}{${x}}`;
+    const F = (x: string) => `\\textcolor{${FPC}}{${x}}`;
     setEq({
-      rule: [
-        'P(D\\mid +) =',
-        `\\dfrac{${T('P(+\\mid D)\\,P(D)')}}{${T('P(+\\mid D)P(D)')}+${F('P(+\\mid\\lnot D)P(\\lnot D)')}}`,
-      ],
-      live: [
-        `P(D\\mid +) = ${(post * 100).toFixed(1)}\\%`,
-        `\\quad = \\dfrac{${T(tpA.toFixed(4))}}{${T(tpA.toFixed(4))}+${F(fpA.toFixed(4))}}`,
-      ],
+      rule: ['P(\\text{sick}\\mid +) =', `\\dfrac{${T('P(+\\mid \\text{sick})\\,P(\\text{sick})')}}{${T('P(+\\mid \\text{sick})\\,P(\\text{sick})')}+${F('P(+\\mid \\text{healthy})\\,P(\\text{healthy})')}}`],
+      live: [`= \\dfrac{${T(`${pct(S.sens, 0).replace('%', '\\%')}\\times ${pct(S.prev).replace('%', '\\%')}`)}}{${T(`${pct(S.sens, 0).replace('%', '\\%')}\\times ${pct(S.prev).replace('%', '\\%')}`)}+${F(`${pct(1 - S.spec, 0).replace('%', '\\%')}\\times ${pct(1 - S.prev).replace('%', '\\%')}`)}} = ${pct(post).replace('%', '\\%')}`],
     });
     setResult({
-      value: `${(post * 100).toFixed(1)}%`,
-      colour: post >= 0.5 ? COL.tp : COL.fp,
-      status: `${tp} of the ${tp + fp} positive tests are truly sick`,
-      note: 'The false alarms are drawn from the huge healthy group, which is how they can outnumber the true catches.',
+      value: pct(post),
+      colour: post >= 0.5 ? TPC : FPC,
+      status: `${C.tp} of the ${C.tp + C.fp} positive tests are truly sick`,
+      note: 'The false alarms come from the huge healthy group, which is how they can outnumber the true catches.',
     });
-    setRows({
-      'r-post': `${(post * 100).toFixed(1)}%`,
-      'r-postneg': `${(postNeg * 100).toFixed(2)}%`,
-    });
+    setRows({ 'r-post': pct(post), 'r-post2': pct(post2), 'r-postneg': pct(fnA / (fnA + tnA || 1), 2) });
     el('tally').innerHTML =
-      `<span class="t tp">${tp} true +</span>` +
-      `<span class="t fp">${fp} false +</span>` +
-      `<span class="t fn">${fn} false −</span>` +
-      `<span class="t tn">${tn} true −</span>`;
+      `<span class="t tp">${C.tp} true +</span>` +
+      `<span class="t fp">${C.fp} false +</span>` +
+      `<span class="t fn">${C.fn} false −</span>` +
+      `<span class="t tn">${C.tn} true −</span>`;
   }
 
-  const views = segmented('view', (v) => { state.view = v; draw(); });
-  const setPr = slider('pr', (v) => { state.prev = v / 1000; draw(); }, (v) => `${(v / 10).toFixed(1)}%`);
-  const setSe = slider('se', (v) => { state.sens = v / 100; draw(); }, (v) => `${v}%`);
-  const setSp = slider('sp', (v) => { state.spec = v / 100; draw(); }, (v) => `${v}%`);
-
   /** Prevalence in tenths of a percent, sensitivity and specificity in percent. */
-  function show(pr: number, se: number, sp: number) {
-    state.prev = pr / 1000;
-    state.sens = se / 100;
-    state.spec = sp / 100;
-    state.view = 'pos';
-    setPr(pr);
-    setSe(se);
-    setSp(sp);
-    views.select('pos');
-    draw();
+  function show(pr: number, se: number, sp: number, view = 'pos') {
+    Object.assign(S, { prev: pr / 1000, sens: se / 100, spec: sp / 100, view });
+    userSet = true;
+    syncSliders();
+    views.select(view);
+    assign();
+    st.go(5);
   }
   tries({
     rare: () => show(10, 90, 90),
     common: () => show(200, 90, 90),
     spec: () => show(10, 90, 99),
+    twice: () => { userSet = false; st.go(4); st.play(true); },
   });
 
-  draw();
+  assign();
+  st.start();
 </script>
 
 <style>
