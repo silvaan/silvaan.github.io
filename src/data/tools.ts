@@ -284,7 +284,7 @@ export const AREAS: Area[] = [
         slug: 'probability-density',
         title: 'Probability Density',
         description:
-          'No single value has any probability, only stretches do, so a density is the height whose area is that probability. Drag an interval and read off the integral.',
+          'No single value has any probability, only stretches do, so a density is the height whose area is that probability. Eight real distributions with their parameters, a histogram of samples settling onto the curve, and the mean, median and mode pulling apart on a skew.',
         href: '/simulations/statistics/probability-density',
         status: 'live',
       },
