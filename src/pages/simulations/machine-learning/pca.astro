@@ -15,7 +15,7 @@ import Try from '../../../components/sim/Try.astro';
   areaSlug="machine-learning"
   title="Principal Component Analysis"
   description="Keep one number per point instead of two: its shadow on a line u. Turn u and watch how much of the spread the shadows keep. The best line keeps the most and throws away the least, and it is the top eigenvector of the covariance matrix."
-  shortcuts={['animate', 'reset', 'fullscreen']}
+  shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -23,7 +23,7 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="pca"
           width="1000"
-          height="600"
+          height="640"
           role="img"
           aria-label="A cloud of points, a line u through their mean with each point's shadow on it, the residuals to the line, and the two principal components as arrows."
         ></canvas>
@@ -36,12 +36,28 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'PC1', color: '#5eead4' },
           { label: 'PC2', color: '#c4b5fd' },
         ]}
-        hint="Drag anywhere to turn u · drag a point to move it"
+        hint="Drag anywhere to turn u · drag a point to move it · any control takes over the tour"
       />
       <Result label="Spread kept by u" />
     </div>
 
     <div class="sim-panel">
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · Two numbers' },
+          { value: '1', label: '2 · A shadow' },
+          { value: '2', label: '3 · Turn u' },
+          { value: '3', label: '4 · The best line' },
+          { value: '4', label: '5 · Units' },
+          { value: '5', label: '6 · Explore' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
       <Seg
         id="data"
         label="Data"
@@ -60,7 +76,9 @@ import Try from '../../../components/sim/Try.astro';
         <button type="button" class="btn ghost" id="resample">New sample</button>
       </Actions>
       <Slider id="t" label="Squash onto u" min={0} max={100} value={0} display="0%" hint={['two numbers each', 'one number each']} />
-      <Transport animate="Project onto u" />
+      <Actions>
+        <button type="button" class="btn ghost" id="project">Project onto u</button>
+      </Actions>
       <Checks
         label="Before PCA"
         items={[{ id: 'std', label: 'Standardize each axis (divide by its spread)' }]}
@@ -120,6 +138,7 @@ import Try from '../../../components/sim/Try.astro';
   import { equation } from '../../../lib/equation';
   import { stageInk, arrow } from '../../../lib/draw';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
+  import { story, headline, say, withAlpha, isLight, beat, lerp } from '../../../lib/story';
 
   // PCA in two dimensions is one question asked of every direction u: how
   // spread out are the shadows of the points on u? The spread is uᵀCu, its
@@ -128,19 +147,20 @@ import Try from '../../../components/sim/Try.astro';
   type P = [number, number];
   const DATA = '#7c8cff', U = '#fbbf24', LOST = '#f9736a', PC1 = '#5eead4', PC2 = '#c4b5fd';
   const N = 90;
-  const view = { data: 'tilted', theta: (100 * Math.PI) / 180, t: 0, std: false, resid: true };
+  const view = { data: 'tilted', theta: (100 * Math.PI) / 180, t: 0, std: false, resid: true, u: 1, pc: 1, ellipse: 0, pop: 1 };
   let pts: P[] = [];
   let seed = 7;
 
   const canvas = el('pca') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink } = stageInk(canvas);
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
   const { label, textWidth } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  const PLOT = { x: 16, y: 16, w: W - 32, h: H - 32 };
+  // the scatter on the left, under the headline; the spread panel on the right
+  const PLOT = { x: 16, y: 180, w: 624, h: 444 };
   let O = { x: PLOT.x + PLOT.w / 2, y: PLOT.y + PLOT.h / 2 };
   let UNIT = 80;
   const toPx = (x: number, y: number) => ({ px: O.x + x * UNIT, py: O.y - y * UNIT });
@@ -292,7 +312,7 @@ import Try from '../../../components/sim/Try.astro';
     const ux = Math.cos(view.theta), uy = Math.sin(view.theta);
     const far = Math.hypot(PLOT.w, PLOT.h) / UNIT;
     const a = toPx(c.mx - ux * far, c.my - uy * far), b = toPx(c.mx + ux * far, c.my + uy * far);
-    ctx.strokeStyle = 'rgba(251,191,36,0.7)';
+    ctx.strokeStyle = withAlpha(U, 0.7 * view.u);
     ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.moveTo(a.px, a.py); ctx.lineTo(b.px, b.py); ctx.stroke();
     blockLine(a.px, a.py, b.px, b.py);
@@ -306,18 +326,42 @@ import Try from '../../../components/sim/Try.astro';
       const p = toPx(x, y), q = shadows[i];
       const d = { px: p.px + view.t * (q.px - p.px), py: p.py + view.t * (q.py - p.py) };
       shown.push(d);
-      if (view.resid && view.t < 0.999) {
-        ctx.strokeStyle = 'rgba(249,115,106,0.45)';
+      if (view.resid && view.t < 0.999 && view.u > 0) {
+        ctx.strokeStyle = withAlpha(LOST, 0.45 * view.u);
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(d.px, d.py); ctx.lineTo(q.px, q.py); ctx.stroke();
       }
     });
-    ctx.fillStyle = 'rgba(251,191,36,0.85)';
-    for (const q of shadows) { ctx.beginPath(); ctx.arc(q.px, q.py, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = withAlpha(U, 0.85 * view.u);
+    if (view.u > 0) for (const q of shadows) { ctx.beginPath(); ctx.arc(q.px, q.py, 2.2, 0, Math.PI * 2); ctx.fill(); }
     ctx.fillStyle = DATA;
     ctx.strokeStyle = 'rgba(13,14,18,0.6)';
     ctx.lineWidth = 1;
-    for (const d of shown) { ctx.beginPath(); ctx.arc(d.px, d.py, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    // in the first chapter the points pop in one after another
+    shown.forEach((d, i) => {
+      const a = Math.max(0, Math.min(1, view.pop * 1.3 * shown.length - i));
+      if (a <= 0) return;
+      ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.arc(d.px, d.py, 4 * (0.6 + 0.4 * a), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+    // the covariance ellipse, two standard deviations along each component
+    if (view.ellipse > 0) {
+      ctx.save();
+      ctx.translate(m.px, m.py);
+      ctx.rotate(-c.th1);
+      ctx.strokeStyle = withAlpha(PC1, 0.5 * view.ellipse);
+      ctx.fillStyle = withAlpha(PC1, 0.05 * view.ellipse);
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 2 * Math.sqrt(c.l1) * UNIT, Math.max(1, 2 * Math.sqrt(c.l2) * UNIT), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
     if (drag >= 0) {
       ctx.strokeStyle = DATA;
       ctx.lineWidth = 2;
@@ -326,7 +370,8 @@ import Try from '../../../components/sim/Try.astro';
 
     // the two components, as arrows two standard deviations long
     const tips: [{ px: number; py: number }, string, string][] = [];
-    for (const [e, l, col, name] of [[e1, c.l1, PC1, 'PC1'], [e2, c.l2, PC2, 'PC2']] as const) {
+    ctx.globalAlpha = view.pc;
+    if (view.pc > 0) for (const [e, l, col, name] of [[e1, c.l1, PC1, 'PC1'], [e2, c.l2, PC2, 'PC2']] as const) {
       const r = Math.max(2 * Math.sqrt(l), 18 / UNIT);
       const tip = toPx(c.mx + e.x * r, c.my + e.y * r);
       ctx.lineWidth = 3;
@@ -336,19 +381,20 @@ import Try from '../../../components/sim/Try.astro';
       blockDot(tip.px, tip.py, 7);
       tips.push([tip, col, name]);
     }
+    ctx.globalAlpha = 1;
     ctx.fillStyle = ink(0.9);
     ctx.beginPath(); ctx.arc(m.px, m.py, 3.5, 0, Math.PI * 2); ctx.fill();
     blockDot(m.px, m.py, 8);
     ctx.restore();
 
-    for (const [tip, col, name] of tips) place(name, 13, col, tip.px, tip.py, Math.atan2(tip.py - m.py, tip.px - m.px), 6);
+    if (view.pc > 0.5) for (const [tip, col, name] of tips) place(name, 13, col, tip.px, tip.py, Math.atan2(tip.py - m.py, tip.px - m.px), 6);
     // name u near the edge of the plot, on the far side from PC1's label
     const end = toPx(c.mx + ux * Math.min(far, (PLOT.h / 2 - 30) / UNIT), c.my + uy * Math.min(far, (PLOT.h / 2 - 30) / UNIT));
-    place('u', 15, U, end.px, end.py, Math.atan2(end.py - m.py, end.px - m.px) + Math.PI / 2, 6);
+    if (view.u > 0.5) place('u', 15, U, end.px, end.py, Math.atan2(end.py - m.py, end.px - m.px) + Math.PI / 2, 6);
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
+  /** The scatter and the numbers; the story's frame calls it, then adds its own layers. */
+  function paint() {
     layoutReset();
     const X = seen();
     const c = pca(X);
@@ -411,10 +457,10 @@ import Try from '../../../components/sim/Try.astro';
     for (const p of [c.th1, (c.th1 + Math.PI / 2) % Math.PI]) if (between(th, p) < 2) return p;
     return th;
   }
-  const setTh = slider('th', (v) => { cancelAnimationFrame(raf); view.theta = magnet((v * Math.PI) / 180); draw(); }, (v) => `${Math.round(v)}°`);
-  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; draw(); }, (v) => `${Math.round(v)}%`);
-  const setStd = check('std', (on) => { view.std = on; fit(); draw(); });
-  check('resid', (on) => { view.resid = on; draw(); });
+  const setTh = slider('th', (v) => { cancelAnimationFrame(raf); view.theta = magnet((v * Math.PI) / 180); }, (v) => `${Math.round(v)}°`);
+  const setT = slider('t', (v) => { cancelAnimationFrame(raf); view.t = v / 100; }, (v) => `${Math.round(v)}%`);
+  const setStd = check('std', (on) => { view.std = on; fit(); });
+  check('resid', (on) => { view.resid = on; });
 
   function load(kind: string) {
     cancelAnimationFrame(raf);
@@ -423,7 +469,7 @@ import Try from '../../../components/sim/Try.astro';
     view.t = 0;
     setT(0);
     fit();
-    draw();
+   
   }
   const datas = segmented('data', load);
   el('resample').addEventListener('click', () => { seed = (seed * 48271 + 11) % 2147483647; load(view.data); });
@@ -435,7 +481,6 @@ import Try from '../../../components/sim/Try.astro';
     const tick = (now: number) => {
       const p = Math.min(1, (now - start) / ms);
       step(p * p * (3 - 2 * p));
-      draw();
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -452,27 +497,20 @@ import Try from '../../../components/sim/Try.astro';
     // to PC1, or on to PC2 when u is already there
     glide(between(view.theta, c.th1) < 0.5 ? c.th1 + Math.PI / 2 : c.th1);
   });
-  el('run').addEventListener('click', () => {
+  el('project').addEventListener('click', () => {
     view.t = 0;
     ease(1300, (e) => { view.t = e; setT(Math.round(e * 100)); });
   });
-  el('reset').addEventListener('click', () => {
-    seed = 7;
-    datas.select('tilted');
-    view.std = false;
-    setStd(false);
-    aimAt((100 * Math.PI) / 180);
-    load('tilted');
-  });
 
   function show(kind: string, o: { std?: boolean; th?: number } = {}) {
+    st.go(5);
     if (kind !== view.data || o.std !== undefined) seed = 7;
     datas.select(kind);
     view.std = !!o.std;
     setStd(view.std);
     load(kind);
     if (o.th !== undefined) aimAt((o.th * Math.PI) / 180);
-    draw();
+   
   }
   tries({
     snap: () => { show('tilted', { th: 100 }); el('snap').click(); },
@@ -480,7 +518,7 @@ import Try from '../../../components/sim/Try.astro';
       show('tilted');
       const c = pca(seen());
       aimAt(c.th1);
-      el('run').click();
+      el('project').click();
     },
     round: () => show('round', { th: 30 }),
     thin: () => { show('thin', { th: 40 }); el('snap').click(); },
@@ -517,15 +555,16 @@ import Try from '../../../components/sim/Try.astro';
   function turn(p: { x: number; y: number }) {
     const c = pca(seen()), m = toPx(c.mx, c.my);
     if (Math.hypot(p.x - m.px, p.y - m.py) > 4) aimAt(magnet(Math.atan2(m.py - p.y, p.x - m.px)));
-    draw();
+   
   }
   canvas.addEventListener('pointerdown', (e) => {
     const p = local(e);
     if (!inPlot(p)) return;
     cancelAnimationFrame(raf);
     canvas.setPointerCapture(e.pointerId);
+    st.touch();
     drag = inPlot(p) && view.t < 0.05 ? nearest(p) : -1;
-    if (drag >= 0) { frozen = { ...scale }; datas.clear(); draw(); return; }
+    if (drag >= 0) { frozen = { ...scale }; datas.clear(); return; }
     turning = true;
     turn(p);
   });
@@ -535,22 +574,186 @@ import Try from '../../../components/sim/Try.astro';
       // back from the drawn (possibly standardized) plane to the raw data, with the scale held still
       const x = (p.x - O.x) / UNIT, y = (O.y - p.y) / UNIT;
       pts[drag] = [frozen.mx + x * frozen.sx, frozen.my + y * frozen.sy];
-      draw();
+     
       return;
     }
     if (turning) { turn(p); return; }
     canvas.style.cursor = inPlot(p) && view.t < 0.05 && nearest(p) >= 0 ? 'move' : inPlot(p) ? 'grab' : 'default';
   });
   const stop = () => {
-    if (drag >= 0) { drag = -1; fit(); draw(); }
+    if (drag >= 0) { drag = -1; fit(); }
     turning = false;
   };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
+  // --- the story ------------------------------------------------------------------
+  const chapters = [
+    { dur: 7, title: 'Two numbers per point', body: 'Every point is two numbers, x and y. Could one number per point say almost as much?' },
+    { dur: 9.5, title: 'Keep only a shadow', body: 'Pick a line u and keep just each point’s shadow on it: one number. The shadows’ spread is what survives; the red residuals are what is thrown away.' },
+    { dur: 11, title: 'Turn the line', body: 'Turn u all the way round. The shadows spread out and bunch up, but kept plus lost is always the same total: Pythagoras on every point.' },
+    { dur: 9, title: 'The best line', body: 'The top of the curve is PC1, the line that keeps the most and so loses the least. At 90° to it sits PC2, the worst. They are the eigenvectors of the covariance matrix.' },
+    { dur: 12, title: 'Watch the units', body: 'Write x in units four times smaller and PC1 just follows the bigger numbers. Standardise each axis first and the real trend appears.' },
+    { dur: Infinity, title: 'Explore', body: 'Turn u, drag points, change the data, squash onto u, standardise.' },
+  ];
+  const DEG100 = (100 * Math.PI) / 180;
+  /** Directions u has pointed in during chapter 3, for the traced curve. */
+  let swept: number[] = [];
+
+  function ready(kind: string, std: boolean) {
+    if (view.data === kind && view.std === std) return;
+    seed = 7;
+    datas.select(kind);
+    view.std = std;
+    setStd(std);
+    load(kind);
+  }
+  /** The short way round between two undirected directions. */
+  const turnTo = (from: number, to: number, e: number) => {
+    let d = (((to - from) % Math.PI) + Math.PI) % Math.PI;
+    if (d > Math.PI / 2) d -= Math.PI;
+    return from + d * e;
+  };
+
+  const st = story({
+    chapters,
+    enter(i) {
+      if (i < 4) ready('tilted', false);
+      if (i === 4) ready('units', false);
+      if (i === 2) swept = [];
+      if (i < 5) { view.t = 0; setT(0); }
+      view.pop = 1;
+    },
+    relevant: (i) => [['data'], ['t'], ['th'], ['th'], ['std'], null][i],
+    frame,
+  });
+
+  function frame(ch: number, t: number) {
+    const light = isLight(canvas);
+    const manual = st.manual();
+    if (!manual) {
+      if (ch === 0) Object.assign(view, { u: 0, pc: 0, ellipse: 0, pop: beat(t, 0.4, 3.4) });
+      if (ch === 1) {
+        Object.assign(view, { u: beat(t, 0.3, 1.2), pc: 0, ellipse: 0, pop: 1 });
+        aimAt(DEG100);
+        view.t = beat(t, 3, 5) * (1 - beat(t, 7.2, 8.8));
+        setT(Math.round(view.t * 100));
+      }
+      if (ch === 2) {
+        Object.assign(view, { u: 1, pc: 0, ellipse: 0, pop: 1 });
+        aimAt(DEG100 + Math.PI * beat(t, 1, 9.5));
+      }
+      if (ch === 3) {
+        const c = pca(seen());
+        Object.assign(view, { u: 1, pc: beat(t, 3, 4), ellipse: beat(t, 4.5, 5.5), pop: 1 });
+        aimAt(turnTo(DEG100, c.th1, beat(t, 0.8, 3)));
+      }
+      if (ch === 4) {
+        if (t > 6 && !view.std) { view.std = true; setStd(true); fit(); }
+        const c = pca(seen());
+        Object.assign(view, { u: 1, pc: beat(t, 1, 2), ellipse: 0, pop: 1 });
+        aimAt(turnTo(view.theta, c.th1, t < 1.5 ? 0.15 : 0.08));
+      }
+    }
+    if (ch === 5 || manual) Object.assign(view, { u: 1, pc: ch === 0 ? view.pc : 1, pop: 1, ellipse: ch >= 3 ? view.ellipse : 0 });
+    if (ch === 2) swept.push(view.theta % Math.PI);
+
+    ctx.clearRect(0, 0, W, H);
+    paint();
+    side(ch, t, light);
+    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 600, accent: PC1, manual });
+    if (ch === 4) {
+      const c = pca(seen());
+      const tag = view.std ? 'standardised: PC1 follows the real trend' : `raw: PC1 points along x (${deg(c.th1).toFixed(0)}°)`;
+      say(ctx, tag, PLOT.x + 16, PLOT.y + 20, { colour: view.std ? PC1 : LOST, size: 15, weight: 650, halo: inv(0.8) });
+    }
+  }
+
+  /** The right-hand panel: kept and lost as one bar, and the spread kept for every direction of u. */
+  function side(ch: number, t: number, light: boolean) {
+    const c = pca(seen());
+    const x0 = 670, w = 300;
+    const kept = varAlong(c, view.theta), total = c.total || 1;
+    const a = view.u;
+    if (a > 0.01) {
+      ctx.globalAlpha = a;
+      say(ctx, 'spread of the shadows on u', x0, 172, { colour: ink(0.55), size: 13 });
+      const kw = (kept / total) * w;
+      ctx.fillStyle = withAlpha(U, 0.85);
+      ctx.fillRect(x0, 188, kw, 24);
+      ctx.fillStyle = withAlpha(LOST, 0.7);
+      ctx.fillRect(x0 + kw, 188, w - kw, 24);
+      ctx.globalAlpha = 1;
+      say(ctx, `kept ${kept.toFixed(2)}`, x0, 228, { colour: light ? '#b45309' : U, size: 14, weight: 650, alpha: a });
+      say(ctx, `lost ${(total - kept).toFixed(2)}`, x0 + w, 228, { colour: LOST, size: 14, weight: 650, align: 'right', alpha: a });
+      say(ctx, `kept + lost = ${total.toFixed(2)}, for every u`, x0, 250, { colour: ink(0.6), size: 13, alpha: a * (ch >= 2 ? 1 : beat(t, 5, 6)) });
+    }
+    // the curve
+    const b = ch >= 2 ? 1 : 0;
+    if (!b) return;
+    const y0 = 300, h = 170;
+    const gx = (th: number) => x0 + (th / Math.PI) * w;
+    const gy = (v: number) => y0 + h - (v / total) * h;
+    say(ctx, 'spread kept, for every direction of u', x0, y0 - 16, { colour: ink(0.55), size: 13 });
+    ctx.strokeStyle = ink(0.15);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x0, gy(total));
+    ctx.lineTo(x0 + w, gy(total));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = ink(0.4);
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    for (const d of [0, 45, 90, 135, 180]) ctx.fillText(`${d}°`, gx((d * Math.PI) / 180), y0 + h + 14);
+    const line = (from: (th: number) => boolean, col: string, lw: number) => {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      let on = false;
+      for (let i = 0; i <= 180; i++) {
+        const th = (i * Math.PI) / 180;
+        if (!from(th)) { on = false; continue; }
+        const X = gx(th), Y = gy(varAlong(c, th));
+        on ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+        on = true;
+      }
+      ctx.stroke();
+    };
+    line(() => true, withAlpha(U, 0.25), 1.5);
+    const seen2 = ch === 2 && !st.manual() ? (th: number) => swept.some((s2) => Math.abs(s2 - th) < 0.012) : () => true;
+    line(seen2, U, 2.5);
+    // where u points now
+    const th = ((view.theta % Math.PI) + Math.PI) % Math.PI;
+    ctx.fillStyle = light ? '#b45309' : '#fff';
+    ctx.beginPath();
+    ctx.arc(gx(th), gy(varAlong(c, th)), 5, 0, Math.PI * 2);
+    ctx.fill();
+    if (view.pc > 0.05) {
+      const t2 = (c.th1 + Math.PI / 2) % Math.PI;
+      for (const [ang, val, col, name] of [[c.th1, c.l1, PC1, `PC1: λ₁ = ${c.l1.toFixed(2)}`], [t2, c.l2, PC2, `PC2: λ₂ = ${c.l2.toFixed(2)}`]] as const) {
+        ctx.globalAlpha = view.pc;
+        ctx.strokeStyle = col;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(gx(ang), y0);
+        ctx.lineTo(gx(ang), y0 + h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        const right = gx(ang) < x0 + w / 2;
+        say(ctx, name, gx(ang) + (right ? 6 : -6), gy(val) + (val > total / 2 ? -10 : 12), { colour: col, size: 13, weight: 650, align: right ? 'left' : 'right', alpha: view.pc, halo: inv(0.85) });
+      }
+      say(ctx, `PC1 keeps ${((100 * c.l1) / total).toFixed(0)}% of the spread`, x0, y0 + h + 44, { colour: PC1, size: 16, weight: 700, alpha: view.pc });
+    }
+  }
+
   pts = sample('tilted');
   fit();
-  draw();
+  st.start();
+ 
 </script>
 
 <style>
