@@ -321,6 +321,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'information-entropy',
+        title: 'Information and Entropy',
+        description:
+          'A bit is one yes/no answer. Find a card in 16 with four of them, see why rare news takes more questions, send the weather in 1.75 bits a day, and pour the questions flat to find the entropy.',
+        href: '/simulations/statistics/information-entropy',
+        status: 'live',
+      },
+      {
         slug: 'kl-divergence',
         title: 'KL Divergence',
         description:
