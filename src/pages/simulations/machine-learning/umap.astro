@@ -1,0 +1,974 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="machine-learning"
+  title="UMAP"
+  description="Put a ball around every point, each just big enough to reach its nearest neighbours, and glue the overlaps into edges and triangles: a fuzzy simplicial complex, the shape of the data. Then throw that shape on a page and tug its edges until it lies flat. What settles is the UMAP map."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="umap"
+          width="1000"
+          height="640"
+          role="img"
+          aria-label="A cloud of points in 3D, a ball around each point, the overlaps glued into edges and triangles, and the same complex being tugged flat into a UMAP map."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'edges and triangles: the complex', color: '#9aa0ac' },
+          { label: 'an edge being tugged', color: '#5eead4' },
+          { label: 'a push from a random point', color: '#f9736a' },
+        ]}
+        hint="Scroll to zoom · drag to move · on the 3D cloud a drag turns it, shift-drag moves · double-click to reset · hover a point to see its neighbours"
+      />
+      <Result label="Neighbours kept on the map" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · The cloud' },
+          { value: '1', label: '2 · Balls' },
+          { value: '2', label: '3 · Fuzzy balls' },
+          { value: '3', label: '4 · The complex' },
+          { value: '4', label: '5 · Flatten' },
+          { value: '5', label: '6 · Tug &amp; shove' },
+          { value: '6', label: '7 · The map' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
+      <Seg
+        id="data"
+        label="Data"
+        attr="d"
+        options={[
+          { value: 'roll', label: 'Rolled sheet' },
+          { value: 'rings', label: 'Linked rings' },
+          { value: 'clusters', label: 'Five clusters' },
+        ]}
+      />
+      <Slider id="nn" label="n_neighbors: how far each ball reaches" min={2} max={50} value={15} hint={['few, local', 'many, global']} />
+      <Slider id="md" label="min_dist: how close points may sit" min={0} max={0.99} step={0.01} value={0.1} hint={['packed tight', 'spread out']} />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-ep', label: 'epoch' },
+          { id: 'r-th', label: 'edges · triangles' },
+          { id: 'r-ab', label: 'curve a, b' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      With one ball size for everyone, the dense inner turns of the sheet melt into a blob while the sparse outer
+      edge falls apart. Giving each point its own radius makes the data look evenly spread from every point.
+      <Try id="balls" />
+    </li>
+    <li>
+      In chapter 3, hover the points on the sparse outer edge of the sheet: their solid core is wide, yet their
+      nearest neighbour still weighs exactly 1. In a crowd the core is a speck. <Try id="fuzzy" />
+    </li>
+    <li>
+      The complex is the shape of the data: the rolled sheet becomes a ribbon of triangles, the linked rings two
+      loops with a hole each, the clusters five separate pieces. <Try id="shape" />
+    </li>
+    <li>
+      At the start of chapter 6 the layout runs in slow motion: one edge tugged, a few random points shoved. As the
+      edges shorten, the triangles come back on the page and the sheet unrolls. <Try id="tugs" />
+    </li>
+    <li>
+      Raise min_dist to 0.8 and the flat complex puffs up into a loose mesh; drop it to 0 and it shrinks into tight
+      knots. The neighbours kept barely change. <Try id="puff" />
+    </li>
+    <li>
+      With n_neighbors at 3 the balls barely touch: few triangles form, the complex breaks into strands, and so does
+      the map. <Try id="tiny" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { segmented, slider, result, readout, tries } from '../../../lib/panel';
+  import { sqDistances } from '../../../lib/tsne';
+  import { fuzzyGraph, fitAB, Layout, NEG_RATE } from '../../../lib/umap';
+  import { stageCamera } from '../../../lib/stage-camera';
+  import { story, headline, say, glows, withAlpha, mix, isLight, ease, beat, lerp, clamp01 } from '../../../lib/story';
+
+  // UMAP as topology: a ball around every point, each sized to reach its k
+  // nearest, the overlaps glued into edges and triangles (the fuzzy
+  // simplicial complex), and the layout as that complex thrown on a page and
+  // tugged flat, one edge at a time with random shoves. Real UMAP from lib/umap.
+  const PULL = '#5eead4', PUSH = '#f9736a', ACC = '#7c8cff';
+
+  const canvas = document.getElementById('umap') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const glow = glows();
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // ---------- data ----------
+  const rng = (seed: number) => {
+    let s = seed >>> 0 || 1;
+    return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  };
+  const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r());
+
+  type Pt = [number, number, number];
+  type Data = { X: Pt[]; colour: string[] };
+
+  function make(kind: string): Data {
+    const r = rng(7), X: Pt[] = [], colour: string[] = [];
+    if (kind === 'clusters') {
+      const C: [Pt, number, string][] = [
+        [[-1.25, 0.55, 0.35], 0.16, '#5eead4'],
+        [[1.1, 0.75, -0.55], 0.2, '#7c8cff'],
+        [[0.15, -0.65, 1.05], 0.4, '#fbbf24'],
+        [[-0.5, -0.8, -1.0], 0.22, '#f472b6'],
+        [[1.2, -0.6, 0.55], 0.16, '#a3e635'],
+      ];
+      for (const [c, s, col] of C)
+        for (let k = 0; k < 60; k++) {
+          X.push([c[0] + s * gauss(r), c[1] + s * gauss(r), c[2] + s * gauss(r)]);
+          colour.push(col);
+        }
+    } else if (kind === 'rings') {
+      for (let ring = 0; ring < 2; ring++)
+        for (let k = 0; k < 150; k++) {
+          const th = (2 * Math.PI * k) / 150 + 0.02 * gauss(r);
+          const a = Math.cos(th), b = Math.sin(th), n = () => 0.05 * gauss(r);
+          X.push(ring === 0 ? [-0.5 + a + n(), b + n(), n()] : [0.5 - a + n(), n(), b + n()]);
+          const t = (1 + Math.cos(th)) / 2;
+          colour.push(ring === 0 ? mix('#5eead4', '#7c8cff', t) : mix('#fbbf24', '#f472b6', t));
+        }
+    } else {
+      for (let k = 0; k < 300; k++) {
+        const u = r(), t = 1.5 * Math.PI * (1 + 2 * u);
+        X.push([t * Math.cos(t) * 0.11, (r() - 0.5) * 1.6, t * Math.sin(t) * 0.11]);
+        colour.push(u < 0.5 ? mix('#5eead4', '#7c8cff', u * 2) : mix('#7c8cff', '#f472b6', u * 2 - 1));
+      }
+    }
+    // centre, and scale to a radius of 1.6
+    const m = [0, 0, 0];
+    X.forEach((p) => p.forEach((v, k) => (m[k] += v / X.length)));
+    let R = 0;
+    X.forEach((p) => { for (let k = 0; k < 3; k++) p[k] -= m[k]; R = Math.max(R, Math.hypot(...p)); });
+    X.forEach((p) => { for (let k = 0; k < 3; k++) p[k] *= 1.6 / R; });
+    return { X, colour };
+  }
+
+  const SHAPE: Record<string, string> = {
+    roll: 'one rolled-up sheet: a ribbon of triangles',
+    rings: 'two loops, each with a hole in the middle',
+    clusters: 'five pieces, glued inside, apart from each other',
+  };
+
+  const S = { data: 'roll', nn: 15, md: 0.1, ang: 0.6, tilt: 0.62, hover: -1 };
+  let data = make(S.data);
+  let N = data.X.length;
+  // zoom and pan over the whole stage; a plain drag on the 3D cloud turns it instead
+  const view = stageCamera(canvas, W, H, {
+    canTurn: () => st.chapter() < C.throw,
+    turn: (dx, dy) => {
+      S.ang += dx * 0.01;
+      S.tilt = Math.max(-1.2, Math.min(1.2, S.tilt + dy * 0.01));
+    },
+  });
+  let D = new Float64Array(0);
+  let G: ReturnType<typeof fuzzyGraph>;
+  let AB = fitAB(S.md);
+  /** Edges i < j with their weight, and triangles with the weight of their weakest edge. */
+  let edges: [number, number, number][] = [];
+  let tris: [number, number, number, number][] = [];
+  /** Each point's ball radius: out to its k-th neighbour. */
+  let radius = new Float64Array(0);
+  let R0 = 0;
+  /** A point in the thick of a crowd and a loner, whose balls are shown up close. */
+  let focal: [number, number] = [0, 1];
+  let near3: Set<number>[] = [];
+  let lay: Layout;
+  let Y0 = new Float64Array(0);
+  /** Where each point is drawn on the page: eases after the real position, so tugs read as motion. */
+  let shown = new Float64Array(0);
+  let kept = 0, keptAt = -1;
+  const K_KEEP = 10;
+  const TRI_MIN = 0.15;
+
+  /** The last tugs and shoves, for drawing them as they happen. */
+  type Ev = { i: number; j: number; push: boolean; at: number };
+  const EV = 400;
+  const events: Ev[] = [];
+  let evHead = 0, clock = 0;
+  const record = (i: number, j: number, push: boolean) => {
+    const e = { i, j, push, at: clock };
+    if (events.length < EV) events.push(e); else events[evHead] = e;
+    evHead = (evHead + 1) % EV;
+  };
+
+  function build() {
+    data = make(S.data);
+    N = data.X.length;
+    D = sqDistances(data.X);
+    G = fuzzyGraph(D, N, S.nn);
+    edges = G.pairs;
+    // a triangle wherever three points are joined in pairs
+    const up = Array.from({ length: N }, () => [] as number[]);
+    for (const [i, j] of edges) up[i].push(j);
+    tris = [];
+    for (const [i, j, w] of edges)
+      for (const m of up[j]) {
+        const w2 = G.W[i * N + m];
+        if (w2 <= 0) continue;
+        const t = Math.min(w, G.W[j * N + m], w2);
+        if (t > TRI_MIN) tris.push([i, j, m, t]);
+      }
+    radius = Float64Array.from({ length: N }, (_, i) => G.dist[i * G.k + G.k - 1]);
+    const byR = Array.from({ length: N }, (_, i) => i).sort((a, b) => radius[a] - radius[b]);
+    R0 = radius[byR[N >> 1]];
+    focal = [byR[Math.floor(N * 0.03)], byR[Math.floor(N * 0.97)]];
+    near3 = Array.from({ length: N }, (_, i) => {
+      const o = Array.from({ length: N }, (_, k) => k).filter((k) => k !== i);
+      o.sort((a, b) => D[i * N + a] - D[i * N + b]);
+      return new Set(o.slice(0, K_KEEP));
+    });
+    restartMap();
+  }
+
+  function restartMap() {
+    AB = fitAB(S.md);
+    lay = new Layout(G.W, G.pairs, N, AB.a, AB.b, 500, 3);
+    lay.onPull = (i, j) => record(i, j, false);
+    lay.onPush = (i, k) => record(i, k, true);
+    Y0 = Float64Array.from(lay.Y);
+    shown = Float64Array.from(lay.Y);
+    events.length = 0;
+    evHead = 0;
+    keptAt = -1;
+    history = [{ epoch: 0, kept: keptNow() }];
+    fitScale(true);
+  }
+
+  /** Neighbours kept every few epochs, for the curve. */
+  let history: { epoch: number; kept: number }[] = [];
+  function logEpoch() {
+    const last = history[history.length - 1];
+    if (lay.epoch - last.epoch >= 10 || (lay.done && last.epoch < lay.epoch)) history.push({ epoch: lay.epoch, kept: keptNow() });
+  }
+
+  /** Run the map to the end at once, for a reader who skips ahead. */
+  function settle() {
+    while (!lay.done) if (!lay.tug()) logEpoch();
+    shown.set(lay.Y);
+    events.length = 0;
+  }
+
+  // ---------- views ----------
+  /** 3D view: centre and pixels per unit. */
+  const V3 = { cx: 610, cy: 385, s: 175 };
+  function project(p: Pt, v = V3, ang = S.ang, tilt = S.tilt) {
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const x = p[0] * ca + p[2] * sa, z = -p[0] * sa + p[2] * ca;
+    const ct = Math.cos(tilt), st = Math.sin(tilt);
+    const y = p[1] * ct - z * st, z2 = p[1] * st + z * ct;
+    const f = 6 / (6 - z2);
+    const px = v.cx + x * v.s * f, py = v.cy - y * v.s * f;
+    // the inset keeps still; only the main view follows the camera
+    return v === V3 ? { x: view.X(px), y: view.Y(py), z: z2, f } : { x: px, y: py, z: z2, f };
+  }
+
+  /** The flat page the map lives on. */
+  const PAGE = { x: 40, y: 200, w: 920, h: 410 };
+  const mapView = { cx: 500, cy: 405, s: 1, ox: 0, oy: 0, target: 1, tx: 0, ty: 0 };
+  function fitScale(now = false, Y = shown) {
+    // UMAP does not re-centre the map, so frame its middle as well as its size
+    const xs: number[] = [], ys: number[] = [];
+    for (let i = 0; i < N; i++) { xs.push(Y[2 * i]); ys.push(Y[2 * i + 1]); }
+    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+    const lo = Math.floor(N * 0.01), hi = Math.floor(N * 0.99);
+    mapView.tx = (xs[lo] + xs[hi]) / 2;
+    mapView.ty = (ys[lo] + ys[hi]) / 2;
+    const rx = (xs[hi] - xs[lo]) / 2 || 1, ry = (ys[hi] - ys[lo]) / 2 || 1;
+    mapView.target = Math.min((PAGE.w / 2 - 40) / rx, (PAGE.h / 2 - 30) / ry);
+    if (now) { mapView.s = mapView.target; mapView.ox = mapView.tx; mapView.oy = mapView.ty; }
+  }
+  const mapXY = (i: number, Y = shown) => ({
+    x: view.X(mapView.cx + (Y[2 * i] - mapView.ox) * mapView.s),
+    y: view.Y(mapView.cy - (Y[2 * i + 1] - mapView.oy) * mapView.s),
+  });
+
+  // screen position of every point this frame, for the complex and hovering
+  const sx = new Float64Array(400), sy = new Float64Array(400), sr = new Float64Array(400), sa = new Float64Array(400), sf = new Float64Array(400);
+
+  // ---------- chapters ----------
+  /** Chapter numbers by name. */
+  const C = { cloud: 0, balls: 1, fuzzy: 2, complex: 3, throw: 4, tug: 5, map: 6 };
+  const chapters = [
+    {
+      dur: 7,
+      title: 'A cloud of points',
+      body: 'Each point is a position in a space of many dimensions. Here there are only three, so you can watch. The goal: a flat map that keeps the shape of the cloud.',
+    },
+    {
+      dur: 12.5,
+      title: 'A ball around every point',
+      body: 'With one ball size for everyone, a point in a crowd holds many neighbours and a loner only a few. So UMAP gives each point its own ball, just big enough to hold its n_neighbors nearest.',
+    },
+    {
+      dur: 16,
+      title: 'Solid at the centre, fading at the rim',
+      body: 'Each ball is solid out to the nearest neighbour, so that neighbour always weighs 1 and no point is ever alone. Past it the ball fades exponentially; each neighbour weighs as much as the shade where it sits.',
+    },
+    {
+      dur: 14,
+      title: 'Overlaps become a shape',
+      body: 'Where a point falls inside another\'s ball, glue an edge, as strong as it is deep inside. Where three points are joined in pairs, fill a triangle. Together the pieces form a fuzzy simplicial complex: the shape of the data.',
+    },
+    {
+      dur: 4.2,
+      title: 'Throw the shape on a page',
+      body: 'Drop every point at a random spot. The complex comes along, crumpled and stretched across the page, but every edge still remembers who was glued to whom.',
+    },
+    {
+      dur: Infinity,
+      title: 'Tug an edge, shove a stranger',
+      body: 'Pick an edge, strong ones more often, and pull its ends together. Then push the point away from a few others picked at random. As the edges shorten, the triangles come back.',
+    },
+    {
+      dur: Infinity,
+      title: 'The complex, laid flat',
+      body: 'The map is a flat complex as close as possible to the one in 3D: the same edges, the same triangles. min_dist sets how tightly it packs; sizes and gaps are not to scale.',
+    },
+  ];
+
+  /** Seconds the throw waits for each point, so they land one after another. */
+  const delay = (i: number) => ((i * 0.618034) % 1) * 0.9;
+  let throwAng = 0;
+
+  const st = story({
+    chapters,
+    enter(i) {
+      if (i === C.throw) { throwAng = S.ang; restartMap(); }
+      if (i === C.tug) restartMap();
+      if (i === C.map) { if (!lay.done) settle(); fitScale(true); }
+      keptAt = -1;
+    },
+    done: (i, t) => (i === C.tug ? lay.done && t > 0.5 : t >= chapters[i].dur),
+    frame,
+  });
+
+  // ---------- drawing ----------
+  /** Which space the stage shows: the 3D cloud or the page. Crossing over sends the camera home. */
+  let world = 0;
+  function frame(ch: number, t: number, dt: number) {
+    const light = isLight(canvas);
+    clock += dt;
+    if (+(ch >= C.throw) !== world) { world = +(ch >= C.throw); view.home(); }
+    view.tick();
+    ctx.clearRect(0, 0, W, H);
+    background(light);
+
+    if (ch === C.cloud) S.ang += dt * 0.28;
+    if (ch === C.balls || ch === C.complex) S.ang += dt * 0.12;
+    // the fuzzy balls hold still, so a reader can hover one point after another
+    if (ch === C.fuzzy) S.ang += dt * 0.12 * (1 - beat(t, 0, 1.5));
+    if (ch === C.tug && dt > 0) runMap(t, dt);
+    if (ch >= C.tug) {
+      const k = ch === C.tug ? 1 - Math.exp(-dt * 14) : 1;
+      for (let m = 0; m < 2 * N; m++) shown[m] = lerp(shown[m], lay.Y[m], k);
+      fitScale();
+      // zoom out at once when the map spreads, ease in when it shrinks
+      mapView.s = mapView.target < mapView.s ? mapView.target : lerp(mapView.s, mapView.target, 0.2);
+      mapView.ox = lerp(mapView.ox, mapView.tx, 0.2);
+      mapView.oy = lerp(mapView.oy, mapView.ty, 0.2);
+    }
+
+    // where every point is this frame
+    if (ch < C.throw) {
+      for (let i = 0; i < N; i++) {
+        const p = project(data.X[i]);
+        sx[i] = p.x; sy[i] = p.y; sf[i] = p.f; sr[i] = 3.1 * p.f; sa[i] = 0.55 + 0.45 * clamp01((p.z + 1.6) / 3.2);
+      }
+    } else if (ch === C.throw) {
+      for (let i = 0; i < N; i++) {
+        const p = project(data.X[i], V3, throwAng);
+        const q = mapXY(i, Y0);
+        const u = ease((t - delay(i)) / 1.7);
+        sx[i] = lerp(p.x, q.x, u);
+        sy[i] = lerp(p.y, q.y, u) - Math.sin(Math.PI * u) * 60;
+        sr[i] = lerp(3.1 * p.f, 3.1, u);
+        sa[i] = 1;
+      }
+    } else {
+      for (let i = 0; i < N; i++) {
+        const q = mapXY(i);
+        sx[i] = q.x; sy[i] = q.y; sr[i] = 3.1; sa[i] = 1;
+      }
+    }
+
+    if (ch < C.throw) floor(ch === C.cloud ? 1 : 0.6);
+    if (ch >= C.throw) page(ch === C.throw ? beat(t, 0.6, 2.2) : 1, light);
+
+    // on the page, a straggler far out is cut at the edge rather than drawn over the headline
+    ctx.save();
+    if (ch >= C.tug) {
+      ctx.beginPath();
+      ctx.roundRect(PAGE.x, PAGE.y, PAGE.w, PAGE.h, 14);
+      ctx.clip();
+    }
+
+    if (ch === C.balls) balls(t, 1, light);
+    if (ch === C.fuzzy) {
+      balls(t, 1 - 0.6 * beat(t, 0, 1), light);
+      // a hovered point shows its own ball in place of the two picked ones
+      if (S.hover >= 0) fuzzyBall(S.hover, 99, true, light);
+      else focal.forEach((i, n) => fuzzyBall(i, t, n === 1, light));
+    }
+    if (ch === C.complex) {
+      balls(t, 1 - 0.75 * beat(t, 0, 1.5), light);
+      // strong pieces first: an edge shows once the bar drops below its weight
+      complex(1 - beat(t, 1, 5), 1 - beat(t, 5, 9), false, light);
+    }
+    if (ch === C.throw) complex(0, 0, true, light);
+    if (ch === C.tug) { complex(0, 0, true, light); tugs(t, light); }
+    if (ch === C.map) complex(0, 0, true, light, true);
+
+    drawPoints(light, ch < C.throw);
+
+    if (ch === C.tug) tugLabels(t);
+    if (S.hover >= 0 && ch !== C.fuzzy) hoverLinks(light);
+    ctx.restore();
+    if (ch === C.map) inset(t, light);
+
+    if (ch === C.balls) captions(t, [[1.2, 5.6, 'one size for all: a crowd holds many, a loner only a few'], [8.2, 99, `own size: every ball holds exactly ${G.k}, as if the data were evenly spread`]]);
+    if (ch === C.fuzzy && S.hover < 0)
+      captions(t, [[0.4, 3.4, 'solid out to the nearest neighbour: it always weighs 1'], [3.4, 7, 'then fading exponentially, e^(−(d − ρ)/σ)'], [7, 11, 'each neighbour weighs the shade where it sits'], [11, 99, 'hover any point to see its own ball']]);
+    if (ch === C.complex) captions(t, [[1, 5, 'a point inside another\'s ball: an edge, strong near the centre, faint at the rim'], [5, 9.5, 'three points joined in pairs: a triangle'], [9.5, 99, SHAPE[S.data]]]);
+
+    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: ch === C.map ? 640 : 470 });
+
+    if (view.away) say(ctx, 'double-click to reset the view', W - 16, H - 14, { colour: ink(0.45), size: 12, align: 'right' });
+    if (ch === C.tug) speedBadge(t, light);
+    if (ch >= C.tug) keptSpark();
+    panelText(ch);
+    eqTick(ch);
+  }
+
+  function background(light: boolean) {
+    if (light) return;
+    const g = ctx.createRadialGradient(W * 0.6, H * 0.6, 50, W * 0.6, H * 0.6, W * 0.75);
+    g.addColorStop(0, 'rgba(124,140,255,0.07)');
+    g.addColorStop(1, 'rgba(124,140,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  /** A faint grid under the 3D cloud, for depth. */
+  function floor(a: number) {
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = ink(0.06 * a);
+    ctx.beginPath();
+    for (let k = -4; k <= 4; k++) {
+      for (const dir of [0, 1]) {
+        const p1: Pt = dir ? [k * 0.45, -1.75, -1.8] : [-1.8, -1.75, k * 0.45];
+        const p2: Pt = dir ? [k * 0.45, -1.75, 1.8] : [1.8, -1.75, k * 0.45];
+        const A = project(p1), B = project(p2);
+        ctx.moveTo(A.x, A.y);
+        ctx.lineTo(B.x, B.y);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function page(a: number, light: boolean) {
+    if (a <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = light ? 'rgba(28,30,36,0.03)' : 'rgba(255,255,255,0.025)';
+    ctx.strokeStyle = ink(0.1);
+    ctx.beginPath();
+    ctx.roundRect(PAGE.x, PAGE.y, PAGE.w, PAGE.h, 14);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * Chapter 2: every ball at one size, then each grown or shrunk to its own
+   * reach. All of them faint, and two up close with the count of points inside.
+   */
+  function balls(t: number, a: number, light: boolean) {
+    if (a <= 0) return;
+    const ch = st.chapter();
+    const grow = ch === C.balls ? ease(t / 1.2) : 1, own = ch === C.balls ? beat(t, 6, 8) : 1;
+    const rad = (i: number) => lerp(R0, radius[i], own) * grow;
+    ctx.save();
+    if (!light) ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < N; i++) {
+      ctx.strokeStyle = withAlpha(data.colour[i], (light ? 0.1 : 0.07) * a);
+      ctx.beginPath();
+      ctx.arc(sx[i], sy[i], Math.max(0.5, rad(i) * V3.s * sf[i] * view.z), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    const up = ch === C.balls ? beat(t, 1.2, 2.2) * a : 0;
+    if (up <= 0) { ctx.restore(); return; }
+    focal.forEach((i, n) => {
+      const r = rad(i), R = r * V3.s * sf[i] * view.z, col = data.colour[i];
+      // the points inside, ringed and tied to the centre
+      let inside = 0;
+      ctx.strokeStyle = withAlpha(col, 0.55 * up);
+      ctx.lineWidth = 1;
+      for (let j = 0; j < N; j++) {
+        if (j === i || Math.sqrt(D[i * N + j]) > r) continue;
+        inside++;
+        ctx.beginPath();
+        ctx.moveTo(sx[i], sy[i]);
+        ctx.lineTo(sx[j], sy[j]);
+        ctx.stroke();
+      }
+      ctx.fillStyle = withAlpha(col, 0.12 * up);
+      ctx.strokeStyle = withAlpha(col, 0.9 * up);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx[i], sy[i], R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      const { lx, al } = side(i, R, n === 1);
+      say(ctx, n ? 'a loner' : 'in a crowd', lx, sy[i] - 10, { colour: col, size: 15, weight: 600, align: al, alpha: up, halo: inv(0.85) });
+      say(ctx, `${inside} inside`, lx, sy[i] + 10, { colour: ink(0.85), size: 14, align: al, alpha: up, halo: inv(0.85) });
+    });
+    ctx.restore();
+  }
+
+  /** Where a ball's label goes: the side with room, the loner's to the right if it fits. */
+  function side(i: number, R: number, loner: boolean) {
+    const right = loner ? sx[i] + R + 110 < W : sx[i] - R - 110 < 0;
+    return { lx: sx[i] + (right ? R + 12 : -R - 12), al: (right ? 'left' : 'right') as CanvasTextAlign };
+  }
+
+  /**
+   * Chapter 3: one point's fuzzy ball. Solid out to ρ, the distance to its
+   * nearest neighbour; past it the shade falls as e^{-(d − ρ)/σ} out to the
+   * k-th neighbour. Then a tie to every neighbour, as strong as the shade where
+   * it sits. `t` runs the reveal; a hovered point passes a late t to show it all.
+   */
+  function fuzzyBall(i: number, t: number, named: boolean, light: boolean) {
+    const core = beat(t, 0.4, 2.4), fade = beat(t, 3.4, 6), ties = beat(t, 7, 8.5);
+    if (core <= 0) return;
+    const px = V3.s * sf[i] * view.z, col = data.colour[i];
+    const rho = G.rho[i], reach = radius[i], sg = G.sigma[i];
+    const Rr = Math.max(1, rho * px), Rk = Math.max(Rr + 1, reach * px);
+    const A = light ? 0.42 : 0.5;
+    ctx.save();
+    // the shade, as a radial gradient: flat to ρ, then the exponential
+    const g = ctx.createRadialGradient(sx[i], sy[i], 0, sx[i], sy[i], Rk);
+    g.addColorStop(0, withAlpha(col, A));
+    g.addColorStop(Math.min(1, Rr / Rk), withAlpha(col, A));
+    for (let m = 1; m <= 12; m++) {
+      const d = rho + ((reach - rho) * m) / 12;
+      g.addColorStop(Math.min(1, (d * px) / Rk), withAlpha(col, A * Math.exp(-(d - rho) / sg)));
+    }
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    // the core grows out to ρ first, then the fading part opens out to the rim
+    ctx.arc(sx[i], sy[i], fade > 0 ? lerp(Rr, Rk, fade) : Rr * core, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = withAlpha(col, 0.9 * core);
+    ctx.beginPath();
+    ctx.arc(sx[i], sy[i], Rr * core, 0, Math.PI * 2);
+    ctx.stroke();
+    if (fade > 0) {
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = withAlpha(col, 0.45 * fade);
+      ctx.beginPath();
+      ctx.arc(sx[i], sy[i], lerp(Rr, Rk, fade), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // its k neighbours, each tie as strong as its weight
+    const j0 = G.knn[i * G.k], jk = G.knn[i * G.k + G.k - 1];
+    if (ties > 0) {
+      if (!light) ctx.globalCompositeOperation = 'lighter';
+      for (let m = 0; m < G.k; m++) {
+        const j = G.knn[i * G.k + m], w = G.V[i * N + j];
+        ctx.strokeStyle = withAlpha(col, ties * (0.12 + 0.88 * w));
+        ctx.lineWidth = 0.5 + 2.5 * w;
+        ctx.beginPath();
+        ctx.moveTo(sx[i], sy[i]);
+        ctx.lineTo(sx[j], sy[j]);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    // the nearest is named as soon as the core reaches it, the farthest once the rim does
+    const marks: [number, string, number][] = [[j0, 'nearest: 1.00', core]];
+    if (ties > 0) marks.push([jk, `farthest: ${G.V[i * N + jk].toFixed(2)}`, ties]);
+    if (named || i === S.hover)
+      for (const [j, text, a] of marks) {
+        ctx.beginPath();
+        ctx.arc(sx[j], sy[j], 6, 0, Math.PI * 2);
+        ctx.strokeStyle = withAlpha(col, a);
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        const dx = sx[j] - sx[i], dy = sy[j] - sy[i], d = Math.hypot(dx, dy) || 1;
+        say(ctx, text, sx[j] + (dx / d) * 14, sy[j] + (dy / d) * 14, {
+          colour: ink(0.95), size: 13, weight: 600, align: dx < 0 ? 'right' : 'left', alpha: a, halo: inv(0.85),
+        });
+      }
+    const { lx, al } = side(i, Rk, named);
+    const label = i === S.hover ? 'this point' : named ? 'a loner' : 'in a crowd';
+    say(ctx, label, lx, sy[i] - 10, { colour: col, size: 15, weight: 600, align: al, alpha: core, halo: inv(0.85) });
+    say(ctx, `ρ = ${rho.toFixed(2)}, σ = ${sg.toFixed(2)}`, lx, sy[i] + 10, { colour: ink(0.8), size: 13, align: al, alpha: core, halo: inv(0.85) });
+    ctx.restore();
+  }
+
+  /**
+   * The complex: triangles filled, edges drawn. In 3D a piece shows once its
+   * weight passes the bar; on the page a stretched piece fades, so the
+   * triangles appear as the layout pulls them small again.
+   */
+  function complex(edgeBar: number, triBar: number, flat: boolean, light: boolean, settled = false) {
+    const fade = (len: number) => (flat ? clamp01(1 - (len - 24) / 70) : 1);
+    ctx.save();
+    ctx.lineJoin = 'round';
+    for (const [i, j, m, w] of tris) {
+      if (w < triBar) continue;
+      const len = Math.max(Math.hypot(sx[i] - sx[j], sy[i] - sy[j]), Math.hypot(sx[j] - sx[m], sy[j] - sy[m]), Math.hypot(sx[i] - sx[m], sy[i] - sy[m]));
+      const a = (light ? 0.1 : 0.08) * (0.4 + w) * fade(len) * (settled ? 1.3 : 1);
+      if (a < 0.005) continue;
+      ctx.fillStyle = withAlpha(data.colour[i], a);
+      ctx.beginPath();
+      ctx.moveTo(sx[i], sy[i]);
+      ctx.lineTo(sx[j], sy[j]);
+      ctx.lineTo(sx[m], sy[m]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (!light) ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 1;
+    for (const [i, j, w] of edges) {
+      if (w < edgeBar) continue;
+      const len = Math.hypot(sx[i] - sx[j], sy[i] - sy[j]);
+      // a long edge on the page is a stretched one: faint, so the mess does not drown the points
+      const alpha = w * (flat ? 0.04 + 0.22 * fade(len) : 0.3) * (light ? 1.6 : 1);
+      if (alpha < 0.01) continue;
+      ctx.strokeStyle = withAlpha(data.colour[i], alpha);
+      ctx.beginPath();
+      ctx.moveTo(sx[i], sy[i]);
+      ctx.lineTo(sx[j], sy[j]);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawPoints(light: boolean, depthSort: boolean) {
+    const idx = Array.from({ length: N }, (_, i) => i);
+    if (depthSort) idx.sort((a, b) => sr[a] - sr[b]);
+    ctx.save();
+    // additive glow only for the loose 3D cloud: on the map a tight island would burn white
+    if (!light && depthSort) ctx.globalCompositeOperation = 'lighter';
+    // zoomed in, the dots grow a little, much less than the space between them
+    const grow = Math.min(1.8, Math.max(0.7, Math.sqrt(view.z)));
+    for (const i of idx) {
+      const r = Math.round(sr[i] * grow * 2) / 2;
+      const img = glow(data.colour[i], r, light);
+      ctx.globalAlpha = sa[i];
+      ctx.drawImage(img, sx[i] - img.width / 4, sy[i] - img.height / 4, img.width / 2, img.height / 2);
+    }
+    ctx.restore();
+  }
+
+  /** One line under the 3D cloud at a time, each over its own stretch of the chapter. */
+  function captions(t: number, lines: [number, number, string][]) {
+    for (const [a, b, text] of lines) {
+      const alpha = beat(t, a, a + 0.6) * (1 - beat(t, b - 0.4, b));
+      if (alpha > 0) say(ctx, text, V3.cx, 612, { colour: ink(0.85), size: 15, weight: 600, align: 'center', alpha, halo: inv(0.8) });
+    }
+  }
+
+  /** Tugs per second: slow motion at first so a single tug can be followed, then flat out. */
+  const SLOW = 6;
+  let acc = 0;
+  function runMap(t: number, dt: number) {
+    const rate = t < SLOW ? 2.5 : Math.min(250000, 2.5 + (t - SLOW) ** 3 * 3000);
+    acc += rate * dt;
+    while (acc >= 1 && !lay.done) if (lay.tug()) acc -= 1; else logEpoch();
+    if (lay.done) acc = 0;
+  }
+
+  /** Chapter 6: the latest tugs glow teal along their edge, the shoves flash red. */
+  function tugs(t: number, light: boolean) {
+    const slow = t < SLOW + 0.5;
+    const life = slow ? 1.4 : 0.12;
+    ctx.save();
+    if (!light) ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (const e of events) {
+      const age = clock - e.at;
+      if (age > life) continue;
+      // five shoves to every tug: at full speed they would hide the tugs
+      const a = (1 - age / life) * (slow ? 1 : e.push ? 0.1 : 0.45);
+      ctx.strokeStyle = withAlpha(e.push ? PUSH : PULL, a);
+      ctx.lineWidth = slow ? (e.push ? 2 : 3.5) : 1;
+      if (e.push) ctx.setLineDash(slow ? [5, 6] : []);
+      ctx.beginPath();
+      ctx.moveTo(sx[e.i], sy[e.i]);
+      ctx.lineTo(sx[e.j], sy[e.j]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (slow) {
+        ctx.beginPath();
+        ctx.arc(sx[e.i], sy[e.i], 8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Names on the newest tug and shove, while they can still be followed. */
+  function tugLabels(t: number) {
+    if (t > SLOW + 0.5) return;
+    let pull: Ev | null = null, push: Ev | null = null;
+    for (const e of events) {
+      if (clock - e.at > 1.4) continue;
+      if (e.push) { if (!push || e.at > push.at) push = e; }
+      else if (!pull || e.at >= pull.at) pull = e;
+    }
+    const lab = { size: 14, weight: 600, align: 'center' as const, halo: inv(0.85) };
+    if (pull) {
+      const a = 1 - (clock - pull.at) / 1.4;
+      say(ctx, 'tug an edge', (sx[pull.i] + sx[pull.j]) / 2, (sy[pull.i] + sy[pull.j]) / 2 - 18, { ...lab, colour: PULL, alpha: a });
+    }
+    if (push) {
+      const a = 1 - (clock - push.at) / 1.4;
+      say(ctx, 'shove a random point', (sx[push.i] + sx[push.j]) / 2, (sy[push.i] + sy[push.j]) / 2 + 20, { ...lab, colour: PUSH, alpha: a });
+    }
+  }
+
+  /** The hovered point's neighbours (from 3D), wherever they are drawn now. */
+  function hoverLinks(light: boolean) {
+    const i = S.hover;
+    ctx.save();
+    if (!light) ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = withAlpha(data.colour[i], 0.7);
+    ctx.lineWidth = 1.4;
+    for (const j of near3[i]) {
+      ctx.beginPath();
+      ctx.moveTo(sx[i], sy[i]);
+      ctx.lineTo(sx[j], sy[j]);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sx[j], sy[j], 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(sx[i], sy[i], 9, 0, Math.PI * 2);
+    ctx.strokeStyle = ink(0.9);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  /** Chapter 7: the 3D cloud again, small, turning, so the two can be compared. */
+  const IN = { x: 740, y: 18, w: 240, h: 170 };
+  function inset(t: number, light: boolean) {
+    const a = beat(t, 0.3, 1.3);
+    if (a <= 0) return;
+    const v = { cx: IN.x + IN.w / 2, cy: IN.y + IN.h / 2 + 8, s: 52 };
+    const ang = S.ang + t * 0.25;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = light ? 'rgba(255,255,255,0.9)' : 'rgba(13,14,18,0.85)';
+    ctx.strokeStyle = ink(0.12);
+    ctx.beginPath();
+    ctx.roundRect(IN.x, IN.y, IN.w, IN.h, 12);
+    ctx.fill();
+    ctx.stroke();
+    say(ctx, 'the cloud it came from', IN.x + 12, IN.y + 16, { colour: ink(0.55), size: 12 });
+    const pts = data.X.map((p, i) => ({ i, ...project(p, v, ang) })).sort((p, q) => p.z - q.z);
+    if (!light) ctx.globalCompositeOperation = 'lighter';
+    const hi = S.hover >= 0 ? near3[S.hover] : null;
+    for (const p of pts) {
+      const on = hi ? p.i === S.hover || hi.has(p.i) : true;
+      ctx.globalAlpha = a * (on ? 0.9 : 0.15);
+      ctx.fillStyle = data.colour[p.i];
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, (p.i === S.hover ? 3.5 : 1.6) * p.f, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function speedBadge(t: number, light: boolean) {
+    if (lay.done) return;
+    const slow = t < SLOW;
+    const text = slow
+      ? `slow motion: one tug, then ${NEG_RATE} shoves from random points`
+      : `full speed, step size ${lay.alpha.toFixed(2)} and shrinking`;
+    const x = PAGE.x + 14, y = PAGE.y + PAGE.h - 24;
+    ctx.save();
+    ctx.fillStyle = withAlpha(slow ? PUSH : PULL, light ? 0.12 : 0.14);
+    ctx.beginPath();
+    ctx.roundRect(x, y - 13, 370, 26, 13);
+    ctx.fill();
+    ctx.restore();
+    say(ctx, text, x + 12, y, { colour: slow ? PUSH : PULL, size: 13, weight: 500 });
+  }
+
+  /** Neighbours kept so far, as a small curve in the corner of the page. */
+  function keptSpark() {
+    const h = history;
+    if (h.length < 2) return;
+    const x0 = PAGE.x + PAGE.w - 190, y0 = PAGE.y + PAGE.h - 18, w = 170, hh = 46;
+    ctx.save();
+    ctx.strokeStyle = withAlpha(ACC, 0.9);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    h.forEach((p, k) => {
+      const x = x0 + (p.epoch / lay.nEpochs) * w, y = y0 - p.kept * hh;
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'neighbours kept, rising', x0, y0 - hh - 10, { colour: ink(0.5), size: 12 });
+  }
+
+  // ---------- numbers ----------
+  function keptNow(): number {
+    const at = lay.epoch * 1e6 + lay.Y[0];
+    if (keptAt === at) return kept;
+    keptAt = at;
+    let s = 0;
+    const Y = lay.Y;
+    const d: [number, number][] = [];
+    for (let i = 0; i < N; i++) {
+      d.length = 0;
+      for (let j = 0; j < N; j++) {
+        if (j === i) continue;
+        d.push([(Y[2 * i] - Y[2 * j]) ** 2 + (Y[2 * i + 1] - Y[2 * j + 1]) ** 2, j]);
+      }
+      d.sort((a, b) => a[0] - b[0]);
+      for (let k = 0; k < K_KEEP; k++) if (near3[i].has(d[k][1])) s++;
+    }
+    kept = s / (N * K_KEEP);
+    return kept;
+  }
+
+  let tick = 0;
+  const NOTE = `Of each point's ${K_KEEP} nearest neighbours in 3D, the share that are also among its ${K_KEEP} nearest on the page.`;
+  function panelText(ch: number) {
+    if (tick++ % 12) return;
+    setRows({
+      'r-ep': ch >= C.throw ? `${lay.epoch} / ${lay.nEpochs}` : '—',
+      'r-th': `${edges.length} · ${tris.length}`,
+      'r-ab': `${AB.a.toFixed(2)}, ${AB.b.toFixed(2)}`,
+    });
+    if (ch < C.throw) {
+      setResult({ value: '100%', status: 'in 3D, by definition', note: NOTE });
+      return;
+    }
+    const k = keptNow();
+    setResult({
+      value: `${Math.round(k * 100)}%`,
+      status: ch === C.throw ? 'thrown at random' : k > 0.6 ? 'neighbourhoods kept' : k > 0.25 ? 'coming together' : 'still a mess',
+      note: NOTE,
+      colour: ch > C.throw && k > 0.6 ? PULL : undefined,
+    });
+  }
+
+  type Part = string | [string, string];
+  const EQ: Part[][] = [
+    ['\\text{shape of the cloud}', '\\;\\Longrightarrow\\;', '\\text{shape on the page}'],
+    ['r_i = \\text{distance to the } k\\text{-th nearest}', '\\quad\\Longrightarrow\\quad \\text{every ball holds } k'],
+    [['v_{j|i}', ACC], '= e^{-(d_{ij} - \\rho_i)/\\sigma_i},', '\\quad \\sum_{j \\in \\mathrm{kNN}(i)} v_{j|i} = \\log_2 k,', '\\quad \\rho_i = \\text{distance to the nearest}'],
+    [['w_{ij}', PULL], '= v_{j|i} + v_{i|j} - v_{j|i}\\,v_{i|j},', '\\quad w_{ijk} = \\min(w_{ij},\\, w_{jk},\\, w_{ik})'],
+    ['y_i \\sim \\mathcal U(-10,\\,10)^2', '\\quad\\text{(the edges } w_{ij} \\text{ stay)}'],
+    ['\\text{tug } (i,j) \\propto', ['w_{ij}', PULL], ':\\; y_i \\mathrel{+}= \\alpha\\,\\nabla \\log q_{ij},', '\\quad \\text{shove } k \\text{ at random}:\\; y_i \\mathrel{+}= \\alpha\\,\\nabla \\log(1 -', ['q_{ik}', PUSH], ')'],
+    ['C = \\sum_{ij}', ['w_{ij}', PULL], '\\log\\dfrac{w_{ij}}{q_{ij}} +', ['(1 - w_{ij})', PUSH], '\\log\\dfrac{1 - w_{ij}}{1 - q_{ij}},', '\\quad q_{ij} = \\dfrac{1}{1 + a\\,\\|y_i - y_j\\|^{2b}}'],
+  ];
+  let eqFor = -1;
+  function eqTick(ch: number) {
+    if (ch === eqFor) return;
+    eqFor = ch;
+    setEq({ rule: EQ[ch] });
+  }
+
+  // ---------- input ----------
+  const toLocal = (e: PointerEvent) => {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
+  };
+  canvas.addEventListener('pointerleave', () => (S.hover = -1));
+  canvas.addEventListener('pointermove', (e) => {
+    if (view.busy) return;
+    const p = toLocal(e);
+    let best = -1, bd = 14 * 14;
+    for (let i = 0; i < N; i++) {
+      const d = (sx[i] - p.x) ** 2 + (sy[i] - p.y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    S.hover = best;
+  });
+
+  // ---------- panel ----------
+  const dataSeg = segmented('data', (v) => { S.data = v; rebuild(); });
+  const setNN = slider('nn', (v) => { S.nn = v; later(rebuild); });
+  const setMD = slider('md', (v) => { S.md = v; later(relayout); }, (v) => v.toFixed(2));
+
+  /** A slider fires on every pixel of a drag: redo the work once it pauses. */
+  let timer = 0;
+  const later = (f: () => void) => { clearTimeout(timer); timer = window.setTimeout(f, 120); };
+
+  /** New data or neighbours: keep the chapter, redo what it shows. */
+  function rebuild() {
+    build();
+    const c = st.chapter();
+    if (c >= C.throw) st.go(c);
+  }
+  /** Only the curve changed: the complex stays, the layout starts over. */
+  function relayout() {
+    const c = st.chapter();
+    if (c >= C.throw) st.go(c); else AB = fitAB(S.md);
+  }
+
+  tries({
+    balls: () => { dataSeg.select('roll'); S.data = 'roll'; rebuild(); st.go(C.balls); st.play(true); },
+    fuzzy: () => { dataSeg.select('roll'); S.data = 'roll'; rebuild(); st.go(C.fuzzy); st.seek(11); st.play(false); },
+    shape: () => { dataSeg.select('rings'); S.data = 'rings'; rebuild(); st.go(C.complex); st.play(true); st.seek(8); },
+    tugs: () => { st.go(C.tug); st.play(true); },
+    puff: () => { S.md = 0.8; setMD(0.8); st.go(C.map); },
+    tiny: () => { S.nn = 3; setNN(3); rebuild(); st.go(C.complex); st.play(true); st.seek(8); },
+  });
+
+  build();
+  st.start();
+</script>

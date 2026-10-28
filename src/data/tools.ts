@@ -432,6 +432,14 @@ export const AREAS: Area[] = [
         href: '/simulations/machine-learning/tsne',
         status: 'live',
       },
+      {
+        slug: 'umap',
+        title: 'UMAP',
+        description:
+          'Put a ball around every point, each just big enough to hold its nearest neighbours, and glue the overlaps into edges and triangles: the shape of the data. Throw that shape on a page and tug its edges flat while shoving random points away.',
+        href: '/simulations/machine-learning/umap',
+        status: 'live',
+      },
     ],
   },
   {
