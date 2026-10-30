@@ -1,0 +1,523 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Population Growth"
+  description="Cells that divide double and double again, until food and room run short. Exponential growth bends into the logistic S curve that levels off at what the dish can hold."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="pg"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A petri dish filling up with dividing cells, next to a plot of the number of cells over time with the logistic S curve, the pure exponential that would never stop, and the carrying capacity K."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'cells, counted', color: '#4ade80' },
+          { label: 'logistic curve', color: '#60a5fa' },
+          { label: 'pure exponential', color: '#fb923c' },
+          { label: 'food and room left', color: '#facc15' },
+        ]}
+        hint="Change K while the dish is full: shrink it and cells die back to the new limit, grow it and they fill the new room"
+      />
+      <Result label="Doubling time now" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running reset />
+      <Slider id="rate" label="Growth rate r" min={0.25} max={1.5} step={0.05} value={0.6} display="0.60 per hour" hint={['slow', 'fast']} />
+      <Slider id="cap" label="Carrying capacity K" min={100} max={1500} step={50} value={1000} display="1000 cells" hint={['small dish', 'big dish']} />
+      <Checks
+        items={[
+          { id: 'log', label: 'Log scale' },
+          { id: 'exp', label: 'Pure exponential', checked: true },
+        ]}
+      />
+      <Readout
+        title="Numbers"
+        rows={[
+          { id: 'r-t', label: 'time' },
+          { id: 'r-n', label: 'cells N' },
+          { id: 'r-food', label: 'food and room left, 1 − N/K' },
+          { id: 'r-rate', label: 'new cells per hour' },
+          { id: 'r-exp', label: 'pure exponential by now' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      At first the count follows the exponential exactly: with almost all the food left, every cell divides at
+      the full rate. On a log scale that stretch is a straight line. <Try id="early" />
+    </li>
+    <li>
+      The curve is steepest halfway, at N = K/2. Before that more cells means more division; after it, each new
+      cell slows all the others more than it adds. <Try id="half" />
+    </li>
+    <li>
+      A faster rate r makes the S steeper, but it levels off at the same height: only K sets the ceiling.
+      <Try id="fast" />
+    </li>
+    <li>
+      Shrink the dish once it is full and the population falls to the new K: the same law, run downhill.
+      <Try id="shrink" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed } from '../../../lib/draw';
+  import { slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight, clamp01 } from '../../../lib/story';
+
+  // Cells in a dish, each dividing at random with rate r·(1 − N/K) per hour
+  // (and dying at r·(N/K − 1) when there are more than K). On average that is
+  // the logistic law dN/dt = r N (1 − N/K); the plot sets the counted cells
+  // against the curve it predicts and the exponential it would be without the brake.
+  const CELL = '#4ade80', LOGI = '#60a5fa', EXP = '#fb923c', FOOD = '#facc15', RATE = '#c084fc';
+  const N0 = 8, TMAX = 30, SPEED = 1.25, MAX = 1700, KMAX = 1500;
+
+  const canvas = document.getElementById('pg') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+
+  // ---------- the dish ----------
+  const DX = 270, DY = 300, RMAX = 218;
+  /** How far apart cells settle: K of them, packed in a hexagonal grid, fill the dish whatever its size. */
+  const D0 = RMAX * Math.sqrt(Math.PI / (KMAX * 0.866));
+  const RC = 0.44 * D0;
+  const S = { r: 0.6, K: 1000, t: 0, log: false, exp: true, pauseAt: 0 };
+  /** The dish grows with K, so K cells always fill it the same way. */
+  const radius = () => RMAX * Math.sqrt(S.K / KMAX);
+
+  const px = new Float32Array(MAX), py = new Float32Array(MAX), born = new Float32Array(MAX);
+  let N = 0;
+
+  // ---------- the law, piece by piece ----------
+  /** A new piece starts whenever r or K changes: each is a logistic (and an exponential) from where things stood. */
+  type Piece = { t0: number; n0: number; e0: number; r: number; K: number };
+  let pieces: Piece[] = [];
+  let history: { t: number; n: number }[] = [];
+  const logistic = (p: Piece, t: number) => p.K / (1 + ((p.K - p.n0) / p.n0) * Math.exp(-p.r * (t - p.t0)));
+  const expo = (p: Piece, t: number) => p.e0 * Math.exp(p.r * (t - p.t0));
+  const pieceAt = (t: number) => {
+    let p = pieces[0];
+    for (const q of pieces) if (q.t0 <= t) p = q;
+    return p;
+  };
+
+  function reset() {
+    N = 0;
+    for (let k = 0; k < N0; k++) {
+      const a = (k / N0) * Math.PI * 2;
+      px[N] = DX + Math.cos(a) * RC * 1.2;
+      py[N] = DY + Math.sin(a) * RC * 1.2;
+      born[N] = -1;
+      N++;
+    }
+    S.t = 0;
+    pieces = [{ t0: 0, n0: N0, e0: N0, r: S.r, K: S.K }];
+    history = [{ t: 0, n: N }];
+  }
+  /** r or K moved: the rest of the curve starts again from here. */
+  function repiece() {
+    if (S.t <= 0) { pieces = [{ t0: 0, n0: N0, e0: N0, r: S.r, K: S.K }]; return; }
+    const last = pieces[pieces.length - 1];
+    const fresh: Piece = { t0: S.t, n0: Math.max(1, N), e0: expo(last, S.t), r: S.r, K: S.K };
+    if (last.t0 === S.t) pieces[pieces.length - 1] = fresh;
+    else pieces.push(fresh);
+  }
+
+  // ---------- the cells ----------
+  /** One stretch of sim time: births and deaths at random, then the cells shove each other apart. */
+  function step(dt: number) {
+    const fill = N / S.K;
+    const birth = S.r * Math.max(0, 1 - fill) * dt, death = S.r * Math.max(0, fill - 1) * dt;
+    const n = N;
+    for (let i = 0; i < n && N < MAX; i++) {
+      if (Math.random() >= birth) continue;
+      // the daughter starts inside her mother and gets pushed out
+      const a = Math.random() * Math.PI * 2;
+      px[N] = px[i] + Math.cos(a) * RC * 0.5;
+      py[N] = py[i] + Math.sin(a) * RC * 0.5;
+      born[N] = born[i] = S.t;
+      N++;
+    }
+    if (death > 0) {
+      let w = 0;
+      for (let i = 0; i < N; i++) {
+        if (Math.random() < death) continue;
+        px[w] = px[i]; py[w] = py[i]; born[w] = born[i];
+        w++;
+      }
+      N = w;
+    }
+    S.t += dt;
+    const last = history[history.length - 1];
+    if (S.t - last.t >= 0.05) history.push({ t: S.t, n: N });
+  }
+
+  // a grid of buckets, so each cell only checks its neighbours
+  const G = Math.ceil((2 * RMAX) / D0) + 3;
+  const head = new Int32Array(G * G), next = new Int32Array(MAX);
+  function relax(iters: number) {
+    const R = radius() - RC, s = D0, d2 = s * s, x0 = DX - RMAX - s, y0 = DY - RMAX - s;
+    for (let it = 0; it < iters; it++) {
+      head.fill(-1);
+      for (let i = 0; i < N; i++) {
+        const gx = Math.min(G - 1, Math.max(0, Math.floor((px[i] - x0) / s)));
+        const gy = Math.min(G - 1, Math.max(0, Math.floor((py[i] - y0) / s)));
+        next[i] = head[gy * G + gx];
+        head[gy * G + gx] = i;
+      }
+      for (let i = 0; i < N; i++) {
+        const gx = Math.min(G - 1, Math.max(0, Math.floor((px[i] - x0) / s)));
+        const gy = Math.min(G - 1, Math.max(0, Math.floor((py[i] - y0) / s)));
+        for (let oy = -1; oy <= 1; oy++)
+          for (let ox = -1; ox <= 1; ox++) {
+            const cx = gx + ox, cy = gy + oy;
+            if (cx < 0 || cy < 0 || cx >= G || cy >= G) continue;
+            for (let j = head[cy * G + cx]; j >= 0; j = next[j]) {
+              if (j <= i) continue;
+              let dx = px[j] - px[i], dy = py[j] - py[i];
+              const dd = dx * dx + dy * dy;
+              if (dd >= d2) continue;
+              let d = Math.sqrt(dd);
+              if (d < 1e-4) { const a = Math.random() * 6.283; dx = Math.cos(a); dy = Math.sin(a); d = 1; }
+              const push = ((s - Math.sqrt(dd)) / d) * 0.5 * 0.8;
+              px[i] -= dx * push; py[i] -= dy * push;
+              px[j] += dx * push; py[j] += dy * push;
+            }
+          }
+      }
+      // the rim of the dish
+      for (let i = 0; i < N; i++) {
+        const dx = px[i] - DX, dy = py[i] - DY, d = Math.hypot(dx, dy);
+        if (d > R) { px[i] = DX + (dx / d) * R; py[i] = DY + (dy / d) * R; }
+      }
+    }
+  }
+  function jiggle(a: number) {
+    for (let i = 0; i < N; i++) {
+      px[i] += (Math.random() - 0.5) * a;
+      py[i] += (Math.random() - 0.5) * a;
+    }
+  }
+
+  // ---------- drawing ----------
+  const PL = { x: 600, y: 70, w: 360, h: 430 };
+  const SANS = 'Inter, ui-sans-serif, system-ui, sans-serif';
+
+  function drawDish() {
+    const R = radius(), food = clamp01(1 - N / S.K);
+    // the agar, yellower while there is food in it
+    ctx.fillStyle = withAlpha(FOOD, (light ? 0.06 : 0.03) + (light ? 0.22 : 0.14) * food);
+    ctx.beginPath();
+    ctx.arc(DX, DY, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.35);
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(DX, DY, R + 6, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // all settled cells in one path, the ones that just split drawn brighter on top
+    const fresh: number[] = [];
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      if (born[i] >= 0 && S.t - born[i] < 0.3) { fresh.push(i); continue; }
+      ctx.moveTo(px[i] + RC, py[i]);
+      ctx.arc(px[i], py[i], RC, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = withAlpha(CELL, light ? 0.75 : 0.7);
+    ctx.fill();
+    ctx.strokeStyle = light ? 'rgba(21,128,61,0.9)' : 'rgba(187,247,208,0.55)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    if (fresh.length) {
+      ctx.beginPath();
+      for (const i of fresh) {
+        ctx.moveTo(px[i] + RC, py[i]);
+        ctx.arc(px[i], py[i], RC, 0, Math.PI * 2);
+      }
+      ctx.fillStyle = light ? '#16a34a' : '#d9f99d';
+      ctx.fill();
+    }
+
+    // counts and the food bar
+    say(ctx, `${N} cells`, 34, 40, { colour: CELL, size: 24, weight: 700 });
+    say(ctx, `hour ${S.t.toFixed(1)}`, 34, 68, { colour: ink(0.6), size: 14 });
+    say(ctx, `the dish holds K = ${S.K}`, 506, 40, { colour: ink(0.6), size: 13, align: 'right' });
+    const bx = DX - 120, by = 552, bw = 240;
+    say(ctx, 'food and room left', bx, by - 16, { colour: ink(0.6), size: 12.5 });
+    say(ctx, `${Math.round(food * 100)}%`, bx + bw, by - 16, { colour: FOOD, size: 13, weight: 700, align: 'right' });
+    ctx.fillStyle = ink(0.1);
+    ctx.fillRect(bx, by, bw, 10);
+    ctx.fillStyle = FOOD;
+    ctx.fillRect(bx, by, bw * food, 10);
+  }
+
+  /** The y scale: linear up to a round number above K, or log from 1 to 10 000. */
+  function yScale() {
+    if (S.log) {
+      const top = 4;
+      return { y: (n: number) => PL.y + PL.h - (Math.log10(Math.max(1, n)) / top) * PL.h, ticks: [1, 10, 100, 1000, 10000], top: 1e4 };
+    }
+    let hi = Math.max(...pieces.map((p) => p.K));
+    for (const h of history) hi = Math.max(hi, h.n);
+    const step = hi * 1.2 > 1000 ? 500 : hi * 1.2 > 400 ? 200 : 100;
+    const top = Math.ceil((hi * 1.15) / step) * step;
+    const ticks: number[] = [];
+    for (let v = 0; v <= top; v += step) ticks.push(v);
+    return { y: (n: number) => PL.y + PL.h - (n / top) * PL.h, ticks, top };
+  }
+  const tx = (t: number) => PL.x + (t / TMAX) * PL.w;
+  const fmt = (n: number) => (n >= 1e4 ? n.toLocaleString('en-US') : String(n));
+
+  function drawPlot() {
+    const sc = yScale();
+    // grid and axes
+    ctx.save();
+    ctx.lineWidth = 1;
+    for (const v of sc.ticks) {
+      const y = sc.y(v);
+      ctx.strokeStyle = ink(0.07);
+      ctx.beginPath(); ctx.moveTo(PL.x, y); ctx.lineTo(PL.x + PL.w, y); ctx.stroke();
+      say(ctx, fmt(v), PL.x - 8, y, { colour: ink(0.5), size: 11.5, align: 'right' });
+    }
+    for (let t = 0; t <= TMAX; t += 5) {
+      const x = tx(t);
+      ctx.strokeStyle = ink(0.07);
+      ctx.beginPath(); ctx.moveTo(x, PL.y); ctx.lineTo(x, PL.y + PL.h); ctx.stroke();
+      say(ctx, String(t), x, PL.y + PL.h + 14, { colour: ink(0.5), size: 11.5, align: 'center' });
+    }
+    ctx.strokeStyle = ink(0.35);
+    ctx.beginPath();
+    ctx.moveTo(PL.x, PL.y); ctx.lineTo(PL.x, PL.y + PL.h); ctx.lineTo(PL.x + PL.w, PL.y + PL.h);
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'hours', PL.x + PL.w, PL.y + PL.h + 34, { colour: ink(0.55), size: 12, align: 'right' });
+    say(ctx, S.log ? 'cells N (log scale)' : 'cells N', PL.x, PL.y - 20, { colour: ink(0.6), size: 12.5, weight: 600 });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PL.x, PL.y - 2, PL.w + 2, PL.h + 4);
+    ctx.clip();
+
+    // K, piece by piece
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    pieces.forEach((p, k) => {
+      const t1 = k + 1 < pieces.length ? pieces[k + 1].t0 : TMAX;
+      ctx.moveTo(tx(p.t0), sc.y(p.K));
+      ctx.lineTo(tx(t1), sc.y(p.K));
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // the exponential, until it leaves the chart
+    let exit: { x: number; t: number } | null = null;
+    if (S.exp) {
+      ctx.strokeStyle = EXP;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 5]);
+      ctx.beginPath();
+      for (let k = 0; k <= 300; k++) {
+        const t = (k / 300) * TMAX, v = expo(pieceAt(t), t);
+        ctx[k ? 'lineTo' : 'moveTo'](tx(t), Math.max(PL.y - 10, sc.y(v)));
+        if (!exit && v > sc.top) exit = { x: tx(t), t };
+        if (v > sc.top) break;
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // the logistic, ahead of the cells too
+    ctx.strokeStyle = withAlpha(LOGI, 0.9);
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (let k = 0; k <= 300; k++) {
+      const t = (k / 300) * TMAX;
+      ctx[k ? 'lineTo' : 'moveTo'](tx(t), sc.y(logistic(pieceAt(t), t)));
+    }
+    ctx.stroke();
+    // the cells, as counted
+    ctx.strokeStyle = CELL;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    history.forEach((h, k) => ctx[k ? 'lineTo' : 'moveTo'](tx(h.t), sc.y(h.n)));
+    ctx.lineTo(tx(S.t), sc.y(N));
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = CELL;
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(tx(S.t), sc.y(Math.max(1, N)), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // labels on the curves
+    const p = pieces[pieces.length - 1];
+    say(ctx, `K = ${p.K}`, PL.x + PL.w - 4, sc.y(p.K) - 11, { colour: ink(0.65), size: 12.5, weight: 650, align: 'right', halo: inv(0.85) });
+    if (S.exp && exit) {
+      const n = expo(pieceAt(S.t), S.t);
+      say(ctx, 'pure exponential', exit.x + 8, PL.y + 12, { colour: EXP, size: 12.5, weight: 650, halo: inv(0.85) });
+      say(ctx, `off the chart by hour ${exit.t.toFixed(0)}`, exit.x + 8, PL.y + 28, { colour: withAlpha(EXP, 0.85), size: 11.5, halo: inv(0.85) });
+      if (S.t > exit.t) say(ctx, `would be ${big(n)} by now`, exit.x + 8, PL.y + 44, { colour: withAlpha(EXP, 0.85), size: 11.5, halo: inv(0.85) });
+    }
+    // where growth is fastest
+    const half = p.K / 2;
+    let th = -1;
+    for (const h of history) if (h.n >= half) { th = h.t; break; }
+    if (th >= 0 && p === pieces[0]) {
+      const x = tx(th), y = sc.y(half);
+      ctx.fillStyle = LOGI;
+      ctx.beginPath();
+      ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      say(ctx, 'steepest at K/2', x + 10, y + 2, { colour: LOGI, size: 12.5, weight: 650, halo: inv(0.85) });
+    }
+  }
+  const big = (n: number) =>
+    n >= 1e12 ? `${(n / 1e12).toFixed(1)} trillion` : n >= 1e9 ? `${(n / 1e9).toFixed(1)} billion` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} million` : Math.round(n).toLocaleString('en-US');
+
+  function draw() {
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    drawDish();
+    drawPlot();
+    panelText();
+  }
+
+  // ---------- numbers ----------
+  let tick = 0;
+  function panelText() {
+    if (tick++ % 6) return;
+    const food = 1 - N / S.K, rate = S.r * N * food;
+    const T2 = food > 0.005 ? Math.log(2) / (S.r * food) : Infinity;
+    setEq({
+      rule: ['\\frac{dN}{dt} =', ['r', RATE], ['N', CELL], ['\\left(1 - \\frac{N}{K}\\right)', FOOD]],
+      live: [
+        '\\frac{dN}{dt} =',
+        [S.r.toFixed(2), RATE], '\\times', [String(N), CELL], '\\times', [fixed(food, 2).replace('−', '-'), FOOD],
+        `= ${fixed(rate, 0).replace('−', '-')} \\text{ cells per hour}`,
+      ],
+    });
+    const exp = expo(pieceAt(S.t), S.t);
+    setRows({
+      'r-t': `${S.t.toFixed(1)} h`,
+      'r-n': `${N} of K = ${S.K}`,
+      'r-food': fixed(food, 2),
+      'r-rate': fixed(rate, 0),
+      'r-exp': big(exp),
+    });
+    const full = N / S.K;
+    setResult({
+      value: isFinite(T2) ? `${T2.toFixed(1)} h` : food < 0 ? 'shrinking' : 'never',
+      status: `${N} cells, ${Math.round(full * 100)}% of K · alone, a cell doubles every ${(Math.log(2) / S.r).toFixed(1)} h`,
+      note:
+        food < 0
+          ? 'More cells than the dish can feed: some die, and the count falls back towards K.'
+          : full < 0.2
+            ? 'Almost all the food is left, so every cell divides at nearly the full rate: the count doubles every ln 2 / r hours, like the exponential.'
+            : full < 0.8
+              ? 'Each new cell eats into what is left, so division slows: growth in cells per hour peaks at K/2 and then falls.'
+              : 'The dish is nearly full. A cell divides only when one gets food and room, so the doubling time runs off to infinity.',
+      colour: food < 0.02 ? FOOD : CELL,
+    });
+  }
+
+  // ---------- loop ----------
+  let last = 0;
+  const tp = transport({
+    onRun: (on) => { if (on && S.t >= TMAX) { reset(); } },
+    onReset: () => { reset(); tp.setRunning(true); },
+  });
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    if (tp.running()) {
+      // sim hours in small steps, so a division chance stays well below 1
+      let left = dt * SPEED;
+      while (left > 1e-6) {
+        const h = Math.min(left, 0.02);
+        step(h);
+        left -= h;
+      }
+      if (S.pauseAt && N >= S.pauseAt) { S.pauseAt = 0; tp.setRunning(false); }
+      if (S.t >= TMAX) tp.setRunning(false);
+    }
+    jiggle(tp.running() ? 0.25 : 0);
+    relax(N > 900 ? 2 : 3);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- panel ----------
+  const setR = slider('rate', (v) => { S.r = v; repiece(); }, (v) => `${v.toFixed(2)} per hour`);
+  const setK = slider('cap', (v) => { S.K = v; repiece(); }, (v) => `${v} cells`);
+  const setLog = check('log', (on) => { S.log = on; });
+  check('exp', (on) => { S.exp = on; });
+
+  /** Run the sim ahead without drawing, for the Try buttons. */
+  function ahead(hours: number) {
+    const end = Math.min(TMAX - 1, S.t + hours);
+    while (S.t < end) { step(0.02); relax(1); }
+    relax(6);
+  }
+  const fresh = (r = 0.6, K = 1000) => {
+    S.r = r; S.K = K; setR(r); setK(K);
+    reset();
+  };
+  tries({
+    early: () => { fresh(); S.log = true; setLog(true); tp.setRunning(true); },
+    half: () => { fresh(); S.log = false; setLog(false); S.pauseAt = 500; tp.setRunning(true); },
+    fast: () => { fresh(1.4); tp.setRunning(true); },
+    shrink: () => {
+      fresh(0.9);
+      S.log = false; setLog(false);
+      ahead(14);
+      S.K = 400; setK(400);
+      repiece();
+      tp.setRunning(true);
+    },
+  });
+
+  reset();
+  tp.setRunning(true);
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #pg {
+    touch-action: none;
+  }
+</style>

@@ -728,6 +728,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/natural-selection',
         status: 'live',
       },
+      {
+        slug: 'population-growth',
+        title: 'Population Growth',
+        description:
+          'Cells that divide double and double again, until food and room run short. Exponential growth bends into the logistic S curve that levels off at what the dish can hold.',
+        href: '/simulations/biology/population-growth',
+        status: 'live',
+      },
     ],
   },
   {
