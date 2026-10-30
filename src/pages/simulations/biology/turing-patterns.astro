@@ -1,0 +1,467 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Turing Patterns"
+  description="Two chemicals spread and react, one switching the other on and both spreading at different speeds. From a nearly even start they settle into spots, stripes and mazes, like the coat of a leopard or a zebra."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="tp"
+          width="1000"
+          height="560"
+          role="img"
+          aria-label="A field coloured by the amount of a chemical v, which grows from a few specks into spots, stripes or a maze, beside a small map of the feed and kill rates with the current setting marked on it."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'v, the chemical that makes more of itself', color: '#2dd4bf' },
+          { label: 'feed F', color: '#f59e0b' },
+          { label: 'kill k', color: '#f87171' },
+        ]}
+        hint="Drag on the pattern to add v · click the small map to pick a feed and kill rate"
+      />
+      <Result label="Patches of v" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="preset"
+        label="Pattern"
+        attr="p"
+        active="spots"
+        options={[
+          { value: 'spots', label: 'Spots' },
+          { value: 'stripes', label: 'Stripes' },
+          { value: 'maze', label: 'Maze' },
+          { value: 'holes', label: 'Holes' },
+          { value: 'mitosis', label: 'Mitosis' },
+          { value: 'coral', label: 'Coral' },
+        ]}
+      />
+      <Transport running />
+      <Slider id="feed" label="Feed F" min={0.01} max={0.09} step={0.0005} value={0.03} display="0.0300" hint={['little u', 'lots of u']} />
+      <Slider id="kill" label="Kill k" min={0.04} max={0.07} step={0.0005} value={0.062} display="0.0620" hint={['v lingers', 'v removed fast']} />
+      <Slider id="ratio" label="How much faster u spreads, D<sub>u</sub>/D<sub>v</sub>" min={1} max={3} step={0.1} value={2} display="2.0×" />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-step', label: 'steps' },
+          { id: 'r-spf', label: 'steps per frame' },
+          { id: 'r-grid', label: 'grid' },
+          { id: 'r-cover', label: 'share of the field with v' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Each spot keeps itself going: v turns u into more v. But v spreads only half as fast as u, so a spot uses up
+      the u around it, and no other spot can start too close. That spacing is the pattern. <Try id="spots" />
+    </li>
+    <li>
+      Make both chemicals spread at the same speed and the specks just fade: without the difference there is no
+      pattern at all. This is Turing's point. <Try id="equal" />
+    </li>
+    <li>
+      Mitosis: each spot grows, stretches and splits in two, until the field is full and they stop.
+      <Try id="mitosis" />
+    </li>
+    <li>
+      Push the kill rate past the line on the small map and v is removed faster than it can make itself: the pattern
+      dissolves. <Try id="dies" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight } from '../../../lib/story';
+
+  // The Gray-Scott model: u is fed in everywhere, v turns u into more v and
+  // is removed. Both diffuse, u faster than v. Solved on a wrapped grid with
+  // the 5-point Laplacian and unit time step (Pearson's scaling), many steps a
+  // frame; v is what is shown.
+  const V = '#2dd4bf', FEED = '#f59e0b', KILL = '#f87171';
+  const PRESETS: Record<string, { F: number; k: number; name: string }> = {
+    spots: { F: 0.03, k: 0.062, name: 'spots' },
+    stripes: { F: 0.058, k: 0.065, name: 'stripes' },
+    maze: { F: 0.029, k: 0.057, name: 'maze' },
+    holes: { F: 0.039, k: 0.058, name: 'holes' },
+    mitosis: { F: 0.0367, k: 0.0649, name: 'mitosis' },
+    coral: { F: 0.0545, k: 0.062, name: 'coral' },
+  };
+
+  const canvas = document.getElementById('tp') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // ---------- the grid ----------
+  const GW = 210, GH = 160, N = GW * GH, DU = 0.2097;
+  let u = new Float32Array(N), v = new Float32Array(N), u2 = new Float32Array(N), v2 = new Float32Array(N);
+  const S = { F: 0.03, k: 0.062, ratio: 2, steps: 0, spf: 16, preset: 'spots' };
+
+  function seed() {
+    u.fill(1);
+    v.fill(0);
+    // a few specks of v, otherwise even
+    for (let s = 0; s < 30; s++) {
+      const cx = Math.floor(Math.random() * GW), cy = Math.floor(Math.random() * GH);
+      for (let dy = -3; dy <= 3; dy++)
+        for (let dx = -3; dx <= 3; dx++) {
+          const i = ((cy + dy + GH) % GH) * GW + ((cx + dx + GW) % GW);
+          u[i] = 0.5 + 0.05 * Math.random();
+          v[i] = 0.25 + 0.05 * Math.random();
+        }
+    }
+    S.steps = 0;
+  }
+
+  function step(n: number) {
+    const F = S.F, Fk = S.F + S.k, Du = DU, Dv = DU / S.ratio;
+    for (let it = 0; it < n; it++) {
+      for (let y = 0; y < GH; y++) {
+        const r = y * GW, up = ((y + GH - 1) % GH) * GW, dn = ((y + 1) % GH) * GW;
+        for (let x = 0; x < GW; x++) {
+          const i = r + x, xm = x ? i - 1 : r + GW - 1, xp = x < GW - 1 ? i + 1 : r;
+          const U = u[i], Vv = v[i];
+          const lu = u[xm] + u[xp] + u[up + x] + u[dn + x] - 4 * U;
+          const lv = v[xm] + v[xp] + v[up + x] + v[dn + x] - 4 * Vv;
+          const uvv = U * Vv * Vv;
+          u2[i] = U + Du * lu - uvv + F * (1 - U);
+          v2[i] = Vv + Dv * lv + uvv - Fk * Vv;
+        }
+      }
+      let t = u; u = u2; u2 = t;
+      t = v; v = v2; v2 = t;
+    }
+    S.steps += n;
+  }
+
+  // ---------- colour ----------
+  const tile = document.createElement('canvas');
+  tile.width = GW;
+  tile.height = GH;
+  const tctx = tile.getContext('2d')!;
+  const img = tctx.createImageData(GW, GH);
+  const px = new Uint32Array(img.data.buffer);
+  const lut = new Uint32Array(256);
+  let lutLight: boolean | null = null;
+  const hex = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  function buildLut(light: boolean) {
+    // dark: from the stage black through indigo and teal to near white; light: the reverse idea on white
+    const stops: [number, string][] = light
+      ? [[0, '#ffffff'], [0.3, '#bae6fd'], [0.6, '#0d9488'], [0.85, '#1e3a8a'], [1, '#0f172a']]
+      : [[0, '#0d0e12'], [0.3, '#312e81'], [0.6, '#0d9488'], [0.85, '#5eead4'], [1, '#f0fdfa']];
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255;
+      let k = 0;
+      while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+      const [ta, ca] = stops[k], [tb, cb] = stops[k + 1], f = (t - ta) / (tb - ta);
+      const a = hex(ca), b = hex(cb);
+      const c = a.map((x, j) => Math.round(x + (b[j] - x) * f));
+      lut[i] = (255 << 24) | (c[2] << 16) | (c[1] << 8) | c[0];
+    }
+    lutLight = light;
+  }
+  const VMAX = 0.42;
+
+  // ---------- layout ----------
+  const FX = 20, FY = 20, FW = 680, FH = 518;
+  const RX = 728;
+  const MAP = { x: 768, y: 52, w: 204, h: 204, k0: 0.04, k1: 0.07, F0: 0, F1: 0.09 };
+  const mx = (k: number) => MAP.x + ((k - MAP.k0) / (MAP.k1 - MAP.k0)) * MAP.w;
+  const my = (F: number) => MAP.y + MAP.h - ((F - MAP.F0) / (MAP.F1 - MAP.F0)) * MAP.h;
+
+  function draw() {
+    const light = isLight(canvas);
+    if (light !== lutLight) buildLut(light);
+    ctx.clearRect(0, 0, W, H);
+    for (let i = 0; i < N; i++) {
+      const t = v[i] / VMAX;
+      px[i] = lut[t <= 0 ? 0 : t >= 1 ? 255 : (t * 255) | 0];
+    }
+    tctx.putImageData(img, 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(tile, FX, FY, FW, FH);
+    ctx.restore();
+    ctx.strokeStyle = ink(0.25);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(FX - 0.5, FY - 0.5, FW + 1, FH + 1);
+    drawMap();
+    drawKey();
+  }
+
+  /** The (F, k) plane: where patterns live, the presets, and the current setting. */
+  function drawMap() {
+    say(ctx, 'where you are: kill k and feed F', RX, 26, { colour: ink(0.85), size: 13.5, weight: 650 });
+    ctx.fillStyle = ink(0.04);
+    ctx.fillRect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.strokeStyle = ink(0.3);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(MAP.x + 0.5, MAP.y + 0.5, MAP.w - 1, MAP.h - 1);
+    // the edge of the even mixture: beyond it, the only even state is u = 1, v = 0
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.clip();
+    ctx.strokeStyle = ink(0.45);
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let j = 0; j <= 120; j++) {
+      const F = MAP.F0 + (j / 120) * (MAP.F1 - MAP.F0), k = Math.sqrt(F) / 2 - F;
+      j ? ctx.lineTo(mx(k), my(F)) : ctx.moveTo(mx(k), my(F));
+    }
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'v dies out', MAP.x + MAP.w - 8, MAP.y + MAP.h - 16, { colour: ink(0.5), size: 11.5, align: 'right' });
+    say(ctx, 'patterns hug', mx(0.0415), my(0.082), { colour: ink(0.5), size: 11.5 });
+    say(ctx, 'the line', mx(0.0415), my(0.082) + 14, { colour: ink(0.5), size: 11.5 });
+    for (const [key, p] of Object.entries(PRESETS)) {
+      const on = key === S.preset;
+      ctx.fillStyle = on ? V : ink(0.55);
+      ctx.beginPath();
+      ctx.arc(mx(p.k), my(p.F), on ? 4 : 3, 0, Math.PI * 2);
+      ctx.fill();
+      const left = key === 'maze' || key === 'holes';
+      const off = on ? 12 : 7;
+      say(ctx, p.name, mx(p.k) + (left ? -off : off), my(p.F), { colour: on ? ink(0.9) : ink(0.55), size: 11, align: left ? 'right' : 'left', weight: on ? 650 : 500, halo: inv(0.8) });
+    }
+    // the current setting
+    const cx = mx(S.k), cy = my(S.F);
+    ctx.strokeStyle = ink(0.95);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = withAlpha(V, 0.9);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - 12, cy); ctx.lineTo(cx - 8, cy);
+    ctx.moveTo(cx + 8, cy); ctx.lineTo(cx + 12, cy);
+    ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 8);
+    ctx.moveTo(cx, cy + 8); ctx.lineTo(cx, cy + 12);
+    ctx.stroke();
+    say(ctx, 'kill k →', MAP.x + MAP.w, MAP.y + MAP.h + 14, { colour: KILL, size: 12, align: 'right', weight: 600 });
+    say(ctx, `${MAP.k0}`, MAP.x, MAP.y + MAP.h + 14, { colour: ink(0.45), size: 11 });
+    say(ctx, 'feed', MAP.x - 6, MAP.y + 8, { colour: FEED, size: 12, align: 'right', weight: 600 });
+    say(ctx, 'F ↑', MAP.x - 6, MAP.y + 23, { colour: FEED, size: 12, align: 'right', weight: 600 });
+    say(ctx, `${MAP.F1}`, MAP.x - 6, MAP.y + 42, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, '0', MAP.x - 6, MAP.y + MAP.h - 4, { colour: ink(0.45), size: 11, align: 'right' });
+  }
+
+  function drawKey() {
+    let y = 306;
+    say(ctx, 'colour: how much v', RX, y, { colour: ink(0.85), size: 13, weight: 650 });
+    y += 18;
+    const bw = 244;
+    for (let i = 0; i < bw; i++) {
+      const c = lut[Math.round((i / (bw - 1)) * 255)];
+      ctx.fillStyle = `rgb(${c & 255},${(c >> 8) & 255},${(c >> 16) & 255})`;
+      ctx.fillRect(RX + i, y, 1, 12);
+    }
+    ctx.strokeStyle = ink(0.25);
+    ctx.strokeRect(RX + 0.5, y + 0.5, bw - 1, 11);
+    say(ctx, 'none', RX, y + 24, { colour: ink(0.5), size: 11.5 });
+    say(ctx, 'lots', RX + bw, y + 24, { colour: ink(0.5), size: 11.5, align: 'right' });
+    y += 58;
+    const lines: [string, string][] = [
+      ['u is fed in everywhere at rate F.', FEED],
+      ['Where v meets u, it turns u into', V],
+      ['more v: uv² switches itself on.', V],
+      ['v is taken away at rate F + k.', KILL],
+      [`u spreads ${S.ratio.toFixed(1)}× as fast as v, so a`, ink(0.7)],
+      ['patch of v starves its neighbours', ink(0.7)],
+      ['of u and keeps them at a distance.', ink(0.7)],
+    ];
+    lines.forEach(([l, c]) => { say(ctx, l, RX, y, { colour: c, size: 12.5 }); y += 20; });
+  }
+
+  // ---------- numbers ----------
+  /** Patches: connected regions where v is above a threshold, on the wrapped grid. */
+  const mark = new Int32Array(N), stack = new Int32Array(N);
+  function patches() {
+    mark.fill(0);
+    let count = 0, cover = 0, vmax = 0;
+    for (let i = 0; i < N; i++) {
+      if (v[i] > vmax) vmax = v[i];
+      if (v[i] <= 0.15 || mark[i]) continue;
+      count++;
+      let sp = 0;
+      stack[sp++] = i;
+      mark[i] = 1;
+      while (sp) {
+        const j = stack[--sp], x = j % GW, y = (j - x) / GW;
+        cover++;
+        const nb = [y * GW + (x ? x - 1 : GW - 1), y * GW + (x < GW - 1 ? x + 1 : 0), ((y + GH - 1) % GH) * GW + x, ((y + 1) % GH) * GW + x];
+        for (const q of nb) if (!mark[q] && v[q] > 0.15) { mark[q] = 1; stack[sp++] = q; }
+      }
+    }
+    return { count, cover: cover / N, vmax };
+  }
+  function panelText() {
+    const p = patches();
+    setEq({
+      rule: [
+        '\\partial_t u = D_u \\nabla^2 u',
+        ['- uv^2', V],
+        ['+ F(1-u)', FEED],
+        '\\qquad \\partial_t v = D_v \\nabla^2 v',
+        ['+ uv^2', V],
+        ['- (F+k)\\,v', KILL],
+      ],
+      live: [[`F = ${S.F.toFixed(4)}`, FEED], [`\\quad k = ${S.k.toFixed(4)}`, KILL], `\\quad D_u = ${S.ratio.toFixed(1)}\\,D_v`, `\\quad \\text{step } ${S.steps}`],
+    });
+    const dead = p.vmax < 0.05;
+    const one = p.count <= 3 && p.cover > 0.2;
+    setResult({
+      value: dead ? '0' : String(p.count),
+      status: dead
+        ? 'v has died out'
+        : `${Math.round(p.cover * 100)}% of the field is v · ${one ? 'mostly joined into long stripes' : p.count > 40 ? 'many separate patches' : 'a few patches'}`,
+      note: dead
+        ? S.ratio < 1.3
+          ? 'With u and v spreading at nearly the same speed, a speck of v cannot hold on to the u around it, and every speck fades. The difference in speed is what makes a pattern.'
+          : 'With this much kill, v is removed faster than it can make more of itself, so every patch fades and the field goes back to plain u.'
+        : 'Each patch is a place where v keeps itself going. Count them as they grow from the first specks: spots multiply into a lattice, stripes and mazes join into a few long pieces.',
+      colour: dead ? undefined : V,
+    });
+    setRows({
+      'r-step': String(S.steps),
+      'r-spf': String(Math.round(S.spf)),
+      'r-grid': `${GW} × ${GH}`,
+      'r-cover': `${Math.round(p.cover * 100)}%`,
+    });
+  }
+
+  // ---------- input ----------
+  function toStage(e: PointerEvent) {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
+  }
+  const inField = (p: { x: number; y: number }) => p.x >= FX && p.x < FX + FW && p.y >= FY && p.y < FY + FH;
+  const inMap = (p: { x: number; y: number }) => p.x >= MAP.x && p.x <= MAP.x + MAP.w && p.y >= MAP.y && p.y <= MAP.y + MAP.h;
+  function brush(p: { x: number; y: number }) {
+    const gx = ((p.x - FX) / FW) * GW, gy = ((p.y - FY) / FH) * GH, R = 4;
+    for (let dy = -R; dy <= R; dy++)
+      for (let dx = -R; dx <= R; dx++) {
+        if (dx * dx + dy * dy > R * R) continue;
+        const x = (Math.floor(gx) + dx + GW) % GW, y = (Math.floor(gy) + dy + GH) % GH, i = y * GW + x;
+        u[i] = 0.5;
+        v[i] = 0.25 + 0.05 * Math.random();
+      }
+  }
+  function pickMap(p: { x: number; y: number }) {
+    const k = MAP.k0 + ((p.x - MAP.x) / MAP.w) * (MAP.k1 - MAP.k0);
+    const F = MAP.F0 + ((MAP.y + MAP.h - p.y) / MAP.h) * (MAP.F1 - MAP.F0);
+    setFk(Math.max(0.01, Math.min(0.09, F)), k);
+  }
+  let drag: '' | 'field' | 'map' = '';
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = toStage(e);
+    drag = inField(p) ? 'field' : inMap(p) ? 'map' : '';
+    if (!drag) return;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+    drag === 'field' ? brush(p) : pickMap(p);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = toStage(e);
+    canvas.style.cursor = inField(p) || inMap(p) ? 'crosshair' : '';
+    if (drag === 'field' && inField(p)) brush(p);
+    if (drag === 'map') pickMap({ x: Math.min(MAP.x + MAP.w, Math.max(MAP.x, p.x)), y: Math.min(MAP.y + MAP.h, Math.max(MAP.y, p.y)) });
+  });
+  const drop = () => (drag = '');
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  // ---------- panel ----------
+  const snap = (x: number) => Math.round(x / 0.0005) * 0.0005;
+  const setFeed = slider('feed', (x) => { S.F = x; custom(); }, (x) => x.toFixed(4));
+  const setKill = slider('kill', (x) => { S.k = x; custom(); }, (x) => x.toFixed(4));
+  const setRatio = slider('ratio', (x) => { S.ratio = x; }, (x) => `${x.toFixed(1)}×`);
+  /** A setting that is no preset: the pattern carries on and morphs. */
+  function custom() {
+    const hit = Object.entries(PRESETS).find(([, p]) => Math.abs(p.F - S.F) < 1e-6 && Math.abs(p.k - S.k) < 1e-6);
+    S.preset = hit ? hit[0] : '';
+    hit ? seg.select(hit[0]) : seg.clear();
+  }
+  function setFk(F: number, k: number) {
+    S.F = snap(F);
+    S.k = snap(k);
+    setFeed(S.F);
+    setKill(S.k);
+    custom();
+  }
+  function preset(key: string, ratio = 2) {
+    const p = PRESETS[key];
+    S.F = p.F;
+    S.k = p.k;
+    S.ratio = ratio;
+    setFeed(p.F);
+    setKill(p.k);
+    setRatio(ratio);
+    S.preset = key;
+    seg.select(key);
+    seed();
+    tp.setRunning(true);
+  }
+  const seg = segmented('preset', (key) => preset(key, S.ratio));
+  const tp = transport({ onReset: () => { seed(); tp.setRunning(true); } });
+
+  tries({
+    spots: () => preset('spots'),
+    equal: () => preset('maze', 1),
+    mitosis: () => preset('mitosis'),
+    dies: () => {
+      if (S.steps < 3000 || S.ratio < 1.5) { preset('maze'); step(3000); }
+      setFk(0.03, 0.068);
+      tp.setRunning(true);
+    },
+  });
+
+  // ---------- loop ----------
+  let tick = 0;
+  function loop() {
+    if (tp.running()) {
+      const t0 = performance.now();
+      step(Math.round(S.spf));
+      // aim for about 8 ms of chemistry a frame
+      const ms = performance.now() - t0;
+      S.spf = Math.max(4, Math.min(40, S.spf * (0.8 + 0.2 * (8 / Math.max(0.5, ms)))));
+    }
+    draw();
+    if (tick++ % 15 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+  seed();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #tp {
+    touch-action: none;
+  }
+</style>

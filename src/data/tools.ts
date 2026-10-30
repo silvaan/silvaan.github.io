@@ -704,6 +704,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/gene-expression',
         status: 'live',
       },
+      {
+        slug: 'turing-patterns',
+        title: 'Turing Patterns',
+        description:
+          'Two chemicals spread and react, one switching the other on and both spreading at different speeds. From a nearly even start they settle into spots, stripes and mazes, like the coat of a leopard or a zebra.',
+        href: '/simulations/biology/turing-patterns',
+        status: 'live',
+      },
     ],
   },
   {
