@@ -643,6 +643,22 @@ export const AREAS: Area[] = [
     ],
   },
   {
+    slug: 'biology',
+    title: 'Biology',
+    description: 'Living things as processes: populations, molecules and cells, each following a few simple rules.',
+    icon: 'M7 3c0 5 10 5 10 9s-10 4-10 9 M17 3c0 5-10 5-10 9s10 4 10 9 M8.5 6.5h7 M8.5 17.5h7',
+    simulators: [
+      {
+        slug: 'genetic-drift',
+        title: 'Genetic Drift',
+        description:
+          'In a small population a gene can win or vanish by luck alone. Follow many populations at once, shrink them and watch chance decide, then add a little selection and see when it starts to beat the dice.',
+        href: '/simulations/biology/genetic-drift',
+        status: 'live',
+      },
+    ],
+  },
+  {
     slug: 'physics',
     title: 'Physics',
     description: 'Fields and the equations that move energy through space.',

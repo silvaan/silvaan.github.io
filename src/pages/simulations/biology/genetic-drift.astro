@@ -1,0 +1,498 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Genetic Drift"
+  description="In a small population a gene can win or vanish by luck alone. Follow many populations at once, shrink them and watch chance decide, then add a little selection and see when it starts to beat the dice."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="drift"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="One population drawn generation by generation with each child joined to its parent, next to the share of one gene version in forty populations over the generations, and a count of how many populations it took over or lost."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'version A of the gene', color: '#fbbf24' },
+          { label: 'version a', color: '#60a5fa' },
+          { label: 'the population on the left', color: '#f472b6' },
+        ]}
+        hint="Each new generation is drawn at random from the parents; change a slider to start forty new populations"
+      />
+      <Result label="Populations A took over" />
+    </div>
+
+    <div class="sim-panel">
+      <Slider id="n" label="Population size N" min={0} max={6} step={1} value={2} display="50" hint={['10', '1000']} />
+      <Slider id="p0" label="Starting share of A" min={5} max={95} step={5} value={30} display="30%" />
+      <Slider id="s" label="Selection for A, s" min={0} max={8} step={1} value={0} display="0" hint={['none', '0.2']} />
+      <Transport reset running />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-gen', label: 'generation' },
+          { id: 'r-a', label: 'A on the left' },
+          { id: 'r-batch', label: 'this batch: won / lost / open' },
+          { id: 'r-total', label: 'populations finished' },
+          { id: 'r-ns', label: 'N · s' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      With no selection nothing pushes the share up or down, yet every population ends at 0% or 100%: each
+      generation is a fresh draw from the last, and the small errors add up until one version is gone for good.
+      <Try id="small" />
+    </li>
+    <li>
+      Under drift alone A takes over in about as many populations as its starting share: start at 20% and about
+      one in five end all A. Every individual is equally likely to be the one whose line survives.
+      <Try id="share" />
+    </li>
+    <li>
+      Give A a 1% edge in a population of 20: N·s is only 0.2, and A wins barely more often than with no edge at
+      all. The dice are louder than selection. <Try id="weak" />
+    </li>
+    <li>
+      The same 1% edge with N = 1000 makes N·s = 10, and A now wins nearly nine times in ten, along a path close to
+      the dashed curve of selection alone. Selection wins once N·s is well above 1. <Try id="strong" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { slider, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight } from '../../../lib/story';
+
+  // The Wright–Fisher model: N individuals, each carrying version A or a of a
+  // gene. Every generation is N fresh draws from the parents, A weighted by
+  // 1 + s. One population is drawn child by child; forty run side by side as
+  // lines, and the tally of which version won is kept across batches.
+  const AC = '#fbbf24', BC = '#60a5fa', ACC = '#f472b6';
+  const SIZES = [10, 20, 50, 100, 200, 500, 1000];
+  const SELS = [0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2];
+  const REPS = 40;
+
+  const canvas = document.getElementById('drift') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+
+  // ---------- layout ----------
+  const POP = { x: 28, y: 76, w: 360, h: 468 };
+  const PLOT = { x: 470, y: 64, w: 420, h: 380 };
+  const HIST = { x: 916, w: 52 };
+
+  // ---------- the populations ----------
+  const P = { n: 50, p0: 0.3, s: 0 };
+  /** Count of A in each population, its history, and the generation it was decided (or -1). */
+  let count = new Int32Array(REPS);
+  let paths: number[][] = [];
+  let fixedAt = new Int32Array(REPS);
+  let gen = 0, acc = 0, hold = 0;
+  /** Finished populations over all batches since the last change. */
+  const tally = { won: 0, lost: 0 };
+
+  /** The population on the left, one row per generation: alleles and parents. */
+  type Row = { a: Uint8Array; parent: Int32Array };
+  let rows: Row[] = [];
+
+  let seed = 12345;
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+  const startCount = () => Math.max(1, Math.min(P.n - 1, Math.round(P.p0 * P.n)));
+  /** The share of A among the parents a child draws from: A counts 1 + s times. */
+  const weighted = (p: number) => (p * (1 + P.s)) / (1 + p * P.s);
+
+  function binomial(n: number, p: number) {
+    if (p <= 0) return 0;
+    if (p >= 1) return n;
+    const v = n * p * (1 - p);
+    if (v > 25) return Math.max(0, Math.min(n, Math.round(n * p + Math.sqrt(v) * gauss())));
+    let k = 0;
+    for (let i = 0; i < n; i++) if (rnd() < p) k++;
+    return k;
+  }
+
+  function batch() {
+    const n = P.n, k0 = startCount();
+    count = new Int32Array(REPS).fill(k0);
+    fixedAt = new Int32Array(REPS).fill(-1);
+    paths = Array.from({ length: REPS }, () => [k0 / n]);
+    gen = 0; acc = 0; hold = 0;
+    // the first generation in random order, so lineages show as they merge
+    const a = new Uint8Array(n);
+    for (let i = 0; i < k0; i++) a[i] = 1;
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    rows = [{ a, parent: new Int32Array(n).fill(-1) }];
+  }
+  function restart() {
+    tally.won = 0;
+    tally.lost = 0;
+    batch();
+  }
+
+  /** The next generation of the population on the left, children in their parents' order. */
+  function breedShown(): number {
+    const prev = rows[rows.length - 1], n = P.n;
+    const cum = new Float64Array(n);
+    let tot = 0;
+    for (let i = 0; i < n; i++) { tot += prev.a[i] ? 1 + P.s : 1; cum[i] = tot; }
+    // n sorted uniform draws, from the gaps of n + 1 exponential ones
+    const gaps = new Float64Array(n + 1);
+    let sum = 0;
+    for (let i = 0; i <= n; i++) { gaps[i] = -Math.log(1 - rnd()); sum += gaps[i]; }
+    const a = new Uint8Array(n), parent = new Int32Array(n);
+    let u = 0, j = 0, k = 0;
+    for (let i = 0; i < n; i++) {
+      u += gaps[i];
+      const x = (u / sum) * tot;
+      while (j < n - 1 && cum[j] < x) j++;
+      parent[i] = j;
+      a[i] = prev.a[j];
+      k += a[i];
+    }
+    rows.push({ a, parent });
+    if (rows.length > 200) rows.shift();
+    return k;
+  }
+
+  function step() {
+    gen++;
+    const shownDone = fixedAt[0] >= 0;
+    for (let r = 0; r < REPS; r++) {
+      if (fixedAt[r] >= 0) continue;
+      const p = count[r] / P.n;
+      count[r] = r === 0 ? breedShown() : binomial(P.n, weighted(p));
+      paths[r].push(count[r] / P.n);
+      if (count[r] === 0 || count[r] === P.n) {
+        fixedAt[r] = gen;
+        if (count[r]) tally.won++; else tally.lost++;
+      }
+    }
+    // the population on the left keeps going after it is decided, so it never freezes
+    if (shownDone) breedShown();
+  }
+
+  /** Generations per second: small populations slow enough to watch, big ones fast enough to finish. */
+  const pace = () => Math.max(3, Math.min(300, P.n / 4));
+  const decided = () => fixedAt.every((g) => g >= 0);
+
+  // ---------- loop ----------
+  const tp = transport({ onReset: () => { restart(); tp.setRunning(true); } });
+  let last = 0, tick = 0;
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    if (tp.running()) {
+      if (decided()) {
+        // a pause on the result, then a new batch of forty
+        if ((hold += dt) > 1.6) batch();
+      } else {
+        acc = Math.min(acc + dt * pace(), 60);
+        while (acc >= 1 && !decided()) { step(); acc--; }
+      }
+    }
+    draw();
+    if (tick++ % 8 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- theory ----------
+  /** Kimura's chance that A takes over, for N individuals starting at share p. */
+  function fixProb(p: number) {
+    const k = 2 * P.n * P.s;
+    if (k < 1e-9) return p;
+    return (1 - Math.exp(-k * p)) / (1 - Math.exp(-k));
+  }
+
+  // ---------- drawing ----------
+  function draw() {
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    population();
+    plot();
+    histogram();
+  }
+
+  /** The population on the left: newest generation at the bottom, each child joined to its parent. */
+  function population() {
+    const n = P.n, cw = POP.w / n, rh = Math.max(3, Math.min(26, cw)), dots = n <= 50;
+    const shown = Math.min(rows.length, Math.floor(POP.h / rh));
+    say(ctx, `one population of ${n}`, POP.x, 30, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, dots ? 'one row per generation, each child joined to its parent' : 'one row per generation, children next to their parents', POP.x, 52, { colour: ink(0.5), size: 12 });
+    const yOf = (k: number) => POP.y + POP.h - (shown - k) * rh + rh / 2;
+    const xOf = (i: number) => POP.x + (i + 0.5) * cw;
+    const first = rows.length - shown;
+    if (dots) {
+      // parent lines, then the people on top
+      ctx.lineWidth = 1;
+      for (const allele of [0, 1]) {
+        ctx.strokeStyle = withAlpha(allele ? AC : BC, 0.4);
+        ctx.beginPath();
+        for (let k = 1; k < shown; k++) {
+          const row = rows[first + k], y = yOf(k);
+          for (let i = 0; i < n; i++) {
+            if (row.a[i] !== allele) continue;
+            ctx.moveTo(xOf(i), y);
+            ctx.lineTo(xOf(row.parent[i]), y - rh);
+          }
+        }
+        ctx.stroke();
+      }
+      const r = Math.max(1.6, Math.min(cw, rh) * 0.3);
+      for (const allele of [0, 1]) {
+        ctx.fillStyle = allele ? AC : BC;
+        ctx.beginPath();
+        for (let k = 0; k < shown; k++) {
+          const row = rows[first + k], y = yOf(k);
+          for (let i = 0; i < n; i++) {
+            if (row.a[i] !== allele) continue;
+            ctx.moveTo(xOf(i) + r, y);
+            ctx.arc(xOf(i), y, r, 0, Math.PI * 2);
+          }
+        }
+        ctx.fill();
+      }
+    } else {
+      // one pixel per individual, stretched: too many for a dot each
+      if (strip.width !== n || strip.height !== shown) { strip.width = n; strip.height = Math.max(1, shown); }
+      const g = strip.getContext('2d')!, im = g.createImageData(n, Math.max(1, shown));
+      for (let k = 0; k < shown; k++) {
+        const row = rows[first + k];
+        for (let i = 0; i < n; i++) {
+          const o = 4 * (k * n + i), c = row.a[i] ? A_RGB : B_RGB;
+          im.data[o] = c[0]; im.data[o + 1] = c[1]; im.data[o + 2] = c[2]; im.data[o + 3] = 255;
+        }
+      }
+      g.putImageData(im, 0, 0);
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(strip, POP.x, POP.y + POP.h - shown * rh, POP.w, shown * rh);
+      ctx.restore();
+    }
+    const k = count[0];
+    say(ctx, `generation ${gen}`, POP.x, POP.y + POP.h + 22, { colour: ink(0.55), size: 12.5 });
+    say(ctx, `A ${Math.round((100 * k) / n)}%`, POP.x + POP.w, POP.y + POP.h + 22, { colour: AC, size: 13, weight: 650, align: 'right' });
+    if (fixedAt[0] >= 0) {
+      const won = k === n;
+      say(ctx, won ? 'A took over' : 'A is gone', POP.x + POP.w / 2, POP.y + POP.h + 22, { colour: won ? AC : BC, size: 13, weight: 700, align: 'center' });
+    }
+  }
+
+  const strip = document.createElement('canvas');
+  const A_RGB = [251, 191, 36], B_RGB = [96, 165, 250];
+
+  const NICE = [25, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+  function plot() {
+    const span = NICE.find((v) => v >= gen) ?? gen;
+    const X = (g: number) => PLOT.x + (g / span) * PLOT.w, Y = (p: number) => PLOT.y + PLOT.h - p * PLOT.h;
+    ctx.strokeStyle = ink(0.22);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PLOT.x, PLOT.y); ctx.lineTo(PLOT.x, PLOT.y + PLOT.h); ctx.lineTo(PLOT.x + PLOT.w, PLOT.y + PLOT.h);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.07);
+    ctx.beginPath();
+    for (const p of [0.25, 0.5, 0.75, 1]) { ctx.moveTo(PLOT.x, Y(p)); ctx.lineTo(PLOT.x + PLOT.w, Y(p)); }
+    ctx.stroke();
+    for (const p of [0, 0.5, 1]) say(ctx, `${p * 100}%`, PLOT.x - 6, Y(p), { colour: ink(0.45), size: 12, align: 'right' });
+    const divs = [25, 50, 500, 5000, 50000].includes(span) ? 5 : 4;
+    for (let k = 0; k <= divs; k++) say(ctx, String((span * k) / divs), X((span * k) / divs), PLOT.y + PLOT.h + 13, { colour: ink(0.45), size: 12, align: 'center' });
+    say(ctx, 'generations', PLOT.x + PLOT.w, PLOT.y + PLOT.h + 30, { colour: ink(0.45), size: 12, align: 'right' });
+    say(ctx, `share of A in ${REPS} populations`, PLOT.x, PLOT.y - 18 + 4, { colour: ink(0.55), size: 12 });
+
+    // where it started, and where selection alone would take it
+    const p0 = startCount() / P.n;
+    ctx.save();
+    ctx.setLineDash([4, 5]);
+    ctx.strokeStyle = ink(0.3);
+    ctx.beginPath();
+    ctx.moveTo(PLOT.x, Y(p0)); ctx.lineTo(PLOT.x + PLOT.w, Y(p0));
+    ctx.stroke();
+    if (P.s > 0) {
+      ctx.strokeStyle = ink(0.75);
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      let p = p0;
+      ctx.moveTo(X(0), Y(p));
+      const stride = Math.max(1, Math.floor(span / 400));
+      for (let g = 1; g <= span; g++) {
+        p = weighted(p);
+        if (g % stride === 0) ctx.lineTo(X(g), Y(p));
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+    // a key for the two dashed lines, under the plot
+    const ky = PLOT.y + PLOT.h + 30;
+    const key = (x: number, c: string, lw: number, text: string) => {
+      ctx.save();
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = c;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(x, ky); ctx.lineTo(x + 24, ky);
+      ctx.stroke();
+      ctx.restore();
+      say(ctx, text, x + 30, ky, { colour: ink(0.6), size: 12 });
+    };
+    key(PLOT.x, ink(0.3), 1, 'start');
+    if (P.s > 0) key(PLOT.x + 80, ink(0.75), 1.8, 'selection alone, no chance');
+
+    // the forty, coloured by how they ended; the one on the left on top
+    const stride = Math.max(1, Math.floor(span / 220));
+    for (let r = REPS - 1; r >= 0; r--) {
+      const path = paths[r], f = fixedAt[r];
+      const c = r === 0 ? ACC : f < 0 ? ink(0.35) : withAlpha(count[r] ? AC : BC, 0.7);
+      ctx.strokeStyle = c;
+      ctx.lineWidth = r === 0 ? 2.6 : 1.2;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(X(0), Y(path[0]));
+      for (let g = stride; g < path.length; g += stride) ctx.lineTo(X(g), Y(path[g]));
+      ctx.lineTo(X(path.length - 1), Y(path[path.length - 1]));
+      ctx.stroke();
+      if (f >= 0) {
+        ctx.fillStyle = count[r] ? AC : BC;
+        ctx.beginPath();
+        ctx.arc(X(f), Y(count[r] ? 1 : 0), r === 0 ? 4.5 : 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  /** Where the forty are now: sideways bars, with the decided ones at the two ends. */
+  function histogram() {
+    const Y = (p: number) => PLOT.y + PLOT.h - p * PLOT.h;
+    const won = Array.from(count).filter((k, r) => fixedAt[r] >= 0 && k > 0).length;
+    const lost = Array.from(count).filter((k, r) => fixedAt[r] >= 0 && k === 0).length;
+    const BINS = 10, bins = new Array(BINS).fill(0);
+    for (let r = 0; r < REPS; r++) if (fixedAt[r] < 0) bins[Math.min(BINS - 1, Math.floor((count[r] / P.n) * BINS))]++;
+    const unit = HIST.w / 8;
+    const bh = PLOT.h / BINS;
+    ctx.fillStyle = ink(0.35);
+    bins.forEach((c, b) => { if (c) ctx.fillRect(HIST.x, Y((b + 1) / BINS) + 1, Math.min(HIST.w, c * unit), bh - 2); });
+    ctx.fillStyle = AC;
+    ctx.fillRect(HIST.x, Y(1) - 7, Math.min(HIST.w, won * unit), 7);
+    ctx.fillStyle = BC;
+    ctx.fillRect(HIST.x, Y(0), Math.min(HIST.w, lost * unit), 7);
+    say(ctx, `${won} won`, HIST.x, Y(1) - 18, { colour: AC, size: 12.5, weight: 650 });
+    say(ctx, `${lost} lost`, HIST.x, Y(0) + 20, { colour: BC, size: 12.5, weight: 650 });
+
+    // the score so far against the theory
+    const done = tally.won + tally.lost, u = fixProb(startCount() / P.n);
+    const y0 = PLOT.y + PLOT.h + 70;
+    say(ctx, done ? `A took over in ${tally.won} of ${done} finished populations: ${Math.round((100 * tally.won) / done)}%` : 'no population has finished yet', PLOT.x, y0, { colour: ink(0.85), size: 14, weight: 650 });
+    say(ctx, P.s > 0 ? `theory with selection: ${Math.round(u * 100)}%   ·   chance alone would give ${Math.round((100 * startCount()) / P.n)}%` : `theory for chance alone: the starting share, ${Math.round(u * 100)}%`, PLOT.x, y0 + 24, { colour: ink(0.6), size: 13 });
+    // a bar for the score with a tick at the theory
+    const bx = PLOT.x, bw = PLOT.w, by = y0 + 44;
+    ctx.fillStyle = withAlpha(BC, 0.35);
+    ctx.fillRect(bx, by, bw, 10);
+    if (done) {
+      ctx.fillStyle = AC;
+      ctx.fillRect(bx, by, bw * (tally.won / done), 10);
+    }
+    ctx.strokeStyle = ink(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx + bw * u, by - 5); ctx.lineTo(bx + bw * u, by + 15);
+    ctx.stroke();
+  }
+
+  // ---------- numbers ----------
+  function panelText() {
+    const ns = P.n * P.s, u = fixProb(startCount() / P.n), done = tally.won + tally.lost;
+    setEq({
+      rule: [
+        "p' = \\frac{p\\,(1+s)}{1+p\\,s}",
+        "\\quad n_A' \\sim \\text{Binomial}(N,\\, p')\\quad",
+        ['P(\\text{A wins}) \\approx \\frac{1-e^{-2Nsp_0}}{1-e^{-2Ns}}', AC],
+      ],
+      live: [
+        `N = ${P.n}\\quad s = ${P.s}\\quad Ns = ${ns.toFixed(ns < 1 ? 2 : 1)}\\quad p_0 = ${(startCount() / P.n).toFixed(2)}\\quad`,
+        [`P(\\text{A wins}) \\approx ${u.toFixed(2)}`, AC],
+      ],
+    });
+    const open = fixedAt.filter((g) => g < 0).length;
+    const won = Array.from(count).filter((k, r) => fixedAt[r] >= 0 && k > 0).length;
+    setRows({
+      'r-gen': String(gen),
+      'r-a': `${count[0]} of ${P.n}`,
+      'r-batch': `${won} / ${REPS - open - won} / ${open}`,
+      'r-total': String(done),
+      'r-ns': ns.toFixed(ns < 1 ? 2 : 1),
+    });
+    const regime = ns < 0.5 ? 'drift rules' : ns < 3 ? 'drift and selection about even' : 'selection rules';
+    setResult({
+      value: done ? `${Math.round((100 * tally.won) / done)}%` : '…',
+      status: `of ${done} populations · theory ${Math.round(u * 100)}% · N·s = ${ns.toFixed(ns < 1 ? 2 : 1)}, ${regime}`,
+      note:
+        P.s === 0
+          ? 'With no selection every individual is equally likely to be the ancestor of everyone in the end, so A wins as often as its starting share.'
+          : ns < 0.5
+            ? 'The edge is real but each generation the dice move the share by more than selection does, so A wins hardly more often than chance alone.'
+            : ns < 3
+              ? 'Selection and chance are of similar size: A is favoured, but it still loses often.'
+              : 'Selection beats the dice: the populations follow the dashed curve and A almost always takes over, unless it starts with very few copies.',
+      colour: AC,
+    });
+  }
+
+  // ---------- panel ----------
+  const setN = slider('n', (v) => { P.n = SIZES[v]; restart(); }, (v) => String(SIZES[v]));
+  const setP0 = slider('p0', (v) => { P.p0 = v / 100; restart(); }, (v) => `${v}%`);
+  const setS = slider('s', (v) => { P.s = SELS[v]; restart(); }, (v) => String(SELS[v]));
+  const pick = (n: number, p0: number, s: number) => {
+    P.n = n; P.p0 = p0 / 100; P.s = s;
+    setN(SIZES.indexOf(n)); setP0(p0); setS(SELS.indexOf(s));
+    restart();
+    tp.setRunning(true);
+  };
+  tries({
+    small: () => pick(20, 50, 0),
+    share: () => pick(100, 20, 0),
+    weak: () => pick(20, 10, 0.01),
+    strong: () => pick(1000, 10, 0.01),
+  });
+
+  seed = (Math.random() * 2 ** 31) | 0;
+  restart();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #drift {
+    touch-action: none;
+  }
+</style>
