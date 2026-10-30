@@ -656,6 +656,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/genetic-drift',
         status: 'live',
       },
+      {
+        slug: 'predator-prey',
+        title: 'Predators and Prey',
+        description:
+          'Rabbits feed foxes and foxes eat rabbits, so neither settles: both populations rise and crash in turn, the foxes always a step behind, and in the plane of the two counts every cycle is a closed loop.',
+        href: '/simulations/biology/predator-prey',
+        status: 'live',
+      },
     ],
   },
   {

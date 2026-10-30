@@ -1,0 +1,720 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const RAB = '#4f9cf9', FOX = '#f97316';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Predators and Prey"
+  description="Rabbits feed foxes and foxes eat rabbits, so neither settles: both populations rise and crash in turn, a quarter of a cycle apart, and in the plane of the two counts every cycle is a closed loop."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="lv"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="A field of rabbits and foxes whose numbers follow the Lotka-Volterra equations, the two populations plotted against time, and the phase plane of rabbits against foxes where the state goes round a closed loop about the balance point."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'rabbits x', color: RAB },
+          { label: 'foxes y', color: FOX },
+          { label: 'balance point (x*, y*)', color: '#a78bfa' },
+        ]}
+        hint="Click anywhere in the phase plane to start the two populations from that point"
+      />
+      <Result label="Now" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running />
+      <Slider id="alpha" label="Rabbit birth rate α" min={0.4} max={2} step={0.05} value={1} display="1.00" hint={['slow', 'fast']} />
+      <Slider id="beta" label="Predation β" min={0.01} max={0.1} step={0.005} value={0.04} display="0.040" hint={['clumsy', 'deadly']} />
+      <Slider id="gamma" label="Fox death rate γ" min={0.3} max={1.6} step={0.05} value={0.8} display="0.80" hint={['hardy', 'frail']} />
+      <Slider id="delta" label="Conversion δ" min={0.004} max={0.03} step={0.001} value={0.01} display="0.010" hint={['many rabbits per new fox', 'few']} />
+      <Slider id="x0" label="Starting rabbits" min={5} max={200} step={5} value={40} />
+      <Slider id="y0" label="Starting foxes" min={2} max={80} step={1} value={10} />
+      <Readout
+        title="Numbers"
+        rows={[
+          { id: 'r-t', label: 'time' },
+          { id: 'r-eq', label: 'balance x* = γ/δ, y* = α/β' },
+          { id: 'r-avg', label: 'average over one loop' },
+          { id: 'r-period', label: 'period of the loop' },
+          { id: 'r-lag', label: 'fox peak after rabbit peak' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Rabbits peak first and the foxes peak after them, once the rabbits are already falling. The fox curve trails
+      the rabbit curve by a quarter of a loop when the swings are small, and by a bit less on wide loops like this
+      one. <Try id="lag" />
+    </li>
+    <li>
+      Start exactly at the balance point, where the two dashed nullclines cross, and nothing moves: births match
+      deaths for both. Start a little off it and the loop is a small, nearly round orbit whose period is close to
+      2π/√(αγ). <Try id="near" />
+    </li>
+    <li>
+      Start far from balance and the swings get violent: the rabbits drop to a fraction of one animal and still
+      come back. The equations allow that; a real population that small would simply die out. <Try id="far" />
+    </li>
+    <li>
+      Make the rabbits breed faster. The balance moves up, not right: there are more foxes on average, and the
+      average number of rabbits over a loop stays at γ/δ. <Try id="breed" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { slider, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight, clamp01 } from '../../../lib/story';
+
+  // Lotka-Volterra, integrated with RK4. The field on the left is only a
+  // picture of the two numbers: one icon per k animals, born next to a parent
+  // and, for rabbits, removed next to a fox. The dynamics are the ODE's alone.
+  const RAB = '#4f9cf9', FOX = '#f97316', EQ = '#a78bfa';
+
+  const canvas = document.getElementById('lv') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const P = { a: 1, b: 0.04, g: 0.8, d: 0.01 };
+  const start = { x: 40, y: 10 };
+  let X = start.x, Y = start.y, T = 0;
+
+  const deriv = (x: number, y: number) => [P.a * x - P.b * x * y, P.d * x * y - P.g * y];
+  /** One RK4 step; small enough steps keep the loop closed for hundreds of cycles. */
+  function rk4(x: number, y: number, h: number) {
+    const [k1x, k1y] = deriv(x, y);
+    const [k2x, k2y] = deriv(x + (h / 2) * k1x, y + (h / 2) * k1y);
+    const [k3x, k3y] = deriv(x + (h / 2) * k2x, y + (h / 2) * k2y);
+    const [k4x, k4y] = deriv(x + h * k3x, y + h * k3y);
+    return [x + (h / 6) * (k1x + 2 * k2x + 2 * k3x + k4x), y + (h / 6) * (k1y + 2 * k2y + 2 * k3y + k4y)];
+  }
+  /** Shorter steps when the rates are fast, which happens at the far ends of a wide loop. */
+  const stepSize = (x: number, y: number) => Math.min(0.01, 0.08 / (P.a + P.b * y + P.d * x + P.g));
+  const eqX = () => P.g / P.d, eqY = () => P.a / P.b;
+
+  // ---------- the whole loop through the current state ----------
+  type Orbit = { pts: number[]; period: number; maxX: number; maxY: number; minX: number; avgX: number; avgY: number };
+  let orbit: Orbit;
+  /** Follow the state once round the balance point (by the angle it sweeps in log coordinates). */
+  function traceOrbit(x0: number, y0: number): Orbit {
+    const ex = eqX(), ey = eqY();
+    const ang = (x: number, y: number) => Math.atan2(Math.log(y / ey), Math.log(x / ex));
+    const pts = [x0, y0];
+    let x = x0, y = y0, t = 0, swept = 0, prev = ang(x, y), maxX = x, maxY = y, minX = x, sx = 0, sy = 0;
+    const small = Math.abs(Math.log(x0 / ex)) + Math.abs(Math.log(y0 / ey)) < 1e-4;
+    if (small) {
+      const per = (2 * Math.PI) / Math.sqrt(P.a * P.g);
+      return { pts, period: per, maxX: x, maxY: y, minX: x, avgX: x, avgY: y };
+    }
+    let n = 0;
+    while (Math.abs(swept) < 2 * Math.PI && t < 400) {
+      const h = stepSize(x, y);
+      [x, y] = rk4(x, y, h);
+      sx += x * h; sy += y * h;
+      t += h;
+      const a = ang(x, y);
+      let da = a - prev;
+      if (da > Math.PI) da -= 2 * Math.PI;
+      if (da < -Math.PI) da += 2 * Math.PI;
+      swept += da;
+      prev = a;
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); minX = Math.min(minX, x);
+      if (++n % 4 === 0) pts.push(x, y);
+    }
+    pts.push(x0, y0);
+    return { pts, period: t, maxX, maxY, minX, avgX: sx / t, avgY: sy / t };
+  }
+
+  // ---------- axes, chosen once per loop so nothing jumps while it runs ----------
+  const nice = (v: number) => {
+    const e = 10 ** Math.floor(Math.log10(v)), m = v / e;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * e;
+  };
+  /** A round number at or above v, in finer steps, for the end of an axis. */
+  const roundUp = (v: number) => {
+    const e = 10 ** Math.floor(Math.log10(v)), m = v / e;
+    return ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((s) => m <= s) ?? 10) * e;
+  };
+  let xMax = 250, yMax = 80, nMax = 250, per = 1;
+  const PER_OPTIONS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  function fitAxes() {
+    xMax = roundUp(Math.max(orbit.maxX, eqX(), start.x) * 1.08);
+    yMax = roundUp(Math.max(orbit.maxY, eqY(), start.y) * 1.08);
+    nMax = Math.max(xMax, yMax);
+    // one icon stands for `per` animals, the same for both kinds
+    const big = Math.max(orbit.maxX, orbit.maxY);
+    per = PER_OPTIONS.find((p) => big / p <= 260) ?? 5000;
+  }
+
+  // ---------- history ----------
+  const WINDOW = 30;
+  let hist: { t: number; x: number; y: number }[] = [];
+  let peaks: { t: number; kind: 'x' | 'y' }[] = [];
+  function record() {
+    const last = hist[hist.length - 1];
+    if (last && T - last.t < 0.04) return;
+    hist.push({ t: T, x: X, y: Y });
+    // a peak is a sample higher than both neighbours
+    const n = hist.length;
+    if (n >= 3) {
+      const [p, q, r] = [hist[n - 3], hist[n - 2], hist[n - 1]];
+      if (q.x > p.x && q.x >= r.x && q.x > eqX()) peaks.push({ t: q.t, kind: 'x' });
+      if (q.y > p.y && q.y >= r.y && q.y > eqY()) peaks.push({ t: q.t, kind: 'y' });
+    }
+    while (hist.length && hist[0].t < T - WINDOW - 1) hist.shift();
+    while (peaks.length && peaks[0].t < T - WINDOW - 1) peaks.shift();
+  }
+
+  // ---------- the field ----------
+  const FIELD = { x: 24, y: 52, w: 372, h: 524 };
+  type Agent = {
+    x: number; y: number; vx: number; vy: number; tx: number; ty: number;
+    born: number; dying: number; eaten: boolean; face: number;
+  };
+  let rabbits: Agent[] = [], foxes: Agent[] = [];
+  let clock = 0;
+  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+  const inField = () => ({ x: rnd(FIELD.x + 14, FIELD.x + FIELD.w - 14), y: rnd(FIELD.y + 14, FIELD.y + FIELD.h - 14) });
+  const spot = (): Agent => {
+    const p = inField(), q = inField();
+    return { x: p.x, y: p.y, vx: 0, vy: 0, tx: q.x, ty: q.y, born: -10, dying: -1, eaten: false, face: Math.random() < 0.5 ? -1 : 1 };
+  };
+  function populate() {
+    rabbits = Array.from({ length: Math.round(X / per) }, spot);
+    foxes = Array.from({ length: Math.round(Y / per) }, spot);
+  }
+  const alive = (list: Agent[]) => list.filter((a) => a.dying < 0);
+  /** Bring the icons in line with the numbers: births at a parent, deaths with a short fade. */
+  function reconcile() {
+    const sync = (list: Agent[], want: number, pickDeath: (live: Agent[]) => Agent) => {
+      let live = alive(list);
+      while (live.length < want) {
+        const parent = live.length ? live[Math.floor(Math.random() * live.length)] : null;
+        // the young start at the parent and head off somewhere, so the field never clumps
+        const a = spot();
+        if (parent) { a.x = parent.x; a.y = parent.y; }
+        a.born = clock;
+        list.push(a);
+        live.push(a);
+      }
+      while (live.length > want) {
+        const a = pickDeath(live);
+        a.dying = clock;
+        live = live.filter((b) => b !== a);
+      }
+    };
+    const liveFoxes = alive(foxes);
+    sync(rabbits, Math.round(X / per), (live) => {
+      if (!liveFoxes.length) return live[Math.floor(Math.random() * live.length)];
+      // the rabbit closest to any fox is the one that gets caught
+      let best = live[0], bd = Infinity;
+      for (const r of live)
+        for (const f of liveFoxes) {
+          const d = (r.x - f.x) ** 2 + (r.y - f.y) ** 2;
+          if (d < bd) { bd = d; best = r; }
+        }
+      best.eaten = true;
+      return best;
+    });
+    sync(foxes, Math.round(Y / per), (live) => live[Math.floor(Math.random() * live.length)]);
+    rabbits = rabbits.filter((a) => a.dying < 0 || clock - a.dying < 0.45);
+    foxes = foxes.filter((a) => a.dying < 0 || clock - a.dying < 0.6);
+  }
+  function wander(dt: number) {
+    const liveR = alive(rabbits);
+    const move = (a: Agent, speed: number, tx: number, ty: number) => {
+      if (a.dying >= 0) return;
+      const dx = tx - a.x, dy = ty - a.y, d = Math.hypot(dx, dy) || 1;
+      const k = Math.min(1, dt * 4);
+      a.vx += ((dx / d) * speed - a.vx) * k;
+      a.vy += ((dy / d) * speed - a.vy) * k;
+      a.x += a.vx * dt;
+      a.y += a.vy * dt;
+      if (Math.abs(a.vx) > 4) a.face = a.vx < 0 ? -1 : 1;
+    };
+    const retarget = (a: Agent) => {
+      if (Math.hypot(a.tx - a.x, a.ty - a.y) < 8) { const q = inField(); a.tx = q.x; a.ty = q.y; }
+    };
+    for (const r of rabbits) { retarget(r); move(r, 46, r.tx, r.ty); }
+    for (const f of foxes) {
+      retarget(f);
+      // a fox goes for a rabbit it can see, otherwise roams
+      let best: Agent | null = null, bd = 80 * 80;
+      for (const r of liveR) {
+        const d = (r.x - f.x) ** 2 + (r.y - f.y) ** 2;
+        if (d < bd) { bd = d; best = r; }
+      }
+      move(f, best ? 44 : 36, best ? best.x : f.tx, best ? best.y : f.ty);
+    }
+  }
+
+  // sprites: a rabbit and a fox, drawn once at twice the resolution
+  function sprite(kind: 'r' | 'f', colour: string) {
+    const c = document.createElement('canvas'), S = 16, k = 3;
+    c.width = c.height = S * k;
+    const g = c.getContext('2d')!;
+    g.scale(k, k);
+    g.fillStyle = colour;
+    g.strokeStyle = 'rgba(0,0,0,0.35)';
+    g.lineWidth = 0.6;
+    if (kind === 'r') {
+      g.beginPath(); g.ellipse(7, 10.5, 4.6, 3.6, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.beginPath(); g.arc(11, 7.5, 2.6, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.beginPath(); g.ellipse(10.4, 3.4, 0.9, 2.6, -0.2, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.beginPath(); g.ellipse(12.2, 3.6, 0.9, 2.6, 0.3, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      g.beginPath(); g.arc(2.6, 10, 1.4, 0, Math.PI * 2); g.fill();
+    } else {
+      g.beginPath(); g.ellipse(6.5, 10, 4.6, 3, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+      // tail
+      g.beginPath(); g.ellipse(1.8, 8.4, 2.4, 1.3, -0.6, 0, Math.PI * 2); g.fill(); g.stroke();
+      // head with ears and a pointed snout
+      g.beginPath();
+      g.moveTo(9.2, 5); g.lineTo(10, 1.6); g.lineTo(11.2, 4.2); g.lineTo(12.6, 1.8); g.lineTo(13, 5.2);
+      g.lineTo(15.6, 7.6); g.lineTo(12, 9.2); g.lineTo(9, 8.4); g.closePath();
+      g.fill(); g.stroke();
+      g.fillStyle = 'rgba(255,255,255,0.85)';
+      g.beginPath(); g.arc(1, 7.6, 0.9, 0, Math.PI * 2); g.fill();
+    }
+    return c;
+  }
+  const SPR = { r: sprite('r', RAB), f: sprite('f', FOX) };
+  function drawAgent(a: Agent, img: HTMLCanvasElement, size: number) {
+    let s = size, alpha = 1;
+    const age = clock - a.born;
+    if (age < 0.3) s *= 0.3 + 0.7 * clamp01(age / 0.3);
+    if (a.dying >= 0) {
+      const t = clamp01((clock - a.dying) / 0.45);
+      s *= 1 - 0.6 * t;
+      alpha = 1 - t;
+      if (a.eaten) {
+        ctx.strokeStyle = withAlpha(FOX, 0.8 * (1 - t));
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(a.x, a.y, 5 + 10 * t, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = alpha;
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.scale(a.face, 1);
+    ctx.drawImage(img, -s / 2, -s / 2, s, s);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- layout of the two plots ----------
+  const TS = { x: 476, y: 52, w: 496, h: 176 };
+  const PP = { x: 476, y: 300, w: 496, h: 248 };
+  const tsX = (t: number) => TS.x + ((t - Math.max(0, T - WINDOW)) / WINDOW) * TS.w;
+  const tsY = (n: number) => TS.y + TS.h - (n / nMax) * TS.h;
+  const ppX = (x: number) => PP.x + (x / xMax) * PP.w;
+  const ppY = (y: number) => PP.y + PP.h - (y / yMax) * PP.h;
+  const ticks = (max: number) => {
+    const s = nice(max / 4);
+    const out: number[] = [];
+    for (let v = 0; v <= max + 1e-9; v += s) out.push(v);
+    return out;
+  };
+  const fmt = (v: number) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2));
+
+  function frame(b: { x: number; y: number; w: number; h: number }) {
+    ctx.strokeStyle = ink(0.25);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x, b.y + b.h);
+    ctx.lineTo(b.x + b.w, b.y + b.h);
+    ctx.stroke();
+  }
+
+  function drawTime() {
+    say(ctx, 'the two populations over time', TS.x - 40, 22, { colour: ink(0.85), size: 15, weight: 650 });
+    frame(TS);
+    for (const v of ticks(nMax)) {
+      const y = tsY(v);
+      ctx.strokeStyle = ink(0.06);
+      ctx.beginPath(); ctx.moveTo(TS.x, y); ctx.lineTo(TS.x + TS.w, y); ctx.stroke();
+      say(ctx, String(v), TS.x - 8, y, { colour: ink(0.45), size: 11, align: 'right' });
+    }
+    say(ctx, 'time', TS.x + TS.w, TS.y + TS.h + 14, { colour: ink(0.45), size: 11, align: 'right' });
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(TS.x, TS.y - 4, TS.w, TS.h + 8);
+    ctx.clip();
+    // balance levels
+    ctx.setLineDash([3, 5]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = withAlpha(RAB, 0.4);
+    ctx.beginPath(); ctx.moveTo(TS.x, tsY(eqX())); ctx.lineTo(TS.x + TS.w, tsY(eqX())); ctx.stroke();
+    ctx.strokeStyle = withAlpha(FOX, 0.4);
+    ctx.beginPath(); ctx.moveTo(TS.x, tsY(eqY())); ctx.lineTo(TS.x + TS.w, tsY(eqY())); ctx.stroke();
+    ctx.setLineDash([]);
+    const line = (key: 'x' | 'y', colour: string) => {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 2.2;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      hist.forEach((s, i) => (i ? ctx.lineTo(tsX(s.t), tsY(s[key])) : ctx.moveTo(tsX(s.t), tsY(s[key]))));
+      ctx.stroke();
+    };
+    line('x', RAB);
+    line('y', FOX);
+    // a rabbit peak and the fox peak that follows it
+    for (let i = 0; i < peaks.length; i++) {
+      const p = peaks[i];
+      if (p.kind !== 'x') continue;
+      const q = peaks.slice(i + 1).find((r) => r.kind === 'y');
+      if (!q) continue;
+      const x0 = tsX(p.t), x1 = tsX(q.t), yb = TS.y + TS.h - 7;
+      const hx = hist.find((s) => s.t >= p.t), hy = hist.find((s) => s.t >= q.t);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = withAlpha(RAB, 0.6);
+      ctx.beginPath(); ctx.moveTo(x0, tsY(hx?.x ?? 0)); ctx.lineTo(x0, yb); ctx.stroke();
+      ctx.strokeStyle = withAlpha(FOX, 0.7);
+      ctx.beginPath(); ctx.moveTo(x1, tsY(hy?.y ?? 0)); ctx.lineTo(x1, yb); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = ink(0.6);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x0, yb); ctx.lineTo(x1, yb); ctx.stroke();
+      say(ctx, 'lag', x1 + 4, yb - 1, { colour: ink(0.6), size: 11, halo: inv(0.9) });
+    }
+    ctx.restore();
+    const last = hist[hist.length - 1];
+    if (last) {
+      for (const [v, c] of [[last.x, RAB], [last.y, FOX]] as [number, string][]) {
+        ctx.fillStyle = c;
+        ctx.beginPath(); ctx.arc(tsX(last.t), tsY(v), 4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  // the direction of motion on a grid, recomputed only with the axes
+  let arrows: number[] = [];
+  function fieldArrows() {
+    arrows = [];
+    const nx = 16, ny = 8;
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const x = ((i + 0.5) / nx) * xMax, y = ((j + 0.5) / ny) * yMax;
+        const [dx, dy] = deriv(x, y);
+        // direction on screen, each axis in its own scale
+        const sx = (dx / xMax) * PP.w, sy = -(dy / yMax) * PP.h, m = Math.hypot(sx, sy) || 1;
+        arrows.push(ppX(x), ppY(y), sx / m, sy / m);
+      }
+  }
+
+  function drawPhase() {
+    say(ctx, 'the phase plane: rabbits against foxes', PP.x - 40, PP.y - 30, { colour: ink(0.85), size: 15, weight: 650 });
+    frame(PP);
+    for (const v of ticks(xMax)) say(ctx, String(v), ppX(v), PP.y + PP.h + 12, { colour: ink(0.45), size: 11, align: 'center' });
+    for (const v of ticks(yMax)) say(ctx, String(v), PP.x - 8, ppY(v), { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, 'rabbits x', PP.x + PP.w, PP.y + PP.h + 28, { colour: RAB, size: 12, weight: 600, align: 'right' });
+    say(ctx, 'foxes y', PP.x + 8, PP.y + 8, { colour: FOX, size: 12, weight: 600 });
+
+    // which way the state is pushed everywhere
+    ctx.strokeStyle = ink(0.16);
+    ctx.fillStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    for (let k = 0; k < arrows.length; k += 4) {
+      const [x, y, ux, uy] = arrows.slice(k, k + 4), L = 9;
+      ctx.beginPath();
+      ctx.moveTo(x - ux * L, y - uy * L);
+      ctx.lineTo(x + ux * L, y + uy * L);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x + ux * (L + 2), y + uy * (L + 2));
+      ctx.lineTo(x + ux * (L - 3) - uy * 3, y + uy * (L - 3) + ux * 3);
+      ctx.lineTo(x + ux * (L - 3) + uy * 3, y + uy * (L - 3) - ux * 3);
+      ctx.fill();
+    }
+
+    // nullclines: where each population is momentarily steady
+    const ex = ppX(eqX()), ey = ppY(eqY());
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = withAlpha(RAB, 0.7);
+    ctx.beginPath(); ctx.moveTo(PP.x, ey); ctx.lineTo(PP.x + PP.w, ey); ctx.stroke();
+    ctx.strokeStyle = withAlpha(FOX, 0.7);
+    ctx.beginPath(); ctx.moveTo(ex, PP.y); ctx.lineTo(ex, PP.y + PP.h); ctx.stroke();
+    ctx.setLineDash([]);
+    say(ctx, 'rabbits steady: y = α/β', PP.x + PP.w - 4, ey - 10, { colour: RAB, size: 11.5, weight: 600, align: 'right', halo: inv(0.85) });
+    say(ctx, 'foxes steady: x = γ/δ', ex + 6, PP.y + 8, { colour: FOX, size: 11.5, weight: 600, halo: inv(0.85) });
+
+    // the full loop this state is on, and the part already travelled
+    ctx.strokeStyle = ink(0.22);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let k = 0; k < orbit.pts.length; k += 2) {
+      const x = ppX(orbit.pts[k]), y = ppY(orbit.pts[k + 1]);
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PP.x, PP.y - 2, PP.w + 2, PP.h + 2);
+    ctx.clip();
+    const from = Math.max(0, T - orbit.period);
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    for (let i = 1; i < hist.length; i++) {
+      const s = hist[i], p = hist[i - 1];
+      if (s.t < from) continue;
+      ctx.strokeStyle = ink(0.15 + 0.75 * clamp01((s.t - from) / Math.max(orbit.period, 1e-6)));
+      ctx.beginPath(); ctx.moveTo(ppX(p.x), ppY(p.y)); ctx.lineTo(ppX(s.x), ppY(s.y)); ctx.stroke();
+    }
+    ctx.restore();
+
+    // balance point
+    ctx.fillStyle = EQ;
+    ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // start, then now
+    ctx.strokeStyle = ink(0.5);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(ppX(start.x), ppY(start.y), 5, 0, Math.PI * 2); ctx.stroke();
+    const nx = ppX(X), ny = ppY(Y);
+    ctx.fillStyle = ink(0.95);
+    ctx.beginPath(); ctx.arc(nx, ny, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // the push right now, as an arrow on the state
+    const [dx, dy] = deriv(X, Y);
+    const sx = (dx / xMax) * PP.w, sy = -(dy / yMax) * PP.h, m = Math.hypot(sx, sy);
+    if (m > 1e-6) {
+      const L = Math.min(34, 6 + m * 0.35), ux = sx / m, uy = sy / m;
+      ctx.strokeStyle = ink(0.8);
+      ctx.fillStyle = ink(0.8);
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(nx + ux * 8, ny + uy * 8); ctx.lineTo(nx + ux * L, ny + uy * L); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(nx + ux * (L + 5), ny + uy * (L + 5));
+      ctx.lineTo(nx + ux * (L - 2) - uy * 4, ny + uy * (L - 2) + ux * 4);
+      ctx.lineTo(nx + ux * (L - 2) + uy * 4, ny + uy * (L - 2) - ux * 4);
+      ctx.fill();
+    }
+    if (hover) {
+      const right = hover.px > PP.x + PP.w - 240;
+      say(ctx, `start here: ${Math.round(hover.x)} rabbits, ${Math.round(hover.y)} foxes`, hover.px + (right ? -10 : 10), hover.py - 12, {
+        colour: ink(0.85), size: 12, weight: 600, halo: inv(0.9), align: right ? 'right' : 'left',
+      });
+      ctx.strokeStyle = ink(0.6);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(hover.px, hover.py, 5, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+
+  function drawField() {
+    say(ctx, 'the field', FIELD.x, 22, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, per === 1 ? 'one icon per animal' : `one icon per ${per} animals`, FIELD.x + FIELD.w, 22, { colour: ink(0.5), size: 12, align: 'right' });
+    ctx.fillStyle = isLight(canvas) ? 'rgba(132,190,96,0.16)' : 'rgba(132,190,96,0.07)';
+    roundRect(ctx, FIELD.x, FIELD.y, FIELD.w, FIELD.h, 10);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.12);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    for (const r of rabbits) drawAgent(r, SPR.r, 15);
+    for (const f of foxes) drawAgent(f, SPR.f, 19);
+    // the counts, big, in the corner
+    const lr = alive(rabbits).length, lf = alive(foxes).length;
+    const bx = FIELD.x + 12, by = FIELD.y + FIELD.h - 40;
+    ctx.fillStyle = inv(0.75);
+    roundRect(ctx, bx - 4, by - 14, 168, 50, 6);
+    ctx.fill();
+    say(ctx, `${Math.round(X)} rabbits`, bx + 4, by, { colour: RAB, size: 14, weight: 700 });
+    say(ctx, `${Math.round(Y)} foxes`, bx + 4, by + 22, { colour: FOX, size: 14, weight: 700 });
+    say(ctx, per === 1 ? '' : `${lr} icons`, bx + 152, by, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, per === 1 ? '' : `${lf} icons`, bx + 152, by + 22, { colour: ink(0.45), size: 11, align: 'right' });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawField();
+    drawTime();
+    drawPhase();
+  }
+
+  // ---------- numbers ----------
+  const f2 = (v: number, n = 2) => v.toFixed(n);
+  function phaseNote() {
+    const moreR = X > eqX(), moreF = Y > eqY();
+    if (!moreF && !moreR) return ['Rabbits recovering', 'Few foxes are left, so rabbits breed faster than they are eaten, while the starving foxes keep dwindling.'];
+    if (!moreF && moreR) return ['Rabbits booming, foxes growing', 'With rabbits plentiful, each fox catches enough to raise young, so foxes now increase too.'];
+    if (moreF && moreR) return ['Foxes peaking, rabbits falling', 'Foxes now eat rabbits faster than rabbits are born; the foxes still grow while food lasts.'];
+    return ['Rabbits scarce, foxes starving', 'Too many foxes for too few rabbits: the foxes die off, which will soon let the rabbits recover.'];
+  }
+  function panelText() {
+    const [status, note] = phaseNote();
+    setResult({
+      value: `${Math.round(X)} rabbits · ${Math.round(Y)} foxes`,
+      status,
+      note,
+      colour: X / eqX() > Y / eqY() ? RAB : FOX,
+    });
+    // the most recent rabbit peak with a fox peak after it
+    let lag = '';
+    for (let i = peaks.length - 1; i >= 0; i--) {
+      if (peaks[i].kind !== 'x') continue;
+      const q = peaks.slice(i + 1).find((r) => r.kind === 'y');
+      if (q) { lag = `${f2(q.t - peaks[i].t, 1)} (${f2((q.t - peaks[i].t) / orbit.period)} of a loop)`; break; }
+    }
+    setRows({
+      'r-t': f2(T, 1),
+      'r-eq': `${fmt(eqX())}, ${fmt(eqY())}`,
+      'r-avg': `${fmt(orbit.avgX)}, ${fmt(orbit.avgY)}`,
+      'r-period': `${f2(orbit.period, 2)}  (small loops: ${f2((2 * Math.PI) / Math.sqrt(P.a * P.g), 2)})`,
+      'r-lag': lag || 'waiting for a peak',
+    });
+    setEq({
+      rule: [
+        ['\\dfrac{dx}{dt} = \\alpha x - \\beta x y', RAB],
+        '\\qquad',
+        ['\\dfrac{dy}{dt} = \\delta x y - \\gamma y', FOX],
+      ],
+      live: [
+        [`\\dot x = ${f2(P.a)}\\cdot${Math.round(X)} - ${f2(P.b, 3)}\\cdot${Math.round(X)}\\cdot${Math.round(Y)} = ${f2(deriv(X, Y)[0], 1)}`, RAB],
+        '\\qquad',
+        [`\\dot y = ${f2(P.d, 3)}\\cdot${Math.round(X)}\\cdot${Math.round(Y)} - ${f2(P.g)}\\cdot${Math.round(Y)} = ${f2(deriv(X, Y)[1], 1)}`, FOX],
+      ],
+    });
+  }
+
+  // ---------- state changes ----------
+  /** New parameters: keep the animals where they are, find the loop they are now on. */
+  function retrace() {
+    orbit = traceOrbit(X, Y);
+    const old = per;
+    fitAxes();
+    fieldArrows();
+    if (per !== old) populate();
+    panelText();
+    draw();
+  }
+  function restart(x = start.x, y = start.y) {
+    start.x = x; start.y = y;
+    X = x; Y = y; T = 0;
+    hist = []; peaks = [];
+    record();
+    orbit = traceOrbit(X, Y);
+    fitAxes();
+    fieldArrows();
+    populate();
+    panelText();
+    draw();
+  }
+
+  // ---------- the loop ----------
+  const SPEED = 1.5; // model time per second
+  let lastTime = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+    clock += dt;
+    if (tp.running()) {
+      let left = dt * SPEED;
+      while (left > 1e-9) {
+        const h = Math.min(left, stepSize(X, Y));
+        [X, Y] = rk4(X, Y, h);
+        T += h;
+        left -= h;
+        record();
+      }
+      reconcile();
+      panelText();
+    } else reconcile();
+    wander(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  let hover: { x: number; y: number; px: number; py: number } | null = null;
+  const toPlane = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W, py = ((e.clientY - r.top) / r.height) * H;
+    if (px < PP.x || px > PP.x + PP.w || py < PP.y || py > PP.y + PP.h) return null;
+    return { x: Math.max(1, ((px - PP.x) / PP.w) * xMax), y: Math.max(1, ((PP.y + PP.h - py) / PP.h) * yMax), px, py };
+  };
+  canvas.addEventListener('pointermove', (e) => {
+    hover = toPlane(e);
+    canvas.style.cursor = hover ? 'crosshair' : '';
+  });
+  canvas.addEventListener('pointerleave', () => { hover = null; });
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = toPlane(e);
+    if (!p) return;
+    setX0(Math.round(p.x));
+    setY0(Math.round(p.y));
+    restart(p.x, p.y);
+    tp.setRunning(true);
+  });
+
+  // ---------- panel ----------
+  const tp = transport({ onReset: () => restart() });
+  const setA = slider('alpha', (v) => { P.a = v; retrace(); }, (v) => v.toFixed(2));
+  const setB = slider('beta', (v) => { P.b = v; retrace(); }, (v) => v.toFixed(3));
+  const setG = slider('gamma', (v) => { P.g = v; retrace(); }, (v) => v.toFixed(2));
+  const setD = slider('delta', (v) => { P.d = v; retrace(); }, (v) => v.toFixed(3));
+  const setX0 = slider('x0', (v) => restart(v, start.y));
+  const setY0 = slider('y0', (v) => restart(start.x, v));
+  /** Default rates, a chosen start, running. */
+  function preset(x: number, y: number, a = 1) {
+    Object.assign(P, { a, b: 0.04, g: 0.8, d: 0.01 });
+    setA(P.a); setB(P.b); setG(P.g); setD(P.d);
+    setX0(Math.round(x)); setY0(Math.round(y));
+    restart(x, y);
+    tp.setRunning(true);
+  }
+  tries({
+    lag: () => preset(40, 10),
+    near: () => preset(95, 25),
+    far: () => preset(200, 4),
+    breed: () => {
+      // keep the current loop going, only faster breeding
+      P.a = 1.6;
+      setA(1.6);
+      retrace();
+      tp.setRunning(true);
+    },
+  });
+  new MutationObserver(() => draw()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  restart();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #lv {
+    touch-action: none;
+  }
+</style>
