@@ -1,7 +1,6 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
-import Slider from '../../../components/sim/Slider.astro';
 import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
@@ -12,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Autoencoder & Latent Space"
-  description="Force a picture through a gap of two numbers and make the network rebuild it from those two alone. Nothing says what the numbers should mean, and yet the only way to pass is to lay every picture out on a map."
+  description="Squeeze a picture through a gap of two numbers and make the network rebuild it from those two alone. Nothing says what the numbers should mean, yet they come out as a map where alike pictures sit together: walk it and the digit morphs from one to the next."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -21,31 +20,41 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="ae"
           width="1000"
-          height="600"
+          height="640"
           role="img"
-          aria-label="A training image beside its reconstruction, a map of the latent space with every training image placed on it, and the picture decoded from the point you are pointing at."
+          aria-label="An hourglass that squeezes a picture of a digit into two numbers and rebuilds it, beside a map where every picture is a point and a mosaic of what every part of the map decodes to."
         ></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the point you are decoding', color: '#7c8cff' }, { label: 'one training image', color: '#5eead4' }]}
-        hint="Drag anywhere on the map, including the empty parts"
+        legend={[
+          { label: 'the two numbers: a point on the map', color: '#7c8cff' },
+          { label: 'what comes back', color: '#5eead4' },
+          { label: 'what it got wrong', color: '#f87171' },
+        ]}
+        hint="Drag anywhere on the map, including the empty parts, to decode that point"
       />
-      <Result label="Reconstruction error" />
+      <Result label="Rebuild error" />
     </div>
 
     <div class="sim-panel">
-      <Transport reset />
-      <Slider id="lat" label="Numbers in the gap" min={1} max={4} value={2} hint={['one', 'four']} />
-      <Seg id="data" label="Pictures" attr="d" options={[{ value: 'digits', label: 'Digits' }, { value: 'blobs', label: 'Blobs' }]} />
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · Squeeze' },
+          { value: '1', label: '2 · A map' },
+          { value: '2', label: '3 · Walk it' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
       <Readout
-        title="Numbers"
+        title="Now"
         rows={[
-          { id: 'r-err', label: 'reconstruction error' },
-          { id: 'r-steps', label: 'training steps' },
-          { id: 'r-comp', label: 'compression' },
-          { id: 'r-best1', label: 'best with 1 number' },
-          { id: 'r-best2', label: 'best with 2' },
-          { id: 'r-best3', label: 'best with 3' },
+          { id: 'r-step', label: 'training step' },
+          { id: 'r-err', label: 'rebuild error' },
         ]}
       />
     </div>
@@ -53,463 +62,676 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Train on digits. Nobody says what a digit is, yet similar pictures land
-      near each other: rebuilding from two numbers forces a <b>map</b>.
-      <Try id="train" label="Train" />
+      The colours are only for you. The network never sees which digit a picture is, yet the groups come out
+      by digit: rebuilding from two numbers is only possible if alike pictures get alike numbers.
+      <Try id="train" label="Watch it train" />
     </li>
     <li>
-      Drag into the empty space between clusters. Nothing in the loss covers
-      those points, so what comes out there is a blend or junk: a plain
-      autoencoder's map has <b>holes</b>. A variational autoencoder adds noise to
-      the codes and pulls them towards one smooth cloud, which is what lets you
-      sample from it.
+      Drag to a point between two groups and what comes back is halfway between the two digits: the map is
+      smooth where there are pictures. <Try id="between" />
     </li>
     <li>
-      With <b>1</b> number everything lies on a line and the error jumps; each
-      extra number helps less. The panel keeps the best error per width.
-      <Try id="one" />
-    </li>
-    <li>
-      On <b>blobs</b> only a spot's position varies, so two numbers suffice:
-      the data really is two-dimensional, see
-      <a href="/simulations/generative-ai/data-manifold">The Data Manifold</a>.
-      <Try id="blobs" />
+      Drag into an empty corner, far from every dot. Training never visited it, so the decoder only guesses and
+      makes smears. <Try id="corner" />
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { digitSet } from '../../../lib/digits';
-  import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
+  import { result, readout, tries } from '../../../lib/panel';
+  import { AE } from '../../../lib/autoencoder';
+  import type { Job, Snap, Done } from '../../../lib/autoencoder-worker';
+  import { story, headline, say, withAlpha, mix, isLight, ease, beat, lerp, clamp01 } from '../../../lib/story';
 
-  const PICK = '#7c8cff', DOT = '#5eead4', ERR = '#f87171';
-  const IMG = 16, D = IMG * IMG, HID = 48, M = 500, BATCH = 10, SHOWN = 320;
-  const CLASSES = [0, 1, 3, 4, 7, 8];
-  const PALETTE = ['#5eead4', '#7c8cff', '#f59e0b', '#f87171', '#c084fc', '#60a5fa', '#34d399', '#fbbf24', '#fb7185', '#a3e635'];
+  // An autoencoder as an hourglass: a picture squeezed into a gap of two
+  // numbers and rebuilt from them. The gap opens onto a map where every
+  // picture is a point. The net trains in a worker while the story plays.
+  const PICK = '#7c8cff', OUT = '#5eead4', ERR = '#f87171';
+  const CLASSES = [0, 1, 2, 4, 7];
+  const DIGIT: Record<number, string> = { 0: '#f59e0b', 1: '#a3e635', 2: '#22d3ee', 4: '#c084fc', 7: '#fb7185' };
+  const IMG = 16, D = IMG * IMG, M = 600, SHOWN = 300, TOTAL = 4000, EVERY = 50;
+  /** Numbers in the gap. */
+  const L = 2;
 
-  const state = { lat: 2, data: 'digits', running: false, steps: 0, drag: [0, 0, 0, 0] };
-  const best: Record<number, number> = {};
-
-  const canvas = el('ae') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const canvas = document.getElementById('ae') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  function mulberry32(a: number) {
-    return () => {
-      a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  let rnd = mulberry32(1);
-  const gauss = () => {
-    const u = Math.max(1e-9, rnd());
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd());
+  // ---------- data ----------
+  const digits = digitSet(M, IMG, 20260907, CLASSES, 0.35);
+  const X = digits.map((d) => Float32Array.from(d.img));
+  const label = digits.map((d) => d.label);
+  /** The picture the story follows: a 7. */
+  const FOCAL = label.indexOf(7);
+
+  // ---------- the net, trained in a worker ----------
+  const snaps: Snap[] = [];
+  let done: Done | null = null;
+  let net: AE | null = null;
+  const worker = new Worker(new URL('../../../lib/autoencoder-worker.ts', import.meta.url), { type: 'module' });
+  worker.onmessage = (e: MessageEvent<Snap | Done>) => {
+    if ('done' in e.data) {
+      done = e.data;
+      net = new AE(D, L, 3, 48);
+      net.load(done.weights);
+    } else snaps.push(e.data);
   };
+  const job: Job = { L, steps: TOTAL, every: EVERY, shown: SHOWN, focal: FOCAL };
+  worker.postMessage({ pictures: X, job });
 
-  // --- the pictures ----------------------------------------------------------
-  let X: Float64Array[] = [];
-  /** What made each picture: the digit, or where the blob was. */
-  let tag: number[] = [];
+  // ---------- pictures ----------
+  const tile = document.createElement('canvas');
+  tile.width = tile.height = IMG;
+  const tctx = tile.getContext('2d')!;
+  const tdata = tctx.createImageData(IMG, IMG);
+  let light = isLight(canvas);
+  function pic(img: ArrayLike<number>, x: number, y: number, s: number, alpha = 1, edge = ink(0.2)) {
+    for (let i = 0; i < D; i++) {
+      const v = Math.round(255 * clamp01(light ? 1 - img[i] : img[i]));
+      tdata.data[4 * i] = tdata.data[4 * i + 1] = tdata.data[4 * i + 2] = v;
+      tdata.data[4 * i + 3] = 255;
+    }
+    tctx.putImageData(tdata, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tile, x, y, s, s);
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+    ctx.restore();
+  }
+  /** What the rebuilt picture got wrong, in red. */
+  function wrong(a: ArrayLike<number>, b: ArrayLike<number>, x: number, y: number, s: number, alpha: number) {
+    for (let i = 0; i < D; i++) {
+      tdata.data[4 * i] = 248; tdata.data[4 * i + 1] = 113; tdata.data[4 * i + 2] = 113;
+      tdata.data[4 * i + 3] = Math.round(255 * clamp01(Math.abs(a[i] - b[i]) * 1.4));
+    }
+    tctx.putImageData(tdata, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = inv(1);
+    ctx.fillRect(x, y, s, s);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(tile, x, y, s, s);
+    ctx.strokeStyle = withAlpha(ERR, 0.5);
+    ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+    ctx.restore();
+  }
+  /** Every cell of the map decoded, as one picture. */
+  let mosaic: HTMLCanvasElement | null = null, mosaicLight = light;
+  function mosaicOf(d: Done) {
+    if (mosaic && mosaicLight === light) return mosaic;
+    const N = d.n, c = document.createElement('canvas');
+    c.width = c.height = N * IMG;
+    const g = c.getContext('2d')!, im = g.createImageData(N * IMG, N * IMG);
+    for (let cy = 0; cy < N; cy++)
+      for (let cx = 0; cx < N; cx++)
+        for (let py = 0; py < IMG; py++)
+          for (let px = 0; px < IMG; px++) {
+            const v = d.mosaic[(cy * N + cx) * D + py * IMG + px];
+            const o = 4 * ((cy * IMG + py) * N * IMG + cx * IMG + px);
+            im.data[o] = im.data[o + 1] = im.data[o + 2] = Math.round(255 * clamp01(light ? 1 - v : v));
+            im.data[o + 3] = 255;
+          }
+    g.putImageData(im, 0, 0);
+    mosaic = c;
+    mosaicLight = light;
+    return c;
+  }
 
-  function makeData() {
-    rnd = mulberry32(7);
-    X = [];
-    tag = [];
-    if (state.data === 'digits') {
-      for (const d of digitSet(M, IMG, 20260907, CLASSES)) {
-        X.push(d.img);
-        tag.push(d.label);
-      }
+  // ---------- layout ----------
+  const CX = 150, INY = 172, S1 = 112, H1Y = 312, GAPY = 344, H2Y = 376, OUTY = 400;
+  const MAP = { x: 334, y: 174, w: 456, h: 440 };
+  const RC = { x: 814, y: 194 };
+
+  type Box = number[];
+  const sx = (v: number, b: Box) => MAP.x + ((v - b[0]) / (b[1] - b[0])) * MAP.w;
+  const sy = (v: number, b: Box) => MAP.y + MAP.h - ((v - b[2]) / (b[3] - b[2])) * MAP.h;
+  /** Where dot k goes on screen, given its code. */
+  const place = (codes: Float32Array, k: number, b: Box) => ({ x: sx(codes[2 * k], b), y: sy(codes[2 * k + 1], b) });
+  /** The two numbers under a spot on the map. */
+  function latentAt(px: number, py: number, b: Box) {
+    return [b[0] + ((px - MAP.x) / MAP.w) * (b[1] - b[0]), b[2] + ((MAP.y + MAP.h - py) / MAP.h) * (b[3] - b[2])];
+  }
+  function boxOf(codes: Float32Array): Box {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let k = 0; k < SHOWN; k++) {
+      x0 = Math.min(x0, codes[2 * k]); x1 = Math.max(x1, codes[2 * k]);
+      y0 = Math.min(y0, codes[2 * k + 1]); y1 = Math.max(y1, codes[2 * k + 1]);
+    }
+    const px = (x1 - x0) * 0.12 + 0.02, py = (y1 - y0) * 0.12 + 0.02;
+    return [x0 - px, x1 + px, y0 - py, y1 + py];
+  }
+  const finalCodes = () => snaps[snaps.length - 1].codes;
+
+  // ---------- state ----------
+  /** Where the pointer is on the map, and whether the reader has moved it. */
+  const S = { px: MAP.x + MAP.w / 2, py: MAP.y + MAP.h / 2, dragged: false, aim: '' as '' | 'between' | 'corner' };
+  let frameBox: Box | null = null;
+  const lerpBox = (a: Box, b: Box, k: number) => a.map((v, i) => lerp(v, b[i], k));
+
+  // ---------- chapters ----------
+  const PLAY = 11;
+  const chapters = [
+    {
+      dur: 11,
+      title: 'Squeeze, then rebuild',
+      body: 'A picture of a digit is 256 numbers. Squeeze it through a gap of two, then ask the network to rebuild all 256 from those two alone. Untrained, what comes back is a smudge.',
+    },
+    {
+      dur: Infinity,
+      title: 'Nobody said what a 7 is',
+      body: 'Training only checks that what comes out matches what went in. But two numbers can only rebuild a picture if alike pictures get alike numbers, so the points sort themselves into a map.',
+    },
+    {
+      dur: Infinity,
+      title: 'Walk the map',
+      body: 'Now drop the first half. Any point on the map is two numbers, and the second half turns them into a picture. Walk from one group to the next and the digit morphs on the way.',
+    },
+  ];
+
+  const st = story({
+    chapters,
+    enter() {
+      frameBox = null;
+      S.dragged = false;
+    },
+    done: (i, t) => (i === 1 ? t > PLAY + 3 && !!done : t >= chapters[i].dur),
+    frame,
+  });
+
+  /** The snapshot shown at a training step, with the codes eased between two snapshots. */
+  function codesAt(step: number) {
+    const k = Math.min(snaps.length - 1, Math.floor(step / EVERY));
+    const a = snaps[k], b = snaps[Math.min(snaps.length - 1, k + 1)], f = clamp01(step / EVERY - k);
+    if (a === b || f === 0) return { codes: a.codes, snap: a };
+    const out = new Float32Array(a.codes.length);
+    for (let i = 0; i < out.length; i++) out[i] = lerp(a.codes[i], b.codes[i], f);
+    return { codes: out, snap: f < 0.5 ? a : b };
+  }
+
+  // ---------- frame ----------
+  let tick = 0, shownStep = 0, shownError = 0;
+  function frame(ch: number, t: number, _dt: number, live: number) {
+    tick++;
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    if (!snaps.length) say(ctx, 'starting…', MAP.x + MAP.w / 2, MAP.y + MAP.h / 2, { colour: ink(0.5), align: 'center' });
+    // a reader who took over sees the chapter as it ends, not frozen where they stopped it
+    else if (ch <= 1) passStage(ch, st.manual() ? Math.max(t, ch === 0 ? 9.5 : 6) : t, live);
+    else decodeStage(t, live);
+    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t: st.manual() ? Math.max(t, 2) : t, width: 520, manual: st.manual() });
+    if (tick % 12 === 1) panelText(ch);
+  }
+
+  // chapters 1 and 2: a picture goes through, and the map forms
+  const want = (ch: number, t: number) => (st.manual() ? TOTAL : ch === 1 ? TOTAL * clamp01((t - 1) / PLAY) ** 1.6 : 0);
+  function passStage(ch: number, t: number, live: number) {
+    const goal = want(ch, t), have = snaps[snaps.length - 1].step;
+    const step = Math.min(goal, have);
+    // hold the chapter while the worker catches up
+    if (goal > have + EVERY && !done) st.seek(Math.max(0, st.time() - live));
+    const { codes, snap } = codesAt(step);
+    shownStep = Math.round(step);
+    shownError = snap.error;
+    const target = done && step >= TOTAL ? done.box : boxOf(codes);
+    frameBox = frameBox ? lerpBox(frameBox, target, 1 - Math.exp(-live * 4)) : target;
+    const b = frameBox;
+
+    // the map
+    mapFrame(ch === 0 ? beat(t, 3, 4) : 1);
+    const colourA = ch === 0 ? 0 : beat(t, 3, 5);
+    dots(codes, b, ch === 0 ? 0.55 * beat(t, 3.4, 4.6) : 1, colourA);
+    const fp = place(codes, FOCAL, b);
+
+    // the hourglass
+    const gapA = ch === 0 ? beat(t, 2.4, 3.2) : 1;
+    hourglass({
+      inA: ch === 0 ? beat(t, 0.2, 1) : 1,
+      enc: 1,
+      code: Array.from(codes.subarray(FOCAL * L, FOCAL * L + L)),
+      gapA,
+      out: snap.recon,
+      outA: ch === 0 ? beat(t, 5.6, 6.6) : 1,
+      errA: ch === 0 ? beat(t, 7.4, 8.4) : 1,
+    });
+    if (ch === 0) flow(t);
+    link(fp.x, fp.y, gapA * (ch === 0 ? beat(t, 3.2, 4) : 1));
+    if (ch === 0) {
+      const a = beat(t, 3.6, 4.4) * (1 - beat(t, 9.6, 10.4));
+      say(ctx, 'two numbers are a point', fp.x + 14, fp.y - 16, { colour: PICK, size: 14, weight: 650, alpha: a, halo: inv(0.85) });
+      say(ctx, 'what it got wrong', 222, OUTY + S1 + 16, { colour: ERR, size: 12.5, weight: 600, alpha: beat(t, 7.8, 8.6) });
+      squeezeCard(beat(t, 1, 2));
+    } else {
+      sparkline(step);
+      key(colourA);
+      if (goal > step + EVERY)
+        say(ctx, `training… step ${shownStep}`, MAP.x + MAP.w - 10, MAP.y + 16, { colour: ink(0.55), size: 12, align: 'right', halo: inv(0.8) });
+    }
+  }
+
+  // chapter 3: only the second half, a point on the map becomes a picture
+  function decodeStage(t: number, live: number) {
+    if (!done || !net) {
+      // still learning: show it as it goes, and hold the chapter
+      const last = snaps[snaps.length - 1];
+      shownStep = last.step;
+      shownError = last.error;
+      const target = boxOf(last.codes);
+      frameBox = frameBox ? lerpBox(frameBox, target, 1 - Math.exp(-live * 4)) : target;
+      mapFrame(1);
+      dots(last.codes, frameBox, 1, 1);
+      say(ctx, `still training… step ${last.step} of ${TOTAL}`, MAP.x + MAP.w / 2, MAP.y + MAP.h / 2, { colour: ink(0.8), size: 15, weight: 600, align: 'center', halo: inv(0.85) });
+      st.seek(Math.max(0, t - live));
       return;
     }
-    for (let m = 0; m < M; m++) {
-      const r = Math.sqrt(rnd()) * 0.78, a = rnd() * Math.PI * 2;
-      const cx = r * Math.cos(a), cy = r * Math.sin(a);
-      const img = new Float64Array(D);
-      const s2 = 2 * 0.22 * 0.22;
-      for (let py = 0; py < IMG; py++)
-        for (let px = 0; px < IMG; px++) {
-          const x = (px / (IMG - 1)) * 2 - 1, y = (py / (IMG - 1)) * 2 - 1;
-          img[py * IMG + px] = Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / s2);
-        }
-      X.push(img);
-      tag.push(((Math.atan2(cy, cx) + Math.PI) / (2 * Math.PI)) * 9.99);
+    shownStep = TOTAL;
+    shownError = done.error;
+    const b = done.box, codes = finalCodes();
+    if (S.aim) aimAt(S.aim);
+
+    // the mosaic of what every cell decodes to, fading in behind the dots
+    const fade = st.manual() || S.dragged ? 1 : beat(t, 3, 5);
+    mapFrame(1);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalAlpha = 0.55 * fade;
+    ctx.drawImage(mosaicOf(done), MAP.x, MAP.y, MAP.w, MAP.h);
+    ctx.restore();
+    for (let k = 0; k < SHOWN; k++) {
+      const p = place(codes, k, b);
+      dot(p.x, p.y, DIGIT[label[k]], 1 - 0.35 * fade);
     }
-  }
-  const colourOf = (m: number) =>
-    state.data === 'digits' ? PALETTE[tag[m] % PALETTE.length] : PALETTE[Math.floor(tag[m]) % PALETTE.length];
 
-  // --- the network: 256 → 48 → L → 48 → 256 ----------------------------------
-  type P = { w: Float64Array; m: Float64Array; v: Float64Array; n: number };
-  let W1: P, W2: P, W3: P, W4: P, b1: P, b2: P, b3: P, b4: P;
-  let adamT = 0;
-
-  const par = (n: number, sigma: number): P => {
-    const w = new Float64Array(n);
-    for (let i = 0; i < n; i++) w[i] = sigma ? gauss() * sigma : 0;
-    return { w, m: new Float64Array(n), v: new Float64Array(n), n };
-  };
-
-  function initNet() {
-    rnd = mulberry32(99 + state.lat);
-    const L = state.lat;
-    W1 = par(HID * D, Math.sqrt(2 / D));
-    b1 = par(HID, 0);
-    W2 = par(L * HID, Math.sqrt(1 / HID));
-    b2 = par(L, 0);
-    W3 = par(HID * L, Math.sqrt(2 / Math.max(1, L)));
-    b3 = par(HID, 0);
-    W4 = par(D * HID, Math.sqrt(1 / HID));
-    b4 = par(D, 0);
-    adamT = 0;
-    state.steps = 0;
+    if (!S.dragged && !st.manual()) walk(t);
+    const z = latentAt(S.px, S.py, b);
+    const out = net.decode(z);
+    pointer(S.px, S.py);
+    const encA = st.manual() || S.dragged ? 0 : 1 - beat(t, 0.2, 1.4);
+    hourglass({ inA: encA, enc: 0.15 + 0.85 * encA, code: z, gapA: 1, out, outA: 1, errA: 0 });
+    link(S.px, S.py, 1);
+    if (encA < 0.5) say(ctx, 'no picture goes in: just a point', CX, INY + S1 / 2, { colour: ink(0.45), size: 12.5, align: 'center', alpha: 1 - 2 * encA });
+    filmstrip(t);
+    key(1);
   }
 
-  const h1 = new Float64Array(HID), h2 = new Float64Array(HID);
-  const zlat = new Float64Array(8), xhat = new Float64Array(D);
-
-  function encode(x: Float64Array) {
-    const L = state.lat;
-    for (let j = 0; j < HID; j++) {
-      let s = b1.w[j];
-      const off = j * D;
-      for (let i = 0; i < D; i++) s += W1.w[off + i] * x[i];
-      h1[j] = Math.tanh(s);
-    }
-    for (let j = 0; j < L; j++) {
-      let s = b2.w[j];
-      const off = j * HID;
-      for (let i = 0; i < HID; i++) s += W2.w[off + i] * h1[i];
-      zlat[j] = s;
-    }
-  }
-  function decode(z: Float64Array | number[], L: number) {
-    for (let j = 0; j < HID; j++) {
-      let s = b3.w[j];
-      const off = j * L;
-      for (let i = 0; i < L; i++) s += W3.w[off + i] * z[i];
-      h2[j] = Math.tanh(s);
-    }
-    for (let j = 0; j < D; j++) {
-      let s = b4.w[j];
-      const off = j * HID;
-      for (let i = 0; i < HID; i++) s += W4.w[off + i] * h2[i];
-      xhat[j] = s;
-    }
-  }
-  const forward = (x: Float64Array) => { encode(x); decode(zlat, state.lat); };
-
-  const gW1 = new Float64Array(HID * D), gb1 = new Float64Array(HID);
-  const gW2 = new Float64Array(8 * HID), gb2 = new Float64Array(8);
-  const gW3 = new Float64Array(HID * 8), gb3 = new Float64Array(HID);
-  const gW4 = new Float64Array(D * HID), gb4 = new Float64Array(D);
-  const dx = new Float64Array(D), dh2 = new Float64Array(HID), dz = new Float64Array(8), dh1 = new Float64Array(HID);
-
-  function trainStep() {
-    const L = state.lat;
-    gW1.fill(0); gb1.fill(0); gW2.fill(0); gb2.fill(0);
-    gW3.fill(0); gb3.fill(0); gW4.fill(0); gb4.fill(0);
-    for (let n = 0; n < BATCH; n++) {
-      const x = X[Math.floor(rnd() * M)];
-      forward(x);
-      for (let i = 0; i < D; i++) dx[i] = (xhat[i] - x[i]) / BATCH;
-      for (let j = 0; j < D; j++) {
-        const g = dx[j], off = j * HID;
-        for (let i = 0; i < HID; i++) gW4[off + i] += g * h2[i];
-        gb4[j] += g;
-      }
-      dh2.fill(0);
-      for (let j = 0; j < D; j++) {
-        const g = dx[j], off = j * HID;
-        for (let i = 0; i < HID; i++) dh2[i] += W4.w[off + i] * g;
-      }
-      for (let i = 0; i < HID; i++) dh2[i] *= 1 - h2[i] * h2[i];
-      for (let j = 0; j < HID; j++) {
-        const g = dh2[j], off = j * L;
-        for (let i = 0; i < L; i++) gW3[off + i] += g * zlat[i];
-        gb3[j] += g;
-      }
-      dz.fill(0);
-      for (let j = 0; j < HID; j++) {
-        const g = dh2[j], off = j * L;
-        for (let i = 0; i < L; i++) dz[i] += W3.w[off + i] * g;
-      }
-      for (let j = 0; j < L; j++) {
-        const g = dz[j], off = j * HID;
-        for (let i = 0; i < HID; i++) gW2[off + i] += g * h1[i];
-        gb2[j] += g;
-      }
-      dh1.fill(0);
-      for (let j = 0; j < L; j++) {
-        const g = dz[j], off = j * HID;
-        for (let i = 0; i < HID; i++) dh1[i] += W2.w[off + i] * g;
-      }
-      for (let i = 0; i < HID; i++) dh1[i] *= 1 - h1[i] * h1[i];
-      for (let j = 0; j < HID; j++) {
-        const g = dh1[j], off = j * D;
-        if (g === 0) continue;
-        for (let i = 0; i < D; i++) gW1[off + i] += g * x[i];
-        gb1[j] += g;
-      }
-    }
-    adamT++;
-    adam(W1, gW1); adam(b1, gb1); adam(W2, gW2); adam(b2, gb2);
-    adam(W3, gW3); adam(b3, gb3); adam(W4, gW4); adam(b4, gb4);
-    state.steps++;
-  }
-
-  const LR = 0.005, B1 = 0.9, B2 = 0.999;
-  function adam(p: P, g: Float64Array) {
-    const c1 = 1 - Math.pow(B1, adamT), c2 = 1 - Math.pow(B2, adamT);
-    for (let i = 0; i < p.n; i++) {
-      p.m[i] = B1 * p.m[i] + (1 - B1) * g[i];
-      p.v[i] = B2 * p.v[i] + (1 - B2) * g[i] * g[i];
-      p.w[i] -= (LR * (p.m[i] / c1)) / (Math.sqrt(p.v[i] / c2) + 1e-8);
-    }
-  }
-
-  function measure() {
-    let s = 0, n = 0;
-    for (let m = 0; m < M; m += 6) {
-      forward(X[m]);
-      for (let i = 0; i < D; i++) s += (xhat[i] - X[m][i]) ** 2;
-      n++;
-    }
-    return s / (n * D);
-  }
-
-  let codes: number[][] = [];
-  function encodeAll() {
-    codes = [];
-    for (let m = 0; m < SHOWN; m++) {
-      encode(X[m]);
-      codes.push(Array.from(zlat.slice(0, state.lat)));
-    }
-  }
-
-  // --- layout ----------------------------------------------------------------
-  const IN = { x: 66, y: 134, s: 172 };
-  const OUT = { x: 66, y: 372, s: 172 };
-  const MAP = { x: 306, y: 116, w: 386, h: 420 };
-  const DEC = { x: 748, y: 176, s: 224 };
-
-  const grey = (v: number) => {
-    const g = Math.round(255 * Math.max(0, Math.min(1, v)));
-    return `rgb(${g},${g},${g})`;
-  };
-
-  function image(x: number, y: number, s: number, data: ArrayLike<number>, title: string) {
-    const c = s / IMG;
-    for (let py = 0; py < IMG; py++)
-      for (let px = 0; px < IMG; px++) {
-        ctx.fillStyle = grey(data[py * IMG + px]);
-        ctx.fillRect(x + px * c, y + py * c, c + 0.5, c + 0.5);
-      }
-    ctx.strokeStyle = ink(0.18);
+  // ---------- pieces ----------
+  function mapFrame(a: number) {
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, s, s);
-    label(title, x, y - 14, 0.55, 'left', 13);
+    ctx.strokeRect(MAP.x + 0.5, MAP.y + 0.5, MAP.w - 1, MAP.h - 1);
+    ctx.restore();
+    say(ctx, 'first number →', MAP.x + MAP.w - 8, MAP.y + MAP.h + 14, { colour: ink(0.45), size: 12, align: 'right', alpha: a });
+    say(ctx, 'second number ↑', MAP.x + 2, MAP.y - 12, { colour: ink(0.45), size: 12, alpha: a });
   }
-
-  function nearest() {
-    let bi = 0, bd = Infinity;
-    for (let m = 0; m < codes.length; m++) {
-      let d = 0;
-      for (let i = 0; i < state.lat; i++) d += (codes[m][i] - state.drag[i]) ** 2;
-      if (d < bd) { bd = d; bi = m; }
-    }
-    return bi;
-  }
-
-  let bounds = { x0: -1, x1: 1, y0: -1, y1: 1 };
-  function latentMap() {
-    label('the gap', MAP.x, MAP.y - 32, 0.55, 'left', 13);
-    label(
-      state.lat === 1 ? 'one number, so every picture is on a line' : `${state.lat} numbers, the first two drawn`,
-      MAP.x,
-      MAP.y - 14,
-      0.32,
-      'left',
-      11
-    );
-    ctx.strokeStyle = ink(0.12);
+  function dot(x: number, y: number, colour: string, a: number) {
+    ctx.globalAlpha = a;
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = inv(0.7);
     ctx.lineWidth = 1;
-    ctx.strokeRect(MAP.x, MAP.y, MAP.w, MAP.h);
-    if (!codes.length) return;
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const c of codes) {
-      x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]);
-      const b = state.lat > 1 ? c[1] : 0;
-      y0 = Math.min(y0, b); y1 = Math.max(y1, b);
-    }
-    const padx = (x1 - x0) * 0.14 + 0.05, pady = (y1 - y0) * 0.14 + 0.05;
-    bounds = { x0: x0 - padx, x1: x1 + padx, y0: y0 - pady, y1: y1 + pady };
-    const sx = (v: number) => MAP.x + ((v - bounds.x0) / (bounds.x1 - bounds.x0)) * MAP.w;
-    const sy = (v: number) => MAP.y + MAP.h - ((v - bounds.y0) / (bounds.y1 - bounds.y0)) * MAP.h;
-
-    for (let m = 0; m < codes.length; m++) {
-      ctx.fillStyle = colourOf(m);
-      ctx.globalAlpha = 0.75;
-      ctx.beginPath();
-      ctx.arc(sx(codes[m][0]), sy(state.lat > 1 ? codes[m][1] : 0), 3.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.beginPath();
+    ctx.arc(x, y, 3.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
     ctx.globalAlpha = 1;
-
-    const px = sx(state.drag[0]), py = sy(state.lat > 1 ? state.drag[1] : 0);
+  }
+  function dots(codes: Float32Array, b: Box, a: number, colourA: number) {
+    if (a <= 0) return;
+    const grey = light ? '#6b7280' : '#9aa0ac';
+    for (let k = 0; k < SHOWN; k++) {
+      if (k === FOCAL) continue;
+      const p = place(codes, k, b);
+      dot(p.x, p.y, mix(grey, DIGIT[label[k]], colourA), a);
+    }
+    const p = place(codes, FOCAL, b);
+    ctx.fillStyle = PICK;
+    ctx.strokeStyle = inv(0.85);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  function pointer(x: number, y: number) {
+    ctx.save();
     ctx.strokeStyle = PICK;
     ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.moveTo(px - 14, py);
-    ctx.lineTo(px + 14, py);
-    ctx.moveTo(px, py - 14);
-    ctx.lineTo(px, py + 14);
+    ctx.moveTo(x - 15, y); ctx.lineTo(x - 6, y);
+    ctx.moveTo(x + 6, y); ctx.lineTo(x + 15, y);
+    ctx.moveTo(x, y - 15); ctx.lineTo(x, y - 6);
+    ctx.moveTo(x, y + 6); ctx.lineTo(x, y + 15);
     ctx.stroke();
     ctx.fillStyle = PICK;
-    ctx.strokeStyle = inv(0.8);
+    ctx.strokeStyle = inv(0.9);
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(px, py, 7, 0, Math.PI * 2);
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.restore();
+  }
+  /** The dashed thread from the gap to its point on the map. */
+  function link(x: number, y: number, a: number) {
+    if (a <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = 0.55 * a;
+    ctx.strokeStyle = PICK;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath();
+    ctx.moveTo(CX + L * 8 + 8, GAPY);
+    ctx.bezierCurveTo(CX + 160, GAPY, x - 80, y, x - 8, y);
+    ctx.stroke();
+    ctx.restore();
+  }
 
-    if (state.data === 'digits') {
-      // a compact key, so the colours mean something without a legend row
-      let lx = MAP.x + 8;
-      for (const d of CLASSES) {
-        ctx.fillStyle = PALETTE[d % PALETTE.length];
+  function hourglass(o: { inA: number; enc: number; code: number[]; gapA: number; out: ArrayLike<number>; outA: number; errA: number }) {
+    const x0 = CX - S1 / 2, hw = 52, gw = L * 8 + 4;
+    const fan = (ya: number, wa: number, yb: number, wb: number, a: number) => {
+      ctx.fillStyle = ink(0.05 * a);
+      ctx.strokeStyle = ink(0.16 * a);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(CX - wa, ya); ctx.lineTo(CX + wa, ya);
+      ctx.lineTo(CX + wb, yb); ctx.lineTo(CX - wb, yb);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    };
+    // encoder half
+    fan(INY + S1 + 2, S1 / 2, H1Y, hw, o.enc);
+    fan(H1Y, hw, GAPY - 4, gw, o.enc);
+    // decoder half
+    fan(GAPY + 4, gw, H2Y, hw, 1);
+    fan(H2Y, hw, OUTY - 2, S1 / 2, 1);
+    const row = (y: number, a: number) => {
+      for (let i = 0; i < 12; i++) {
+        ctx.fillStyle = ink(0.35 * a);
         ctx.beginPath();
-        ctx.arc(lx + 4, MAP.y + MAP.h - 14, 4, 0, Math.PI * 2);
+        ctx.arc(CX - hw + 6 + (i * (2 * hw - 12)) / 11, y, 2, 0, Math.PI * 2);
         ctx.fill();
-        label(String(d), lx + 12, MAP.y + MAP.h - 10, 0.6, 'left', 11);
-        lx += 30;
       }
+    };
+    row(H1Y, o.enc);
+    row(H2Y, 1);
+    say(ctx, 'encoder', CX - S1 / 2 - 10, (INY + S1 + GAPY) / 2, { colour: ink(0.4 * o.enc + 0.05), size: 12, align: 'right' });
+    say(ctx, 'decoder', CX - S1 / 2 - 10, (GAPY + OUTY) / 2, { colour: ink(0.45), size: 12, align: 'right' });
+
+    if (o.inA > 0) {
+      pic(X[FOCAL], x0, INY, S1, o.inA);
+      say(ctx, '256 numbers', x0 + S1 + 10, INY + 14, { colour: ink(0.55), size: 12, alpha: o.inA });
+      say(ctx, 'go in', x0 + S1 + 10, INY + 30, { colour: ink(0.4), size: 12, alpha: o.inA });
+    } else {
+      ctx.save();
+      ctx.strokeStyle = ink(0.12);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(x0 + 0.5, INY + 0.5, S1 - 1, S1 - 1);
+      ctx.restore();
+    }
+    // the gap: one glowing dot per number
+    for (let i = 0; i < L; i++) {
+      ctx.fillStyle = withAlpha(PICK, 0.25 + 0.75 * o.gapA);
+      ctx.beginPath();
+      ctx.arc(CX - (L - 1) * 8 + i * 16, GAPY, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (o.gapA > 0) {
+      const txt = `(${o.code.map((v) => fixed(v, 2)).join(', ')})`;
+      say(ctx, txt, CX + L * 8 + 14, GAPY - 9, { colour: PICK, size: 13, weight: 650, alpha: o.gapA, halo: inv(0.8) });
+      say(ctx, 'two numbers', CX + L * 8 + 14, GAPY + 9, { colour: ink(0.5), size: 12, alpha: o.gapA });
+    }
+    if (o.outA > 0) {
+      pic(o.out, x0, OUTY, S1, o.outA, withAlpha(OUT, 0.6));
+      say(ctx, 'comes back', x0 + S1 + 10, OUTY + 14, { colour: OUT, size: 12, weight: 600, alpha: o.outA });
+    }
+    if (o.errA > 0) wrong(X[FOCAL], o.out, x0 + S1 + 10, OUTY + S1 - 56, 56, o.errA);
+  }
+
+  /** Chapter 1: a few specks run down the hourglass, squeezed through the gap. */
+  const SPECKS = Array.from({ length: 36 }, (_, k) => {
+    const r = (s: number) => ((Math.sin((k + 1) * s) * 43758.5453) % 1 + 1) % 1;
+    let a = 0;
+    for (let n = 0; n < 30; n++) {
+      a = Math.floor(r(12.9898 + n) * D);
+      if (X[FOCAL][a] > 0.5) break;
+    }
+    return { a, b: Math.floor(r(78.233) * D), o: r(39.42) * 0.8, h: r(5.13) * 2 - 1 };
+  });
+  function flow(t: number) {
+    const x0 = CX - S1 / 2;
+    for (const s of SPECKS) {
+      const ax = x0 + ((s.a % IMG) + 0.5) * (S1 / IMG), ay = INY + (Math.floor(s.a / IMG) + 0.5) * (S1 / IMG);
+      const bx = x0 + ((s.b % IMG) + 0.5) * (S1 / IMG), by = OUTY + (Math.floor(s.b / IMG) + 0.5) * (S1 / IMG);
+      const gx = CX + (s.h > 0 ? 8 : -8), hx = CX + s.h * 46;
+      const f1 = beat(t, 1 + s.o, 2.6 + s.o), f2 = beat(t, 4.3 + s.o, 5.9 + s.o);
+      let x = 0, y = 0;
+      if (f1 > 0 && f1 < 1) {
+        if (f1 < 0.5) { x = lerp(ax, hx, f1 * 2); y = lerp(ay, H1Y, f1 * 2); }
+        else { x = lerp(hx, gx, f1 * 2 - 1); y = lerp(H1Y, GAPY, f1 * 2 - 1); }
+      } else if (f2 > 0 && f2 < 1) {
+        if (f2 < 0.5) { x = lerp(gx, hx, f2 * 2); y = lerp(GAPY, H2Y, f2 * 2); }
+        else { x = lerp(hx, bx, f2 * 2 - 1); y = lerp(H2Y, by, f2 * 2 - 1); }
+      } else continue;
+      ctx.fillStyle = withAlpha(PICK, 0.85);
+      ctx.beginPath();
+      ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  function squeezeCard(a: number) {
+    if (a <= 0) return;
+    const x = RC.x + 6;
+    let y = RC.y + 10;
+    const line = (txt: string, c: string, size = 14, w = 500) => { say(ctx, txt, x, y, { colour: c, size, weight: w, alpha: a }); y += 24; };
+    line('256 numbers in', ink(0.75));
+    line('2 numbers in the gap', PICK, 14, 650);
+    line('256 numbers back out', OUT);
+    y += 8;
+    line('squeezed 128×', ink(0.9), 20, 700);
+  }
+
+  /** Chapter 2: the rebuild error as training goes. */
+  function sparkline(step: number) {
+    const x0 = 34, y0 = 612, w = 236, h = 56;
+    const pts = snaps.filter((s) => s.step <= step);
+    if (pts.length < 2) return;
+    const top = snaps[0].error;
+    say(ctx, 'rebuild error while training', x0, y0 - h - 10, { colour: ink(0.55), size: 12 });
+    ctx.save();
+    ctx.strokeStyle = ink(0.15);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0 - h); ctx.lineTo(x0, y0); ctx.lineTo(x0 + w, y0);
+    ctx.stroke();
+    ctx.strokeStyle = ERR;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    pts.forEach((s, k) => {
+      const x = x0 + (s.step / TOTAL) * w, y = y0 - (s.error / top) * h;
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+  function key(a: number) {
+    if (a <= 0) return;
+    let x = RC.x + 4;
+    const y = MAP.y + MAP.h - 6;
+    say(ctx, 'colours: which digit.', RC.x + 4, y - 44, { colour: ink(0.55), size: 12, alpha: a });
+    say(ctx, 'the network never sees them', RC.x + 4, y - 27, { colour: ink(0.55), size: 12, alpha: a });
+    for (const d of CLASSES) {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = DIGIT[d];
+      ctx.beginPath();
+      ctx.arc(x + 5, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      say(ctx, String(d), x + 14, y, { colour: ink(0.75), size: 13, weight: 600, alpha: a });
+      x += 32;
     }
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    const m = codes.length ? nearest() : 0;
-    forward(X[m]);
-    image(IN.x, IN.y, IN.s, X[m], 'goes in');
-    image(OUT.x, OUT.y, OUT.s, xhat, 'comes back');
+  /** Chapter 3: walk from one digit's group to the next. */
+  const ROUTE = [1, 7, 2, 0, 4];
+  /** For each digit on the route, the dot deepest inside its own group: most of its neighbours share its digit. */
+  let stopDots: number[] | null = null;
+  function stops() {
+    const codes = finalCodes();
+    if (!stopDots) {
+      const K = 12;
+      const dist = (a: number, b: number) => (codes[2 * a] - codes[2 * b]) ** 2 + (codes[2 * a + 1] - codes[2 * b + 1]) ** 2;
+      stopDots = ROUTE.map((d) => {
+        let best = 0, bs = -Infinity;
+        for (let k = 0; k < SHOWN; k++) {
+          if (label[k] !== d) continue;
+          const near = Array.from({ length: SHOWN }, (_, j) => j).filter((j) => j !== k).sort((a, b) => dist(k, a) - dist(k, b)).slice(0, K);
+          const pure = near.filter((j) => label[j] === d).length;
+          const score = pure - near.reduce((s, j) => s + Math.sqrt(dist(k, j)), 0) / (K * 100);
+          if (score > bs) { bs = score; best = k; }
+        }
+        return best;
+      });
+    }
+    return stopDots.map((k) => place(codes, k, done!.box));
+  }
+  function walkAt(u: number) {
+    const s = stops(), seg = u * (s.length - 1), k = Math.min(s.length - 2, Math.floor(seg)), f = ease(seg - k);
+    return { x: lerp(s[k].x, s[k + 1].x, f), y: lerp(s[k].y, s[k + 1].y, f) };
+  }
+  const walkU = (t: number) => clamp01((t - 1.6) / 12.5);
+  function walk(t: number) {
+    const p = walkAt(walkU(t));
+    S.px = p.x;
+    S.py = p.y;
+    // the trail so far
+    ctx.save();
+    ctx.strokeStyle = withAlpha(PICK, 0.6);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let k = 0; k <= 60; k++) {
+      const q = walkAt((k / 60) * walkU(t));
+      k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  function filmstrip(t: number) {
+    if (st.manual() || S.dragged) return;
+    say(ctx, 'along the walk', RC.x + 4, RC.y - 6, { colour: ink(0.55), size: 12 });
+    const s = 48, gap = 7, u = walkU(t);
+    for (let k = 0; k < 9; k++) {
+      const at = k / 8;
+      if (u + 1e-6 < at) continue;
+      const p = walkAt(at), img = net!.decode(latentAt(p.x, p.y, done!.box));
+      const x = RC.x + 4 + (k % 3) * (s + gap), y = RC.y + 8 + Math.floor(k / 3) * (s + gap);
+      pic(img, x, y, s, 1, k % 2 ? ink(0.15) : withAlpha(DIGIT[ROUTE[k / 2]], 0.8));
+    }
+  }
+  /** For the Try buttons: halfway between the 0s and the 4s, or the empty corner furthest from every dot. */
+  function aimAt(aim: 'between' | 'corner') {
+    S.aim = '';
+    if (aim === 'between') {
+      const s = stops();
+      S.px = (s[3].x + s[4].x) / 2;
+      S.py = (s[3].y + s[4].y) / 2;
+      return;
+    }
+    const codes = finalCodes(), b = done!.box;
+    let best = { x: 0, y: 0 }, bd = -1;
+    for (const [fx, fy] of [[0.04, 0.04], [0.96, 0.04], [0.04, 0.96], [0.96, 0.96]]) {
+      const c = { x: MAP.x + fx * MAP.w, y: MAP.y + fy * MAP.h };
+      let d = Infinity;
+      for (let k = 0; k < SHOWN; k++) {
+        const p = place(codes, k, b);
+        d = Math.min(d, (p.x - c.x) ** 2 + (p.y - c.y) ** 2);
+      }
+      if (d > bd) { bd = d; best = c; }
+    }
+    S.px = best.x;
+    S.py = best.y;
+  }
 
-    label(`${D} → ${state.lat} → ${D}`, OUT.x, OUT.y + OUT.s + 22, 0.5, 'left', 12);
-
-    latentMap();
-    decode(state.drag, state.lat);
-    image(DEC.x, DEC.y, DEC.s, xhat, 'decoded from your point');
-    label('including the empty space', DEC.x, DEC.y + DEC.s + 22, 0.32, 'left', 11);
-
-    const err = lastErr;
-    setEq({
-      rule: [['z = f(x)', PICK], '\\quad', ['\\hat x = g(z)', DOT], '\\qquad', ['\\min \\lVert x - g(f(x))\\rVert^2', ERR]],
-      live: [`\\dim x = ${D}`, [`\\quad \\dim z = ${state.lat}`, PICK], [`\\quad \\text{error} = ${err.toFixed(5)}`, ERR], `\\quad ${state.steps}\\text{ steps}`],
-    });
-    setRows({
-      'r-err': err.toFixed(5),
-      'r-steps': String(state.steps),
-      'r-comp': `${D} → ${state.lat}, ${(D / state.lat).toFixed(0)}×`,
-      'r-best1': best[1] ? best[1].toFixed(5) : '—',
-      'r-best2': best[2] ? best[2].toFixed(5) : '—',
-      'r-best3': best[3] ? best[3].toFixed(5) : '—',
-    });
+  // ---------- numbers ----------
+  const EQ: (string | [string, string])[][] = [
+    ['x \\in \\mathbb R^{256}', '\\;\\xrightarrow{\\;\\text{encoder } f\\;}\\;', ['z \\in \\mathbb R^{2}', PICK], '\\;\\xrightarrow{\\;\\text{decoder } g\\;}\\;', ['\\hat x \\in \\mathbb R^{256}', OUT]],
+    ['\\min_{f,\\,g}\\; \\textstyle\\sum_x\\;', ['\\lVert x - g(f(x)) \\rVert^2', ERR]],
+    [['\\hat x = g(z)', OUT], '\\quad\\text{for any point }', ['z', PICK], '\\text{ on the map}'],
+  ];
+  let eqFor = '';
+  function panelText(ch: number) {
+    const live = `${ch}|${shownStep}|${shownError.toFixed(4)}`;
+    if (live !== eqFor) {
+      eqFor = live;
+      setEq({ rule: EQ[ch], live: [`\\text{step } ${shownStep}`, [`\\quad \\text{error } ${shownError.toFixed(4)}`, ERR]] });
+    }
+    setRows({ 'r-step': `${shownStep} of ${TOTAL}`, 'r-err': shownError.toFixed(4) });
     setResult({
-      value: err.toFixed(5),
-      colour: state.lat === 1 ? ERR : DOT,
-      status: `${D} numbers through a gap of ${state.lat}, a factor of ${(D / state.lat).toFixed(0)} · ${state.steps} training steps`,
+      value: shownError.toFixed(4),
+      status: `256 numbers through a gap of 2 · step ${shownStep}`,
       note:
-        state.steps < 500
-          ? 'Still training. Watch the map: the points start as noise and sort themselves into groups as the network finds what the pictures have in common.'
-          : state.lat === 1
-            ? 'One number is a line, and a line has nowhere to put pictures that differ in more than one way, so the reconstructions blur into an average.'
-            : state.data === 'blobs'
-              ? 'Only the position of the blob ever changed, so two numbers are exactly enough and a third buys nothing at all.'
-              : 'Nothing asked for this arrangement. Rebuilding a picture from two numbers is only possible if similar pictures are given nearby numbers.',
+        ch === 0
+          ? 'The mean squared difference per pixel between what goes in and what comes back. Untrained, the network rebuilds every picture as the same smudge.'
+          : ch === 1
+            ? 'The error falls as the dots sort themselves by digit. Nothing in the loss mentions digits: alike pictures end up near because that is the only way two numbers can carry them.'
+            : 'Only the decoder runs now. A point between two groups decodes to something between the two digits; a point far from every dot was never trained and decodes to a smear.',
+      colour: shownStep >= TOTAL ? OUT : undefined,
     });
   }
 
-  // --- interaction -----------------------------------------------------------
+  // ---------- input ----------
   let dragging = false;
-  function setDrag(e: PointerEvent) {
-    const r = canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * W;
-    const y = ((e.clientY - r.top) / r.height) * H;
-    state.drag[0] = bounds.x0 + ((x - MAP.x) / MAP.w) * (bounds.x1 - bounds.x0);
-    if (state.lat > 1) state.drag[1] = bounds.y0 + ((MAP.y + MAP.h - y) / MAP.h) * (bounds.y1 - bounds.y0);
+  function toStage(e: PointerEvent) {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
   }
+  const onMap = (p: { x: number; y: number }) => p.x >= MAP.x && p.x <= MAP.x + MAP.w && p.y >= MAP.y && p.y <= MAP.y + MAP.h;
   canvas.addEventListener('pointerdown', (e) => {
-    const r = canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * W;
-    const y = ((e.clientY - r.top) / r.height) * H;
-    if (x < MAP.x || x > MAP.x + MAP.w || y < MAP.y || y > MAP.y + MAP.h) return;
+    const p = toStage(e);
+    if (!onMap(p) || st.chapter() < 2) return;
     dragging = true;
+    S.dragged = true;
+    st.touch();
     try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
-    setDrag(e);
+    S.px = p.x;
+    S.py = p.y;
   });
-  canvas.addEventListener('pointermove', (e) => { if (dragging) setDrag(e); });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = toStage(e);
+    canvas.style.cursor = onMap(p) && st.chapter() >= 2 ? 'crosshair' : '';
+    if (!dragging) return;
+    S.px = Math.min(MAP.x + MAP.w, Math.max(MAP.x, p.x));
+    S.py = Math.min(MAP.y + MAP.h, Math.max(MAP.y, p.y));
+  });
   const drop = () => (dragging = false);
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
-  // --- the loop --------------------------------------------------------------
-  let frames = 0, lastErr = 1;
-  function frame() {
-    if (state.running) {
-      for (let i = 0; i < 30; i++) trainStep();
-      if (frames % 10 === 0) {
-        lastErr = measure();
-        if (state.steps > 800 && (best[state.lat] === undefined || lastErr < best[state.lat])) best[state.lat] = lastErr;
-        encodeAll();
-      }
-    }
-    frames++;
-    draw();
-    requestAnimationFrame(frame);
-  }
-
-  function restart() {
-    state.drag = [0, 0, 0, 0];
-    makeData();
-    initNet();
-    encodeAll();
-    lastErr = measure();
-  }
-
-  const setLat = slider('lat', (v) => { state.lat = v; restart(); });
-  const datas = segmented('data', (d) => { state.data = d; restart(); });
-  const run = transport({ onRun: (running) => (state.running = running), onReset: () => restart() });
-
-  function train(data: string, lat: number) {
-    state.data = data;
-    datas.select(data);
-    state.lat = lat;
-    setLat(lat);
-    restart();
-    if (!run.running()) el('run').click();
-  }
+  // ---------- tries ----------
+  const aim = (a: 'between' | 'corner') => { st.go(2); st.touch(); S.dragged = true; S.aim = a; };
   tries({
-    train: () => train('digits', 2),
-    one: () => train('digits', 1),
-    blobs: () => train('blobs', 2),
+    train: () => { st.go(1); st.play(true); },
+    between: () => aim('between'),
+    corner: () => aim('corner'),
   });
 
-  restart();
-  requestAnimationFrame(frame);
+  st.start();
 </script>
 
 <style>
   #ae {
-    cursor: crosshair;
     touch-action: none;
   }
 </style>

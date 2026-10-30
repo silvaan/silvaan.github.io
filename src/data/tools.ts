@@ -548,7 +548,7 @@ export const AREAS: Area[] = [
         slug: 'autoencoder',
         title: 'Autoencoder & Latent Space',
         description:
-          'Squeeze a picture through a gap of two numbers and force the network to rebuild it. Nothing says what the numbers should mean, and they come out as a map you can drag around.',
+          'Squeeze a picture through a gap of two numbers and make the network rebuild it. Nothing says what the numbers mean, yet they come out as a map where alike pictures sit together: walk it and the digit morphs from one to the next.',
         href: '/simulations/deep-learning/autoencoder',
         status: 'live',
       },

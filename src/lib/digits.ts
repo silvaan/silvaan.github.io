@@ -19,9 +19,10 @@ function mulberry32(a: number) {
 
 /**
  * `count` digits at `size` by `size`, values in 0..1. Pass `only` to restrict
- * which digits appear, which keeps a latent space readable.
+ * which digits appear, which keeps a latent space readable, and a `vary` below
+ * 1 for steadier strokes, so the digit is what changes most between pictures.
  */
-export function digitSet(count: number, size = 28, seed = 1, only?: number[]): Digit[] {
+export function digitSet(count: number, size = 28, seed = 1, only?: number[], vary = 1): Digit[] {
   const pool = only ?? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   const rnd = mulberry32(seed);
   const pad = 8; // room to rotate in before the glyph is cropped
@@ -41,11 +42,11 @@ export function digitSet(count: number, size = 28, seed = 1, only?: number[]): D
     c.rotate((rnd() - 0.5) * 0.42);
     // a little shear reads as slant, which is most of what varies in handwriting
     c.transform(1, 0, (rnd() - 0.5) * 0.34, 1, 0, 0);
-    const scale = 0.78 + rnd() * 0.24;
+    const scale = 0.78 + 0.12 * (1 - vary) + rnd() * 0.24 * vary;
     c.scale(scale, scale * (0.92 + rnd() * 0.18));
     c.fillStyle = '#fff';
     c.strokeStyle = '#fff';
-    c.lineWidth = 1 + rnd() * 2.4;
+    c.lineWidth = 1 + rnd() * 2.4 * vary;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.font = `${rnd() < 0.5 ? '600' : '400'} ${Math.round(size * 0.96)}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
