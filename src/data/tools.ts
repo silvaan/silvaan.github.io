@@ -712,6 +712,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/turing-patterns',
         status: 'live',
       },
+      {
+        slug: 'morphogen-gradients',
+        title: 'Morphogen Gradients',
+        description:
+          'A signal leaks from one end of an embryo and fades as it spreads. Each cell reads how much reaches it and picks what to become, so a smooth slope is cut into sharp bands of tissue.',
+        href: '/simulations/biology/morphogen-gradients',
+        status: 'live',
+      },
     ],
   },
   {

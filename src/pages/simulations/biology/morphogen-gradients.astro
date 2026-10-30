@@ -1,0 +1,636 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Morphogen Gradients"
+  description="A signal leaks from one end of an embryo and fades as it spreads. Each cell reads how much reaches it and picks what to become, so a smooth slope is cut into sharp bands of tissue."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="mg"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="An elongated embryo with a glowing source at its left end, molecules spreading from it and cells coloured blue, white or red by how much signal they read, above a plot of the concentration along the embryo with two threshold lines."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'morphogen molecules, C', color: '#f59e0b' },
+          { label: 'above the high threshold', color: '#3b82f6' },
+          { label: 'in between', color: '#d4d4d8' },
+          { label: 'below the low threshold', color: '#ef4444' },
+        ]}
+        hint="Click the embryo to graft a second source (click it again to remove it) · drag the two threshold lines up and down"
+      />
+      <Result label="Boundaries, % of egg length" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport reset running />
+      <Slider id="dif" label="Diffusion D" min={1} max={30} step={0.5} value={7} display="7.0 µm²/s" hint={['stays put', 'spreads fast']} />
+      <Slider id="deg" label="Degradation k" min={0.2} max={5} step={0.05} value={0.7} display="0.70 ×10⁻³/s" hint={['long-lived', 'short-lived']} />
+      <Slider id="src" label="Source strength C<sub>0</sub>" min={0.2} max={2} step={0.05} value={1} display="1.00" hint={['weak', 'strong']} />
+      <Checks items={[{ id: 'noisy', label: 'Noisy reading: each cell misjudges C a little' }]} />
+      <Readout
+        title="Numbers"
+        open
+        rows={[
+          { id: 'r-lam', label: 'decay length λ = √(D/k)' },
+          { id: 'r-k', label: 'time to settle, about 1/k' },
+          { id: 'r-t', label: 'time t' },
+          { id: 'r-ss', label: 'boundaries once settled' },
+          { id: 'r-mol', label: 'molecules drawn' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The starting values are those of Bicoid in the fruit fly egg: it spreads about 7 µm² per second and lasts about
+      24 minutes, so λ ≈ 100 µm, a fifth of the 500 µm egg. Switch the source on and the bands creep toward the tail;
+      they only settle after about 1/k, the lifetime of a molecule, once making and breaking balance.
+      <Try id="time" />
+    </li>
+    <li>
+      Double the source and every boundary moves toward the tail by the same distance, λ·ln 2 ≈ 69 µm, wherever it
+      sits. A cell knows only the concentration where it is, so anything that changes the source shifts the whole
+      map. Gradients alone are fragile, which is why embryos add other tricks: target genes that sharpen and lock in
+      their own borders, and a second gradient from the other end. <Try id="double" />
+    </li>
+    <li>
+      Graft a second source at the far end and the pattern becomes a mirror image, with the head-end tissue at both
+      ends. This is the classic graft in the chick wing: put a second piece of the signalling region (the ZPA) on the
+      wrong side of the bud and the wing grows a mirror-duplicated set of digits. <Try id="graft" />
+    </li>
+    <li>
+      With a short λ only the tip turns blue; with a long one the slope is so shallow that the whole tissue reads
+      nearly the same value and looks alike. Gradients like this lay out the coarse map, head to tail, while repeats
+      such as digits or hair follicles are filled in by the reaction and diffusion of <a
+        href="/simulations/biology/turing-patterns">Turing patterns</a
+      >. <Try id="short" label="Short λ" /> <Try id="long" label="Long λ" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight } from '../../../lib/story';
+  import { Gradient, Molecules, crossings, at, lambda, L, NX, DX } from '../../../lib/morphogen-gradients';
+
+  // Synthesis, diffusion and degradation along a 500 µm embryo: the field is
+  // integrated on a line of nodes, the molecules drawn are the same process one
+  // by one, and each cell turns the concentration it reads into one of three
+  // fates with two thresholds (Wolpert's French flag).
+  const PLAY = 500; // simulated seconds per real second
+  const AMBER = '#f59e0b', TEAL = '#14b8a6', PINK = '#ec4899', VIOLET = '#8b5cf6';
+
+  const canvas = document.getElementById('mg') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+  const MOL = () => (light ? '#b45309' : '#fbbf24');
+  const BLUE = () => (light ? '#2563eb' : '#3b82f6');
+  const RED = () => (light ? '#dc2626' : '#ef4444');
+  const WHITE = () => (light ? '#d4d4d8' : '#e8e9ec');
+
+  // ---------- layout ----------
+  const EX0 = 70, EX1 = 930, SX = (EX1 - EX0) / L;
+  const ECX = (EX0 + EX1) / 2, EA = (EX1 - EX0) / 2, ECY = 128, EB = 82, EN = 2.4;
+  const PY0 = 298, PY1 = 528;
+  /** Top of the plot: room for the source, eased when it changes. */
+  let cmax = 1.2;
+  const X = (um: number) => EX0 + um * SX;
+  const Y = (c: number) => PY1 - (Math.min(c, cmax * 1.02) / cmax) * (PY1 - PY0);
+  const unY = (y: number) => ((PY1 - y) / (PY1 - PY0)) * cmax;
+  /** Half the embryo's height at a screen x: a superellipse. */
+  const half = (px: number) => EB * Math.pow(Math.max(0, 1 - Math.pow(Math.abs((px - ECX) / EA), EN)), 1 / EN);
+  const inside = (px: number, py: number) =>
+    Math.pow(Math.abs((px - ECX) / EA), EN) + Math.pow(Math.abs((py - ECY) / EB), EN) < 1;
+  const pct = (um: number) => `${Math.round((um / L) * 100)}%`;
+
+  // ---------- model ----------
+  const field = new Gradient();
+  const mol = new Molecules(8, 14000);
+  const P = { hi: 0.45, lo: 0.2, noisy: false };
+  let steady = field.steady();
+  const restead = () => (steady = field.steady());
+
+  // the cells: a staggered sheet clipped to the embryo
+  type Cell = { px: number; py: number; x: number; r: number; g: number; col: number[] };
+  const cells: Cell[] = [];
+  const CW = (EX1 - EX0) / 48, RH = 19, NR = 8;
+  for (let row = 0; row < NR; row++) {
+    const py = ECY + (row - (NR - 1) / 2) * RH;
+    for (let px = EX0 + (row % 2 ? CW : CW / 2); px < EX1; px += CW) {
+      const ok = [[-0.4, -0.4], [0.4, -0.4], [-0.4, 0.4], [0.4, 0.4]].every(([a, b]) => inside(px + a * CW, py + b * RH));
+      if (ok) cells.push({ px, py, x: (px - EX0) / SX, r: 0, g: 1, col: [0, 0, 0] });
+    }
+  }
+  const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  const fateOf = (r: number) => (r > P.hi ? 0 : r > P.lo ? 1 : 2);
+  const fateCol = (f: number) => rgb(f === 0 ? BLUE() : f === 1 ? WHITE() : RED());
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  function regain() {
+    for (const c of cells) c.g = P.noisy ? Math.exp(0.2 * gauss()) : 1;
+  }
+  function snapCells() {
+    for (const c of cells) {
+      c.r = at(field.c, c.x) * c.g;
+      c.col = fateCol(fateOf(c.r));
+    }
+  }
+
+  /** Boundaries of the settled pattern before the source last changed, to show how far they move. */
+  let ghost: { b: number[]; from: number; t: number } | null = null;
+
+  function fresh() {
+    field.reset();
+    field.take();
+    mol.clear();
+    ghost = null;
+    restead();
+    for (const c of cells) c.r = 0;
+    snapCells();
+  }
+  /** Jump to the settled state of the current settings. */
+  function settle() {
+    field.c.set(field.steady());
+    field.time = 0;
+    field.take();
+    mol.fill(field.c);
+    restead();
+    snapCells();
+  }
+
+  // ---------- loop ----------
+  const TAU = 120; // seconds a cell averages its reading over
+  let last = 0, tick = 0, wall = 0;
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    wall += dt;
+    light = isLight(canvas);
+    if (tp.running() && dt > 0) {
+      const h = dt * PLAY;
+      field.step(h);
+      mol.advance(field.take(), field.graft >= 0 ? field.graft * DX : -1, field.D, field.k, h, EB / SX);
+      const a = 1 - Math.exp(-h / TAU);
+      for (const c of cells) {
+        const read = at(field.c, c.x) * c.g * (P.noisy ? 1 + 0.3 * gauss() : 1);
+        c.r += (read - c.r) * a;
+      }
+    }
+    const fade = 1 - Math.exp(-dt * 6);
+    cmax += (Math.max(1.2, field.C0 * 1.1) - cmax) * fade;
+    for (const c of cells) {
+      const t = fateCol(fateOf(c.r));
+      for (let j = 0; j < 3; j++) c.col[j] += (t[j] - c.col[j]) * fade;
+    }
+    draw();
+    if (tick++ % 8 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+
+  const settled = () => {
+    let e = 0;
+    for (let i = 0; i <= NX; i++) e = Math.max(e, Math.abs(field.c[i] - steady[i]));
+    return e < 0.01 * field.C0;
+  };
+  const minutes = (s: number) => (s < 600 ? (s / 60).toFixed(1) : String(Math.round(s / 60)));
+
+  // ---------- drawing ----------
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    embryo();
+    guides();
+    plot();
+    clock();
+  }
+
+  function shape() {
+    ctx.beginPath();
+    for (let j = 0; j <= 200; j++) {
+      const th = (j / 200) * Math.PI * 2, c = Math.cos(th), s = Math.sin(th);
+      const px = ECX + EA * Math.sign(c) * Math.pow(Math.abs(c), 2 / EN);
+      const py = ECY + EB * Math.sign(s) * Math.pow(Math.abs(s), 2 / EN);
+      j ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath();
+  }
+
+  function glow(px: number, r: number) {
+    const g = ctx.createRadialGradient(px, ECY, 0, px, ECY, r);
+    g.addColorStop(0, withAlpha(MOL(), light ? 0.55 : 0.75));
+    g.addColorStop(0.35, withAlpha(MOL(), light ? 0.22 : 0.3));
+    g.addColorStop(1, withAlpha(MOL(), 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, ECY, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = MOL();
+    ctx.beginPath();
+    ctx.arc(px, ECY, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function embryo() {
+    say(ctx, 'head end (anterior)', EX0, 22, { colour: ink(0.6), size: 12.5 });
+    say(ctx, `an embryo ${L} µm long, like a fruit fly egg`, ECX, 22, { colour: ink(0.45), size: 12, align: 'center' });
+    say(ctx, 'tail end (posterior)', EX1, 22, { colour: ink(0.6), size: 12.5, align: 'right' });
+    shape();
+    ctx.fillStyle = ink(0.04);
+    ctx.fill();
+    ctx.save();
+    shape();
+    ctx.clip();
+    // cells by fate
+    const alpha = light ? 0.62 : 0.5;
+    for (const c of cells) {
+      ctx.fillStyle = `rgba(${c.col[0] | 0},${c.col[1] | 0},${c.col[2] | 0},${alpha})`;
+      ctx.beginPath();
+      ctx.roundRect(c.px - CW / 2 + 1.5, c.py - RH / 2 + 1.5, CW - 3, RH - 3, 4);
+      ctx.fill();
+    }
+    ctx.strokeStyle = ink(light ? 0.14 : 0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const c of cells) ctx.roundRect(c.px - CW / 2 + 1.5, c.py - RH / 2 + 1.5, CW - 3, RH - 3, 4);
+    ctx.stroke();
+    // the molecules
+    const m = mol, s = light ? 2.2 : 2;
+    if (!light) {
+      ctx.fillStyle = inv(0.55);
+      ctx.beginPath();
+      for (let j = 0; j < m.n; j++) {
+        const px = X(m.x[j]), py = ECY + m.v[j] * half(px) * 0.92;
+        ctx.rect(px - s / 2 - 0.7, py - s / 2 - 0.7, s + 1.4, s + 1.4);
+      }
+      ctx.fill();
+    }
+    ctx.fillStyle = MOL();
+    ctx.beginPath();
+    for (let j = 0; j < m.n; j++) {
+      const px = X(m.x[j]), py = ECY + m.v[j] * half(px) * 0.92;
+      ctx.rect(px - s / 2, py - s / 2, s, s);
+    }
+    ctx.fill();
+    ctx.restore();
+    shape();
+    ctx.strokeStyle = ink(0.35);
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    // the sources
+    glow(EX0 + 3, 30);
+    if (field.graft >= 0) {
+      const gx = X(field.graft * DX);
+      glow(gx, 30);
+      ctx.strokeStyle = ink(0.85);
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(gx, ECY, 13, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      say(ctx, 'graft', Math.min(EX1 - 2, gx + 18), ECY + EB + 2, { colour: MOL(), size: 12, weight: 600, align: 'right', halo: inv(0.85) });
+    }
+    say(ctx, 'source', EX0 + 2, ECY + EB + 2, { colour: MOL(), size: 12, weight: 600, align: 'left' });
+  }
+
+  type Mark = { x: number; hi: boolean };
+  const marks = (c: ArrayLike<number>): Mark[] =>
+    [...crossings(c, P.hi).map((x) => ({ x, hi: true })), ...crossings(c, P.lo).map((x) => ({ x, hi: false }))].sort((a, b) => a.x - b.x);
+
+  /** Where the live curve crosses each threshold, carried up to the embryo. */
+  function guides() {
+    let lastX = -99;
+    for (const m of marks(field.c)) {
+      const px = X(m.x), col = m.hi ? BLUE() : RED();
+      ctx.save();
+      ctx.strokeStyle = withAlpha(col, 0.7);
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(px, Y(m.hi ? P.hi : P.lo));
+      ctx.lineTo(px, ECY - EB - 2);
+      ctx.stroke();
+      ctx.restore();
+      const lx = Math.max(px, lastX + 38);
+      say(ctx, pct(m.x), lx, ECY + EB + 20, { colour: col, size: 12.5, weight: 650, align: 'center', halo: inv(0.9) });
+      lastX = lx;
+    }
+  }
+
+  function plot() {
+    const x0 = EX0, x1 = EX1;
+    // axes and grid
+    ctx.strokeStyle = ink(0.07);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const ticks = [0, 0.5, 1, 1.5, 2].filter((c) => c <= cmax);
+    for (const c of ticks) { ctx.moveTo(x0, Y(c)); ctx.lineTo(x1, Y(c)); }
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.3);
+    ctx.beginPath();
+    ctx.moveTo(x0, PY0 - 4); ctx.lineTo(x0, PY1); ctx.lineTo(x1, PY1);
+    ctx.stroke();
+    for (const c of ticks) say(ctx, c.toFixed(1), x0 - 8, Y(c), { colour: ink(0.45), size: 11.5, align: 'right' });
+    say(ctx, 'C', x0 - 8, PY0 - 14, { colour: MOL(), size: 13, weight: 700, align: 'right' });
+    ctx.strokeStyle = ink(0.3);
+    ctx.beginPath();
+    for (let p = 0; p <= 100; p += 10) { ctx.moveTo(X((p / 100) * L), PY1); ctx.lineTo(X((p / 100) * L), PY1 + 4); }
+    ctx.stroke();
+    for (let p = 0; p <= 100; p += 20) say(ctx, `${p}%`, X((p / 100) * L), PY1 + 16, { colour: ink(0.45), size: 11.5, align: 'center' });
+    say(ctx, `position along the embryo, % of its length (100% = ${L} µm)`, ECX, PY1 + 40, { colour: ink(0.5), size: 12, align: 'center' });
+
+    // molecules counted in bins, to compare with the curve
+    const bins = 25, bw = L / bins, cnt = new Array(bins).fill(0);
+    for (let j = 0; j < mol.n; j++) cnt[Math.min(bins - 1, Math.floor(mol.x[j] / bw))]++;
+    ctx.fillStyle = withAlpha(MOL(), light ? 0.16 : 0.14);
+    cnt.forEach((n, b) => {
+      const c = n / (mol.per * bw);
+      if (c > 0) ctx.fillRect(X(b * bw) + 1, Y(c), bw * SX - 2, PY1 - Y(c));
+    });
+
+    // λ: where the settled curve has fallen to C0/e
+    const lam = lambda(field.D, field.k);
+    if (lam < L * 0.95) {
+      const y = Y(field.C0 / Math.E);
+      ctx.strokeStyle = VIOLET;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x0, y); ctx.lineTo(X(lam), y);
+      ctx.moveTo(X(lam), y - 5); ctx.lineTo(X(lam), y + 5);
+      ctx.stroke();
+      say(ctx, `λ = ${Math.round(lam)} µm`, (x0 + X(lam)) / 2, y - 10, { colour: VIOLET, size: 12, weight: 650, align: 'center', halo: inv(0.85) });
+    }
+
+    // the thresholds, with grips at the right
+    for (const hi of [true, false]) {
+      const T = hi ? P.hi : P.lo, y = Y(T), col = hi ? BLUE() : RED();
+      ctx.strokeStyle = withAlpha(col, drag === (hi ? 'hi' : 'lo') ? 1 : 0.8);
+      ctx.lineWidth = drag === (hi ? 'hi' : 'lo') ? 2.4 : 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x0, y); ctx.lineTo(x1, y);
+      ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.roundRect(x1 + 4, y - 8, 22, 16, 4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (const d of [-3, 0, 3]) { ctx.moveTo(x1 + 9, y + d); ctx.lineTo(x1 + 21, y + d); }
+      ctx.stroke();
+      const lab = hi ? `blue above ${T.toFixed(2)}` : `red below ${T.toFixed(2)}`;
+      say(ctx, lab, x1 - 4, y + (hi ? -10 : 10), { colour: col, size: 12, weight: 650, align: 'right', halo: inv(0.85) });
+    }
+    // the settled curve, dashed, and the curve now
+    const curve = (c: ArrayLike<number>) => {
+      ctx.beginPath();
+      for (let i = 0; i <= NX; i++) (i ? ctx.lineTo : ctx.moveTo).call(ctx, X(i * DX), Y(c[i]));
+    };
+    ctx.save();
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = ink(0.5);
+    ctx.lineWidth = 1.6;
+    curve(steady);
+    ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = MOL();
+    ctx.lineWidth = 2.6;
+    ctx.lineJoin = 'round';
+    curve(field.c);
+    ctx.stroke();
+
+    // crossings on the live curve
+    for (const m of marks(field.c)) {
+      ctx.fillStyle = m.hi ? BLUE() : RED();
+      ctx.strokeStyle = inv(0.9);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(X(m.x), Y(m.hi ? P.hi : P.lo), 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fill();
+    }
+    // where they will settle, and where they settled before the source changed
+    const now = marks(steady);
+    for (const m of now) tri(X(m.x), m.hi ? BLUE() : RED(), 1);
+    if (ghost && ghost.b.length === now.length) {
+      ghost.b.forEach((x, i) => {
+        const a = X(x), b = X(now[i].x), y = PY1 - 16, col = now[i].hi ? BLUE() : RED();
+        tri(a, col, 0.35);
+        if (Math.abs(b - a) < 6) return;
+        ctx.strokeStyle = withAlpha(col, 0.8);
+        ctx.fillStyle = withAlpha(col, 0.8);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(a, y); ctx.lineTo(b - Math.sign(b - a) * 6, y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(b, y); ctx.lineTo(b - Math.sign(b - a) * 7, y - 4); ctx.lineTo(b - Math.sign(b - a) * 7, y + 4);
+        ctx.fill();
+        const d = now[i].x - x;
+        say(ctx, `${d > 0 ? '+' : '−'}${Math.round(Math.abs(d))} µm`, (a + b) / 2, y - 11, { colour: col, size: 11.5, weight: 650, align: 'center', halo: inv(0.85) });
+      });
+    }
+  }
+  /** A small triangle on the x axis. */
+  function tri(px: number, col: string, a: number) {
+    ctx.fillStyle = withAlpha(col, a);
+    ctx.beginPath();
+    ctx.moveTo(px, PY1 - 1); ctx.lineTo(px - 5, PY1 - 9); ctx.lineTo(px + 5, PY1 - 9);
+    ctx.fill();
+  }
+
+  /** Time since the source came on, against the lifetime 1/k. */
+  function clock() {
+    const y = 262, life = 1 / field.k, span = 4 * life, bx = 260, bw = 220;
+    say(ctx, `t = ${minutes(field.time)} min`, EX0, y, { colour: ink(0.85), size: 13.5, weight: 650 });
+    say(ctx, settled() ? 'settled' : 'still building', EX0 + 98, y, { colour: settled() ? ink(0.6) : MOL(), size: 12.5, weight: 600 });
+    ctx.fillStyle = ink(0.08);
+    ctx.fillRect(bx, y - 4, bw, 8);
+    ctx.fillStyle = withAlpha(MOL(), 0.8);
+    ctx.fillRect(bx, y - 4, bw * Math.min(1, field.time / span), 8);
+    ctx.strokeStyle = PINK;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let j = 1; j <= 3; j++) { ctx.moveTo(bx + (bw * j) / 4, y - 7); ctx.lineTo(bx + (bw * j) / 4, y + 7); }
+    ctx.stroke();
+    say(ctx, '1/k', bx + bw / 4, y + 15, { colour: PINK, size: 11.5, weight: 600, align: 'center' });
+    say(ctx, '2/k', bx + bw / 2, y + 15, { colour: PINK, size: 11.5, align: 'center' });
+    say(ctx, '3/k', bx + (3 * bw) / 4, y + 15, { colour: PINK, size: 11.5, align: 'center' });
+    say(ctx, `lifetime 1/k = ${minutes(life)} min`, bx + bw + 12, y, { colour: PINK, size: 12, weight: 600 });
+    // key for the plot
+    let kx = 652;
+    ctx.strokeStyle = MOL();
+    ctx.lineWidth = 2.6;
+    ctx.beginPath(); ctx.moveTo(kx, y); ctx.lineTo(kx + 20, y); ctx.stroke();
+    say(ctx, 'now', kx + 26, y, { colour: ink(0.6), size: 12 });
+    kx += 64;
+    ctx.save();
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = ink(0.5);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(kx, y); ctx.lineTo(kx + 22, y); ctx.stroke();
+    ctx.restore();
+    say(ctx, 'settled', kx + 28, y, { colour: ink(0.6), size: 12 });
+    kx += 80;
+    ctx.fillStyle = withAlpha(MOL(), 0.3);
+    ctx.fillRect(kx, y - 6, 12, 12);
+    say(ctx, 'molecules counted', kx + 18, y, { colour: ink(0.6), size: 12 });
+  }
+
+  // ---------- numbers ----------
+  const RULE: (string | [string, string])[] = [
+    ['\\partial_t C', AMBER],
+    '=',
+    ['D\\,\\partial_x^2 C', TEAL],
+    ['-\\,kC', PINK],
+    '\\qquad',
+    ['\\lambda = \\sqrt{D/k}', VIOLET],
+  ];
+  const list = (xs: number[]) => (xs.length ? xs.map(pct).join(', ') : 'none');
+  function panelText() {
+    const lam = lambda(field.D, field.k), life = 1 / field.k;
+    setEq({
+      rule: RULE,
+      live: [
+        [`D = ${field.D.toFixed(1)}\\,\\mu\\text{m}^2/\\text{s}`, TEAL],
+        [`\\quad k = ${(field.k * 1000).toFixed(2)}\\times 10^{-3}/\\text{s}`, PINK],
+        [`\\quad \\lambda = ${Math.round(lam)}\\,\\mu\\text{m} = ${Math.round((lam / L) * 100)}\\%\\text{ of the egg}`, VIOLET],
+        `\\quad 1/k = ${minutes(life)}\\text{ min}`,
+      ],
+    });
+    const now = marks(field.c), fin = marks(steady), done = settled();
+    setRows({
+      'r-lam': `${Math.round(lam)} µm (${Math.round((lam / L) * 100)}%)`,
+      'r-k': `${minutes(life)} min`,
+      'r-t': `${minutes(field.time)} min`,
+      'r-ss': list(fin.map((m) => m.x)),
+      'r-mol': String(mol.n),
+    });
+    const mid = at(field.c, L / 2);
+    const status = now.length
+      ? `${now.map((m) => `${m.hi ? 'blue | white' : 'white | red'} at ${pct(m.x)}`).join(', ')} · ${done ? 'settled' : `still moving, t = ${minutes(field.time)} min`}`
+      : `no boundary: the whole embryo is ${mid > P.hi ? 'blue' : mid > P.lo ? 'white' : 'red'}`;
+    let note = 'A smooth slope has become sharp bands: each cell only asks whether what it reads is above or below two thresholds.';
+    if (field.graft >= 0) note = `Two sources make two gradients, so the tissue made near a source appears near both of them${field.graft > NX * 0.9 ? ': a mirror image' : ''}.${done ? '' : ' It is still filling in.'}`;
+    else if (!done && field.time < 3 * life) note = `The molecules are still arriving, so the bands creep toward the tail. They stop once making and breaking balance, after about 1/k = ${minutes(life)} min.`;
+    else if (ghost && ghost.b.length === fin.length && fin.length) {
+      const r = field.C0 / ghost.from, d = lam * Math.log(r);
+      note = `The source changed by ×${r.toFixed(2)}, so every boundary moved by λ·ln ${r.toFixed(2)} = ${Math.round(d)} µm (${Math.round((d / L) * 100)}% of the egg), the same distance wherever it sits.`;
+    } else if (lam < 55) note = 'With a short λ the signal dies within a few cells of the source: only the tip reads enough to turn blue.';
+    else if (lam > 250) note = 'With a long λ the slope is so shallow that cells far apart read nearly the same value, so the tissue barely changes along its length.';
+    setResult({ value: now.length ? now.map((m) => pct(m.x)).join(' · ') : 'none', status, note, colour: now.length ? undefined : MOL() });
+  }
+
+  // ---------- panel ----------
+  const tp = transport({ onReset: () => { field.graft = -1; fresh(); tp.setRunning(true); } });
+  const setD = slider('dif', (v) => { field.D = v; ghost = null; restead(); }, (v) => `${v.toFixed(1)} µm²/s`);
+  const setK = slider('deg', (v) => { field.k = v / 1000; ghost = null; restead(); }, (v) => `${v.toFixed(2)} ×10⁻³/s`);
+  let lastSrc = 0;
+  const setC0 = (v: number) => {
+    // keep the settled boundaries from before a burst of changes
+    if (!ghost || wall - lastSrc > 1.5) ghost = { b: marks(steady).map((m) => m.x), from: field.C0, t: wall };
+    lastSrc = wall;
+    field.C0 = v;
+    restead();
+  };
+  const setSrc = slider('src', setC0, (v) => v.toFixed(2));
+  check('noisy', (on) => { P.noisy = on; regain(); });
+
+  function setup(D: number, k: number, C0: number, from: 'zero' | 'settled') {
+    field.D = D; field.k = k / 1000; field.C0 = C0; field.graft = -1;
+    setD(D); setK(k); setSrc(C0);
+    P.hi = 0.45; P.lo = 0.2;
+    ghost = null;
+    if (from === 'zero') fresh();
+    else settle();
+    tp.setRunning(true);
+  }
+  tries({
+    time: () => setup(7, 0.7, 1, 'zero'),
+    double: () => {
+      setup(7, 0.7, 1, 'settled');
+      setSrc(2);
+      setC0(2);
+    },
+    graft: () => {
+      setup(7, 0.7, 1, 'settled');
+      field.graft = NX;
+      restead();
+    },
+    short: () => setup(7, 4, 1, 'settled'),
+    long: () => setup(30, 0.2, 1, 'settled'),
+  });
+
+  // ---------- input ----------
+  function toStage(e: PointerEvent) {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
+  }
+  function grab(p: { x: number; y: number }): '' | 'hi' | 'lo' {
+    if (p.x < EX0 - 10 || p.x > EX1 + 30) return '';
+    const dh = Math.abs(p.y - Y(P.hi)), dl = Math.abs(p.y - Y(P.lo));
+    if (Math.min(dh, dl) > 9) return '';
+    return dh <= dl ? 'hi' : 'lo';
+  }
+  let drag: '' | 'hi' | 'lo' = '';
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = toStage(e);
+    drag = grab(p);
+    if (drag) {
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic pointers need no capture */ }
+      return;
+    }
+    if (!inside(p.x, p.y)) return;
+    const gx = field.graft >= 0 ? X(field.graft * DX) : -1e9;
+    if (Math.abs(p.x - gx) < 26) field.graft = -1;
+    else field.graft = Math.max(8, Math.min(NX, Math.round((p.x - EX0) / SX / DX)));
+    ghost = null;
+    restead();
+    tp.setRunning(true);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = toStage(e);
+    if (drag) {
+      const c = Math.round(unY(p.y) * 100) / 100;
+      if (drag === 'hi') P.hi = Math.min(cmax, Math.max(P.lo * 1.15 + 0.01, c));
+      else P.lo = Math.max(0.02, Math.min(P.hi / 1.15 - 0.01, c));
+      return;
+    }
+    canvas.style.cursor = grab(p) ? 'ns-resize' : inside(p.x, p.y) ? 'pointer' : '';
+  });
+  const drop = () => (drag = '');
+  canvas.addEventListener('pointerup', drop);
+  canvas.addEventListener('pointercancel', drop);
+
+  fresh();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #mg {
+    touch-action: none;
+  }
+</style>
