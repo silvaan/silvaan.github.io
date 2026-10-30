@@ -688,6 +688,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/diffusion-osmosis',
         status: 'live',
       },
+      {
+        slug: 'action-potential',
+        title: 'Action Potential',
+        description:
+          'A neuron fires by opening sodium gates, then potassium gates, in that order. Below a threshold nothing happens; above it the spike is always the same, and it runs down the axon by setting off the next patch.',
+        href: '/simulations/biology/action-potential',
+        status: 'live',
+      },
     ],
   },
   {

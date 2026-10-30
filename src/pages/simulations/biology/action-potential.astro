@@ -1,0 +1,767 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Action Potential"
+  description="A neuron fires by opening sodium gates, then potassium gates, in that order. Below a threshold nothing happens; above it the spike is always the same, and it runs down the axon by setting off the next patch."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ap"
+          width="1000"
+          height="640"
+          role="img"
+          aria-label="A magnified patch of nerve membrane with sodium and potassium gates that open and close and ions flowing through them, the voltage and gate variables at that spot plotted beside it, and the whole axon below with the spike running along it."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'Na⁺ and its gates', color: '#fbbf24' },
+          { label: 'K⁺ and its gates', color: '#a78bfa' },
+          { label: 'voltage', color: '#5eead4' },
+          { label: 'the push from the electrode', color: '#f472b6' },
+        ]}
+        hint="Click anywhere to push at the electrode, or click the axon to push it at that spot"
+      />
+      <Result label="Peak voltage" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running>
+        <button type="button" class="btn" id="stim">Stimulate</button>
+      </Transport>
+      <Slider
+        id="amp"
+        label="Push strength"
+        min={0.2}
+        max={4}
+        step={0.05}
+        value={1.5}
+        display="1.5× threshold"
+        hint={['weak', 'strong']}
+      />
+      <Readout
+        title="Now, at the electrode"
+        rows={[
+          { id: 'r-v', label: 'voltage' },
+          { id: 'r-na', label: 'Na⁺ gates open (m³h)' },
+          { id: 'r-k', label: 'K⁺ gates open (n⁴)' },
+          { id: 'r-speed', label: 'spike speed along the axon' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      A push just below the threshold lifts the voltage a few millivolts and then it sinks back. Too few Na⁺
+      gates open to outrun the K⁺ and leak currents pulling it down, and nothing reaches the far end of the
+      axon. <Try id="below" label="Below threshold" />
+    </li>
+    <li>
+      A push just above it sets off the whole sequence: Na⁺ gates open (m rises), Na⁺ rushes in and the
+      voltage shoots towards +50 mV. Then the Na⁺ gates plug (h falls), the K⁺ gates open (n rises), and the
+      voltage drops below rest before it settles. <Try id="above" label="Just above" />
+    </li>
+    <li>
+      Push twice as hard and the spike is no taller: once past the threshold the gates, not the push, decide
+      its height. That is what all or none means. <Try id="twice" label="Twice as strong" />
+    </li>
+    <li>
+      Push again a few milliseconds after a spike and nothing happens. The Na⁺ gates are still plugged and the
+      K⁺ gates still open, so the membrane cannot fire again until h has recovered. That is also why a spike
+      never runs backwards. <Try id="refractory" label="Second push too soon" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { slider, result, readout, tries, transport, el } from '../../../lib/panel';
+  import { say, withAlpha, isLight, glows, lerp, clamp01 } from '../../../lib/story';
+  import { Cable, HH, REST, THRESHOLD } from '../../../lib/action-potential';
+
+  // A squid giant axon as a row of Hodgkin–Huxley patches. The electrode
+  // pushes charge in 2 cm from the left end; the patch under it is drawn
+  // magnified with its gates, its voltage and gates are traced beside it, and
+  // the whole axon below shows the spike running away from it.
+  const canvas = document.getElementById('ap') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const glow = glows();
+
+  let light = isLight(canvas);
+  const pal = () =>
+    light
+      ? { na: '#d97706', k: '#7c3aed', v: '#0d9488', push: '#db2777' }
+      : { na: '#fbbf24', k: '#a78bfa', v: '#5eead4', push: '#f472b6' };
+  let P = pal();
+
+  // ---------- the model ----------
+  const cable = new Cable(160, 0.1);
+  /** The compartment under the electrode. */
+  const E = 20;
+  /** Membrane milliseconds per second on screen: slow while something fires, faster while it recovers. */
+  const SLOW = 2, FAST = 7;
+  let rate = SLOW;
+  const THRESH_V = -53;
+  let amp = 1.5;
+  /** Pushes waiting for their moment, in membrane time. */
+  let queue: { at: number; i: number; x: number }[] = [];
+
+  /** One sweep of the trace: it starts at a push and runs 25 ms. */
+  const SW = 25, DS = 0.05, NSW = Math.round(SW / DS);
+  type Sweep = {
+    t0: number; len: number;
+    V: Float32Array; m: Float32Array; h: Float32Array; n: Float32Array;
+    /** `away`: pushed somewhere else on the axon, not at the electrode. */
+    pushes: { t: number; x: number; away: boolean }[];
+  };
+  let sweeps: Sweep[] = [];
+  const sweep = () => sweeps[sweeps.length - 1] as Sweep | undefined;
+  let sinceSample = 0;
+
+  function pushNow(i: number, x: number) {
+    cable.push(i, x * THRESHOLD);
+    pokes.push({ i, born: wob });
+    const s = sweep(), away = Math.abs(i - E) > 2;
+    // a push soon after the last one joins its sweep, so the two can be compared
+    if (s && cable.t - s.t0 < 12) s.pushes.push({ t: cable.t - s.t0, x, away });
+    else {
+      sweeps.push({
+        t0: cable.t, len: 0,
+        V: new Float32Array(NSW), m: new Float32Array(NSW), h: new Float32Array(NSW), n: new Float32Array(NSW),
+        pushes: [{ t: 0, x, away }],
+      });
+      sinceSample = DS;
+      if (sweeps.length > 4) sweeps.shift();
+    }
+  }
+  const schedule = (x: number, delay = 0, i = E) => queue.push({ at: cable.t + delay, i, x });
+
+  // spike timing for the speed: when the spike passes two points 6 cm apart
+  const GAUGE = [60, 120];
+  let crossed = [-Infinity, -Infinity], speed = 0;
+
+  function advance(ms: number) {
+    const steps = Math.round(ms / 0.01);
+    for (let s = 0; s < steps; s++) {
+      queue = queue.filter((q) => {
+        if (q.at > cable.t + 1e-9) return true;
+        pushNow(q.i, q.x);
+        return false;
+      });
+      const before = GAUGE.map((g) => cable.V[g]);
+      cable.step(0.01);
+      GAUGE.forEach((g, j) => {
+        if (before[j] < -20 && cable.V[g] >= -20) {
+          crossed[j] = cable.t;
+          const dt = Math.abs(crossed[1] - crossed[0]);
+          if (dt > 0.5 && dt < 15) speed = ((GAUGE[1] - GAUGE[0]) * cable.dx) / 100 / (dt / 1000);
+        }
+      });
+      const sw = sweep();
+      sinceSample += 0.01;
+      if (sw && sw.len < NSW && sinceSample >= DS - 1e-9) {
+        sinceSample = 0;
+        const k = sw.len++;
+        sw.V[k] = cable.V[E]; sw.m[k] = cable.m[E]; sw.h[k] = cable.h[E]; sw.n[k] = cable.n[E];
+      }
+      // ions through the magnified patch, one drawn per fixed charge
+      qNa += Math.max(0, -cable.ina[E]) * 0.01;
+      qK += Math.max(0, cable.ik[E]) * 0.01;
+    }
+  }
+
+  // ---------- the magnified patch ----------
+  const FRAME = { x0: 14, y0: 12, x1: 492, y1: 356 };
+  const OUT = { y0: 40, y1: 150 }, MY0 = 170, MY1 = 214, IN = { y0: 232, y1: 344 };
+  const PX0 = 26, PX1 = 480;
+  const SLOTS: ('na' | 'k' | 'pump')[] = ['na', 'k', 'na', 'pump', 'k', 'na', 'k'];
+  const slotX = (k: number) => 66 + k * 64;
+  const naX = SLOTS.map((s, k) => (s === 'na' ? slotX(k) : -1)).filter((x) => x > 0);
+  const kX = SLOTS.map((s, k) => (s === 'k' ? slotX(k) : -1)).filter((x) => x > 0);
+  const pumpX = slotX(SLOTS.indexOf('pump'));
+  const PIPE = { x: 236, y: 300 };
+
+  function rng(seed: number) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  /** Background ions: lots of Na⁺ outside and K⁺ inside, a few of each the other way. */
+  type Ion = { x: number; y: number; ph: number; w: number; na: boolean };
+  const IONS: Ion[] = (() => {
+    const r = rng(7), out: Ion[] = [];
+    const add = (n: number, na: boolean, y0: number, y1: number) => {
+      for (let i = 0; i < n; i++) out.push({ x: PX0 + 16 + r() * (PX1 - PX0 - 32), y: y0 + 8 + r() * (y1 - y0 - 16), ph: r() * 6.28, w: 0.5 + r(), na });
+    };
+    add(22, true, OUT.y0, OUT.y1);
+    add(4, false, OUT.y0, OUT.y1);
+    add(20, false, IN.y0 + 40, IN.y1 - 30);
+    add(4, true, IN.y0 + 40, IN.y1 - 30);
+    return out;
+  })();
+
+  function ion(x: number, y: number, na: boolean, a = 1) {
+    const g = glow(na ? P.na : P.k, 3.6, light), R = g.width / 4;
+    ctx.globalAlpha = a;
+    ctx.drawImage(g, x - R, y - R, 2 * R, 2 * R);
+    ctx.globalAlpha = 1;
+  }
+
+  /** The seconds clock of the picture: it runs only while the sim does. */
+  let wob = 0;
+  const QUANTUM = 30;
+  let qNa = 0, qK = 0;
+  let flowing: { na: boolean; ch: number; born: number; r: number }[] = [];
+
+  function patch() {
+    const V = cable.V[E], m = cable.m[E], h = cable.h[E], n = cable.n[E];
+    const m3 = m ** 3, n4 = n ** 4;
+
+    // the magnifier, tied to its spot on the axon
+    ctx.save();
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(FRAME.x0, FRAME.y0, FRAME.x1 - FRAME.x0, FRAME.y1 - FRAME.y0, 12);
+    ctx.stroke();
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(FRAME.x0 + 40, FRAME.y1); ctx.lineTo(cx(E) - 7, AX.y - AX.r - 4);
+    ctx.moveTo(FRAME.x1 - 40, FRAME.y1); ctx.lineTo(cx(E) + 7, AX.y - AX.r - 4);
+    ctx.stroke();
+    ctx.restore();
+
+    say(ctx, 'outside the cell', PX0 + 4, OUT.y0 - 12, { colour: ink(0.5), size: 12.5, weight: 600 });
+    say(ctx, 'inside the cell', PX0 + 4, IN.y1 - 6, { colour: ink(0.5), size: 12.5, weight: 600 });
+    for (const q of IONS) ion(q.x + 5 * Math.sin(wob * q.w + q.ph), q.y + 4 * Math.sin(wob * 0.8 * q.w + 2 * q.ph), q.na, 0.85);
+
+    membrane();
+    charges(V);
+    naX.forEach((x) => naChannel(x, m3, h));
+    kX.forEach((x) => kChannel(x, n4));
+    pump(pumpX);
+    flows();
+
+    const naState = m3 * h > 0.05 ? 'open' : h < 0.3 ? 'plugged' : 'closed';
+    const kState = n4 > 0.08 ? 'open' : 'closed';
+    say(ctx, 'Na⁺ gate', naX[0], MY1 + 56, { colour: P.na, size: 12, weight: 650, align: 'center' });
+    say(ctx, naState, naX[0], MY1 + 71, { colour: ink(0.6), size: 11.5, align: 'center' });
+    say(ctx, 'K⁺ gate', kX[2], MY1 + 56, { colour: P.k, size: 12, weight: 650, align: 'center' });
+    say(ctx, kState, kX[2], MY1 + 71, { colour: ink(0.6), size: 11.5, align: 'center' });
+    say(ctx, 'pump', pumpX, MY1 + 56, { colour: ink(0.55), size: 12, weight: 600, align: 'center' });
+
+    pipette(cable.pushing(E));
+    say(ctx, `${V < 0 ? '−' : '+'}${Math.abs(V).toFixed(0)} mV`, PX1 - 4, IN.y1 - 34, { colour: P.v, size: 28, weight: 700, align: 'right', halo: inv(0.8) });
+    say(ctx, 'inside minus outside', PX1 - 4, IN.y1 - 10, { colour: ink(0.5), size: 12, align: 'right' });
+  }
+
+  function membrane() {
+    // two rows of lipid heads with their tails meeting in the middle
+    const mid = (MY0 + MY1) / 2;
+    ctx.save();
+    ctx.strokeStyle = ink(0.13);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let x = PX0 + 4; x <= PX1; x += 9) {
+      for (const dx of [-1.5, 1.5]) {
+        ctx.moveTo(x + dx, MY0 + 9); ctx.lineTo(x + dx, mid - 2);
+        ctx.moveTo(x + dx, MY1 - 9); ctx.lineTo(x + dx, mid + 2);
+      }
+    }
+    ctx.stroke();
+    ctx.fillStyle = ink(0.24);
+    for (let x = PX0 + 4; x <= PX1; x += 9) {
+      ctx.beginPath(); ctx.arc(x, MY0 + 5, 4, 0, 6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, MY1 - 5, 4, 0, 6.283); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** The voltage as charge on the two faces: + outside and − inside at rest, flipped at the peak. */
+  function charges(V: number) {
+    const a = clamp01(Math.abs(V) / 55), up = V < 0 ? '+' : '−', down = V < 0 ? '−' : '+';
+    for (let k = 0; k <= SLOTS.length; k++) {
+      const x = k === 0 ? PX0 + 10 : k === SLOTS.length ? PX1 - 8 : (slotX(k - 1) + slotX(k)) / 2;
+      say(ctx, up, x, MY0 - 10, { colour: ink(0.85), size: 17, weight: 700, align: 'center', alpha: a });
+      say(ctx, down, x, MY1 + 11, { colour: ink(0.85), size: 17, weight: 700, align: 'center', alpha: a });
+    }
+  }
+
+  /** Two protein halves with a pore between them. */
+  function poreBody(x: number, c: string) {
+    ctx.save();
+    ctx.fillStyle = withAlpha(c, light ? 0.22 : 0.28);
+    ctx.strokeStyle = withAlpha(c, 0.85);
+    ctx.lineWidth = 1.4;
+    for (const bx of [x - 22, x + 7]) {
+      ctx.beginPath();
+      ctx.roundRect(bx, MY0 - 12, 15, MY1 - MY0 + 24, 7);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  /** A lid hinged at (hx, hy), shut across the pore at angle 0. */
+  function lid(hx: number, hy: number, ang: number, c: string) {
+    ctx.save();
+    ctx.strokeStyle = c;
+    ctx.lineWidth = 4.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + 15 * Math.cos(ang), hy + 15 * Math.sin(ang));
+    ctx.stroke();
+    ctx.restore();
+  }
+  function naChannel(x: number, m3: number, h: number) {
+    poreBody(x, P.na);
+    // activation lid at the outer mouth: open fraction m³
+    lid(x - 7, MY0 - 12, -1.8 * clamp01(m3 * 1.3), P.na);
+    // inactivation ball on a chain at the inner mouth: plugs the pore as h falls
+    const plug = clamp01((0.6 - h) / 0.42);
+    const bx = lerp(x + 22, x, plug), by = lerp(MY1 + 34, MY1 + 18, plug);
+    ctx.save();
+    ctx.strokeStyle = withAlpha(P.na, 0.8);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x + 14, MY1 + 12);
+    ctx.quadraticCurveTo(x + 26, MY1 + 22, bx, by);
+    ctx.stroke();
+    ctx.fillStyle = P.na;
+    ctx.beginPath();
+    ctx.arc(bx, by, 6.5, 0, 6.283);
+    ctx.fill();
+    ctx.strokeStyle = inv(0.8);
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.restore();
+  }
+  function kChannel(x: number, n4: number) {
+    poreBody(x, P.k);
+    // one lid at the inner mouth: open fraction n⁴, which tops out near 0.35
+    lid(x - 7, MY1 + 12, 1.8 * clamp01(n4 / 0.3), P.k);
+  }
+  /** The Na⁺/K⁺ pump: three Na⁺ out, then two K⁺ in, round and round. */
+  function pump(x: number) {
+    ctx.save();
+    ctx.fillStyle = ink(0.08);
+    ctx.strokeStyle = ink(0.35);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.roundRect(x - 20, MY0 - 14, 40, MY1 - MY0 + 28, 12);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    const c = (wob / 3.2) % 1;
+    for (let j = 0; j < 3; j++) {
+      const f = clamp01((c - j * 0.05) / 0.4);
+      if (f > 0 && f < 1) ion(x - 8 + j * 8, lerp(MY1 + 30, MY0 - 26, f), true, Math.sin(Math.PI * f));
+    }
+    for (let j = 0; j < 2; j++) {
+      const f = clamp01((c - 0.5 - j * 0.05) / 0.4);
+      if (f > 0 && f < 1) ion(x - 5 + j * 10, lerp(MY0 - 26, MY1 + 30, f), false, Math.sin(Math.PI * f));
+    }
+  }
+
+  /** Ions through the open gates of the patch: in from the crowd, through the pore, out the other side. */
+  const TRIP = 0.85;
+  function flows() {
+    while (qNa >= QUANTUM) { qNa -= QUANTUM; flowing.push({ na: true, ch: Math.floor(Math.random() * 3), born: wob, r: Math.random() }); }
+    while (qK >= QUANTUM) { qK -= QUANTUM; flowing.push({ na: false, ch: Math.floor(Math.random() * 3), born: wob, r: Math.random() }); }
+    flowing = flowing.filter((e) => wob - e.born < TRIP);
+    for (const e of flowing) {
+      const f = (wob - e.born) / TRIP, na = e.na;
+      const x = (na ? naX : kX)[e.ch], jx = (e.r - 0.5) * 50;
+      const yA = na ? MY0 - 44 : MY1 + 44, yB = na ? MY0 - 12 : MY1 + 12, yC = na ? MY1 + 12 : MY0 - 12, yD = na ? MY1 + 60 : MY0 - 60;
+      let px: number, py: number;
+      if (f < 0.3) { px = lerp(x + jx, x, f / 0.3); py = lerp(yA, yB, f / 0.3); }
+      else if (f < 0.6) { px = x; py = lerp(yB, yC, (f - 0.3) / 0.3); }
+      else { px = lerp(x, x - jx * 0.8, (f - 0.6) / 0.4); py = lerp(yC, yD, (f - 0.6) / 0.4); }
+      ion(px, py, na, f > 0.75 ? (1 - f) / 0.25 : 1);
+    }
+  }
+
+  function pipette(on: boolean) {
+    const { x, y } = PIPE;
+    ctx.save();
+    ctx.fillStyle = ink(0.05);
+    ctx.strokeStyle = on ? P.push : ink(0.35);
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(x + 22, FRAME.y1); ctx.lineTo(x - 2, y); ctx.lineTo(x + 3, y); ctx.lineTo(x + 40, FRAME.y1);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'electrode', x + 40, FRAME.y1 - 14, { colour: ink(0.5), size: 12 });
+    if (!on) return;
+    for (let j = 0; j < 7; j++) {
+      const a = j * 0.9 + wob * 3, r = 10 + ((wob * 40 + j * 9) % 34);
+      say(ctx, '+', x + r * Math.cos(a), y - 4 + r * Math.sin(a) * 0.7, { colour: P.push, size: 15, weight: 800, align: 'center', alpha: 1 - r / 46 });
+    }
+    say(ctx, 'push', x + 34, y + 4, { colour: P.push, size: 13, weight: 700 });
+  }
+
+  // ---------- the trace at the electrode ----------
+  const G = { x0: 580, x1: 968, vy0: 40, vy1: 230, sy0: 238, sy1: 254, gy0: 290, gy1: 350 };
+  const VMAX = 60, VMIN = -90;
+  const vy = (V: number) => G.vy0 + ((VMAX - V) / (VMAX - VMIN)) * (G.vy1 - G.vy0);
+  const gy = (f: number) => G.gy1 - f * (G.gy1 - G.gy0);
+  const tx = (s: number) => G.x0 + (s / SW) * (G.x1 - G.x0);
+
+  function plot() {
+    say(ctx, 'voltage at the electrode', G.x0, G.vy0 - 24, { colour: ink(0.8), size: 13.5, weight: 650 });
+    ctx.save();
+    ctx.strokeStyle = ink(0.14);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(G.x0 + 0.5, G.vy0 + 0.5, G.x1 - G.x0, G.vy1 - G.vy0);
+    for (const v of [40, 0, -40, -80]) {
+      say(ctx, `${v < 0 ? '−' : v > 0 ? '+' : ''}${Math.abs(v)}`, G.x0 - 6, vy(v), { colour: ink(0.45), size: 11, align: 'right' });
+      ctx.strokeStyle = ink(v === 0 ? 0.14 : 0.06);
+      ctx.beginPath(); ctx.moveTo(G.x0, vy(v)); ctx.lineTo(G.x1, vy(v)); ctx.stroke();
+    }
+    say(ctx, 'mV', G.x0 - 6, G.vy0 + 8, { colour: ink(0.45), size: 11, align: 'right' });
+    ctx.setLineDash([5, 5]);
+    const guide = (v: number, c: string) => { ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(G.x0, vy(v)); ctx.lineTo(G.x1, vy(v)); ctx.stroke(); };
+    guide(HH.ENa, withAlpha(P.na, 0.5));
+    guide(HH.EK, withAlpha(P.k, 0.5));
+    ctx.lineWidth = 1.4;
+    guide(THRESH_V, ink(0.55));
+    ctx.restore();
+    say(ctx, 'where Na⁺ would stop: +50', G.x1 - 6, vy(HH.ENa) + 10, { colour: P.na, size: 11.5, align: 'right' });
+    say(ctx, 'where K⁺ would stop: −77', G.x1 - 6, vy(HH.EK) + 10, { colour: P.k, size: 11.5, align: 'right' });
+    say(ctx, 'threshold ≈ −53', G.x1 - 6, vy(THRESH_V) - 9, { colour: ink(0.75), size: 11.5, weight: 600, align: 'right', halo: inv(0.8) });
+
+    // older sweeps stay as faint traces, for comparing spikes
+    sweeps.forEach((s, j) => trace(s, j === sweeps.length - 1));
+    if (!sweeps.length) say(ctx, 'press Stimulate, or click anywhere', (G.x0 + G.x1) / 2, vy(-20), { colour: ink(0.5), size: 13, align: 'center' });
+
+    // the push, as a strip under the trace
+    say(ctx, 'push', G.x0 - 6, (G.sy0 + G.sy1) / 2, { colour: P.push, size: 11.5, weight: 600, align: 'right' });
+    const s = sweep();
+    if (s) {
+      for (const p of s.pushes) {
+        const hgt = clamp01(p.x / 4) * (G.sy1 - G.sy0);
+        // a push elsewhere on the axon is only outlined: none of it reaches the electrode
+        if (p.away) {
+          ctx.strokeStyle = withAlpha(P.push, 0.7);
+          ctx.strokeRect(tx(p.t) + 0.5, G.sy1 - hgt + 0.5, tx(1) - tx(0) - 1, hgt - 1);
+        } else {
+          ctx.fillStyle = withAlpha(P.push, 0.9);
+          ctx.fillRect(tx(p.t), G.sy1 - hgt, tx(1) - tx(0), hgt);
+        }
+      }
+    }
+    ctx.save();
+    ctx.strokeStyle = ink(0.2);
+    ctx.beginPath(); ctx.moveTo(G.x0, G.sy1 + 0.5); ctx.lineTo(G.x1, G.sy1 + 0.5); ctx.stroke();
+    ctx.restore();
+
+    // the gates: m and h of Na⁺, n of K⁺
+    say(ctx, 'gate variables', G.x0, G.gy0 - 14, { colour: ink(0.7), size: 12.5, weight: 600 });
+    ctx.save();
+    ctx.strokeStyle = ink(0.14);
+    ctx.strokeRect(G.x0 + 0.5, G.gy0 + 0.5, G.x1 - G.x0, G.gy1 - G.gy0);
+    ctx.restore();
+    say(ctx, '1', G.x0 - 6, G.gy0 + 6, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, '0', G.x0 - 6, G.gy1 - 4, { colour: ink(0.45), size: 11, align: 'right' });
+    if (s && s.len > 1) {
+      const curve = (a: Float32Array, c: string, dash: number[]) => {
+        ctx.save();
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 2;
+        ctx.setLineDash(dash);
+        ctx.beginPath();
+        for (let i = 0; i < s.len; i++) i ? ctx.lineTo(tx(i * DS), gy(a[i])) : ctx.moveTo(tx(i * DS), gy(a[i]));
+        ctx.stroke();
+        ctx.restore();
+      };
+      curve(s.m, P.na, []);
+      curve(s.h, P.na, [5, 4]);
+      curve(s.n, P.k, []);
+      // names at the pen, kept apart when the curves run together
+      const k = s.len - 1, xe = Math.min(tx(k * DS) + 6, G.x1 - 30);
+      const labs = [
+        { t: 'm', y: gy(s.m[k]), c: P.na },
+        { t: 'h', y: gy(s.h[k]), c: P.na },
+        { t: 'n', y: gy(s.n[k]), c: P.k },
+      ].sort((a, b) => a.y - b.y);
+      for (let j = 1; j < 3; j++) labs[j].y = Math.max(labs[j].y, labs[j - 1].y + 12);
+      for (const l of labs) say(ctx, l.t, xe, Math.min(l.y, G.gy1 + 30), { colour: l.c, size: 12.5, weight: 700, halo: inv(0.85) });
+    }
+    for (let ms = 0; ms <= SW; ms += 5) say(ctx, `${ms}`, tx(ms), G.gy1 + 13, { colour: ink(0.45), size: 11, align: 'center' });
+    say(ctx, 'ms after the push', G.x1, G.gy1 + 28, { colour: ink(0.45), size: 11, align: 'right' });
+  }
+
+  function trace(s: Sweep, current: boolean) {
+    if (s.len < 2) return;
+    ctx.save();
+    ctx.globalAlpha = current ? 1 : 0.3;
+    ctx.strokeStyle = P.v;
+    ctx.lineWidth = 2.4;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < s.len; i++) i ? ctx.lineTo(tx(i * DS), vy(s.V[i])) : ctx.moveTo(tx(i * DS), vy(s.V[i]));
+    ctx.stroke();
+    ctx.restore();
+    if (current && s.len < NSW) {
+      ctx.fillStyle = P.v;
+      ctx.beginPath();
+      ctx.arc(tx((s.len - 1) * DS), vy(s.V[s.len - 1]), 4, 0, 6.283);
+      ctx.fill();
+    }
+    // the push strength by the top of the trace
+    const { i, v } = peakOf(s);
+    if (s.len > i + 4 && (v > 0 || !s.pushes[0].away)) {
+      const lab = `${fmtX(s.pushes[0].x)}×${s.pushes[0].away ? ' elsewhere' : ''}`;
+      if (v > 0) say(ctx, lab, tx(i * DS) + 8, vy(v) - 6 + (current ? 0 : 12), { colour: P.push, size: 12, weight: 700, alpha: current ? 1 : 0.6, halo: inv(0.85) });
+      else say(ctx, lab, tx(i * DS), vy(v) - 14, { colour: P.push, size: 12, weight: 700, align: 'center', alpha: current ? 1 : 0.6, halo: inv(0.85) });
+    }
+  }
+  function peakOf(s: Sweep) {
+    let i = 0;
+    for (let k = 1; k < s.len; k++) if (s.V[k] > s.V[i]) i = k;
+    return { i, v: s.V[i] };
+  }
+  /** Spikes in a sweep: upward crossings of 0 mV. */
+  function spikesIn(s: Sweep) {
+    let c = 0;
+    for (let k = 1; k < s.len; k++) if (s.V[k - 1] < 0 && s.V[k] >= 0) c++;
+    return c;
+  }
+  const fmtX = (x: number) => x.toFixed(2).replace(/\.?0+$/, '');
+
+  // ---------- the whole axon ----------
+  const AX = { x0: 40, x1: 960, y: 452, r: 22 };
+  const PROF = { y0: 536, y1: 616 };
+  const cx = (i: number) => AX.x0 + ((i + 0.5) / cable.N) * (AX.x1 - AX.x0);
+  let parts: { x: number; born: number; na: boolean; dx: number }[] = [];
+  let pokes: { i: number; born: number }[] = [];
+  const AX_QUANTUM = 900;
+
+  function axon(ms: number) {
+    const { N, V, m, h, n } = cable;
+    const seg = (AX.x1 - AX.x0) / N;
+    // ions crossing the wall where the gates are open, one drawn per fixed charge
+    if (ms > 0)
+      for (let i = 0; i < N; i++) {
+        const a = (Math.max(0, -cable.ina[i]) * ms) / AX_QUANTUM, b = (Math.max(0, cable.ik[i]) * ms) / AX_QUANTUM;
+        const x = AX.x0 + (i + Math.random()) * seg;
+        if (Math.random() < a) parts.push({ x, born: wob, na: true, dx: (Math.random() - 0.5) * 8 });
+        if (Math.random() < b) parts.push({ x, born: wob, na: false, dx: (Math.random() - 0.5) * 8 });
+      }
+
+    say(ctx, 'the whole axon: click it to push at that spot', AX.x1, AX.y - AX.r - 30, { colour: ink(0.75), size: 12.5, weight: 600, align: 'right' });
+    // the tube, coloured by the voltage in each patch
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(AX.x0, AX.y - AX.r, AX.x1 - AX.x0, 2 * AX.r, AX.r);
+    ctx.fillStyle = ink(0.05);
+    ctx.fill();
+    ctx.clip();
+    for (let i = 0; i < N; i++) {
+      const hot = clamp01((V[i] + 62) / 95), cold = clamp01((-66 - V[i]) / 10);
+      if (hot > 0.01) { ctx.fillStyle = withAlpha(P.na, 0.85 * hot); ctx.fillRect(AX.x0 + i * seg, AX.y - AX.r, seg + 0.6, 2 * AX.r); }
+      if (cold > 0.01) { ctx.fillStyle = withAlpha(P.k, 0.4 * cold); ctx.fillRect(AX.x0 + i * seg, AX.y - AX.r, seg + 0.6, 2 * AX.r); }
+    }
+    ctx.restore();
+    // gates along the two walls: Na⁺ on top, K⁺ underneath
+    for (let i = 0; i < N; i++) {
+      const x = AX.x0 + i * seg, fna = m[i] ** 3 * h[i], fk = n[i] ** 4;
+      if (fna > 0.004) { ctx.fillStyle = withAlpha(P.na, 0.9); ctx.fillRect(x + 0.6, AX.y - AX.r - 3, seg - 1.8, 3 + 11 * clamp01(fna / 0.25)); }
+      if (fk > 0.05) { ctx.fillStyle = withAlpha(P.k, 0.8); const hh = 3 + 11 * clamp01(fk / 0.33); ctx.fillRect(x + 0.6, AX.y + AX.r - hh + 3, seg - 1.8, hh); }
+    }
+    ctx.save();
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(AX.x0, AX.y - AX.r, AX.x1 - AX.x0, 2 * AX.r, AX.r);
+    ctx.stroke();
+    ctx.restore();
+    parts = parts.filter((q) => wob - q.born < 0.7);
+    for (const q of parts) {
+      const f = (wob - q.born) / 0.7;
+      const y = q.na ? lerp(AX.y - AX.r - 20, AX.y - AX.r + 10, f) : lerp(AX.y + AX.r - 10, AX.y + AX.r + 20, f);
+      ion(q.x + q.dx * f, y, q.na, f > 0.6 ? (1 - f) / 0.4 : 1);
+    }
+    // the electrode's spot
+    ctx.save();
+    ctx.fillStyle = cable.pushing(E) ? P.push : ink(0.5);
+    ctx.beginPath();
+    ctx.moveTo(cx(E), AX.y - 4); ctx.lineTo(cx(E) - 5, AX.y - AX.r - 6); ctx.lineTo(cx(E) + 5, AX.y - AX.r - 6);
+    ctx.fill();
+    ctx.restore();
+    // where a push went in
+    pokes = pokes.filter((q) => wob - q.born < 0.9);
+    for (const q of pokes) {
+      const x = cx(q.i), a = 1 - (wob - q.born) / 0.9;
+      say(ctx, '+', x, AX.y, { colour: P.push, size: 22, weight: 800, align: 'center', alpha: a, halo: inv(0.6 * a) });
+      ctx.save();
+      ctx.strokeStyle = withAlpha(P.push, a);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, AX.y, AX.r + 6 + 14 * (1 - a), 0, 6.283); ctx.stroke();
+      ctx.restore();
+    }
+    // a scale bar
+    const cm = (AX.x1 - AX.x0) / (N * cable.dx);
+    ctx.save();
+    ctx.strokeStyle = ink(0.45);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(AX.x1 - 2 * cm, AX.y + AX.r + 24); ctx.lineTo(AX.x1, AX.y + AX.r + 24); ctx.stroke();
+    ctx.restore();
+    say(ctx, '2 cm', AX.x1 - cm, AX.y + AX.r + 36, { colour: ink(0.5), size: 11.5, align: 'center' });
+    say(ctx, 'squid giant axon, 0.5 mm across', AX.x1 - 2 * cm - 14, AX.y + AX.r + 24, { colour: ink(0.5), size: 12, align: 'right' });
+
+    // the voltage along it, now
+    const py = (v: number) => PROF.y0 + ((50 - v) / 140) * (PROF.y1 - PROF.y0);
+    say(ctx, 'voltage along the axon, now', AX.x0, PROF.y0 - 14, { colour: ink(0.75), size: 12.5, weight: 600 });
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = ink(0.12);
+    ctx.beginPath(); ctx.moveTo(AX.x0, py(0)); ctx.lineTo(AX.x1, py(0)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = P.v;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) i ? ctx.lineTo(cx(i), py(V[i])) : ctx.moveTo(cx(i), py(V[i]));
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, '0 mV', AX.x1 + 4, py(0), { colour: ink(0.45), size: 10.5 });
+    say(ctx, 'rest', AX.x1 + 4, py(REST.V), { colour: ink(0.45), size: 10.5 });
+  }
+
+  // ---------- numbers ----------
+  const fmtV = (v: number) => `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(1)} mV`;
+  function panelText() {
+    const V = cable.V[E], m = cable.m[E], h = cable.h[E], n = cable.n[E];
+    setEq({
+      rule: [
+        'C\\,\\dfrac{dV}{dt} = ', [' I ', P.push], ' - ', ['g_{Na}\\, m^3 h\\, (V - E_{Na})', P.na], ' - ', ['g_K\\, n^4 (V - E_K)', P.k], ' - g_L (V - E_L)',
+      ],
+      live: [[`V = ${V.toFixed(1)}\\text{ mV}`, P.v], [`\\quad m = ${m.toFixed(2)}`, P.na], [`\\quad h = ${h.toFixed(2)}`, P.na], [`\\quad n = ${n.toFixed(2)}`, P.k]],
+    });
+    setRows({
+      'r-v': fmtV(V),
+      'r-na': (m ** 3 * h).toFixed(3),
+      'r-k': (n ** 4).toFixed(3),
+      'r-speed': speed ? `${speed.toFixed(1)} m/s` : 'no spike has passed yet',
+    });
+    const s = sweep();
+    if (!s) {
+      setResult({ value: '…', status: 'no push yet', note: 'At rest the inside sits 65 mV below the outside: K⁺ leaking out leaves negative charge behind.' });
+      return;
+    }
+    const { i, v } = peakOf(s), settled = s.len > i + 20 || s.len === NSW;
+    const fired = spikesIn(s), x = s.pushes.map((p) => `${fmtX(p.x)}×${p.away ? ' (elsewhere on the axon)' : ''}`).join(' then ');
+    if (!settled) {
+      setResult({ value: '…', status: `push of ${x} the threshold`, note: 'Watching the voltage at the electrode.' });
+      return;
+    }
+    const tooSoon = s.pushes.length > 1 && fired < s.pushes.length;
+    setResult({
+      value: v > 0 ? fmtV(v) : 'no spike',
+      status: `push of ${x} the threshold · ${tooSoon ? `${s.pushes.length} pushes, ${fired} spike${fired === 1 ? '' : 's'}` : v > 0 ? 'it fired' : `the voltage only reached ${fmtV(v)}`}`,
+      note: tooSoon
+        ? 'The second push came while the Na⁺ gates were still plugged (h low) and the K⁺ gates still open: the membrane is refractory and cannot fire again yet.'
+        : v > 0
+          ? 'The voltage heads for +50 mV, where Na⁺ would stop flowing in, and turns back before it gets there as the Na⁺ gates plug and the K⁺ gates open. Any push past the threshold gives this same peak.'
+          : 'Below the threshold the voltage rises only as far as the push takes it, then leaks back to rest, and the axon further along never notices.',
+      colour: v > 0 ? P.v : undefined,
+    });
+  }
+
+  // ---------- loop ----------
+  let tick = 0, last = 0;
+  const tp = transport({
+    onReset: () => {
+      cable.reset();
+      queue = []; sweeps = []; parts = []; pokes = []; flowing = [];
+      qNa = qK = 0; speed = 0; crossed = [-Infinity, -Infinity];
+      schedule(amp, 2);
+      tp.setRunning(true);
+    },
+  });
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    light = isLight(canvas);
+    P = pal();
+    const live = tp.running() ? dt : 0;
+    wob += live;
+    const busy = queue.some((q) => q.at - cable.t < 1.5) || cable.V.some((v) => v > -55);
+    rate += ((busy ? SLOW : FAST) - rate) * (1 - Math.exp(-live * (busy ? 12 : 1.5)));
+    if (live > 0) advance(live * rate);
+    ctx.clearRect(0, 0, W, H);
+    axon(live * rate);
+    patch();
+    plot();
+    if (tick++ % 6 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  const setAmp = slider('amp', (v) => (amp = v), (v) => `${fmtX(v)}× threshold`);
+  function stimulate(i = E, x = amp) {
+    schedule(x, 0, i);
+    if (!tp.running()) tp.setRunning(true);
+  }
+  el('stim').addEventListener('click', () => stimulate());
+  canvas.addEventListener('pointerdown', (e) => {
+    const b = canvas.getBoundingClientRect();
+    const x = ((e.clientX - b.left) / b.width) * W, y = ((e.clientY - b.top) / b.height) * H;
+    const onAxon = Math.abs(y - AX.y) < AX.r + 14 && x >= AX.x0 && x <= AX.x1;
+    stimulate(onAxon ? Math.max(1, Math.min(cable.N - 2, Math.floor(((x - AX.x0) / (AX.x1 - AX.x0)) * cable.N))) : E);
+  });
+  canvas.style.cursor = 'pointer';
+
+  // ---------- tries ----------
+  /** Wait for the membrane to settle from any earlier spike, then push. */
+  const fresh = (x: number, delay = 0) => {
+    amp = x;
+    setAmp(x);
+    queue = [];
+    const quiet = sweeps.length && cable.t - sweep()!.t0 < 20 ? 20 - (cable.t - sweep()!.t0) : 0;
+    schedule(x, quiet + delay);
+    if (!tp.running()) tp.setRunning(true);
+    return quiet;
+  };
+  tries({
+    below: () => fresh(0.8),
+    above: () => fresh(1.1),
+    twice: () => fresh(2.2),
+    refractory: () => {
+      const q = fresh(1.5);
+      schedule(1.5, q + 6);
+    },
+  });
+
+  schedule(amp, 2);
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #ap {
+    touch-action: none;
+  }
+</style>
