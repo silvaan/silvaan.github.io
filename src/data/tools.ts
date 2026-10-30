@@ -516,7 +516,7 @@ export const AREAS: Area[] = [
         slug: 'cosine-similarity',
         title: 'Embeddings & Cosine Similarity',
         description:
-          'Every word is an arrow and meaning is the direction it points. Rank the same words by cosine, by raw dot product and by straight-line distance, and watch the level sets turn from rays into rings.',
+          'A word is a list of numbers, which is an arrow, and words used alike point alike. In 3D, rank the words by angle, by dot product and by distance, watch length change the answer, then push every arrow onto the sphere and see the three agree.',
         href: '/simulations/deep-learning/cosine-similarity',
         status: 'live',
       },
