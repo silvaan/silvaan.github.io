@@ -720,6 +720,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/morphogen-gradients',
         status: 'live',
       },
+      {
+        slug: 'natural-selection',
+        title: 'Natural Selection',
+        description:
+          'Creatures that match their background are harder to spot, so they live to have young that look like them. Change the background and, a few generations later, the population has changed colour.',
+        href: '/simulations/biology/natural-selection',
+        status: 'live',
+      },
     ],
   },
   {

@@ -1,0 +1,648 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Natural Selection"
+  description="Creatures that match their background are harder to spot, so they live to have young that look like them. Change the background and, a few generations later, the population has changed colour."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ns"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Moths of many shades resting on tree bark. Each generation birds eat the moths that stand out most and the survivors have young that look like them; a histogram shows the shades in the population and a plot follows the mean shade against the shade of the bark."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'mean shade of the moths', color: MEAN },
+          { label: 'shade of the bark', color: BARK },
+          { label: 'eaten this generation', color: EATEN },
+        ]}
+        hint="Each generation: the birds hunt, then the survivors breed. Tick “You are the predator” to do the hunting yourself"
+      />
+      <Result label="Mean shade" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running />
+      <Slider id="bark" label="Bark shade" min={0} max={100} value={80} display="0.80" hint={['pale lichen', 'sooty']} />
+      <Slider id="eye" label="How sharp the birds' eyes are" min={0} max={30} value={15} hint={['blind', 'sharp']} />
+      <Slider id="mut" label="Mutation size m" min={0} max={0.1} step={0.005} value={0.04} display="0.040" hint={['none', 'large']} />
+      <Seg
+        id="pace"
+        label="Pace"
+        attr="p"
+        options={[
+          { value: '1.8', label: 'Slow' },
+          { value: '1', label: 'Normal' },
+          { value: '0.45', label: 'Fast' },
+        ]}
+        active="1"
+      />
+      <Checks items={[{ id: 'you', label: 'You are the predator' }]} />
+      <Readout
+        title="Numbers"
+        rows={[
+          { id: 'r-gen', label: 'generation' },
+          { id: 'r-mean', label: 'mean shade ± spread' },
+          { id: 'r-eaten', label: 'mean shade of the eaten' },
+          { id: 'r-surv', label: 'mean shade of the survivors' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The bark has just turned sooty and the moths are still pale. The birds take the palest first, the survivors are
+      a little darker than average, and so are their young: in fifteen or twenty generations the moths match the
+      bark. <Try id="sooty" />
+    </li>
+    <li>
+      Set mutation to zero and do the same. Selection can only keep shades that already exist, so the population
+      stalls at the darkest moth it started with, and its spread shrinks to nothing. <Try id="still" />
+    </li>
+    <li>
+      Make the birds blind. Who gets eaten is then luck, and the mean shade wanders at random instead of heading for
+      the bark: drift, not adaptation. <Try id="blind" />
+    </li>
+    <li>
+      Hunt yourself: each generation, click twelve moths you can spot. You find the ones that stand out, so the
+      eaten are paler than the survivors (open Numbers), and over the generations the moths adapt to your eyes.
+      <Try id="you" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, lerp, clamp01, ease } from '../../../lib/story';
+
+  // Peppered moths on bark. Each moth has one heritable number, its shade z
+  // (0 pale, 1 dark). Each generation the birds eat half of the moths, picking
+  // each next victim with odds e^{k|z - b|}, b the bark's shade; every survivor
+  // is equally likely to be a parent, and a young moth is its parent's shade
+  // plus a small random mutation.
+  const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
+  const N = 120, KILL = 0.5, USER_K = 12;
+
+  const canvas = document.getElementById('ns') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  const S = { b: 0.8, k: 15, m: 0.04, pace: 1, you: false };
+  const SCENE = { x: 24, y: 52, w: 560, h: 524 };
+  const HIST = { x: 652, y: 52, w: 324, h: 160 };
+  const HISTORY = { x: 652, y: 318, w: 324, h: 226 };
+
+  // ---------- colour ----------
+  const PALE = [238, 232, 216], DARK = [36, 33, 31];
+  const shadeRGB = (z: number) => PALE.map((p, i) => Math.round(lerp(p, DARK[i], clamp01(z))));
+  const shadeCSS = (z: number, a = 1) => {
+    const [r, g, b] = shadeRGB(z);
+    return `rgba(${r},${g},${b},${a})`;
+  };
+
+  // ---------- the bark: a fixed pattern of furrows, recoloured to any shade ----------
+  const RES = 2, TW = SCENE.w * RES, TH = SCENE.h * RES;
+  const G = 128, grid = new Float32Array(G * G).map(() => Math.random());
+  function noise(x: number, y: number) {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const at = (i: number, j: number) => grid[((j & (G - 1)) * G) + (i & (G - 1))];
+    return lerp(lerp(at(xi, yi), at(xi + 1, yi), u), lerp(at(xi, yi + 1), at(xi + 1, yi + 1), u), v);
+  }
+  const fbm = (x: number, y: number, oct: number) => {
+    let s = 0, a = 0.5, f = 1;
+    for (let o = 0; o < oct; o++) { s += a * noise(x * f + o * 17, y * f + o * 31); a *= 0.5; f *= 2; }
+    return s;
+  };
+  const pattern = new Float32Array(TW * TH);
+  {
+    let sum = 0, sq = 0;
+    for (let j = 0; j < TH; j++)
+      for (let i = 0; i < TW; i++) {
+        const u = i / RES, v = j / RES;
+        // long vertical furrows, a fine grain and some broad patches
+        const furrow = fbm(u * 0.045, v * 0.007, 4) - 0.5;
+        const crack = Math.max(0, 0.06 - Math.abs(fbm(u * 0.03 + 5, v * 0.005, 3) - 0.5)) * 6;
+        const grain = fbm(u * 0.3, v * 0.3, 2) - 0.5;
+        const patch = fbm(u * 0.012 + 9, v * 0.012 + 3, 3) - 0.5;
+        const n = furrow + 0.3 * grain + 0.6 * patch + crack;
+        pattern[j * TW + i] = n;
+        sum += n; sq += n * n;
+      }
+    const mean = sum / pattern.length, sd = Math.sqrt(sq / pattern.length - mean * mean);
+    for (let q = 0; q < pattern.length; q++) pattern[q] = (pattern[q] - mean) / sd;
+  }
+  const bark = document.createElement('canvas');
+  bark.width = TW;
+  bark.height = TH;
+  function paintBark() {
+    const g = bark.getContext('2d')!, im = g.createImageData(TW, TH), d = im.data;
+    // the spread of shades within the bark, so a moth of exactly the bark's shade can still be seen against parts of it
+    const amp = 0.075;
+    for (let q = 0; q < pattern.length; q++) {
+      const z = clamp01(S.b + amp * pattern[q]);
+      d[4 * q] = lerp(PALE[0], DARK[0], z) * 0.97;
+      d[4 * q + 1] = lerp(PALE[1], DARK[1], z) * 0.98;
+      d[4 * q + 2] = lerp(PALE[2], DARK[2], z) * 0.94;
+      d[4 * q + 3] = 255;
+    }
+    g.putImageData(im, 0, 0);
+  }
+
+  // ---------- the moths ----------
+  type Moth = {
+    x: number; y: number; rot: number; z: number;
+    fate: 'alive' | 'eaten' | 'old' | 'young';
+    /** when the current animation started, on the sim clock */
+    at: number;
+    /** where a young moth sets off from: its parent */
+    px: number; py: number;
+    /** when the birds will take it in this hunt, or -1 */
+    eatAt: number;
+  };
+  let moths: Moth[] = [];
+  const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  /** A resting place not too close to the others. */
+  function freeSpot(taken: { x: number; y: number }[]) {
+    let best = { x: 0, y: 0 }, bd = -1;
+    for (let t = 0; t < 14; t++) {
+      const p = { x: rnd(SCENE.x + 18, SCENE.x + SCENE.w - 18), y: rnd(SCENE.y + 18, SCENE.y + SCENE.h - 18) };
+      let d = Infinity;
+      for (const q of taken) d = Math.min(d, (q.x - p.x) ** 2 + (q.y - p.y) ** 2);
+      if (d > 26 * 26) return p;
+      if (d > bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+  const newMoth = (z: number, p: { x: number; y: number }): Moth => ({
+    x: p.x, y: p.y, rot: rnd(-0.5, 0.5), z: clamp01(z), fate: 'alive', at: -9, px: p.x, py: p.y, eatAt: -1,
+  });
+
+  /** One moth: two pairs of wings and a body, no outline, so a good match really hides. */
+  function drawMoth(x: number, y: number, rot: number, z: number, s: number, alpha: number) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.scale(s, s);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = shadeCSS(z);
+    ctx.beginPath();
+    for (const side of [-1, 1]) {
+      ctx.moveTo(0, -3);
+      ctx.lineTo(side * 11, -1.5);
+      ctx.lineTo(side * 9, 3.5);
+      ctx.lineTo(side * 5, 7);
+      ctx.lineTo(0, 4.5);
+    }
+    ctx.fill();
+    ctx.fillStyle = shadeCSS(Math.min(1, z + 0.12));
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 1.4, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ---------- generations ----------
+  type Phase = 'hunt' | 'wait' | 'breed' | 'rest';
+  let phase: Phase = 'rest', pt = 0, sc = 0, gen = 0;
+  const BASE = { hunt: 0.85, breed: 0.65, rest: 0.2 };
+  const dur = (p: 'hunt' | 'breed' | 'rest') => BASE[p] * S.pace;
+  let eatenZ: number[] = [], lastEaten: number[] = [], lastSurv: number[] = [];
+  let history: { gen: number; mean: number; sd: number; b: number }[] = [];
+  let misses: { x: number; y: number; at: number }[] = [];
+
+  const living = () => moths.filter((m) => m.fate === 'alive');
+  const stats = (zs: number[]) => {
+    if (!zs.length) return { mean: NaN, sd: 0 };
+    const mean = zs.reduce((a, b) => a + b, 0) / zs.length;
+    return { mean, sd: Math.sqrt(zs.reduce((a, z) => a + (z - mean) ** 2, 0) / zs.length) };
+  };
+
+  function eat(m: Moth) {
+    m.fate = 'eaten';
+    m.at = sc;
+    m.eatAt = -1;
+    eatenZ.push(m.z);
+  }
+  /** The birds choose their victims for this generation, one at a time, the most visible most likely. */
+  function startHunt() {
+    pt = 0;
+    if (S.you) { phase = 'wait'; return; }
+    phase = 'hunt';
+    const pool = living().filter((m) => m.eatAt < 0);
+    const K = Math.max(0, Math.round(KILL * N) - eatenZ.length);
+    const w = pool.map((m) => Math.exp(S.k * Math.abs(m.z - S.b)));
+    for (let n = 0; n < K && pool.length; n++) {
+      let total = 0;
+      for (const v of w) total += v;
+      let r = Math.random() * total, i = 0;
+      while (i < w.length - 1 && (r -= w[i]) > 0) i++;
+      pool[i].eatAt = rnd(0.05, 0.85) * dur('hunt');
+      pool.splice(i, 1);
+      w.splice(i, 1);
+    }
+  }
+  /** Every survivor is equally likely to be a parent; the young take its shade, give or take a mutation. */
+  function startBreed() {
+    phase = 'breed';
+    pt = 0;
+    const parents = living();
+    if (!parents.length) { reset(); return; }
+    lastEaten = eatenZ;
+    lastSurv = parents.map((m) => m.z);
+    eatenZ = [];
+    const young: Moth[] = [];
+    for (let n = 0; n < N; n++) {
+      const p = parents[Math.floor(Math.random() * parents.length)];
+      const c = newMoth(p.z + S.m * gauss(), freeSpot(young));
+      c.fate = 'young';
+      c.at = sc;
+      c.px = p.x;
+      c.py = p.y;
+      young.push(c);
+    }
+    for (const p of parents) { p.fate = 'old'; p.at = sc; }
+    moths = [...parents, ...young];
+  }
+  function endBreed() {
+    moths = moths.filter((m) => m.fate === 'young');
+    for (const m of moths) m.fate = 'alive';
+    gen++;
+    record();
+    phase = 'rest';
+    pt = 0;
+  }
+  function record() {
+    const { mean, sd } = stats(living().map((m) => m.z));
+    history.push({ gen, mean, sd, b: S.b });
+    if (history.length > 400) history.shift();
+  }
+
+  function advance(dt: number) {
+    pt += dt;
+    if (phase === 'hunt') {
+      for (const m of moths) if (m.fate === 'alive' && m.eatAt >= 0 && pt >= m.eatAt) eat(m);
+      if (pt >= dur('hunt')) startBreed();
+    } else if (phase === 'wait') {
+      if (eatenZ.length >= USER_K && pt >= 0) startBreed();
+    } else if (phase === 'breed') {
+      if (pt >= dur('breed')) endBreed();
+    } else if (pt >= dur('rest')) startHunt();
+  }
+
+  function reset(mean = 0.18) {
+    const spots: { x: number; y: number }[] = [];
+    moths = [];
+    for (let n = 0; n < N; n++) {
+      const p = freeSpot(spots);
+      spots.push(p);
+      moths.push(newMoth(mean + 0.08 * gauss(), p));
+    }
+    gen = 0;
+    history = [];
+    eatenZ = []; lastEaten = []; lastSurv = []; misses = [];
+    record();
+    phase = 'rest';
+    pt = 0;
+    panelText();
+    draw();
+  }
+
+  // ---------- drawing ----------
+  function drawScene() {
+    say(ctx, 'moths on the bark', SCENE.x, 22, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, `generation ${gen} · ${moths.filter((m) => m.fate === 'alive' || m.fate === 'young').length} moths`, SCENE.x + SCENE.w, 22, { colour: ink(0.5), size: 12, align: 'right' });
+    ctx.save();
+    roundRect(ctx, SCENE.x, SCENE.y, SCENE.w, SCENE.h, 10);
+    ctx.clip();
+    ctx.drawImage(bark, SCENE.x, SCENE.y, SCENE.w, SCENE.h);
+    const breedT = (m: Moth) => ease(clamp01((sc - m.at) / (dur('breed') * 0.9)));
+    for (const m of moths) {
+      if (m.fate === 'alive') drawMoth(m.x, m.y, m.rot, m.z, 1, 1);
+      else if (m.fate === 'old') drawMoth(m.x, m.y, m.rot, m.z, 1, 1 - breedT(m));
+      else if (m.fate === 'eaten') {
+        const e = clamp01((sc - m.at) / 0.35);
+        if (e >= 1) continue;
+        drawMoth(m.x, m.y, m.rot, m.z, 1 - 0.5 * e, 1 - e);
+        ctx.strokeStyle = withAlpha(EATEN, 0.95 * (1 - e * e));
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, lerp(24, 8, Math.min(1, e * 1.6)), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    for (const m of moths) {
+      if (m.fate !== 'young') continue;
+      const u = breedT(m);
+      drawMoth(lerp(m.px, m.x, u), lerp(m.py, m.y, u), m.rot, m.z, 0.45 + 0.55 * u, Math.min(1, 0.3 + u));
+    }
+    for (const q of misses) {
+      const e = clamp01((performance.now() - q.at) / 500);
+      ctx.strokeStyle = `rgba(255,255,255,${0.7 * (1 - e)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(q.x - 5, q.y - 5); ctx.lineTo(q.x + 5, q.y + 5);
+      ctx.moveTo(q.x + 5, q.y - 5); ctx.lineTo(q.x - 5, q.y + 5);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.strokeStyle = ink(0.15);
+    ctx.lineWidth = 1;
+    roundRect(ctx, SCENE.x, SCENE.y, SCENE.w, SCENE.h, 10);
+    ctx.stroke();
+
+    // what is happening, in a pill at the foot of the scene
+    const text =
+      phase === 'wait'
+        ? `Your turn: click the moths you can spot · ${USER_K - eatenZ.length} to go`
+        : phase === 'hunt'
+          ? `The birds hunt: ${eatenZ.length} of ${Math.round(KILL * N)} eaten`
+          : phase === 'breed'
+            ? `The ${moths.filter((m) => m.fate === 'old').length} survivors breed`
+            : `Generation ${gen}`;
+    ctx.font = '600 13px Inter, ui-sans-serif, system-ui, sans-serif';
+    const tw = ctx.measureText(text).width + 24, cx = SCENE.x + SCENE.w / 2, cy = SCENE.y + SCENE.h - 24;
+    ctx.fillStyle = 'rgba(14,15,19,0.78)';
+    roundRect(ctx, cx - tw / 2, cy - 13, tw, 26, 13);
+    ctx.fill();
+    say(ctx, text, cx, cy, { colour: phase === 'wait' || phase === 'hunt' ? '#fca5a5' : '#e8e9ec', size: 13, weight: 600, align: 'center' });
+  }
+
+  /** A strip of the shade scale, left to right or bottom to top. */
+  function shadeStrip(x: number, y: number, w: number, h: number, vertical: boolean) {
+    const g = vertical ? ctx.createLinearGradient(0, y + h, 0, y) : ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, shadeCSS(0));
+    g.addColorStop(1, shadeCSS(1));
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = ink(0.25);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  }
+
+  const BINS = 25;
+  function drawHist() {
+    say(ctx, 'shades in the population', HIST.x, 22, { colour: ink(0.85), size: 15, weight: 650 });
+    const alive = new Array(BINS).fill(0), gone = new Array(BINS).fill(0);
+    const bin = (z: number) => Math.min(BINS - 1, Math.floor(z * BINS));
+    for (const m of moths) {
+      if (m.fate === 'alive' || m.fate === 'young') alive[bin(m.z)]++;
+      else if (m.fate === 'eaten') gone[bin(m.z)]++;
+    }
+    const top = Math.max(30, Math.ceil(Math.max(...alive.map((a, i) => a + gone[i])) / 10) * 10);
+    const bw = HIST.w / BINS, base = HIST.y + HIST.h, sy = HIST.h / top;
+    for (let v = 0; v <= top; v += top > 40 ? 20 : 10) {
+      const y = base - v * sy;
+      ctx.strokeStyle = ink(0.06);
+      ctx.beginPath(); ctx.moveTo(HIST.x, y); ctx.lineTo(HIST.x + HIST.w, y); ctx.stroke();
+      say(ctx, String(v), HIST.x - 8, y, { colour: ink(0.45), size: 11, align: 'right' });
+    }
+    for (let i = 0; i < BINS; i++) {
+      const x = HIST.x + i * bw + 1, h1 = alive[i] * sy, h2 = gone[i] * sy;
+      if (h1 > 0) {
+        ctx.fillStyle = shadeCSS((i + 0.5) / BINS);
+        ctx.fillRect(x, base - h1, bw - 2, h1);
+        ctx.strokeStyle = ink(0.3);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, base - h1 + 0.5, bw - 3, h1 - 1);
+      }
+      if (h2 > 0) {
+        ctx.fillStyle = withAlpha(EATEN, 0.18);
+        ctx.fillRect(x, base - h1 - h2, bw - 2, h2);
+        ctx.strokeStyle = withAlpha(EATEN, 0.9);
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(x + 0.5, base - h1 - h2 + 0.5, bw - 3, h2 - 1);
+      }
+    }
+    ctx.strokeStyle = ink(0.3);
+    ctx.beginPath(); ctx.moveTo(HIST.x, base + 0.5); ctx.lineTo(HIST.x + HIST.w, base + 0.5); ctx.stroke();
+    shadeStrip(HIST.x, base + 5, HIST.w, 10, false);
+    say(ctx, 'pale', HIST.x, base + 28, { colour: ink(0.5), size: 11 });
+    say(ctx, 'dark', HIST.x + HIST.w, base + 28, { colour: ink(0.5), size: 11, align: 'right' });
+    // the bark's shade, and the mean of the living
+    const bx = HIST.x + S.b * HIST.w;
+    ctx.strokeStyle = BARK;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(bx, HIST.y - 4); ctx.lineTo(bx, base + 15); ctx.stroke();
+    ctx.setLineDash([]);
+    say(ctx, 'bark', bx, HIST.y - 12, { colour: BARK, size: 12, weight: 650, align: 'center', halo: inv(0.9) });
+    const zs = moths.filter((m) => m.fate === 'alive' || m.fate === 'young').map((m) => m.z);
+    const { mean } = stats(zs);
+    if (!isNaN(mean)) {
+      const mx = HIST.x + mean * HIST.w;
+      ctx.fillStyle = MEAN;
+      ctx.beginPath();
+      ctx.moveTo(mx, base + 16); ctx.lineTo(mx - 6, base + 26); ctx.lineTo(mx + 6, base + 26);
+      ctx.fill();
+      if (Math.abs(mx - bx) > 40) say(ctx, 'mean', mx, base + 36, { colour: MEAN, size: 11, weight: 650, align: 'center' });
+    }
+  }
+
+  function drawHistory() {
+    say(ctx, 'mean shade, generation by generation', HISTORY.x, HISTORY.y - 32, { colour: ink(0.85), size: 15, weight: 650 });
+    const span = 40, g1 = Math.max(span, gen), g0 = g1 - span;
+    const gx = (g: number) => HISTORY.x + ((g - g0) / span) * HISTORY.w;
+    const zy = (z: number) => HISTORY.y + HISTORY.h - z * HISTORY.h;
+    shadeStrip(HISTORY.x - 14, HISTORY.y, 8, HISTORY.h, true);
+    for (const v of [0, 0.5, 1]) {
+      ctx.strokeStyle = ink(0.06);
+      ctx.beginPath(); ctx.moveTo(HISTORY.x, zy(v)); ctx.lineTo(HISTORY.x + HISTORY.w, zy(v)); ctx.stroke();
+      say(ctx, v.toFixed(1), HISTORY.x - 20, zy(v), { colour: ink(0.45), size: 11, align: 'right' });
+    }
+    ctx.strokeStyle = ink(0.25);
+    ctx.beginPath();
+    ctx.moveTo(HISTORY.x, HISTORY.y); ctx.lineTo(HISTORY.x, HISTORY.y + HISTORY.h); ctx.lineTo(HISTORY.x + HISTORY.w, HISTORY.y + HISTORY.h);
+    ctx.stroke();
+    for (let g = Math.ceil(g0 / 10) * 10; g <= g1; g += 10)
+      say(ctx, String(g), gx(g), HISTORY.y + HISTORY.h + 12, { colour: ink(0.45), size: 11, align: 'center' });
+    say(ctx, 'generation', HISTORY.x + HISTORY.w, HISTORY.y + HISTORY.h + 28, { colour: ink(0.45), size: 11, align: 'right' });
+
+    const shown = history.filter((h) => h.gen >= g0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(HISTORY.x, HISTORY.y - 4, HISTORY.w + 4, HISTORY.h + 8);
+    ctx.clip();
+    // spread band
+    if (shown.length > 1) {
+      ctx.fillStyle = withAlpha(MEAN, 0.16);
+      ctx.beginPath();
+      shown.forEach((h, i) => (i ? ctx.lineTo(gx(h.gen), zy(h.mean + h.sd)) : ctx.moveTo(gx(h.gen), zy(h.mean + h.sd))));
+      for (let i = shown.length - 1; i >= 0; i--) ctx.lineTo(gx(shown[i].gen), zy(shown[i].mean - shown[i].sd));
+      ctx.fill();
+    }
+    // the bark, as steps, carried to now
+    ctx.strokeStyle = BARK;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    shown.forEach((h, i) => {
+      if (i) ctx.lineTo(gx(h.gen), zy(shown[i - 1].b));
+      i ? ctx.lineTo(gx(h.gen), zy(h.b)) : ctx.moveTo(gx(h.gen), zy(h.b));
+    });
+    const last = shown[shown.length - 1];
+    if (last) { ctx.lineTo(gx(gen + 0.6), zy(last.b)); ctx.lineTo(gx(gen + 0.6), zy(S.b)); ctx.lineTo(gx(gen + 1), zy(S.b)); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = MEAN;
+    ctx.lineWidth = 2.4;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    shown.forEach((h, i) => (i ? ctx.lineTo(gx(h.gen), zy(h.mean)) : ctx.moveTo(gx(h.gen), zy(h.mean))));
+    ctx.stroke();
+    if (last) {
+      ctx.fillStyle = MEAN;
+      ctx.beginPath(); ctx.arc(gx(last.gen), zy(last.mean), 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawScene();
+    drawHist();
+    drawHistory();
+  }
+
+  // ---------- numbers ----------
+  function panelText() {
+    const { mean, sd } = stats(living().map((m) => m.z));
+    const now = isNaN(mean) ? stats(moths.filter((m) => m.fate === 'young').map((m) => m.z)) : { mean, sd };
+    const gap = now.mean - S.b;
+    const e = stats(lastEaten), s = stats(lastSurv);
+    setRows({
+      'r-gen': String(gen),
+      'r-mean': `${now.mean.toFixed(2)} ± ${now.sd.toFixed(2)}`,
+      'r-eaten': lastEaten.length ? `${e.mean.toFixed(2)} (${lastEaten.length} moths)` : 'none yet',
+      'r-surv': lastSurv.length ? `${s.mean.toFixed(2)} (${lastSurv.length} moths)` : 'none yet',
+    });
+    let note: string;
+    if (S.k === 0 && !S.you) note = 'The birds are blind, so who survives is luck: the mean shade drifts at random and ignores the bark.';
+    else if (Math.abs(gap) < 0.08) note = 'The moths match the bark. The birds now take the odd ones out on both sides, which holds the colour where it is.';
+    else if (now.sd < 0.012) note = 'There is almost no variation left to choose from. Without mutation, selection cannot go any further.';
+    else note = `The moths still stand out, so the ${gap < 0 ? 'palest' : 'darkest'} are eaten first and each generation is born a little ${gap < 0 ? 'darker' : 'paler'}.`;
+    setResult({
+      value: now.mean.toFixed(2),
+      status: `bark ${S.b.toFixed(2)} · gap ${Math.abs(gap).toFixed(2)} · generation ${gen}`,
+      note,
+      colour: MEAN,
+    });
+    setEq({
+      rule: [
+        ['P(\\text{eaten}) \\propto e^{\\,k\\,|z - b|}', '#f87171'],
+        '\\qquad',
+        ['z_{\\text{young}} = z_{\\text{parent}} + \\varepsilon,\\quad \\varepsilon \\sim \\mathcal{N}(0,\\, m^2)', MEAN],
+      ],
+      live: [
+        `k = ${S.k}`,
+        '\\quad',
+        [`b = ${S.b.toFixed(2)}`, BARK],
+        '\\quad',
+        `m = ${S.m.toFixed(3)}`,
+        '\\quad',
+        [`\\bar z = ${now.mean.toFixed(2)}`, MEAN],
+      ],
+    });
+  }
+
+  // ---------- the loop ----------
+  let lastTime = performance.now();
+  function loop(now: number) {
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+    // the sim clock also runs while waiting for the reader to hunt, so their pecks animate
+    if (tp.running() || phase === 'wait') sc += dt;
+    if (tp.running()) advance(dt);
+    misses = misses.filter((q) => now - q.at < 500);
+    panelText();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input: the reader as the predator ----------
+  const toScene = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const inScene = (p: { x: number; y: number }) =>
+    p.x > SCENE.x && p.x < SCENE.x + SCENE.w && p.y > SCENE.y && p.y < SCENE.y + SCENE.h;
+  canvas.addEventListener('pointermove', (e) => {
+    canvas.style.cursor = S.you && inScene(toScene(e)) ? 'crosshair' : '';
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = toScene(e);
+    if (!S.you || phase !== 'wait' || eatenZ.length >= USER_K || !inScene(p)) return;
+    let best: Moth | null = null, bd = 16 * 16;
+    for (const m of living()) {
+      const d = (m.x - p.x) ** 2 + (m.y - p.y) ** 2;
+      if (d < bd) { bd = d; best = m; }
+    }
+    if (best) eat(best);
+    else misses.push({ ...p, at: performance.now() });
+    // a short pause after the last catch, so it can be seen
+    if (eatenZ.length >= USER_K) pt = -0.4;
+  });
+
+  // ---------- panel ----------
+  const tp = transport({ onReset: () => reset() });
+  const setBark = slider('bark', (v) => { S.b = v / 100; paintBark(); }, (v) => (v / 100).toFixed(2));
+  const setEye = slider('eye', (v) => { S.k = v; });
+  const setMut = slider('mut', (v) => { S.m = v; }, (v) => v.toFixed(3));
+  segmented('pace', (v) => { S.pace = +v; });
+  const setYou = check('you', (on) => {
+    S.you = on;
+    if (!on && phase === 'wait') startHunt();
+  });
+  /** Pale moths, a chosen bark, running. */
+  function setup(o: { b?: number; k?: number; m?: number; you?: boolean } = {}) {
+    S.b = o.b ?? 0.8; S.k = o.k ?? 15; S.m = o.m ?? 0.04; S.you = o.you ?? false;
+    setBark(S.b * 100); setEye(S.k); setMut(S.m); setYou(S.you);
+    paintBark();
+    reset();
+    tp.setRunning(true);
+  }
+  tries({
+    sooty: () => setup(),
+    still: () => setup({ m: 0 }),
+    blind: () => setup({ k: 0, b: 0.5 }),
+    you: () => setup({ you: true }),
+  });
+  new MutationObserver(() => draw()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  paintBark();
+  reset();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #ns {
+    touch-action: none;
+  }
+</style>
