@@ -680,6 +680,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/enzyme-kinetics',
         status: 'live',
       },
+      {
+        slug: 'diffusion-osmosis',
+        title: 'Diffusion and Osmosis',
+        description:
+          'Molecules wander at random and the crowd spreads out with no force pushing it. Put a membrane in the way that lets water through but not sugar, and the water moves towards the sugar.',
+        href: '/simulations/biology/diffusion-osmosis',
+        status: 'live',
+      },
     ],
   },
   {

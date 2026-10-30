@@ -1,0 +1,891 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Diffusion and Osmosis"
+  description="Molecules wander at random and the crowd spreads out with no force pushing it. Put a membrane in the way that lets water through but not sugar, and the water moves towards the sugar."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="osm"
+          width="1000"
+          height="560"
+          role="img"
+          aria-label="A tank of molecules doing random walks: a crowd spreading out evenly, sugar held back by a membrane with small pores, or two chambers whose water levels separate as water crosses towards the sugar, with the crossing rates and the pressure balance beside it."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'molecules we follow', color: '#f472b6' },
+          { label: 'water', color: '#60a5fa' },
+          { label: 'sugar', color: '#f59e0b' },
+        ]}
+        hint="Molecules are not to scale, and far more crowded than in real sugar water"
+      />
+      <Result label="Crowd in the left half" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="setup"
+        label="Setup"
+        attr="s"
+        active="diffuse"
+        options={[
+          { value: 'walk', label: 'Random walk' },
+          { value: 'diffuse', label: 'Diffusion' },
+          { value: 'membrane', label: 'Membrane' },
+          { value: 'osmosis', label: 'Osmosis' },
+        ]}
+      />
+      <Transport running />
+      <Slider id="cl" label="Sugar on the left" min={0} max={0.3} step={0.05} value={0.2} display="0.20 mol/L" />
+      <Slider id="cr" label="Sugar on the right" min={0} max={0.3} step={0.05} value={0} display="0.00 mol/L" />
+      <Checks items={[{ id: 'follow', label: 'Follow one molecule' }]} />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-t', label: 'time since reset' },
+          { id: 'r-n', label: 'molecules' },
+          { id: 'r-x', label: 'water crossings (→ / ←)' },
+          { id: 'r-dh', label: 'level difference' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      A single molecule has no plan, so getting twice as far takes four times as long. That is why diffusion is fast
+      across a cell and hopeless across a room. <Try id="walk" label="Follow a random walk" />
+    </li>
+    <li>
+      Put sugar on one side only and water crosses towards it: more water molecules reach the pores from the side
+      with more free water. The level climbs until the taller column pushes back as hard. <Try id="one" />
+    </li>
+    <li>
+      Put the same sugar on both sides and the levels stay put. Water keeps crossing the whole time, but as much
+      each way. <Try id="equal" />
+    </li>
+    <li>
+      Pure water against syrup: the bigger the difference in sugar, the higher the column it holds up. In real sugar
+      water at 25 °C, every 0.1 mol/L of difference is worth about 25 m of water. <Try id="syrup" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed } from '../../../lib/draw';
+  import { segmented, slider, check, transport, result, readout, tries, el } from '../../../lib/panel';
+  import { say, withAlpha, isLight, beat } from '../../../lib/story';
+
+  // Molecules as random walkers in a tank. Each one keeps a little of its
+  // velocity from one moment to the next and gets a random kick (Langevin
+  // motion), so on long times it spreads like a random walk. Osmosis is the
+  // same walkers with one extra rule: the liquid cannot be squeezed, so a
+  // chamber's level is its number of molecules, and water crossing into the
+  // taller column is turned back more often (the pressure of the extra height).
+  const PICK = '#f472b6', WATER = '#60a5fa', SUGAR = '#f59e0b';
+  type Setup = 'walk' | 'diffuse' | 'membrane' | 'osmosis';
+
+  const canvas = document.getElementById('osm') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+
+  // ---------- geometry ----------
+  const XM = 320, CW = 250, X0 = XM - CW, X1 = XM + CW;
+  const TOP = 60, FLOOR = 530, BOX_BOT = 390;
+  const STRIP = { top: 456, bot: 530 };
+  const RX = 628;
+  /** Pores: of every PORE px of membrane, OPEN px are holes. */
+  const PORE = 10, OPEN = 5;
+  const NB = 20;
+
+  // ---------- random numbers ----------
+  let spare = NaN;
+  function gauss() {
+    if (!Number.isNaN(spare)) { const s = spare; spare = NaN; return s; }
+    let u = 0, v = 0, r = 0;
+    do { u = 2 * Math.random() - 1; v = 2 * Math.random() - 1; r = u * u + v * v; } while (r >= 1 || r === 0);
+    const f = Math.sqrt((-2 * Math.log(r)) / r);
+    spare = v * f;
+    return u * f;
+  }
+
+  // ---------- walkers ----------
+  type Swarm = { n: number; x: Float32Array; y: Float32Array; vx: Float32Array; vy: Float32Array; side: Uint8Array; vr: number; tau: number };
+  function swarm(n: number, vr: number, tau: number): Swarm {
+    const s = { n, x: new Float32Array(n), y: new Float32Array(n), vx: new Float32Array(n), vy: new Float32Array(n), side: new Uint8Array(n), vr, tau };
+    for (let i = 0; i < n; i++) { s.vx[i] = gauss() * vr; s.vy[i] = gauss() * vr; }
+    return s;
+  }
+  /** Diffusion constant of a swarm, in px²/s: velocity variance times memory. */
+  const Dof = (s: Swarm) => s.vr * s.vr * s.tau;
+  /** One Langevin step of the velocities: keep part, add a kick. */
+  function kick(s: Swarm, dt: number) {
+    const a = Math.exp(-dt / s.tau), b = Math.sqrt(1 - a * a) * s.vr;
+    for (let i = 0; i < s.n; i++) {
+      s.vx[i] = a * s.vx[i] + b * gauss();
+      s.vy[i] = a * s.vy[i] + b * gauss();
+    }
+  }
+  const isPore = (depth: number) => ((depth % PORE) + PORE) % PORE < OPEN;
+  function fill(s: Swarm, x0: number, x1: number, y0: number, y1: number, from = 0, to = s.n) {
+    for (let i = from; i < to; i++) {
+      s.x[i] = x0 + Math.random() * (x1 - x0);
+      s.y[i] = y0 + Math.random() * (y1 - y0);
+    }
+  }
+
+  /** A closed box, optionally split by the membrane. Water passes its pores, a blocked swarm never does. */
+  function stepBox(s: Swarm, dt: number, bot: number, wall: boolean, blocked: boolean, tally?: number[]) {
+    kick(s, dt);
+    for (let i = 0; i < s.n; i++) {
+      let x = s.x[i] + s.vx[i] * dt, y = s.y[i] + s.vy[i] * dt;
+      if (x < X0) { x = 2 * X0 - x; s.vx[i] = -s.vx[i]; }
+      if (x > X1) { x = 2 * X1 - x; s.vx[i] = -s.vx[i]; }
+      if (y < TOP) { y = 2 * TOP - y; s.vy[i] = -s.vy[i]; }
+      if (y > bot) { y = 2 * bot - y; s.vy[i] = -s.vy[i]; }
+      if (wall && (s.x[i] < XM) !== (x < XM)) {
+        if (!blocked && isPore(bot - y)) tally && tally[x >= XM ? 0 : 1]++;
+        else { x = 2 * XM - x; s.vx[i] = -s.vx[i]; }
+      }
+      s.x[i] = x;
+      s.y[i] = y;
+    }
+  }
+
+  // ---------- osmosis ----------
+  // Each chamber in its own coordinates: x from the outer wall (0) to the
+  // membrane (CW), y the height above the floor. Crossing mirrors x.
+  const RHO = 0.014, LAM = 0.0015, START = 200, PER_MOL = 700;
+  const O = {
+    water: swarm(0, 600, 0.04), sugar: swarm(0, 300, 0.04),
+    n: [0, 0], h: [START, START], hs: [START, START], rate: [0, 0],
+  };
+  const level = (side: number) => O.n[side] / (CW * RHO);
+  function initOsmosis() {
+    const total = Math.round(CW * START * RHO);
+    const ns = [Math.round(S.cl * PER_MOL), Math.round(S.cr * PER_MOL)];
+    O.water = swarm(2 * total - ns[0] - ns[1], 600, 0.04);
+    O.sugar = swarm(ns[0] + ns[1], 300, 0.04);
+    let w = 0, s = 0;
+    for (const side of [0, 1]) {
+      for (let k = 0; k < total; k++) {
+        const sug = k < ns[side], sw = sug ? O.sugar : O.water, i = sug ? s++ : w++;
+        sw.side[i] = side;
+        sw.x[i] = Math.random() * CW;
+        sw.y[i] = Math.random() * START;
+      }
+    }
+    O.n = [total, total];
+    O.h = [START, START];
+    O.hs = [START, START];
+    O.rate = [0, 0];
+  }
+  function stepOsmo(dt: number, tally: number[]) {
+    for (const sw of [O.water, O.sugar]) {
+      const water = sw === O.water;
+      kick(sw, dt);
+      for (let i = 0; i < sw.n; i++) {
+        let x = sw.x[i] + sw.vx[i] * dt, y = sw.y[i] + sw.vy[i] * dt;
+        let side = sw.side[i];
+        if (y < 0) { y = -y; sw.vy[i] = -sw.vy[i]; }
+        if (y > O.h[side]) { y = Math.max(0, 2 * O.h[side] - y); sw.vy[i] = -sw.vy[i]; }
+        if (x < 0) { x = -x; sw.vx[i] = -sw.vx[i]; }
+        if (x > CW) {
+          const to = 1 - side;
+          // a pore below both surfaces, and the pressure of a taller column turning water back
+          const open = water && isPore(y) && y < Math.min(O.h[0], O.h[1]);
+          if (open && Math.random() < Math.exp(-LAM * Math.max(0, O.h[to] - O.h[side]))) {
+            O.n[side]--; O.n[to]++;
+            O.h[side] = level(side); O.h[to] = level(to);
+            sw.side[i] = side = to;
+            tally[to]++;
+          }
+          x = 2 * CW - x;
+          sw.vx[i] = -sw.vx[i];
+        }
+        sw.x[i] = x;
+        sw.y[i] = y;
+      }
+    }
+  }
+  /** Fraction of the molecules in a chamber that are water. */
+  function freeWater(side: number) {
+    let s = 0;
+    for (let i = 0; i < O.sugar.n; i++) if (O.sugar.side[i] === side) s++;
+    return O.n[side] ? 1 - s / O.n[side] : 1;
+  }
+  const gx = (side: number, x: number) => (side === 0 ? XM - CW + x : XM + CW - x);
+
+  // ---------- state ----------
+  const S = { setup: 'diffuse' as Setup, cl: 0.2, cr: 0, follow: false };
+  let simT = 0;
+  let bg = swarm(0, 350, 0.04);
+  let crowd = swarm(0, 330, 0.04);
+  /** Random walk: free (unfolded) positions, for the squared distance. */
+  let fx = new Float32Array(0), fy = new Float32Array(0);
+  const ENS = 300, C0 = { x: XM, y: (TOP + FLOOR) / 2 };
+  let walk = swarm(0, 100, 0.06);
+  /** The followed molecule's path, and in the random walk its squared distance and the crowd's average. */
+  const trail: number[] = [];
+  const one: number[] = [];
+  const msdLog: [number, number][] = [];
+  const hist = new Float32Array(NB), histS = new Float32Array(NB);
+  const crossings = [0, 0];
+
+  /** Sugar molecules for one side of the membrane box, from the slider's concentration. */
+  const boxSugar = (c: number) => Math.round(c * 1300);
+  let sugarSplit = 0;
+
+  function reset() {
+    simT = 0;
+    trail.length = 0;
+    one.length = 0;
+    msdLog.length = 0;
+    hist.fill(0);
+    histS.fill(0);
+    crossings[0] = crossings[1] = 0;
+    if (S.setup === 'walk') {
+      bg = swarm(Math.round(CW * 2 * (FLOOR - TOP) * 0.004), 350, 0.04);
+      fill(bg, X0, X1, TOP, FLOOR);
+      walk = swarm(ENS, 100, 0.06);
+      fx = new Float32Array(ENS).fill(C0.x);
+      fy = new Float32Array(ENS).fill(C0.y);
+    } else if (S.setup === 'diffuse' || S.setup === 'membrane') {
+      bg = swarm(Math.round(CW * 2 * (BOX_BOT - TOP) * 0.005), 350, 0.04);
+      fill(bg, X0, X1, TOP, BOX_BOT);
+      if (S.setup === 'diffuse') {
+        crowd = swarm(500, 330, 0.04);
+        fill(crowd, X0, X0 + 75, TOP, BOX_BOT);
+      } else {
+        // each side's sugar starts against its outer wall and spreads towards the membrane
+        const a = boxSugar(S.cl), b = boxSugar(S.cr);
+        crowd = swarm(a + b, 220, 0.04);
+        fill(crowd, X0, X0 + 75, TOP, BOX_BOT, 0, a);
+        fill(crowd, X1 - 75, X1, TOP, BOX_BOT, a, a + b);
+        sugarSplit = a;
+      }
+    } else initOsmosis();
+    panelFor();
+  }
+
+  /** The one molecule the trail follows, in stage coordinates. */
+  function followed(): [number, number] | null {
+    if (S.setup === 'walk') return [fold(fx[0], X0, X1), fold(fy[0], TOP, FLOOR)];
+    if (S.setup === 'diffuse') return crowd.n ? [crowd.x[0], crowd.y[0]] : null;
+    if (S.setup === 'membrane') return bg.n ? [bg.x[0], bg.y[0]] : null;
+    const w = O.water;
+    return w.n ? [gx(w.side[0], w.x[0]), FLOOR - Math.min(w.y[0], O.hs[w.side[0]])] : null;
+  }
+
+  /** Advance the simulation by dt seconds, in small steps. */
+  function advance(dt: number) {
+    const n = Math.max(1, Math.ceil(dt / (1 / 60) - 1e-6)), h = dt / n;
+    for (let k = 0; k < n; k++) {
+      simT += h;
+      if (S.setup === 'walk') {
+        stepBox(bg, h, FLOOR, false, false);
+        // unfolded walk: the walls are mirrors, so folding the free path gives the bounced one
+        kick(walk, h);
+        for (let i = 0; i < walk.n; i++) { fx[i] += walk.vx[i] * h; fy[i] += walk.vy[i] * h; }
+        one.push((fx[0] - C0.x) ** 2 + (fy[0] - C0.y) ** 2);
+        msdLog.push([simT, msd()]);
+      } else if (S.setup !== 'osmosis') {
+        const wall = S.setup === 'membrane';
+        stepBox(bg, h, BOX_BOT, wall, false, crossings);
+        stepBox(crowd, h, BOX_BOT, wall, true);
+        histogram(h);
+      } else {
+        const tally = [0, 0];
+        stepOsmo(h, tally);
+        crossings[0] += tally[1];
+        crossings[1] += tally[0];
+        const a = 1 - Math.exp(-h / 1.2), b = 1 - Math.exp(-h / 0.3);
+        for (const s of [0, 1]) {
+          O.rate[s] += (tally[s] / h - O.rate[s]) * a;
+          O.hs[s] += (O.h[s] - O.hs[s]) * b;
+        }
+      }
+      const p = followed();
+      if (p) {
+        trail.push(p[0], p[1]);
+        // a long path for the random walk, the last few seconds otherwise
+        const keep = S.setup === 'walk' ? 2400 : 480;
+        if (trail.length > keep) trail.splice(0, trail.length - keep);
+      }
+    }
+  }
+  const fold = (u: number, lo: number, hi: number) => {
+    const L = hi - lo;
+    let v = (u - lo) % (2 * L);
+    if (v < 0) v += 2 * L;
+    return lo + (v > L ? 2 * L - v : v);
+  };
+  function msd() {
+    let s = 0;
+    for (let i = 0; i < ENS; i++) s += (fx[i] - C0.x) ** 2 + (fy[i] - C0.y) ** 2;
+    return s / ENS;
+  }
+  function msdAt(t: number) {
+    for (const [tt, m] of msdLog) if (tt >= t) return m;
+    return msdLog.length ? msdLog[msdLog.length - 1][1] : 0;
+  }
+  function histogram(h: number) {
+    if (!crowd.n) return;
+    hist.fill(0);
+    const bw = (2 * CW) / NB;
+    for (let i = 0; i < crowd.n; i++) hist[Math.min(NB - 1, Math.max(0, Math.floor((crowd.x[i] - X0) / bw)))]++;
+    const a = simT < 0.05 ? 1 : 1 - Math.exp(-h / 0.35);
+    for (let b = 0; b < NB; b++) histS[b] += ((hist[b] * NB) / crowd.n - histS[b]) * a;
+  }
+
+  // ---------- drawing helpers ----------
+  function dots(s: Swarm, colour: string, size: number, a: number, at: (i: number) => [number, number], only?: (i: number) => boolean) {
+    if (a <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = colour;
+    ctx.beginPath();
+    for (let i = 0; i < s.n; i++) {
+      if (only && !only(i)) continue;
+      const [x, y] = at(i);
+      if (size <= 2.5) ctx.rect(x - size / 2, y - size / 2, size, size);
+      else { ctx.moveTo(x + size / 2, y); ctx.arc(x, y, size / 2, 0, Math.PI * 2); }
+    }
+    ctx.fill();
+    ctx.restore();
+  }
+  const plain = (s: Swarm) => (i: number): [number, number] => [s.x[i], s.y[i]];
+  function boxTank(bot: number, wall: boolean) {
+    ctx.fillStyle = withAlpha(WATER, light ? 0.07 : 0.06);
+    ctx.fillRect(X0, TOP, 2 * CW, bot - TOP);
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(X0 - 1, TOP - 1, 2 * CW + 2, bot - TOP + 2);
+    if (wall) membrane(TOP, bot);
+  }
+  /** The membrane: short walls with holes between them, measured up from the bottom. */
+  function membrane(y0: number, bot: number) {
+    ctx.save();
+    ctx.strokeStyle = ink(0.7);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let d = OPEN; d < bot - y0; d += PORE) {
+      ctx.moveTo(XM, bot - d);
+      ctx.lineTo(XM, Math.max(y0, bot - d - (PORE - OPEN)));
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  function arrowTo(x0: number, y0: number, x1: number, y1: number, colour: string, w = 2) {
+    const a = Math.atan2(y1 - y0, x1 - x0), L = Math.hypot(x1 - x0, y1 - y0);
+    if (L < 2) return;
+    const hd = Math.min(8 + w, L * 0.6);
+    ctx.save();
+    ctx.strokeStyle = colour;
+    ctx.fillStyle = colour;
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1 - Math.cos(a) * hd * 0.8, y1 - Math.sin(a) * hd * 0.8);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - hd * Math.cos(a - 0.45), y1 - hd * Math.sin(a - 0.45));
+    ctx.lineTo(x1 - hd * Math.cos(a + 0.45), y1 - hd * Math.sin(a + 0.45));
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  const label = (txt: string, x: number, y: number, o: Parameters<typeof say>[4] = {}) => say(ctx, txt, x, y, { colour: ink(0.6), size: 13, ...o });
+  /** Lines of prose in the right-hand column. */
+  function prose(lines: string[], y: number, c = ink(0.65)) {
+    lines.forEach((l) => { label(l, RX, y, { colour: c, size: 13 }); y += 20; });
+    return y;
+  }
+  function trailPath(colour: string, width: number) {
+    if (trail.length < 4) return;
+    ctx.save();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let k = 0; k < trail.length; k += 2) k ? ctx.lineTo(trail[k], trail[k + 1]) : ctx.moveTo(trail[k], trail[k + 1]);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function marker(x: number, y: number, colour: string) {
+    ctx.fillStyle = colour;
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.95);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  /** The optional followed molecule, in any setup but the random walk. */
+  function followDraw() {
+    if (!S.follow || S.setup === 'walk') return;
+    trailPath(ink(0.55), 1.3);
+    const p = followed();
+    if (p) marker(p[0], p[1], S.setup === 'diffuse' ? PICK : WATER);
+  }
+
+  // ---------- random walk ----------
+  function walkStage() {
+    boxTank(FLOOR, false);
+    dots(bg, WATER, 2, light ? 0.35 : 0.3, plain(bg));
+    const crowdA = beat(simT, 5, 6.5);
+    const at = (i: number): [number, number] => [fold(fx[i], X0, X1), fold(fy[i], TOP, FLOOR)];
+    dots(walk, PICK, 4, 0.8 * crowdA, at, (i) => i > 0);
+    ctx.strokeStyle = ink(0.6);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(C0.x - 6, C0.y - 6); ctx.lineTo(C0.x + 6, C0.y + 6);
+    ctx.moveTo(C0.x + 6, C0.y - 6); ctx.lineTo(C0.x - 6, C0.y + 6);
+    ctx.stroke();
+    trailPath(withAlpha(PICK, 0.75 - 0.35 * crowdA), 1.4);
+    const [px, py] = at(0);
+    marker(px, py, PICK);
+    // how far, typically: a circle of the rms distance
+    const r = Math.sqrt(msd());
+    if (crowdA > 0) {
+      ctx.save();
+      ctx.globalAlpha = crowdA;
+      ctx.strokeStyle = ink(0.55);
+      ctx.setLineDash([5, 5]);
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(C0.x, C0.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+      label('typical distance', C0.x, Math.min(FLOOR - 12, C0.y + r + 12), { align: 'center', alpha: crowdA, halo: inv(0.85), colour: ink(0.75) });
+    }
+    label('start', C0.x + 10, C0.y + 14, { size: 12, colour: ink(0.55), halo: inv(0.8), alpha: 1 - crowdA });
+    label('one molecule, then the 300 that started with it', X0, TOP - 16, { size: 12.5, colour: ink(0.6) });
+    msdChart(crowdA);
+  }
+  function msdChart(crowdA: number) {
+    const x0 = RX + 34, y0 = 300, w = 300, h = 210, T = Math.max(14, simT), D = Dof(walk), top = 4 * D * T * 1.1;
+    label('squared distance from the start', RX, 70, { colour: ink(0.85), size: 14, weight: 650 });
+    ctx.strokeStyle = ink(0.3);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0 - h); ctx.lineTo(x0, y0); ctx.lineTo(x0 + w, y0);
+    ctx.stroke();
+    label('time →', x0 + w, y0 + 14, { size: 12, align: 'right', colour: ink(0.5) });
+    const X = (t: number) => x0 + (t / T) * w, Y = (m: number) => y0 - (m / top) * h;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0 - h - 4, w + 4, h + 4);
+    ctx.clip();
+    // what a straight path would do, matched at 1 s
+    ctx.strokeStyle = ink(0.4);
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let t = 0; t <= 4; t += 0.05) { const m = 4 * D * t * t; t ? ctx.lineTo(X(t), Y(m)) : ctx.moveTo(X(t), Y(m)); }
+    ctx.stroke();
+    // the law
+    ctx.strokeStyle = withAlpha(PICK, 0.5);
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(T), Y(4 * D * T));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // the one we follow, its own squared distance: noisy
+    ctx.strokeStyle = withAlpha(PICK, 0.45);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let j = 0, k = 0; j < one.length; j += 3, k++) {
+      const t = msdLog[j][0], m = one[j];
+      k ? ctx.lineTo(X(t), Y(m)) : ctx.moveTo(X(t), Y(m));
+    }
+    ctx.stroke();
+    // the average over the crowd
+    if (crowdA > 0) {
+      ctx.globalAlpha = crowdA;
+      ctx.strokeStyle = PICK;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      for (let j = 0, k = 0; j < msdLog.length; j += 2, k++) {
+        const [t, m] = msdLog[j];
+        k ? ctx.lineTo(X(t), Y(m)) : ctx.moveTo(X(t), Y(m));
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+    label('a straight path: ∝ t²', X(T / 6) + 8, Y(top * 0.93), { size: 12, colour: ink(0.55) });
+    label('∝ t', X(T) - 4, Y(4 * D * T) - 14, { size: 13, weight: 650, colour: PICK, align: 'right' });
+    let y = y0 + 40;
+    const row = (txt: string, c: string, a = 1) => { label(txt, RX, y, { colour: c, size: 13, alpha: a }); y += 21; };
+    row('thin: the one molecule, alone', withAlpha(PICK, 0.85));
+    row(`thick: average of all ${ENS}, which started together`, PICK, crowdA);
+    if (simT >= 4) {
+      const r1 = Math.sqrt(msdAt(simT / 4)), r2 = Math.sqrt(msd());
+      y += 6;
+      label(`after ${fixed(simT / 4, 1)} s: ${Math.round(r1)} px   after ${fixed(simT, 1)} s: ${Math.round(r2)} px`, RX, y, { colour: ink(0.85), size: 14, weight: 600, alpha: crowdA });
+      label('four times the time, only twice the distance', RX, y + 22, { colour: ink(0.6), size: 13, alpha: crowdA });
+    }
+  }
+
+  // ---------- diffusion and the membrane ----------
+  function crowdStage() {
+    const sugar = S.setup === 'membrane', colour = sugar ? SUGAR : PICK;
+    boxTank(BOX_BOT, sugar);
+    dots(bg, WATER, 2, light ? 0.5 : 0.4, plain(bg));
+    dots(crowd, colour, sugar ? 8 : 4.5, 0.95, plain(crowd));
+    followDraw();
+    label('a closed tank', X1, TOP - 16, { size: 12, align: 'right', colour: ink(0.5) });
+    if (sugar) {
+      label('membrane', XM, TOP - 16, { size: 12.5, align: 'center', colour: ink(0.75), weight: 600 });
+      label('sugar is too big for the pores', X0, TOP - 16, { size: 12, colour: SUGAR, weight: 600 });
+    } else label('a crowd released on the left', X0, TOP - 16, { size: 12, colour: PICK, weight: 600 });
+    profile(colour, sugar);
+    let y = 70;
+    if (!sugar) {
+      let left = 0;
+      for (let i = 0; i < crowd.n; i++) if (crowd.x[i] < XM) left++;
+      const f = left / crowd.n, bw = 320, by = 100;
+      label('share of the crowd in the left half', RX, y, { colour: ink(0.85), size: 14, weight: 650 });
+      ctx.fillStyle = ink(0.08);
+      ctx.fillRect(RX, by, bw, 26);
+      ctx.fillStyle = withAlpha(colour, 0.85);
+      ctx.fillRect(RX, by, bw * f, 26);
+      ctx.strokeStyle = ink(0.5);
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(RX + bw / 2, by - 6); ctx.lineTo(RX + bw / 2, by + 32);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(`${Math.round(100 * f)}%`, RX + 8, by + 13, { colour: light ? '#fff' : '#0d0e12', weight: 700, size: 14, alpha: f > 0.14 ? 1 : 0 });
+      label('half', RX + bw / 2, by + 44, { size: 12, align: 'center', colour: ink(0.5) });
+      y = by + 84;
+      label('No force acts on the crowd.', RX, y, { colour: ink(0.85), size: 14, weight: 600 });
+      prose([
+        'Every molecule is as likely to step left',
+        'as right. Where there are more of them,',
+        'more leave than arrive, so the flow runs',
+        'from crowded to empty, at a rate set by',
+        'how steep the slope is: Fick’s law.',
+      ], y + 24);
+      return;
+    }
+    label('crossings through the membrane', RX, y, { colour: ink(0.85), size: 14, weight: 650 });
+    y += 28;
+    const row = (txt: string, c: string) => { label(txt, RX, y, { colour: c, size: 14, weight: 650 }); y += 23; };
+    row('sugar: 0, ever', SUGAR);
+    row(`water, left to right: ${crossings[0]}`, WATER);
+    row(`water, right to left: ${crossings[1]}`, WATER);
+    y += 14;
+    prose([
+      'Each half’s sugar spreads until the',
+      'membrane stops it, so the sugar stays',
+      'uneven. The water crosses freely. The',
+      'tank is closed, so water cannot pile up',
+      'on one side: about as much crosses',
+      'each way. Osmosis opens the top.',
+    ], y);
+  }
+  function profile(colour: string, wall: boolean) {
+    const bw = (2 * CW) / NB, hgt = STRIP.bot - STRIP.top, vmax = 5;
+    label(wall ? 'how much sugar, across the tank' : 'how crowded, across the tank', X0, STRIP.top - 12, { size: 12, colour: ink(0.6) });
+    for (let b = 0; b < NB; b++) {
+      const v = Math.min(vmax, histS[b]), hh = (v / vmax) * hgt;
+      ctx.fillStyle = withAlpha(colour, 0.6);
+      ctx.fillRect(X0 + b * bw + 1, STRIP.bot - hh, bw - 2, hh);
+    }
+    ctx.strokeStyle = ink(0.35);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(X0, STRIP.bot + 0.5); ctx.lineTo(X1, STRIP.bot + 0.5);
+    ctx.stroke();
+    const even = STRIP.bot - (1 / vmax) * hgt;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(X0, even); ctx.lineTo(X1, even);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    label('even', X1 + 6, even, { size: 11.5, colour: ink(0.5) });
+    if (wall) {
+      ctx.strokeStyle = ink(0.6);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(XM, STRIP.top - 2); ctx.lineTo(XM, STRIP.bot);
+      ctx.stroke();
+    }
+    // the net flow at a few places: minus the slope (Fick's law)
+    const ay = BOX_BOT + 24;
+    label('net flow', X1 + 6, ay, { size: 11.5, colour: ink(0.5) });
+    for (let b = 2; b < NB; b += 2) {
+      const x = X0 + b * bw;
+      if (wall && b === NB / 2) continue;
+      const grad = (histS[b] + histS[Math.min(NB - 1, b + 1)] - histS[b - 1] - histS[Math.max(0, b - 2)]) / 2;
+      const len = Math.max(-36, Math.min(36, -grad * 50));
+      if (Math.abs(len) > 3) arrowTo(x - len / 2, ay, x + len / 2, ay, ink(0.65), 1.8);
+      else {
+        ctx.fillStyle = ink(0.35);
+        ctx.fillRect(x - 1, ay - 1, 2, 2);
+      }
+    }
+  }
+
+  // ---------- osmosis ----------
+  function osmoStage() {
+    const hs = O.hs;
+    for (const s of [0, 1]) {
+      ctx.fillStyle = withAlpha(WATER, light ? 0.1 : 0.08);
+      ctx.fillRect(s === 0 ? X0 : XM, FLOOR - hs[s], CW, hs[s]);
+      ctx.strokeStyle = withAlpha(WATER, 0.9);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(s === 0 ? X0 : XM, FLOOR - hs[s]); ctx.lineTo(s === 0 ? XM : X1, FLOOR - hs[s]);
+      ctx.stroke();
+    }
+    // two chambers, open at the top
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(X0 - 1, TOP); ctx.lineTo(X0 - 1, FLOOR + 1); ctx.lineTo(X1 + 1, FLOOR + 1); ctx.lineTo(X1 + 1, TOP);
+    ctx.stroke();
+    membrane(TOP, FLOOR);
+    const at = (sw: Swarm) => (i: number): [number, number] => [gx(sw.side[i], sw.x[i]), FLOOR - Math.min(sw.y[i], hs[sw.side[i]])];
+    dots(O.water, WATER, 2.2, light ? 0.7 : 0.6, at(O.water));
+    dots(O.sugar, SUGAR, 8, 0.95, at(O.sugar));
+    followDraw();
+    label('open at the top', X1, TOP - 16, { size: 12, align: 'right', colour: ink(0.5) });
+    label('membrane', XM, TOP - 16, { size: 12.5, align: 'center', colour: ink(0.75), weight: 600 });
+    const was = 1 - beat(simT, 4, 6);
+    if (was > 0) {
+      ctx.save();
+      ctx.globalAlpha = was;
+      ctx.strokeStyle = ink(0.45);
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(X0, FLOOR - START); ctx.lineTo(X1, FLOOR - START);
+      ctx.stroke();
+      ctx.restore();
+      say(ctx, 'starting level', X0 + 8, FLOOR - START - 12, { size: 11.5, colour: ink(0.6), alpha: was, halo: inv(0.8) });
+    }
+    // the gap between the levels
+    const hi = hs[0] > hs[1] ? 0 : 1, dh = hs[hi] - hs[1 - hi];
+    if (dh > 8) {
+      const xa = XM + (hi === 0 ? -16 : 16);
+      arrowTo(xa, FLOOR - hs[1 - hi], xa, FLOOR - hs[hi], ink(0.75), 1.6);
+      arrowTo(xa, FLOOR - hs[hi], xa, FLOOR - hs[1 - hi], ink(0.75), 1.6);
+      say(ctx, `Δh ${Math.round(dh)}`, xa + (hi === 0 ? -8 : 8), FLOOR - (hs[0] + hs[1]) / 2, { size: 13, weight: 650, colour: ink(0.85), align: hi === 0 ? 'right' : 'left', halo: inv(0.85) });
+    }
+    osmoColumn();
+  }
+  function osmoColumn() {
+    const phi = [freeWater(0), freeWater(1)];
+    let y = 70;
+    label('water crossing the membrane, per second', RX, y, { colour: ink(0.85), size: 14, weight: 650 });
+    y += 30;
+    const maxR = Math.max(150, O.rate[0], O.rate[1]), bw = 250;
+    for (const to of [0, 1]) {
+      const w = Math.max(10, (O.rate[to] / maxR) * bw), more = O.rate[to] >= O.rate[1 - to];
+      const c = more ? WATER : withAlpha(WATER, 0.5);
+      if (to === 1) arrowTo(RX, y, RX + w, y, c, 7);
+      else arrowTo(RX + w, y, RX, y, c, 7);
+      label(`${Math.round(O.rate[to])}`, RX + w + 10, y, { colour: ink(0.85), size: 14, weight: 650 });
+      label(to === 1 ? 'into the right chamber' : 'into the left chamber', RX, y + 17, { size: 12, colour: ink(0.55) });
+      y += 46;
+    }
+    y += 2;
+    label('free water: the share of molecules that are water', RX, y, { colour: ink(0.85), size: 13, weight: 600 });
+    y += 22;
+    label(`left ${Math.round(phi[0] * 100)}%`, RX, y, { colour: ink(0.75), size: 14, weight: 600 });
+    label(`right ${Math.round(phi[1] * 100)}%`, RX + 130, y, { colour: ink(0.75), size: 14, weight: 600 });
+    y += 36;
+    // the pull of the sugar against the weight of the extra height
+    const pull = Math.abs(Math.log(phi[0] / phi[1])) / LAM, push = Math.abs(O.hs[0] - O.hs[1]);
+    label('what decides the level', RX, y, { colour: ink(0.85), size: 13, weight: 600 });
+    y += 24;
+    const scale = 130 / Math.max(120, pull, push);
+    const bar = (v: number, c: string, txt: string) => {
+      ctx.fillStyle = c;
+      ctx.fillRect(RX, y - 7, Math.max(2, v * scale), 14);
+      label(txt, RX + 140, y, { size: 12.5, colour: ink(0.7) });
+      y += 24;
+    };
+    bar(pull, withAlpha(SUGAR, 0.85), 'less free water draws it in');
+    bar(push, withAlpha(WATER, 0.85), 'the extra height pushes back');
+    y += 16;
+    prose([
+      'Any water molecule that reaches a pore can',
+      'cross, so more arrive from the side with more',
+      'free water. Crossing into the taller column',
+      'means pushing against its weight, so the',
+      'level stops where the two balance.',
+    ], y);
+  }
+  /** Van 't Hoff at 25 °C: Π = Δc·R·T, and the column of water it holds up. */
+  function realWorld() {
+    const dc = Math.abs(S.cl - S.cr), P = dc * 0.083145 * 298.15;
+    return { bar: P, m: (P * 1e5) / (1000 * 9.81) };
+  }
+
+  // ---------- numbers ----------
+  const EQ: Record<Setup, (string | [string, string])[]> = {
+    walk: [['\\langle r^2 \\rangle = 4Dt', PICK], '\\quad\\Rightarrow\\quad', 'r_{\\text{typical}} = \\sqrt{4Dt} \\propto \\sqrt{t}'],
+    diffuse: [['J = -D\\,\\tfrac{\\partial c}{\\partial x}', PICK], '\\qquad', '\\tfrac{\\partial c}{\\partial t} = D\\,\\tfrac{\\partial^2 c}{\\partial x^2}'],
+    membrane: [['J_{\\text{sugar}} = 0', SUGAR], '\\text{ through the membrane}\\qquad', ['J_{\\text{water}} \\neq 0', WATER]],
+    osmosis: [['\\Pi = \\Delta c\\, R T', SUGAR], '\\, = \\,', ['\\rho g\\, \\Delta h', WATER]],
+  };
+  function panelText() {
+    const t = fixed(simT, 1);
+    let live: (string | [string, string])[] = [];
+    if (S.setup === 'walk') {
+      const m = msd(), d = simT > 0.5 ? m / (4 * simT) : 0;
+      live = [`t = ${t}\\text{ s}`, `\\quad \\langle r^2 \\rangle = ${Math.round(m)}\\text{ px}^2`, [`\\quad \\langle r^2\\rangle / 4t = ${Math.round(d)}\\text{ px}^2\\!/\\text{s}`, PICK]];
+      const r1 = Math.sqrt(msdAt(simT / 4)), r2 = Math.sqrt(m);
+      setResult({
+        value: simT >= 4 && r1 > 0 ? `×${fixed(r2 / r1, 2)}` : '…',
+        status: simT >= 4 ? `typical distance ${Math.round(r1)} px after ${fixed(simT / 4, 1)} s, ${Math.round(r2)} px after ${t} s` : 'waiting for 4 seconds of wandering',
+        note: 'How much farther the crowd gets in four times the time. A molecule moving in a straight line would get four times as far; a random walker only twice.',
+        colour: PICK,
+      });
+    } else if (S.setup === 'diffuse') {
+      let left = 0;
+      for (let i = 0; i < crowd.n; i++) if (crowd.x[i] < XM) left++;
+      const share = Math.round((100 * left) / crowd.n);
+      live = [`t = ${t}\\text{ s}`, [`\\quad \\text{left half: } ${share}\\%`, PICK]];
+      setResult({
+        value: `${share}%`,
+        status: 'started at 100%, evens out at 50%',
+        note: 'Nothing pushes the crowd to the right. The flow is just the difference between molecules wandering out of a crowded place and the fewer wandering back in.',
+        colour: PICK,
+      });
+    } else if (S.setup === 'membrane') {
+      let left = 0;
+      for (let i = 0; i < sugarSplit; i++) if (crowd.x[i] < XM) left++;
+      live = [`t = ${t}\\text{ s}`, [`\\quad \\text{sugar crossings: 0}`, SUGAR], [`\\quad \\text{water: } ${crossings[0]} \\rightarrow,\\ ${crossings[1]} \\leftarrow`, WATER]];
+      setResult({
+        value: '0',
+        status: `water crossed ${crossings[0]} times to the right and ${crossings[1]} to the left`,
+        note: 'The pores are wide enough for water and too narrow for sugar. The sugar stays where it started; in a closed tank the water flows about equally both ways.',
+        colour: SUGAR,
+      });
+    } else {
+      const { bar, m } = realWorld();
+      const dh = O.hs[0] - O.hs[1], net = O.rate[0] - O.rate[1];
+      const side = Math.abs(dh) < 1 ? '' : dh > 0 ? ', left higher' : ', right higher';
+      live = [`\\Pi = ${fixed(Math.abs(S.cl - S.cr), 2)} \\times 0.0831 \\times 298 = ${fixed(bar, 2)}\\text{ bar}`, [`\\quad \\Delta h = ${fixed(m, 1)}\\text{ m of water}`, WATER]];
+      setResult({
+        value: `Δh ${Math.round(Math.abs(dh))} px${side}`,
+        status: `net water flow ${Math.round(Math.abs(net))}/s into the ${net >= 0 ? 'left' : 'right'} · ${O.water.n} water, ${O.sugar.n} sugar`,
+        note:
+          S.cl === S.cr
+            ? 'The same sugar on both sides: no pull either way, and the levels only jiggle.'
+            : `For real sugar water at 25 °C, ${fixed(Math.abs(S.cl - S.cr), 2)} mol/L of difference gives an osmotic pressure of ${fixed(bar, 1)} bar, enough to hold up ${m < 10 ? fixed(m, 1) : Math.round(m)} m of water. The stage is far more crowded than real sugar water, so its numbers are not to scale.`,
+        colour: WATER,
+      });
+    }
+    setEq({ rule: EQ[S.setup], live });
+    const nMol = S.setup === 'walk' ? bg.n + walk.n : S.setup === 'osmosis' ? O.water.n + O.sugar.n : bg.n + crowd.n;
+    setRows({
+      'r-t': `${t} s`,
+      'r-n': String(nMol),
+      'r-x': S.setup === 'membrane' || S.setup === 'osmosis' ? `${crossings[0]} / ${crossings[1]}` : '–',
+      'r-dh': S.setup === 'osmosis' ? `${Math.round(Math.abs(O.hs[0] - O.hs[1]))} px` : '–',
+    });
+  }
+
+  // ---------- panel ----------
+  const RESULT = { walk: 'Four times the time', diffuse: 'Crowd in the left half', membrane: 'Sugar through the membrane', osmosis: 'Level difference' };
+  /** Controls that do nothing in a setup are dimmed, never hidden. */
+  function panelFor() {
+    el('result-label').textContent = RESULT[S.setup];
+    const sugarOn = S.setup === 'membrane' || S.setup === 'osmosis';
+    for (const [id, on] of [['cl', sugarOn], ['cr', sugarOn], ['follow', S.setup !== 'walk']] as [string, boolean][]) {
+      const c = el(id).closest('.control') as HTMLElement;
+      c.style.opacity = on ? '' : '0.45';
+      c.style.transition = 'opacity 0.3s';
+    }
+  }
+  const tp = transport({ onReset: () => { reset(); tp.setRunning(true); } });
+  const seg = segmented('setup', (v) => { S.setup = v as Setup; reset(); });
+  const molFmt = (v: number) => `${v.toFixed(2)} mol/L`;
+  function setSugar(cl: number, cr: number) {
+    S.cl = cl;
+    S.cr = cr;
+    setCl(cl);
+    setCr(cr);
+    // the sugar only matters with a membrane: moving it elsewhere goes to osmosis
+    if (S.setup !== 'membrane' && S.setup !== 'osmosis') { S.setup = 'osmosis'; seg.select('osmosis'); }
+    reset();
+  }
+  const setCl = slider('cl', (v) => setSugar(v, S.cr), molFmt);
+  const setCr = slider('cr', (v) => setSugar(S.cl, v), molFmt);
+  const setFollow = check('follow', (on) => { S.follow = on; trail.length = 0; });
+
+  const show = (setup: Setup, cl = S.cl, cr = S.cr, follow = S.follow) => {
+    S.setup = setup;
+    seg.select(setup);
+    S.follow = follow;
+    setFollow(follow);
+    S.cl = cl;
+    S.cr = cr;
+    setCl(cl);
+    setCr(cr);
+    reset();
+    tp.setRunning(true);
+  };
+  tries({
+    walk: () => show('walk'),
+    one: () => show('osmosis', 0, 0.2),
+    equal: () => show('osmosis', 0.2, 0.2),
+    syrup: () => show('osmosis', 0.3, 0),
+  });
+
+  // ---------- loop ----------
+  let last = 0, tick = 0;
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    if (tp.running() && dt > 0) advance(dt);
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    if (S.setup === 'walk') walkStage();
+    else if (S.setup === 'osmosis') osmoStage();
+    else crowdStage();
+    if (tick++ % 8 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+  reset();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #osm {
+    touch-action: none;
+  }
+</style>
