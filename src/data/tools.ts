@@ -696,6 +696,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/action-potential',
         status: 'live',
       },
+      {
+        slug: 'gene-expression',
+        title: 'From DNA to Protein',
+        description:
+          'A gene is read in two steps: copied into RNA, then translated three letters at a time into a chain of amino acids. Change a single letter and see whether the protein changes too.',
+        href: '/simulations/biology/gene-expression',
+        status: 'live',
+      },
     ],
   },
   {

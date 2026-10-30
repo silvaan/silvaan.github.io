@@ -1,0 +1,1111 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="From DNA to Protein"
+  description="A gene is read in two steps: copied into RNA, then translated three letters at a time into a chain of amino acids. Change a single letter and see whether the protein changes too."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="gx"
+          width="1000"
+          height="640"
+          role="img"
+          aria-label="A short gene drawn as a ladder of coloured letters, copied into a strand of messenger RNA, then read three letters at a time by a ribosome into a chain of amino acids, with the genetic code table and the effect of single-letter mutations."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'hydrophobic', color: '#f0b45a' },
+          { label: 'polar', color: '#2dd4bf' },
+          { label: 'charged +', color: '#60a5fa' },
+          { label: 'charged −', color: '#f87171' },
+          { label: 'changed by the mutation', color: '#7c8cff' },
+        ]}
+        hint="In the last chapter, click any letter on either DNA strand (or the mRNA) to change it; the panel switches clicks to insert or delete"
+      />
+      <Result label="Reading the gene" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="ch"
+        label="Chapter"
+        attr="c"
+        options={[
+          { value: '0', label: '1 · Letters' },
+          { value: '1', label: '2 · Copy' },
+          { value: '2', label: '3 · Translate' },
+          { value: '3', label: '4 · The code' },
+          { value: '4', label: '5 · Mutations' },
+          { value: '5', label: '6 · Your turn' },
+        ]}
+      />
+      <Transport>
+        <button type="button" class="btn ghost" id="next">Next chapter →</button>
+      </Transport>
+      <Seg
+        id="mut"
+        label="Mutation"
+        attr="m"
+        options={[
+          { value: '0', label: 'Silent' },
+          { value: '1', label: 'Missense' },
+          { value: '2', label: 'Nonsense' },
+          { value: '3', label: 'Frameshift' },
+        ]}
+      />
+      <Seg
+        id="edit"
+        label="Clicking a letter will"
+        attr="e"
+        options={[
+          { value: 'change', label: 'Change it' },
+          { value: 'insert', label: 'Insert one' },
+          { value: 'delete', label: 'Delete it' },
+        ]}
+      />
+      <Actions>
+        <button type="button" class="btn ghost" id="restore">Restore the gene</button>
+      </Actions>
+      <Readout
+        title="Numbers"
+        rows={[
+          { id: 'r-dna', label: 'DNA letters' },
+          { id: 'r-cod', label: 'codons read' },
+          { id: 'r-prot', label: 'amino acids made' },
+          { id: 'r-chg', label: 'changed from the original' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The mRNA is a copy of the template strand, so it reads exactly like the other strand, the coding strand,
+      with U wherever the DNA has T. <Try id="copy" label="Watch the copy" />
+    </li>
+    <li>
+      Change the last letter of a codon and most of the time nothing happens: CTG, CTC, CTA and CTT all mean
+      leucine. The code is redundant mostly in its third letter. <Try id="third" />
+    </li>
+    <li>
+      One letter of this gene, A to T in the seventh codon, swaps glutamate (charged) for valine (hydrophobic).
+      In hemoglobin that is the mutation behind sickle-cell disease. <Try id="sickle" />
+    </li>
+    <li>
+      Insert a letter and every codon after it is misread. Delete one a few letters later and the frame comes
+      back: only the amino acids in between are wrong. <Try id="shift" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation, type Part } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { segmented, result, readout, tries } from '../../../lib/panel';
+  import { story, headline, say, withAlpha, mix, isLight, ease, beat, lerp, clamp01 } from '../../../lib/story';
+
+  // A gene read top to bottom, each row a translation of the one above:
+  // the DNA ladder, its mRNA copy, and the chain of amino acids. Every
+  // chapter draws the same three rows; what changes is how far along they are.
+  const HI = '#7c8cff', RNA = '#c084fc', DARK = '#111318';
+  const BASE: Record<string, string> = { A: '#4ade80', T: '#fb7185', C: '#38bdf8', G: '#facc15', U: '#c084fc' };
+  const PAIR: Record<string, string> = { A: 'T', T: 'A', C: 'G', G: 'C' };
+  const ANTI: Record<string, string> = { A: 'U', U: 'A', C: 'G', G: 'C' };
+  const toRNA = (b: string) => (b === 'T' ? 'U' : b);
+  const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+
+  // ---------- the genetic code ----------
+  // the standard table, first letter × second × third in the order T C A G
+  const CODE = 'FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG';
+  const IDX: Record<string, number> = { T: 0, U: 0, C: 1, A: 2, G: 3 };
+  const aaOf = (c: string) => CODE[16 * IDX[c[0]] + 4 * IDX[c[1]] + IDX[c[2]]];
+  const NAME: Record<string, string> = {
+    F: 'Phe', L: 'Leu', S: 'Ser', Y: 'Tyr', C: 'Cys', W: 'Trp', P: 'Pro', H: 'His', Q: 'Gln', R: 'Arg',
+    I: 'Ile', M: 'Met', T: 'Thr', N: 'Asn', K: 'Lys', V: 'Val', A: 'Ala', D: 'Asp', E: 'Glu', G: 'Gly', '*': 'Stop',
+  };
+  type Kind = 'hydrophobic' | 'polar' | 'plus' | 'minus' | 'stop';
+  const kindOf = (a: string): Kind =>
+    'AVLIMFWPG'.includes(a) ? 'hydrophobic' : 'STCNQY'.includes(a) ? 'polar' : 'KRH'.includes(a) ? 'plus' : 'DE'.includes(a) ? 'minus' : 'stop';
+  const KCOL: Record<Kind, string> = { hydrophobic: '#f0b45a', polar: '#2dd4bf', plus: '#60a5fa', minus: '#f87171', stop: '#9ca3af' };
+  const KNAME: Record<Kind, string> = { hydrophobic: 'hydrophobic', polar: 'polar', plus: 'charged +', minus: 'charged −', stop: 'stop' };
+
+  /** Scan to the first ATG, then read codons until a stop or the end. */
+  function translate(s: string) {
+    const start = s.indexOf('ATG');
+    const aa: { at: number; a: string }[] = [];
+    let stop = -1;
+    if (start < 0) return { start, aa, stop };
+    for (let i = start; i + 3 <= s.length; i += 3) {
+      const a = aaOf(s.slice(i, i + 3));
+      if (a === '*') { stop = i; break; }
+      aa.push({ at: i, a });
+    }
+    return { start, aa, stop };
+  }
+
+  // The first nine codons of human beta-globin (HBB), a stop added to keep it short.
+  const GENE = 'ACACC' + 'ATGGTGCACCTGACTCCTGAGGAGAAG' + 'TAA' + 'GCA';
+  type Seq = { b: string; o: number }[];
+  const ORIG: Seq = GENE.split('').map((b, o) => ({ b, o }));
+  const ORIG_T = translate(GENE);
+  const N0 = GENE.length;
+  const str = (s: Seq) => s.map((x) => x.b).join('');
+
+  const MUTS = [
+    { name: 'Silent', at: 16, to: 'C' }, // CTG → CTC, still Leu
+    { name: 'Missense', at: 24, to: 'T' }, // GAG → GTG, Glu → Val (sickle cell)
+    { name: 'Nonsense', at: 26, to: 'T' }, // GAG → TAG, stop
+    { name: 'Frameshift', at: 13, to: 'G', insert: true }, // one extra G inside codon 3
+  ];
+  function mutated(m: number): Seq {
+    const s = ORIG.map((x) => ({ ...x })), M = MUTS[m];
+    if (M.insert) s.splice(M.at, 0, { b: M.to, o: -1 });
+    else s[M.at].b = M.to;
+    return s;
+  }
+
+  const canvas = document.getElementById('gx') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+  /** Property colours as text: a shade darker on white. */
+  const kc = (k: Kind) => (light ? mix(KCOL[k], '#000000', 0.32) : KCOL[k]);
+
+  // ---------- layout ----------
+  const CODE_Y = 205, TEMP_Y = 251, MRNA_Y = 335, ANTI_Y = 361, PROT_Y = 448, BEFORE_Y = 512, VERDICT_Y = 572;
+  type Lay = { xs: number[]; P: number; X0: number; X1: number };
+  /** Base centres; `w` lets an inserted base grow in and push the others apart. */
+  function layout(seq: Seq, w?: (k: number) => number): Lay {
+    const ws = seq.map((_, k) => (w ? w(k) : 1));
+    const tot = ws.reduce((s, v) => s + v, 0);
+    const P = Math.min(23, 900 / Math.max(1, tot));
+    const X0 = 500 - (tot * P) / 2;
+    const xs: number[] = [];
+    let c = 0;
+    for (const v of ws) { xs.push(X0 + (c + v / 2) * P); c += v; }
+    return { xs, P, X0, X1: X0 + tot * P };
+  }
+  /** Where each base of the original gene sits now, so the old protein can be drawn under its old codons. */
+  function origXs(seq: Seq, L: Lay) {
+    const out: number[] = new Array(GENE.length).fill(NaN);
+    seq.forEach((x, k) => { if (x.o >= 0) out[x.o] = L.xs[k]; });
+    for (let j = 0; j < out.length; j++) if (isNaN(out[j])) out[j] = j ? out[j - 1] + L.P : L.X0;
+    return out;
+  }
+
+  // ---------- pieces ----------
+  function tile(x: number, y: number, b: string, a: number, P: number, o: { ring?: string; w?: number; big?: number } = {}) {
+    if (a <= 0.01) return;
+    const k = o.big ?? 1;
+    const tw = (o.big ? 40 : Math.min(19, P - 4)) * (o.w ?? 1), th = o.big ? 44 : 22;
+    if (tw < 1) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = BASE[b];
+    roundRect(ctx, x - tw / 2, y - th / 2, tw, th, 4 * k);
+    ctx.fill();
+    if (o.ring) {
+      ctx.strokeStyle = o.ring;
+      ctx.lineWidth = 2.5;
+      roundRect(ctx, x - tw / 2 - 2.5, y - th / 2 - 2.5, tw + 5, th + 5, 5);
+      ctx.stroke();
+    }
+    if ((o.w ?? 1) > 0.6) {
+      ctx.fillStyle = DARK;
+      ctx.font = `700 ${o.big ? 24 : Math.min(13, P * 0.6)}px ${MONO}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(b, x, y + 1);
+    }
+    ctx.restore();
+  }
+  const rx = (P: number) => Math.min(P * 1.3, 28);
+  function bead(x: number, y: number, a: string, alpha: number, P: number, ring?: string, ghost = false) {
+    if (alpha <= 0.01) return;
+    const r = rx(P), k = kindOf(a);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = ghost ? withAlpha(KCOL[k], light ? 0.14 : 0.12) : KCOL[k];
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, 13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (ghost) {
+      ctx.strokeStyle = withAlpha(KCOL[k], 0.7);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+    if (ring) {
+      ctx.strokeStyle = ring;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r + 3, 16, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = ghost ? kc(k) : DARK;
+    ctx.font = `700 ${r < 22 ? 10.5 : 12}px Inter, ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(NAME[a], x, y + 0.5);
+    ctx.restore();
+  }
+  function stopTag(x: number, y: number, a: number) {
+    if (a <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = withAlpha(KCOL.stop, 0.3);
+    ctx.strokeStyle = withAlpha(KCOL.stop, 0.9);
+    ctx.lineWidth = 1.2;
+    roundRect(ctx, x - 20, y - 10, 40, 20, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'stop', x, y, { colour: ink(0.75), size: 11.5, weight: 650, align: 'center', alpha: a });
+  }
+  /** A chain of beads joined by bonds. */
+  function chain(items: { x: number; a: string; ring?: string; alpha?: number; y?: number }[], y: number, alpha: number, P: number, ghost = false) {
+    ctx.save();
+    ctx.strokeStyle = ink((ghost ? 0.2 : 0.4) * alpha);
+    ctx.lineWidth = 2.5;
+    for (let k = 1; k < items.length; k++) {
+      const a = Math.min(items[k - 1].alpha ?? 1, items[k].alpha ?? 1);
+      if (a <= 0.5) continue;
+      ctx.beginPath();
+      ctx.moveTo(items[k - 1].x, items[k - 1].y ?? y);
+      ctx.lineTo(items[k].x, items[k].y ?? y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    for (const it of items) bead(it.x, it.y ?? y, it.a, alpha * (it.alpha ?? 1), P, it.ring, ghost);
+  }
+  function rowLabel(text: string, x: number, y: number, a: number, colour = ink(0.5)) {
+    say(ctx, text, x, y, { colour, size: 12, align: 'right', alpha: a });
+  }
+
+  /** The DNA ladder: coding strand on top, template below, bonds between (two for A–T, three for C–G). */
+  function dna(seq: Seq, L: Lay, a: number, o: { open?: (k: number) => number; mark?: (k: number) => string | undefined; w?: (k: number) => number; labels?: number } = {}) {
+    if (a <= 0.01) return;
+    const open = o.open ?? (() => 0);
+    ctx.save();
+    ctx.globalAlpha = a;
+    // the two backbones
+    ctx.strokeStyle = ink(0.28);
+    ctx.lineWidth = 2;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      seq.forEach((_, k) => {
+        const y = (side < 0 ? CODE_Y - 14 : TEMP_Y + 14) + side * 16 * open(k);
+        if (k === 0) ctx.moveTo(L.X0 - 4, y);
+        ctx.lineTo(L.xs[k], y);
+      });
+      ctx.lineTo(L.X1 + 4, (side < 0 ? CODE_Y - 14 : TEMP_Y + 14) + side * 16 * open(seq.length - 1));
+      ctx.stroke();
+    }
+    // hydrogen bonds
+    ctx.lineWidth = 1.3;
+    seq.forEach((x, k) => {
+      const shut = 1 - open(k);
+      if (shut <= 0.05 || (o.w && o.w(k) < 0.7)) return;
+      const n = x.b === 'A' || x.b === 'T' ? 2 : 3;
+      ctx.strokeStyle = ink(0.42 * shut);
+      for (let j = 0; j < n; j++) {
+        const dx = (j - (n - 1) / 2) * 4;
+        ctx.beginPath();
+        ctx.moveTo(L.xs[k] + dx, CODE_Y + 12 - 16 * open(k));
+        ctx.lineTo(L.xs[k] + dx, TEMP_Y - 12 + 16 * open(k));
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+    seq.forEach((x, k) => {
+      const ring = o.mark?.(k);
+      const w = o.w?.(k) ?? 1;
+      tile(L.xs[k], CODE_Y - 16 * open(k), x.b, a, L.P, { ring, w });
+      tile(L.xs[k], TEMP_Y + 16 * open(k), PAIR[x.b], a, L.P, { ring, w });
+    });
+    const la = a * (o.labels ?? 1);
+    if (la > 0.01) {
+      say(ctx, '5′', L.X0 - 12, CODE_Y - 14, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
+      say(ctx, '3′', L.X1 + 12, CODE_Y - 14, { colour: ink(0.5), size: 12, alpha: la });
+      say(ctx, '3′', L.X0 - 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
+      say(ctx, '5′', L.X1 + 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, alpha: la });
+      say(ctx, 'coding strand', L.X1, CODE_Y - 30, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
+      say(ctx, 'template strand', L.X1, TEMP_Y + 30, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
+    }
+  }
+
+  /** The mRNA as a row of tiles on a violet backbone. */
+  function mrna(items: { x: number; b: string; y?: number; a?: number; ring?: string; w?: number }[], y: number, a: number, P: number, label = true) {
+    if (a <= 0.01 || !items.length) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.strokeStyle = withAlpha(RNA, 0.7);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    items.forEach((it, k) => {
+      const yy = (it.y ?? y) - 14;
+      k ? ctx.lineTo(it.x, yy) : ctx.moveTo(it.x - P / 2, yy);
+    });
+    const last = items[items.length - 1];
+    ctx.lineTo(last.x + P / 2, (last.y ?? y) - 14);
+    ctx.stroke();
+    ctx.restore();
+    for (const it of items) tile(it.x, it.y ?? y, toRNA(it.b), a * (it.a ?? 1), P, { ring: it.ring, w: it.w });
+    if (label) {
+      say(ctx, '5′', items[0].x - P / 2 - 10, (items[0].y ?? y) - 14, { colour: withAlpha(RNA, 0.9), size: 12, align: 'right', alpha: a });
+      say(ctx, 'mRNA', last.x + P / 2 + 10, (last.y ?? y), { colour: RNA, size: 12.5, weight: 650, alpha: a });
+    }
+  }
+  /** Brackets over each codon of the reading frame. */
+  function codonMarks(xs: number[], start: number, n: number, y: number, a: number, P: number, hi = -1) {
+    if (a <= 0.01 || start < 0) return;
+    ctx.save();
+    for (let c = 0; c < n && start + 3 * c + 2 < xs.length; c++) {
+      const x0 = xs[start + 3 * c] - P / 2 + 2, x1 = xs[start + 3 * c + 2] + P / 2 - 2;
+      ctx.strokeStyle = c === hi ? withAlpha(HI, a) : ink((c % 2 ? 0.25 : 0.45) * a);
+      ctx.lineWidth = c === hi ? 2.5 : 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x0, y + 4); ctx.lineTo(x0, y); ctx.lineTo(x1, y); ctx.lineTo(x1, y + 4);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function propKey(a: number) {
+    if (a <= 0.01) return;
+    const x = 720, y = 42;
+    say(ctx, 'amino acids, by property', x, y, { colour: ink(0.55), size: 12, alpha: a });
+    (['hydrophobic', 'polar', 'plus', 'minus'] as Kind[]).forEach((k, i) => {
+      const yy = y + 22 + i * 20;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = KCOL[k];
+      ctx.beginPath();
+      ctx.ellipse(x + 9, yy, 9, 6.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      say(ctx, KNAME[k], x + 26, yy, { colour: ink(0.75), size: 12.5, alpha: a });
+    });
+  }
+
+  // ---------- chapters ----------
+  const chapters = [
+    {
+      dur: 11,
+      title: 'Four letters, in pairs',
+      body: 'DNA is two strands of four letters: A, C, G and T. A always faces T and C always faces G, so either strand spells out the other. A gene is a stretch of them.',
+    },
+    {
+      dur: 14.5,
+      title: 'Copy: DNA into RNA',
+      body: 'RNA polymerase unzips a short stretch and reads the template strand, laying down the matching RNA letter for each. The copy, the mRNA, reads like the coding strand with U in place of T.',
+    },
+    {
+      dur: 19,
+      title: 'Translate: three letters, one amino acid',
+      body: 'The ribosome finds the first AUG and reads on three letters at a time. For each codon a tRNA with the matching letters brings one amino acid, and the chain grows until a stop codon.',
+    },
+    {
+      dur: 21,
+      title: 'The genetic code',
+      body: '64 codons, but only 20 amino acids and a stop signal. Most amino acids have several codons, usually differing only in the third letter.',
+    },
+    {
+      dur: 29,
+      title: 'Change one letter',
+      body: 'A mutation is a changed letter in the DNA. It is copied into the mRNA like any other, and what it does to the protein depends on where it lands.',
+    },
+    {
+      dur: Infinity,
+      title: 'Your turn',
+      body: 'Click any letter of the DNA to change it, or use the panel to insert or delete letters. The mRNA and the protein follow, compared with the original below.',
+    },
+  ];
+  const END = [10.5, 14, 18, 20.9, 0, 0];
+  const MUT_DUR = 7;
+
+  // the reader's own gene for the last chapter
+  let user: Seq = ORIG.map((x) => ({ ...x }));
+  let indels = 0;
+  let mutSel = 0;
+  let editMode: 'change' | 'insert' | 'delete' = 'change';
+  let hover: { row: 'code' | 'temp' | 'rna'; i: number; gap: number } | null = null;
+
+  const st = story({
+    chapters,
+    frame,
+    relevant: (i) => (i === 4 ? ['mut'] : i === 5 ? ['edit'] : []),
+  });
+  const mutSeg = segmented('mut', (v) => {
+    mutSel = +v;
+    if (st.chapter() !== 4) st.go(4);
+    st.seek(mutSel * MUT_DUR);
+  });
+  segmented('edit', (v) => {
+    editMode = v as typeof editMode;
+    if (st.chapter() !== 5) st.go(5);
+  });
+  document.getElementById('restore')?.addEventListener('click', () => {
+    user = ORIG.map((x) => ({ ...x }));
+    indels = 0;
+    if (st.chapter() !== 5) st.go(5);
+  });
+
+  // what the panel shows, filled in by whichever chapter drew last
+  const info = { value: '', status: '', note: '', colour: undefined as string | undefined, live: [] as Part[], dna: GENE.length, cod: '', prot: '', chg: '' };
+
+  let tick = 0;
+  function frame(ch: number, t: number) {
+    tick++;
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    const frozen = st.manual() || (!st.playing() && t < 0.01);
+    const T = frozen ? END[ch] : t;
+    if (ch === 0) letters(T);
+    else if (ch === 1) copy(T);
+    else if (ch === 2) translation(T);
+    else if (ch === 3) codeTable(T, frozen);
+    else if (ch === 4) mutations(t, frozen);
+    else explore(t);
+    headline(ctx, ink, {
+      index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body,
+      t: frozen || !st.playing() ? Math.max(t, 2) : t, width: 640, manual: st.manual(),
+    });
+    if (tick % 8 === 1) panelText();
+  }
+
+  // chapter 1: the ladder builds, letter by letter
+  function letters(t: number) {
+    const L = layout(ORIG);
+    const n = ORIG.length;
+    ORIG.forEach((x, k) => {
+      const a1 = beat(t, 0.3 + k * 0.06, 0.6 + k * 0.06), a2 = beat(t, 2.8 + k * 0.04, 3.1 + k * 0.04);
+      tile(L.xs[k], CODE_Y, x.b, a1, L.P);
+      tile(L.xs[k], TEMP_Y, PAIR[x.b], a2, L.P);
+      if (a2 > 0.05) {
+        const nb = x.b === 'A' || x.b === 'T' ? 2 : 3;
+        ctx.strokeStyle = ink(0.42 * a2);
+        ctx.lineWidth = 1.3;
+        for (let j = 0; j < nb; j++) {
+          const dx = (j - (nb - 1) / 2) * 4;
+          ctx.beginPath();
+          ctx.moveTo(L.xs[k] + dx, CODE_Y + 12);
+          ctx.lineTo(L.xs[k] + dx, TEMP_Y - 12);
+          ctx.stroke();
+        }
+      }
+    });
+    // backbones and ends, once the strands are there
+    const bb = beat(t, 2.4, 3.4), bt = beat(t, 4.2, 5);
+    ctx.strokeStyle = ink(0.28 * bb);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(L.X0 - 4, CODE_Y - 14); ctx.lineTo(L.X1 + 4, CODE_Y - 14); ctx.stroke();
+    ctx.strokeStyle = ink(0.28 * bt);
+    ctx.beginPath(); ctx.moveTo(L.X0 - 4, TEMP_Y + 14); ctx.lineTo(L.X1 + 4, TEMP_Y + 14); ctx.stroke();
+    dnaLabels(L, bt);
+
+    // the gene, start to stop
+    const g = beat(t, 6, 7);
+    if (g > 0) {
+      const x0 = L.xs[ORIG_T.start] - L.P / 2, x1 = L.xs[ORIG_T.stop + 2] + L.P / 2, y = CODE_Y - 48;
+      ctx.strokeStyle = withAlpha(HI, 0.9 * g);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x0, y + 8); ctx.lineTo(x0, y); ctx.lineTo(lerp(x0, x1, g), y);
+      if (g > 0.98) ctx.lineTo(x1, y + 8);
+      ctx.stroke();
+      say(ctx, 'start: ATG', x0, y - 12, { colour: HI, size: 12.5, weight: 650, alpha: g });
+      say(ctx, 'the gene', (x0 + x1) / 2, y - 12, { colour: HI, size: 12.5, weight: 650, align: 'center', alpha: g });
+      say(ctx, 'stop: TAA', x1, y - 12, { colour: HI, size: 12.5, weight: 650, align: 'right', alpha: beat(t, 6.8, 7.4) });
+    }
+
+    // the two pairings, close up
+    const z = beat(t, 4.4, 5.4);
+    if (z > 0) {
+      const pair = (cx: number, top: string, nb: number, text: string) => {
+        tile(cx, 400, top, z, 23, { big: 1 });
+        tile(cx, 486, PAIR[top], z, 23, { big: 1 });
+        ctx.strokeStyle = ink(0.55 * z);
+        ctx.lineWidth = 2;
+        ctx.setLineDash([3, 4]);
+        for (let j = 0; j < nb; j++) {
+          const dx = (j - (nb - 1) / 2) * 9;
+          ctx.beginPath(); ctx.moveTo(cx + dx, 424); ctx.lineTo(cx + dx, 462); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        say(ctx, text, cx + 34, 443, { colour: ink(0.65), size: 13, alpha: z });
+      };
+      pair(380, 'A', 2, 'two bonds');
+      pair(600, 'C', 3, 'three bonds');
+      say(ctx, 'Read one strand and you know the other.', 500, 548, { colour: ink(0.8), size: 15, weight: 600, align: 'center', alpha: beat(t, 5.4, 6.2) });
+      say(ctx, 'That is how a cell copies its DNA, and how a gene gets read.', 500, 572, { colour: ink(0.55), size: 13.5, align: 'center', alpha: beat(t, 5.8, 6.6) });
+    }
+    const shown = Math.min(n, Math.max(0, Math.floor((t - 0.3) / 0.06)));
+    Object.assign(info, {
+      value: `${GENE.length} letter pairs`,
+      status: 'A pairs with T, C pairs with G',
+      note: 'These are the first nine codons of the human beta-globin gene, which makes part of hemoglobin, with a stop added to keep it short.',
+      colour: undefined,
+      live: [['\\texttt{A}', BASE.A], '\\text{ pairs with }', ['\\texttt{T}', BASE.T], '\\qquad', ['\\texttt{C}', BASE.C], '\\text{ pairs with }', ['\\texttt{G}', BASE.G]],
+      cod: '·', prot: '·', chg: '·', dna: shown,
+    });
+  }
+  function dnaLabels(L: Lay, a: number) {
+    if (a <= 0.01) return;
+    say(ctx, '5′', L.X0 - 12, CODE_Y - 14, { colour: ink(0.5), size: 12, align: 'right', alpha: a });
+    say(ctx, '3′', L.X1 + 12, CODE_Y - 14, { colour: ink(0.5), size: 12, alpha: a });
+    say(ctx, '3′', L.X0 - 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, align: 'right', alpha: a });
+    say(ctx, '5′', L.X1 + 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, alpha: a });
+    say(ctx, 'coding strand', L.X1, CODE_Y - 30, { colour: ink(0.5), size: 12, align: 'right', alpha: a });
+    say(ctx, 'template strand', L.X1, TEMP_Y + 30, { colour: ink(0.5), size: 12, align: 'right', alpha: a });
+  }
+
+  // chapter 2: the polymerase runs along, the bubble opens and the copy peels off
+  function copy(t: number) {
+    const L = layout(ORIG), N = ORIG.length;
+    // runs past the end so the last letters peel off and the DNA closes again
+    const p = lerp(-3, N + 9, clamp01((t - 0.8) / 11.5));
+    const open = (k: number) => {
+      const d = k - p;
+      const o = d > 1 ? 1 - (d - 1) / 1.5 : d < -5 ? 1 - (-5 - d) / 1.5 : 1;
+      return ease(clamp01(o));
+    };
+    dna(ORIG, L, 1, { open, labels: 1 });
+    // the polymerase: a soft blob around the bubble
+    const cx = L.X0 + (p - 1.5) * L.P;
+    const pa = beat(t, 0.2, 0.8) * (1 - beat(t, 12, 12.8));
+    if (pa > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = pa;
+      ctx.fillStyle = withAlpha(HI, light ? 0.1 : 0.14);
+      ctx.strokeStyle = withAlpha(HI, 0.6);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(cx, (CODE_Y + TEMP_Y) / 2 + 22, 4.6 * L.P, 70, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      say(ctx, 'RNA polymerase', cx, CODE_Y - 50, { colour: HI, size: 13, weight: 650, align: 'center', alpha: pa, halo: inv(0.8) });
+    }
+    // the new RNA: paired with the template inside the bubble, then peeling away to its own row
+    const items: { x: number; b: string; y: number }[] = [];
+    ORIG.forEach((x, k) => {
+      if (p <= k + 0.5) return;
+      const f = ease(clamp01((p - k - 4.5) / 3));
+      items.push({ x: L.xs[k], b: x.b, y: lerp(TEMP_Y + 16 + 27, MRNA_Y, f) });
+    });
+    mrna(items, MRNA_Y, 1, L.P, p > N + 3);
+
+    // close up: the letter being copied
+    const j = Math.min(N - 1, Math.floor(p - 0.5));
+    const z = beat(t, 1.2, 2) * (1 - beat(t, 12.2, 13));
+    if (j >= 0 && z > 0) {
+      const tb = PAIR[ORIG[j].b], rb = toRNA(ORIG[j].b);
+      say(ctx, 'template reads', 400, 418, { colour: ink(0.55), size: 13, align: 'center', alpha: z });
+      say(ctx, 'RNA gets', 600, 418, { colour: ink(0.55), size: 13, align: 'center', alpha: z });
+      tile(400, 462, tb, z, 23, { big: 1 });
+      tile(600, 462, rb, z, 23, { big: 1 });
+      ctx.strokeStyle = ink(0.5 * z);
+      ctx.fillStyle = ink(0.5 * z);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(436, 462); ctx.lineTo(556, 462); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(564, 462); ctx.lineTo(553, 456); ctx.lineTo(553, 468); ctx.fill();
+      // the four rules, the one in use lit
+      ['A', 'T', 'C', 'G'].forEach((d, i) => {
+        const x = 330 + i * 100, on = d === tb;
+        say(ctx, d, x, 530, { colour: BASE[d], size: 16, weight: 700, align: 'right', alpha: z * (on ? 1 : 0.45) });
+        say(ctx, '→', x + 14, 530, { colour: ink(0.6), size: 15, align: 'center', alpha: z * (on ? 1 : 0.45) });
+        say(ctx, toRNA(PAIR[d]), x + 28, 530, { colour: BASE[toRNA(PAIR[d])], size: 16, weight: 700, alpha: z * (on ? 1 : 0.45) });
+      });
+    }
+    const done = beat(t, 12.4, 13.4);
+    if (done > 0) {
+      say(ctx, 'The mRNA: the coding strand again, with U wherever the DNA had T.', 500, 440, { colour: ink(0.8), size: 15, weight: 600, align: 'center', alpha: done });
+      say(ctx, 'It leaves the DNA behind and carries the message to the ribosomes.', 500, 466, { colour: ink(0.55), size: 13.5, align: 'center', alpha: done });
+    }
+    // which letters are which
+    const ka = beat(t, 0.5, 1.3);
+    say(ctx, 'DNA letters', 720, 60, { colour: ink(0.55), size: 12, alpha: ka });
+    say(ctx, 'RNA letters', 720, 100, { colour: ink(0.55), size: 12, alpha: ka });
+    ['A', 'C', 'G', 'T'].forEach((b, i) => {
+      tile(810 + i * 24, 60, b, ka, 23);
+      tile(810 + i * 24, 100, toRNA(b), ka, 23, { ring: b === 'T' ? HI : undefined });
+    });
+
+    const copied = Math.max(0, Math.min(N, Math.ceil(p - 0.5)));
+    const cur = j >= 0 ? ORIG[j].b : 'A';
+    Object.assign(info, {
+      value: `${copied} of ${N}`,
+      status: 'letters copied into mRNA',
+      note: 'Each RNA letter pairs with the template letter it sits on (A with U, C with G), so the mRNA spells out the coding strand, with U for T.',
+      colour: copied >= N ? RNA : undefined,
+      live: [['\\text{template }\\texttt{' + PAIR[cur] + '}', BASE[PAIR[cur]]], '\\to', ['\\text{RNA }\\texttt{' + toRNA(cur) + '}', BASE[toRNA(cur)]]],
+      dna: N, cod: '·', prot: '·', chg: '·',
+    });
+  }
+
+  // chapter 3: the ribosome reads codons; tRNAs bring the amino acids
+  const T0 = 3, STEP = 1.3;
+  function translation(t: number) {
+    const L = layout(ORIG), tr = ORIG_T, n = tr.aa.length;
+    dna(ORIG, L, 1 - 0.75 * beat(t, 0, 1), { labels: 1 - beat(t, 0, 1) });
+    const cx = (c: number) => L.xs[tr.start + 3 * c + 1];
+    const tc = (c: number) => T0 + c * STEP;
+    // which codon the ribosome sits on, as a smooth position
+    let pos = 0;
+    for (let c = 0; c < n; c++) pos += beat(t, tc(c) + 0.75, tc(c) + 1.25);
+    const scan = beat(t, 1.2, 3);
+    const rxp = t < 3 ? lerp(L.xs[0] + L.P, cx(0), scan) : lerp(cx(Math.floor(pos)), cx(Math.min(n, Math.floor(pos) + 1)), pos - Math.floor(pos));
+    const ra = beat(t, 0.8, 1.6) * (1 - beat(t, tc(n) + 1.6, tc(n) + 2.6));
+
+    const cur = Math.min(n, Math.round(pos));
+    codonMarks(L.xs, tr.start, n + 1, MRNA_Y - 28, beat(t, 2.6, 3.2), L.P, t > 3 && ra > 0.5 ? cur : -1);
+    // the ribosome, two subunits clamped on the mRNA
+    if (ra > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = ra;
+      ctx.fillStyle = ink(light ? 0.06 : 0.08);
+      ctx.strokeStyle = ink(0.35);
+      ctx.lineWidth = 1.4;
+      roundRect(ctx, rxp - 4.6 * L.P, MRNA_Y - 22, 6.2 * L.P, 18, 9);
+      ctx.fill(); ctx.stroke();
+      roundRect(ctx, rxp - 5 * L.P, MRNA_Y + 14, 7 * L.P, 76, 22);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+      say(ctx, 'ribosome', rxp - 5 * L.P - 8, MRNA_Y + 40, { colour: ink(0.55), size: 12.5, weight: 600, align: 'right', alpha: ra });
+      if (t < 3.6) say(ctx, 'slides to the first AUG', rxp - 5 * L.P - 8, MRNA_Y + 58, { colour: ink(0.45), size: 12, align: 'right', alpha: ra * (1 - beat(t, 3, 3.6)) });
+    }
+    mrna(ORIG.map((x, k) => ({ x: L.xs[k], b: x.b })), MRNA_Y, 1, L.P);
+
+    // tRNAs, each bringing its amino acid to the chain
+    const items: { x: number; a: string; y?: number; alpha?: number }[] = [];
+    for (let c = 0; c < n; c++) {
+      const s = tc(c);
+      if (t < s) break;
+      const arrive = beat(t, s, s + 0.55), leave = beat(t, s + 0.8, s + 1.3);
+      const codon = GENE.slice(tr.aa[c].at, tr.aa[c].at + 3);
+      const off = (1 - arrive) * 120;
+      if (leave < 1) trna(cx(c) - leave * 3 * L.P, ANTI_Y + off + leave * 50, codon, arrive * (1 - leave), L.P);
+      items.push({ x: cx(c), a: tr.aa[c].a, y: PROT_Y + off, alpha: arrive });
+    }
+    // the stop: nothing fits, the chain is let go
+    const ts = tc(n), rel = beat(t, ts, ts + 0.6);
+    chain(items, PROT_Y, 1, L.P);
+    if (rel > 0) {
+      stopTag(cx(n), PROT_Y, rel);
+      say(ctx, 'stop codon: no tRNA matches, so the chain is let go', cx(n) + 30, PROT_Y + 34, { colour: ink(0.7), size: 13, align: 'right', alpha: beat(t, ts + 0.6, ts + 1.2), halo: inv(0.8) });
+    }
+    if (t > tc(0)) rowLabel('protein', cx(0) - rx(L.P) - 10, PROT_Y, beat(t, tc(0) + 0.4, tc(0) + 1));
+
+    // the chain so far, written out
+    const made = items.filter((it) => (it.alpha ?? 0) > 0.5).length;
+    if (made) {
+      const text = items.slice(0, made).map((it) => NAME[it.a]).join(' · ');
+      say(ctx, text + (rel > 0.5 ? ' · stop' : ''), 500, 540, { colour: ink(0.75), size: 15, weight: 600, align: 'center' });
+      say(ctx, `${made} amino acid${made > 1 ? 's' : ''} from ${3 * made} letters${rel > 0.5 ? ', then a stop' : ''}`, 500, 566, { colour: ink(0.5), size: 13, align: 'center' });
+    }
+    propKey(beat(t, 3, 4));
+
+    const c = Math.min(n, cur);
+    const codon = GENE.slice(tr.start + 3 * c, tr.start + 3 * c + 3).replace(/T/g, 'U');
+    const a = aaOf(codon);
+    Object.assign(info, {
+      value: `${made} amino acid${made === 1 ? '' : 's'}`,
+      status: rel > 0.5 ? `${3 * n} letters read, then a stop` : `reading codon ${c + 1}`,
+      note: 'The ribosome never reads the leader before the first AUG, and nothing after the stop. Each step adds one amino acid to the growing chain.',
+      colour: rel > 0.5 ? KCOL.polar : undefined,
+      live: [['\\texttt{' + codon + '}', RNA], '\\to', ['\\text{' + NAME[a] + '}', KCOL[kindOf(a)]]],
+      dna: N0, cod: `${Math.min(n + 1, c + 1)}`, prot: `${made}`, chg: '·',
+    });
+  }
+  function trna(x: number, y: number, codon: string, a: number, P: number) {
+    if (a <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = withAlpha(RNA, light ? 0.12 : 0.16);
+    ctx.strokeStyle = withAlpha(RNA, 0.8);
+    ctx.lineWidth = 1.4;
+    roundRect(ctx, x - 1.5 * P + 2, y + 13, 3 * P - 4, 38, 10);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y + 51);
+    ctx.lineTo(x, y + PROT_Y - ANTI_Y - 13);
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'tRNA', x, y + 32, { colour: withAlpha(RNA, 1), size: 11.5, weight: 650, align: 'center', alpha: a });
+    for (let k = 0; k < 3; k++) tile(x + (k - 1) * P, y, ANTI[toRNA(codon[k])], a, P);
+  }
+
+  // chapter 4: the table, and the gene looked up in it
+  function codeTable(t: number, frozen: boolean) {
+    const k = ease(clamp01(t / 1.4));
+    const L = layout(ORIG), tr = ORIG_T, n = tr.aa.length;
+    const my = lerp(MRNA_Y, 186, k), py = lerp(PROT_Y, 240, k);
+    dna(ORIG, L, 0.25 * (1 - k), { labels: 0 });
+    // the walk through the gene's codons
+    const walk = frozen ? -1 : Math.floor(t - 2.5);
+    const hc = walk >= 0 && walk <= n ? walk : -1;
+    codonMarks(L.xs, tr.start, n + 1, my - 28, 1, L.P, hc);
+    mrna(ORIG.map((x, i) => ({ x: L.xs[i], b: x.b })), my, 1, L.P);
+    const cx = (c: number) => L.xs[tr.start + 3 * c + 1];
+    chain(tr.aa.map((x, c) => ({ x: cx(c), a: x.a, ring: c === hc ? HI : undefined })), py, 1, L.P);
+    stopTag(cx(n), py, 1);
+
+    // which group of cells is lit
+    const phase = frozen ? -1 : t < 13 ? -1 : t < 15.6 ? 0 : t < 18.2 ? 1 : 2;
+    const groups = ['LSR', '*', 'MW'];
+    const hiCodon = hc >= 0 ? GENE.slice(tr.start + 3 * hc, tr.start + 3 * hc + 3) : '';
+    table(beat(t, 0.8, 2), hiCodon, phase >= 0 ? groups[phase] : '');
+
+    // what the table says, built up line by line
+    const lines = [
+      { at: 13, text: 'Leu, Ser, Arg: 6 codons each' },
+      { at: 15.6, text: 'Stop: 3 codons, UAA, UAG, UGA' },
+      { at: 18.2, text: 'Met, Trp: only 1 codon each' },
+    ];
+    lines.forEach((l, i) => {
+      const a = frozen ? 1 : beat(t, l.at, l.at + 0.6);
+      say(ctx, l.text, 690, 46 + i * 24, { colour: i === phase ? HI : ink(0.75), size: 14, weight: i === phase ? 650 : 500, alpha: a });
+    });
+    say(ctx, 'AUG means Met, and is also where reading starts', 690, 118, { colour: ink(0.5), size: 12.5, alpha: frozen ? 1 : beat(t, 19, 19.6) });
+
+    const a = hiCodon ? aaOf(hiCodon) : 'L';
+    Object.assign(info, {
+      value: '64 codons',
+      status: '20 amino acids and a stop',
+      note: 'With 4 letters, codons of 2 would give only 16 words, too few for 20 amino acids. Codons of 3 give 64, so most amino acids get several.',
+      colour: undefined,
+      live: hiCodon
+        ? [['\\texttt{' + hiCodon.replace(/T/g, 'U') + '}', RNA], '\\to', ['\\text{' + NAME[a] + '}', KCOL[kindOf(a)]]]
+        : ['4 \\times 4 \\times 4 = 64 \\text{ codons} \\to 20 \\text{ amino acids} + \\text{stop}'],
+      dna: N0, cod: `${n + 1}`, prot: `${n}`, chg: '·',
+    });
+  }
+  function table(a: number, hiCodon: string, group: string) {
+    if (a <= 0.01) return;
+    const TX = 66, CW = 216, TY = 290, RH = 19.5, R0 = TY + 22, L4 = 'UCAG';
+    ctx.save();
+    ctx.globalAlpha = a;
+    // tinted blocks: neighbouring rows with the same amino acid merge, so redundancy shows as size
+    for (let f = 0; f < 4; f++)
+      for (let s = 0; s < 4; s++) {
+        let th = 0;
+        while (th < 4) {
+          const aa = CODE[16 * f + 4 * s + th];
+          let e = th;
+          while (e + 1 < 4 && CODE[16 * f + 4 * s + e + 1] === aa) e++;
+          const x = TX + s * CW, y = R0 + (f * 4 + th) * RH, h = (e - th + 1) * RH;
+          const k = kindOf(aa), on = group.includes(aa);
+          ctx.fillStyle = withAlpha(KCOL[k], on ? 0.42 : light ? 0.16 : 0.13);
+          roundRect(ctx, x + 2, y + 1, CW - 4, h - 2, 4);
+          ctx.fill();
+          if (on) {
+            ctx.strokeStyle = HI;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+          say(ctx, NAME[aa], x + CW - 14, y + h / 2, { colour: kc(k), size: 13, weight: 700, align: 'right' });
+          th = e + 1;
+        }
+      }
+    ctx.restore();
+    for (let f = 0; f < 4; f++)
+      for (let s = 0; s < 4; s++)
+        for (let th = 0; th < 4; th++) {
+          const codon = L4[f] + L4[s] + L4[th], x = TX + s * CW, y = R0 + (f * 4 + th) * RH;
+          for (let q = 0; q < 3; q++)
+            say(ctx, codon[q], x + 14 + q * 11, y + RH / 2, { colour: q === 1 ? BASE[codon[q]] : ink(0.75), size: 12.5, weight: q === 1 ? 700 : 500, alpha: a });
+          if (codon.replace(/U/g, 'T') === hiCodon) {
+            ctx.save();
+            ctx.globalAlpha = a;
+            ctx.strokeStyle = HI;
+            ctx.lineWidth = 2.5;
+            roundRect(ctx, x + 1, y, CW - 2, RH, 4);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+    // which letter is which
+    say(ctx, 'first', TX - 30, TY + 8, { colour: ink(0.5), size: 11.5, align: 'center', alpha: a });
+    say(ctx, 'third', TX + 4 * CW + 18, TY + 8, { colour: ink(0.5), size: 11.5, align: 'center', alpha: a });
+    for (let s = 0; s < 4; s++) say(ctx, `second letter ${L4[s]}`, TX + s * CW + 14, TY + 8, { colour: ink(0.6), size: 12, weight: 600, alpha: a });
+    for (let f = 0; f < 4; f++) {
+      say(ctx, L4[f], TX - 30, R0 + (f * 4 + 2) * RH, { colour: BASE[L4[f]], size: 18, weight: 700, align: 'center', alpha: a });
+      if (f) {
+        ctx.strokeStyle = ink(0.15 * a);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(TX - 44, R0 + f * 4 * RH); ctx.lineTo(TX + 4 * CW + 30, R0 + f * 4 * RH); ctx.stroke();
+      }
+      for (let th = 0; th < 4; th++)
+        say(ctx, L4[th], TX + 4 * CW + 18, R0 + (f * 4 + th + 0.5) * RH, { colour: ink(0.5), size: 12, align: 'center', alpha: a });
+    }
+  }
+
+  // chapters 5 and 6: a changed gene, read through, against the original
+  /** Draw a gene and its reading, with the changes ringed. `u` runs the change through: DNA, then mRNA, then protein. */
+  function compare(seq: Seq, u: number, grow?: (k: number) => number) {
+    const L = layout(seq, grow);
+    const ox = origXs(seq, L);
+    const changed = (k: number) => seq[k].o < 0 || seq[k].b !== GENE[seq[k].o];
+    const flash = (from: number) => (u >= from && u < from + 1.2 ? 1 : 0);
+    // DNA, the change already in
+    dna(seq, L, 1, { mark: (k) => (changed(k) ? HI : undefined), w: grow, labels: 1 });
+    // deleted letters leave a mark where they were
+    if (u >= 0)
+      for (let j = 0; j < GENE.length; j++)
+        if (!seq.some((x) => x.o === j)) {
+          const x = ox[j] - L.P / 2;
+          ctx.fillStyle = HI;
+          ctx.beginPath(); ctx.moveTo(x - 5, CODE_Y - 34); ctx.lineTo(x + 5, CODE_Y - 34); ctx.lineTo(x, CODE_Y - 26); ctx.fill();
+        }
+    // mRNA: the old one until the change is copied
+    const newRNA = u >= 2;
+    const rna = newRNA
+      ? seq.map((x, k) => ({ x: L.xs[k], b: x.b, ring: changed(k) ? (flash(2) ? HI : withAlpha(HI, 0.6)) : undefined }))
+      : ORIG.map((x, j) => ({ x: ox[j], b: x.b }));
+    const s = newRNA ? str(seq) : GENE;
+    const tr = translate(s);
+    const xsR = rna.map((r) => r.x);
+    mrna(rna, MRNA_Y, 1, L.P);
+    codonMarks(xsR, tr.start, tr.aa.length + (tr.stop >= 0 ? 1 : 0), MRNA_Y - 28, 1, L.P);
+
+    // protein: the new one once the change reaches the ribosome
+    const newProt = u >= 2.8;
+    const pr = newProt ? tr : ORIG_T;
+    const px = (at: number) => (newProt ? xsR[at + 1] : ox[at + 1]);
+    const items = pr.aa.map((x, c) => ({
+      x: px(x.at), a: x.a,
+      ring: newProt && (c >= ORIG_T.aa.length || ORIG_T.aa[c].a !== x.a) ? HI : undefined,
+    }));
+    chain(items, PROT_Y, 1, L.P);
+    if (pr.stop >= 0) stopTag(px(pr.stop), PROT_Y, 1);
+    if (items.length) rowLabel('now', items[0].x - rx(L.P) - 10, PROT_Y, 1);
+    else say(ctx, pr.start < 0 ? 'no ATG to start from: no protein' : 'no protein', 500, PROT_Y, { colour: ink(0.6), size: 14, align: 'center' });
+    if (newProt && flash(2.8)) {
+      // a pulse on what changed
+      const pa = 1 - (u - 2.8) / 1.2;
+      for (const it of items) if (it.ring) {
+        ctx.strokeStyle = withAlpha(HI, 0.6 * pa);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(it.x, PROT_Y, rx(L.P) + 6 + 14 * (1 - pa), 19 + 10 * (1 - pa), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    // the original protein, under its own codons
+    const before = ORIG_T.aa.map((x) => ({ x: ox[x.at + 1], a: x.a }));
+    // a deleted letter pulls two old codons together: keep their beads apart
+    for (let c = 1; c < before.length; c++) before[c].x = Math.max(before[c].x, before[c - 1].x + 2 * rx(L.P) + 3);
+    chain(before, BEFORE_Y, 1, L.P, true);
+    stopTag(ox[ORIG_T.stop + 1], BEFORE_Y, 0.6);
+    rowLabel('before', before[0].x - rx(L.P) - 10, BEFORE_Y, 1);
+    return { L, tr, pr, newProt };
+  }
+  function verdict(title: string, text: string, colour: string, a: number) {
+    if (a <= 0.01) return;
+    say(ctx, title, 500, VERDICT_Y, { colour, size: 19, weight: 700, align: 'center', alpha: a });
+    say(ctx, text, 500, VERDICT_Y + 28, { colour: ink(0.7), size: 14.5, align: 'center', alpha: a });
+  }
+  const MUT_TEXT = [
+    { title: 'Silent', text: 'CTG became CTC, and both mean Leu: the DNA changed, the protein did not.', colour: KCOL.polar },
+    { title: 'Missense', text: 'GAG became GTG: charged Glu is now hydrophobic Val. In hemoglobin this causes sickle-cell disease.', colour: KCOL.hydrophobic },
+    { title: 'Nonsense', text: 'GAG became TAG, a stop codon: the protein ends after 7 of its 9 amino acids.', colour: KCOL.minus },
+    { title: 'Frameshift', text: 'One extra letter moves every codon boundary after it: the rest is misread, until a stop turns up.', colour: KCOL.minus },
+  ];
+  let lastMut = -1;
+  function mutations(t: number, frozen: boolean) {
+    const m = frozen ? mutSel : Math.min(3, Math.floor(t / MUT_DUR));
+    if (!frozen && m !== mutSel) mutSel = m;
+    if (m !== lastMut) { mutSeg.select(String(m)); lastMut = m; }
+    const u = frozen ? 6.9 : t - m * MUT_DUR;
+    const M = MUTS[m];
+    // the letter changes at 1.2 s: before that, the original
+    const seq = u < 1.2 ? ORIG : mutated(m);
+    const grow = M.insert && u >= 1.2 ? (k: number) => (seq[k].o < 0 ? beat(u, 1.2, 1.9) : 1) : undefined;
+    const { L, pr, newProt } = compare(seq, u < 1.2 ? -1 : u, grow);
+    // point at the change
+    const k = M.at;
+    if (u >= 0.4) {
+      const a = beat(u, 0.4, 1) * (1 - beat(u, 4, 4.6));
+      say(ctx, M.insert ? 'one letter added here' : 'one letter changed here', L.xs[k], CODE_Y - 36, { colour: HI, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
+    }
+    const T = MUT_TEXT[m];
+    verdict(T.title, T.text, T.colour, frozen ? 1 : beat(u, 3.4, 4));
+    propKey(1);
+    const codonAt = (s: string, at: number) => s.slice(at, at + 3).replace(/T/g, 'U');
+    const c0 = Math.floor((M.at - ORIG_T.start) / 3), at0 = ORIG_T.start + 3 * c0;
+    const s1 = str(mutated(m));
+    const was = codonAt(GENE, at0), now = codonAt(s1, at0);
+    // the codon as it was and as it is, under the mRNA
+    if (u >= 2) {
+      const a = frozen ? 1 : beat(u, 2, 2.6);
+      say(ctx, `${was} → ${now}${M.insert ? ', and every codon after it' : ''}`, L.xs[at0 + 1], MRNA_Y + 34, { colour: HI, size: 13, weight: 650, align: M.insert ? 'left' : 'center', alpha: a, halo: inv(0.85) });
+    }
+    const changedN = newProt ? diffCount(pr) : 0;
+    Object.assign(info, {
+      value: T.title,
+      status: newProt ? `${changedN} of ${ORIG_T.aa.length} amino acids changed${pr.aa.length !== ORIG_T.aa.length ? `, ${pr.aa.length} made` : ''}` : 'the change is on its way',
+      note: T.text,
+      colour: T.colour,
+      live: [['\\texttt{' + was + '}', RNA], '\\to', ['\\texttt{' + now + '}', HI], '\\qquad', '\\text{' + NAME[aaOf(was)] + '}', '\\to', ['\\text{' + NAME[aaOf(now)] + '}', KCOL[kindOf(aaOf(now))]]],
+      dna: s1.length, cod: `${pr.aa.length + (pr.stop >= 0 ? 1 : 0)}`, prot: `${pr.aa.length}`, chg: `${changedN}`,
+    });
+  }
+  /** Amino acids that differ from the original, position by position, counting missing and extra ones. */
+  function diffCount(pr: ReturnType<typeof translate>) {
+    const a = ORIG_T.aa.map((x) => x.a), b = pr.aa.map((x) => x.a);
+    let d = 0;
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) d++;
+    return d;
+  }
+
+  function explore(t: number) {
+    const { L, pr } = compare(user, 10);
+    const s = str(user);
+    // what a click would do
+    if (hover) {
+      const x = hover.row === 'temp' ? TEMP_Y : hover.row === 'rna' ? MRNA_Y : CODE_Y;
+      if (editMode === 'insert') {
+        const gx = hover.gap < user.length ? L.xs[hover.gap] - L.P / 2 : L.X1;
+        ctx.strokeStyle = HI;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(gx, CODE_Y - 18); ctx.lineTo(gx, MRNA_Y + 14); ctx.stroke();
+        say(ctx, 'insert an A here', gx, CODE_Y - 36, { colour: HI, size: 13, weight: 650, align: 'center', halo: inv(0.85) });
+      } else {
+        const i = hover.i, b = user[i].b;
+        ctx.strokeStyle = editMode === 'delete' ? KCOL.minus : ink(0.9);
+        ctx.lineWidth = 2;
+        for (const y of [CODE_Y, TEMP_Y]) {
+          roundRect(ctx, L.xs[i] - L.P / 2, y - 14, L.P, 28, 5);
+          ctx.stroke();
+        }
+        const shown = hover.row === 'temp' ? PAIR[b] : hover.row === 'rna' ? toRNA(b) : b;
+        const next = editMode === 'delete' ? '' : hover.row === 'temp' ? PAIR[nextBase(b, true)] : hover.row === 'rna' ? toRNA(nextBase(b, false)) : nextBase(b, false);
+        say(ctx, editMode === 'delete' ? `click to delete ${shown}` : `click: ${shown} → ${next}`, L.xs[i], x === TEMP_Y ? TEMP_Y + 30 : CODE_Y - 36, { colour: editMode === 'delete' ? KCOL.minus : ink(0.9), size: 13, weight: 650, align: 'center', halo: inv(0.85) });
+      }
+    } else if (s === GENE) {
+      const a = 0.55 + 0.45 * Math.sin(t * 3);
+      say(ctx, 'click any letter', L.xs[24], CODE_Y - 36, { colour: HI, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
+    }
+    const v = judge(s, pr);
+    verdict(v.title, v.text, v.colour, 1);
+    propKey(1);
+    const changedN = diffCount(pr);
+    Object.assign(info, {
+      value: v.title,
+      status: `${changedN} of ${ORIG_T.aa.length} amino acids changed · ${pr.aa.length} made`,
+      note: v.text,
+      colour: v.colour,
+      live: [['\\text{' + (pr.aa.map((x) => NAME[x.a]).join(' · ') || 'no protein') + '}', ink(0.9)]],
+      dna: s.length, cod: `${pr.aa.length + (pr.stop >= 0 ? 1 : 0)}`, prot: `${pr.aa.length}`, chg: `${changedN}`,
+    });
+  }
+  const nextBase = (b: string, template: boolean) => {
+    // cycle the letter as seen on the strand clicked
+    const ring = 'ACGT';
+    if (template) return PAIR[ring[(ring.indexOf(PAIR[b]) + 1) % 4]];
+    return ring[(ring.indexOf(b) + 1) % 4];
+  };
+  function judge(s: string, pr: ReturnType<typeof translate>) {
+    const n0 = ORIG_T.aa.length, d = diffCount(pr);
+    if (s === GENE) return { title: 'The original gene', text: 'Nine amino acids, Met to Lys, then a stop. Change a letter and see what survives.', colour: ink(0.85) };
+    if (pr.start < 0) return { title: 'No start', text: 'Without an ATG the ribosome has nowhere to begin: no protein at all.', colour: KCOL.minus };
+    if (d === 0) return { title: 'Silent', text: 'The DNA changed, but every codon still means the same amino acid: the same protein.', colour: KCOL.polar };
+    if (pr.stop < 0) return { title: 'No stop', text: 'The stop codon is gone, so the ribosome reads on to the end of the mRNA.', colour: KCOL.minus };
+    const shift = (s.length - GENE.length) % 3 !== 0;
+    const same = (i: number) => pr.aa[i]?.a === ORIG_T.aa[i]?.a;
+    let lead = 0;
+    while (lead < n0 && same(lead)) lead++;
+    if (shift) return { title: 'Frameshift', text: `Every codon after the edit is read in a new frame: ${d} of ${n0} amino acids differ.`, colour: KCOL.minus };
+    if (pr.aa.length < n0 && lead === pr.aa.length) return { title: 'Nonsense', text: `A stop codon came early: only ${pr.aa.length} of ${n0} amino acids are made.`, colour: KCOL.minus };
+    if (indels > 0 && d > 1) return { title: 'Back in frame', text: `The letters added and removed cancel out in threes: only ${d} amino acids in between are wrong.`, colour: KCOL.hydrophobic };
+    if (d === 1) {
+      const i = pr.aa.findIndex((x, k) => x.a !== ORIG_T.aa[k]?.a);
+      const a = ORIG_T.aa[i]?.a, b = pr.aa[i]?.a;
+      if (a && b) return { title: 'Missense', text: `${NAME[a]} (${KNAME[kindOf(a)]}) became ${NAME[b]} (${KNAME[kindOf(b)]}) at position ${i + 1}.`, colour: KCOL.hydrophobic };
+    }
+    return { title: 'Missense', text: `${d} of ${n0} amino acids changed.`, colour: KCOL.hydrophobic };
+  }
+
+  // ---------- panel ----------
+  const RULE: Part[] = [['\\text{DNA}', HI], '\\xrightarrow{\\text{transcription}}', ['\\text{mRNA}', RNA], '\\xrightarrow{\\text{translation}}', ['\\text{protein}', KCOL.hydrophobic]];
+  function panelText() {
+    setEq({ rule: RULE, live: info.live });
+    setResult({ value: info.value, status: info.status, note: info.note, colour: info.colour });
+    setRows({ 'r-dna': String(info.dna), 'r-cod': info.cod, 'r-prot': info.prot, 'r-chg': info.chg });
+  }
+
+  // ---------- input ----------
+  function toStage(e: PointerEvent) {
+    const b = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
+  }
+  function hit(e: PointerEvent) {
+    if (st.chapter() !== 5) return null;
+    const p = toStage(e), L = layout(user);
+    const row = Math.abs(p.y - CODE_Y) < 15 ? 'code' : Math.abs(p.y - TEMP_Y) < 15 ? 'temp' : Math.abs(p.y - MRNA_Y) < 15 ? 'rna' : null;
+    if (!row || p.x < L.X0 - L.P / 2 || p.x > L.X1 + L.P / 2) return null;
+    const i = Math.max(0, Math.min(user.length - 1, Math.floor((p.x - L.X0) / L.P)));
+    const gap = Math.max(0, Math.min(user.length, Math.round((p.x - L.X0) / L.P)));
+    return { row: row as 'code' | 'temp' | 'rna', i, gap };
+  }
+  canvas.addEventListener('pointermove', (e) => {
+    hover = hit(e);
+    canvas.style.cursor = hover ? 'pointer' : '';
+  });
+  canvas.addEventListener('pointerleave', () => (hover = null));
+  canvas.addEventListener('pointerdown', (e) => {
+    const h = hit(e);
+    if (!h) return;
+    st.touch();
+    if (editMode === 'insert') {
+      if (user.length >= 48) return;
+      user.splice(h.gap, 0, { b: 'A', o: -1 });
+      indels++;
+    } else if (editMode === 'delete') {
+      if (user.length <= 12) return;
+      user.splice(h.i, 1);
+      indels++;
+    } else user[h.i] = { ...user[h.i], b: nextBase(user[h.i].b, h.row === 'temp') };
+    hover = hit(e);
+  });
+
+  // ---------- tries ----------
+  const fresh = () => ORIG.map((x) => ({ ...x }));
+  const mine = (s: Seq, n = 0) => { user = s; indels = n; st.go(5); st.touch(); };
+  tries({
+    copy: () => { st.go(1); st.play(true); },
+    third: () => { const s = fresh(); s[16].b = 'A'; mine(s); },
+    sickle: () => { mutSel = 1; st.go(4); st.seek(MUT_DUR); st.play(true); },
+    shift: () => {
+      const s = fresh();
+      s.splice(17, 1);
+      s.splice(13, 0, { b: 'G', o: -1 });
+      mine(s, 2);
+    },
+  });
+
+  st.start();
+</script>
+
+<style>
+  #gx {
+    touch-action: none;
+  }
+</style>
