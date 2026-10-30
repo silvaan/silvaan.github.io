@@ -664,6 +664,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/predator-prey',
         status: 'live',
       },
+      {
+        slug: 'epidemics',
+        title: 'Epidemics',
+        description:
+          'Each sick person passes the disease on before recovering. Whether that makes an epidemic depends on one number, how many others each case infects, and vaccinating enough people pushes it below 1.',
+        href: '/simulations/biology/epidemics',
+        status: 'live',
+      },
     ],
   },
   {

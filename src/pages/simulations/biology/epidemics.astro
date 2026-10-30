@@ -1,0 +1,414 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Epidemics"
+  description="Each sick person passes the disease on before recovering. Whether that makes an epidemic depends on one number, how many others each case infects, and vaccinating enough people pushes it below 1."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="epi"
+          width="1000"
+          height="600"
+          role="img"
+          aria-label="Four hundred people wandering in a box, coloured healthy, sick or recovered, next to the counts of each over the days and the curves the SIR equations predict."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'healthy, can catch it (S)', color: '#60a5fa' },
+          { label: 'sick (I)', color: '#f87171' },
+          { label: 'recovered (R)', color: '#a1a1aa' },
+          { label: 'vaccinated, counted with R', color: '#2dd4bf' },
+        ]}
+        hint="Every change of a slider starts a new outbreak with five sick people; the dashed curves are the SIR equations"
+      />
+      <Result label="Ever infected" />
+    </div>
+
+    <div class="sim-panel">
+      <Slider id="r0" label="R<sub>0</sub>, people each case infects" min={0.5} max={18} step={0.1} value={3} display="3.0" hint={['fizzles', 'explodes']} />
+      <Slider id="vax" label="Vaccinated" min={0} max={98} step={1} value={0} display="0%" />
+      <Transport reset running />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-day', label: 'day' },
+          { id: 'r-s', label: 'healthy' },
+          { id: 'r-i', label: 'sick' },
+          { id: 'r-r', label: 'recovered' },
+          { id: 'r-v', label: 'vaccinated' },
+          { id: 'r-need', label: 'herd immunity at' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      COVID-19 as it first spread in 2020: published estimates put R<sub>0</sub> at roughly 2 to 3, so take 2.5 with
+      nobody vaccinated. Nearly nine in ten catch it, yet about one in ten never do: the outbreak runs out of people
+      to infect first. Herd immunity would take 1 − 1/2.5 = 60%. The Delta variant was estimated at about 5, which
+      raises the threshold to 80%, so 70% vaccinated still lets it spread; that is why the target kept rising.
+      These are rough estimates, and the model assumes perfect, lasting immunity and people who mix at random.
+      <Try id="covid" label="Original COVID-19" /> <Try id="delta" label="Delta, 70% vaccinated" />
+    </li>
+    <li>
+      Below 1 each generation of cases is smaller than the one before, so the outbreak dies out after a handful.
+      <Try id="below" />
+    </li>
+    <li>
+      Measles infects 12 to 18 people per case. Almost everyone is sick within days, and at the peak most of the
+      crowd is sick at once. <Try id="measles" />
+    </li>
+    <li>
+      Vaccinate past 1 − 1/R<sub>0</sub> and the outbreak fails to spread, though plenty of people could still catch
+      it: each case meets too few of them to replace itself. For measles that takes about 93%.
+      <Try id="past" label="Past the threshold" /> <Try id="measvax" label="Measles at 90%" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { slider, transport, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight } from '../../../lib/story';
+  import { Outbreak, predict, S, I, R, V } from '../../../lib/epidemics';
+
+  // People wander around a box; a sick one infects whoever stays within reach
+  // and recovers after a few days. Played out with chance, the counts follow
+  // the SIR equations, drawn dashed beside them from the same start.
+  const SC = '#60a5fa', IC = '#f87171', ACC = '#7c8cff';
+  /** Days per model step, fixed so playback speed never changes the outcome. */
+  const DT = 0.025;
+  const SICK = 4, REACH = 40, N = 400, SEEDS = 5;
+
+  const canvas = document.getElementById('epi') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+  const RC = () => (light ? '#a1a1aa' : '#8b8b94');
+  const VC = () => (light ? '#14b8a6' : '#2dd4bf');
+
+  // ---------- layout ----------
+  const BOX = { x: 28, y: 64, w: 520, h: 480 };
+  const PANE = { x: 616, w: 352 };
+  const CH = { y: 150, h: 270 };
+
+  // ---------- the crowd ----------
+  const P = { r0: 3, vax: 0 };
+  let world: Outbreak;
+  let ode: { day: number; s: number; i: number; r: number }[] = [];
+  let acc = 0, after = 0;
+  // A faster outbreak needs a faster crowd to stay mixed; playback slows by
+  // the same factor, so on screen people always wander at the same pace.
+  const quick = () => Math.max(1, P.r0 / 3);
+  const daysPerSecond = () => 1.8 / quick();
+
+  /** A new outbreak; the Try buttons pass a seed that gives a typical run. */
+  function fresh(seed = 1 + Math.floor(Math.random() * 1e9)) {
+    acc = 0; after = 0;
+    world = new Outbreak({
+      n: N, w: BOX.w, h: BOX.h, r0: P.r0, vax: P.vax, seeds: SEEDS,
+      seed,
+      sick: SICK, reach: REACH, speed: 70 * quick(),
+    });
+    ode = solve();
+  }
+
+  /** The SIR equations from the same start, as shares of everyone; vaccinated count as R. */
+  function solve() {
+    const g = 1 / SICK, b = P.r0 * g, h = 0.01, out = [];
+    let i = world.counts.i / N, r = world.counts.v / N, s = 1 - i - r, t = 0;
+    out.push({ day: 0, s, i, r });
+    while (t < 400 && (i > 0.4 / N || t < 2)) {
+      for (let k = 0; k < 10; k++) {
+        const inf = b * s * i, rec = g * i;
+        s -= inf * h; i += (inf - rec) * h; r += rec * h; t += h;
+      }
+      out.push({ day: t, s, i, r });
+    }
+    return out;
+  }
+
+  // ---------- loop ----------
+  const tp = transport({ onReset: () => { fresh(); tp.setRunning(true); } });
+  let last = 0, tick = 0;
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    if (tp.running()) {
+      acc = Math.min(acc + dt * daysPerSecond(), 40 * DT);
+      while (acc >= DT) { world.step(DT); acc -= DT; }
+      // a finished outbreak stays on screen for a while, then a new one starts
+      if (world.over >= 0 && (after += dt) > 6) fresh();
+    }
+    draw();
+    if (tick++ % 10 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- drawing ----------
+  function draw() {
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    say(ctx, `${N} people`, BOX.x, 36, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, `day ${Math.floor(world.day)}`, BOX.x + BOX.w, 36, { colour: ink(0.55), size: 13, weight: 600, align: 'right' });
+    people(world, BOX);
+    fizzled(world, BOX);
+    tally(world);
+    chart(world, PANE.x, CH.y, PANE.w, CH.h);
+    gauge(PANE.x, 520, PANE.w);
+  }
+
+  const colourOf = (s: number) => (s === S ? SC : s === I ? IC : RC());
+
+  function people(o: Outbreak, b: { x: number; y: number; w: number; h: number }) {
+    ctx.fillStyle = ink(0.025);
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.strokeStyle = ink(0.16);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(b.x, b.y, b.w, b.h);
+    ctx.clip();
+    // the reach of every sick person: anyone inside can catch it
+    ctx.fillStyle = withAlpha(IC, light ? 0.06 : 0.08);
+    for (let k = 0; k < o.n; k++) {
+      if (o.state[k] !== I) continue;
+      ctx.beginPath();
+      ctx.arc(b.x + o.x[k], b.y + o.y[k], o.reach, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // a ring where someone just caught it, lasting about a third of a second on screen
+    const ring = 0.35 * daysPerSecond();
+    ctx.lineWidth = 1.5;
+    for (let k = 0; k < o.n; k++) {
+      const age = o.day - o.tInf[k];
+      if (o.tInf[k] < 0 || age > ring) continue;
+      const f = age / ring;
+      ctx.strokeStyle = withAlpha(IC, 0.7 * (1 - f));
+      ctx.beginPath();
+      ctx.arc(b.x + o.x[k], b.y + o.y[k], 5 + f * 16, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // the people, one path per colour; the vaccinated are recovered with a ring
+    for (const s of [V, R, S, I]) {
+      ctx.fillStyle = colourOf(s);
+      ctx.beginPath();
+      for (let k = 0; k < o.n; k++) {
+        if (o.state[k] !== s) continue;
+        const x = b.x + o.x[k], y = b.y + o.y[k], r = s === I ? 4.8 : 4.2;
+        ctx.moveTo(x + r, y);
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      if (s === V) {
+        ctx.strokeStyle = VC();
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** The counts as big numbers above the chart. */
+  function tally(o: Outbreak) {
+    const cols: [string, number, string][] = [
+      ['healthy', o.counts.s, SC],
+      ['sick', o.counts.i, IC],
+      ['recovered', o.counts.r, RC()],
+      ['vaccinated', o.counts.v, VC()],
+    ];
+    const step = PANE.w / cols.length;
+    cols.forEach(([label, v, c], k) => {
+      const x = PANE.x + k * step;
+      say(ctx, String(v), x, 44, { colour: c, size: 26, weight: 700 });
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(x + 4, 72, 4, 0, Math.PI * 2);
+      ctx.fill();
+      say(ctx, label, x + 13, 72, { colour: ink(0.6), size: 12.5 });
+    });
+  }
+
+  /** The three counts over the days, with the equations' curves dashed behind. */
+  function chart(o: Outbreak, x: number, y: number, w: number, h: number) {
+    const odeEnd = ode[ode.length - 1].day;
+    const span = Math.max(20, odeEnd * 1.15, o.day * 1.05);
+    const tickStep = span > 120 ? 40 : span > 60 ? 20 : span > 25 ? 10 : 5;
+    const days = Math.ceil(span / tickStep) * tickStep;
+    const X = (d: number) => x + (Math.min(d, days) / days) * w, Y = (f: number) => y + h - f * h;
+    ctx.strokeStyle = ink(0.22);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x, y + h); ctx.lineTo(x + w, y + h);
+    ctx.stroke();
+    ctx.strokeStyle = ink(0.07);
+    ctx.beginPath();
+    for (const f of [0.25, 0.5, 0.75, 1]) { ctx.moveTo(x, Y(f)); ctx.lineTo(x + w, Y(f)); }
+    ctx.stroke();
+    for (const f of [0, 0.5, 1]) say(ctx, `${f * 100}%`, x - 6, Y(f), { colour: ink(0.45), size: 12, align: 'right' });
+    for (let d = 0; d <= days; d += tickStep) say(ctx, String(d), X(d), y + h + 13, { colour: ink(0.45), size: 12, align: 'center' });
+    say(ctx, 'days', x + w, y + h + 30, { colour: ink(0.45), size: 12, align: 'right' });
+    say(ctx, 'share of people', x, y - 18, { colour: ink(0.55), size: 12 });
+
+    // the equations, faint and dashed
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1.6;
+    const curve = (pick: (p: (typeof ode)[0]) => number, c: string) => {
+      ctx.strokeStyle = withAlpha(c, 0.5);
+      ctx.beginPath();
+      ode.forEach((p, k) => (k ? ctx.lineTo(X(p.day), Y(pick(p))) : ctx.moveTo(X(p.day), Y(pick(p)))));
+      ctx.lineTo(x + w, Y(pick(ode[ode.length - 1])));
+      ctx.stroke();
+    };
+    curve((p) => p.s, SC);
+    curve((p) => p.r, RC());
+    curve((p) => p.i, IC);
+    ctx.restore();
+
+    // the crowd, solid
+    const n = o.n, hist = o.history;
+    const line = (pick: (s: { s: number; i: number; r: number; v: number }) => number, c: string, lw: number) => {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = lw;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      hist.forEach((s, k) => (k ? ctx.lineTo(X(s.day), Y(pick(s) / n)) : ctx.moveTo(X(s.day), Y(pick(s) / n))));
+      ctx.lineTo(X(o.day), Y(pick(o.counts) / n));
+      ctx.stroke();
+    };
+    line((s) => s.r + s.v, RC(), 2.2);
+    line((s) => s.s, SC, 2.2);
+    line((s) => s.i, IC, 2.6);
+
+    // key for the two kinds of line
+    const ky = y + h + 50;
+    ctx.strokeStyle = ink(0.7);
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(x, ky); ctx.lineTo(x + 22, ky); ctx.stroke();
+    say(ctx, 'the crowd', x + 28, ky, { colour: ink(0.6), size: 12 });
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = ink(0.45);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(x + 110, ky); ctx.lineTo(x + 132, ky); ctx.stroke();
+    ctx.restore();
+    say(ctx, 'the SIR equations', x + 138, ky, { colour: ink(0.6), size: 12 });
+  }
+
+  /** The vaccinated share against the herd immunity threshold 1 − 1/R0. */
+  function gauge(x: number, y: number, w: number) {
+    const need = Math.max(0, 1 - 1 / P.r0), v = P.vax, h = 12, eff = P.r0 * (1 - v), ok = eff < 1;
+    say(ctx, `vaccinated ${Math.round(v * 100)}%`, x, y - 16, { colour: VC(), size: 13, weight: 650 });
+    say(ctx, `each case infects ${eff.toFixed(2)}: ${ok ? 'fewer' : 'more'} than one`, x + w, y - 16, { colour: ok ? VC() : IC, size: 12.5, weight: 600, align: 'right' });
+    ctx.fillStyle = ink(0.08);
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = withAlpha(VC(), 0.85);
+    ctx.fillRect(x, y, w * v, h);
+    const tx = x + w * need;
+    ctx.strokeStyle = ink(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(tx, y - 6); ctx.lineTo(tx, y + h + 6);
+    ctx.stroke();
+    const lab = P.r0 <= 1 ? 'R₀ below 1: no vaccination needed' : `herd immunity 1 − 1/R₀ = ${Math.round(need * 100)}%`;
+    say(ctx, lab, Math.min(x + w - 100, Math.max(x + 100, tx)), y + h + 18, { colour: ink(0.8), size: 12.5, weight: 600, align: 'center' });
+  }
+
+  /** A few cases can all recover before passing it on: say so instead of leaving a quiet box. */
+  function fizzled(o: Outbreak, b: { x: number; y: number; w: number; h: number }) {
+    if (o.over < 0 || o.ever > 30) return;
+    const chance = P.r0 * (1 - P.vax) >= 1;
+    say(ctx, chance ? `died out early, by chance, after ${o.ever} cases` : `died out after ${o.ever} cases`, b.x + b.w / 2, b.y + 26, { colour: ink(0.85), size: 15, weight: 650, align: 'center', halo: inv(0.85) });
+  }
+
+  // ---------- numbers ----------
+  const RULE: (string | [string, string])[] = [
+    ['\\frac{dS}{dt} = -\\beta\\frac{SI}{N}', SC],
+    '\\quad',
+    ['\\frac{dI}{dt} = \\beta\\frac{SI}{N} - \\gamma I', IC],
+    '\\quad',
+    ['\\frac{dR}{dt} = \\gamma I', '#a1a1aa'],
+    '\\quad',
+    ['R_0 = \\beta / \\gamma', ACC],
+  ];
+  function panelText() {
+    const o = world, beta = P.r0 / SICK, need = Math.max(0, 1 - 1 / P.r0), eff = P.r0 * (1 - P.vax);
+    setEq({
+      rule: RULE,
+      live: [
+        `\\gamma = 1/${SICK}\\text{ per day}\\quad \\beta = ${beta.toFixed(2)}\\quad`,
+        [`R_0 = ${P.r0.toFixed(1)}`, ACC],
+        `\\quad R_0(1 - v) = ${eff.toFixed(2)}`,
+        [`\\quad 1 - 1/R_0 = ${Math.round(need * 100)}\\%`, VC()],
+      ],
+    });
+    setRows({
+      'r-day': String(Math.floor(o.day)),
+      'r-s': String(o.counts.s),
+      'r-i': String(o.counts.i),
+      'r-r': String(o.counts.r),
+      'r-v': String(o.counts.v),
+      'r-need': `${Math.round(need * 100)}% vaccinated`,
+    });
+    const share = Math.round((100 * o.ever) / N), pr = predict(P.r0, 1 - P.vax);
+    setResult({
+      value: `${share}%`,
+      status: `${o.over >= 0 ? 'in the end' : 'so far'} · equations predict ${Math.round(pr.attack * 100)}% · vaccinated ${Math.round(P.vax * 100)}%, herd immunity at ${Math.round(need * 100)}%`,
+      note:
+        eff < 1
+          ? P.vax > 0
+            ? 'Past the threshold each case meets too few people it can infect to replace itself, so the outbreak dies out though many could still catch it.'
+            : 'Below 1 each generation of cases is smaller than the last: the five starting cases cause only a handful more.'
+          : `Each case infects ${eff.toFixed(1)} others at first, so it spreads until too few healthy people are left. Vaccinating more than ${Math.round(need * 100)}% would stop it.`,
+      colour: eff < 1 ? VC() : IC,
+    });
+  }
+
+  // ---------- panel ----------
+  const setVax = slider('vax', (v) => { P.vax = v / 100; fresh(); }, (v) => `${v}%`);
+  const setR0 = slider('r0', (v) => { P.r0 = v; fresh(); }, (v) => v.toFixed(1));
+  const pick = (r0: number, vax: number, seed: number) => {
+    P.r0 = r0; P.vax = vax / 100;
+    setR0(r0); setVax(vax);
+    fresh(seed);
+    tp.setRunning(true);
+  };
+  tries({
+    covid: () => pick(2.5, 0, 1),
+    delta: () => pick(5, 70, 6),
+    below: () => pick(0.8, 0, 39),
+    measles: () => pick(15, 0, 1),
+    past: () => pick(3, 75, 2),
+    measvax: () => pick(15, 90, 8),
+  });
+
+  fresh();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #epi {
+    touch-action: none;
+  }
+</style>
