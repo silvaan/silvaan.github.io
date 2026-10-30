@@ -593,6 +593,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'segmentation',
+        title: 'Segmentation Output',
+        description:
+          'A segmentation network answers with one picture per class, each the size of the input and each a map of one probability. Read a pixel through the stack and the four numbers add up to 1; keep the largest and the stack becomes a mask.',
+        href: '/simulations/computer-vision/segmentation',
+        status: 'live',
+      },
+      {
         slug: 'shape-from-shading',
         title: 'Shape from Shading',
         description:

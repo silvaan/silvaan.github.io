@@ -1,0 +1,457 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="computer-vision"
+  title="Segmentation Output"
+  description="A segmentation network answers with as many pictures as there are classes, each the size of the input, each a map of one probability. At any pixel they add up to 1, and keeping the largest turns the stack into a mask."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="seg"
+          width="1000"
+          height="560"
+          role="img"
+          aria-label="A small picture of a house under the sun, the four probability channels a segmentation network returns for it, the mask made by keeping the largest, and one pixel read through all of them."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'sky', color: '#60a5fa' },
+          { label: 'ground', color: '#a3e635' },
+          { label: 'house', color: '#f87171' },
+          { label: 'sun', color: '#fbbf24' },
+        ]}
+        hint="Move the mouse over the picture, any channel or the mask to read that pixel everywhere"
+      />
+      <Result label="At this pixel" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="res"
+        label="Pixels per side"
+        attr="n"
+        options={[
+          { value: '16', label: '16' },
+          { value: '24', label: '24' },
+          { value: '32', label: '32' },
+          { value: '48', label: '48' },
+        ]}
+        active="24"
+      />
+      <Slider id="sure" label="How sure the network is" min={4} max={120} value={60} hint={['hedges', 'certain']} />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-shape', label: 'output shape' },
+          { id: 'r-pixel', label: 'pixel (column, row)' },
+          { id: 'r-rgb', label: 'its colour in the picture' },
+          { id: 'r-sum', label: 'sum of the four channels' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Every pixel of the picture has one pixel in each channel, at the same place. The output is the picture's
+      grid of pixels, with four numbers in each instead of three colours.
+    </li>
+    <li>
+      Point at the edge of the roof: the pixel is split between house and sky, and the four numbers still add up
+      to 1. <Try id="edge" />
+    </li>
+    <li>
+      Turn the network unsure and every channel goes dim: each pixel spreads its probability over all four
+      classes, the mask still picks one, and fades where that pick means little. <Try id="unsure" />
+    </li>
+    <li>
+      Turn it certain and the channels become all or nothing: the stack is then just the mask written out as one
+      yes-or-no picture per class, which is also how a mask is stored for training. <Try id="sure" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, roundRect } from '../../../lib/draw';
+  import { segmented, slider, result, readout, tries } from '../../../lib/panel';
+  import { say, withAlpha, isLight, lerp, clamp01 } from '../../../lib/story';
+
+  // What a segmentation network hands back: a stack of C pictures the size of
+  // the input, one per class, each pixel a probability, the C of them summing
+  // to 1 at every pixel. No network is trained here; the scores are drawn from
+  // the shapes in the scene, with soft edges and a little noise, so only the
+  // format of the answer is on show.
+  const CLASSES = [
+    { name: 'sky', colour: '#60a5fa' },
+    { name: 'ground', colour: '#a3e635' },
+    { name: 'house', colour: '#f87171' },
+    { name: 'sun', colour: '#fbbf24' },
+  ];
+  const C = CLASSES.length;
+
+  const canvas = document.getElementById('seg') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+
+  // ---------- the scene ----------
+  // signed distances in picture units (0..1), negative inside
+  const sdBox = (x: number, y: number, x0: number, y0: number, x1: number, y1: number) => {
+    const dx = Math.max(x0 - x, x - x1), dy = Math.max(y0 - y, y - y1);
+    return dx > 0 || dy > 0 ? Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) : Math.max(dx, dy);
+  };
+  /** The roof: a triangle over the walls, as the furthest of its three sides. */
+  const sdRoof = (x: number, y: number) => {
+    const ax = 0.32, ay = 0.25, l = 0.13, r = 0.51, by = 0.46;
+    const side = (px: number, py: number, qx: number, qy: number) => {
+      const ex = qx - px, ey = qy - py;
+      return ((x - px) * ey - (y - py) * ex) / Math.hypot(ex, ey);
+    };
+    return Math.max(side(l, by, ax, ay), side(ax, ay, r, by), y - by);
+  };
+  const sdHouse = (x: number, y: number) => Math.min(sdBox(x, y, 0.17, 0.45, 0.47, 0.77), sdRoof(x, y));
+  const sdSun = (x: number, y: number) => Math.hypot(x - 0.76, y - 0.2) - 0.1;
+  const sdGround = (x: number, y: number) => 0.68 + 0.03 * Math.sin(x * 9) - y;
+  /** Slow wobbles, different for each class, so the edges are not perfect. */
+  const wobble = (c: number, x: number, y: number) =>
+    0.3 * Math.sin(5.1 * x + 2.3 * c + 3.7 * y) * Math.cos(4.3 * y - 1.7 * c) + 0.15 * Math.sin(11 * x * y + c);
+
+  /** Scores z_c at a point: sky is the default, the others grow inside their shapes. */
+  function scores(x: number, y: number, k: number) {
+    const h = sdHouse(x, y), s = sdSun(x, y), g = Math.max(sdGround(x, y), -h);
+    return [wobble(0, x, y), -k * g + wobble(1, x, y), -k * h + wobble(2, x, y), -k * s + wobble(3, x, y)];
+  }
+  function softmax(z: number[]) {
+    const m = Math.max(...z), e = z.map((v) => Math.exp(v - m)), s = e.reduce((a, b) => a + b, 0);
+    return e.map((v) => v / s);
+  }
+  /** The colour of the scene at a point, as a camera would see it. */
+  function colourAt(x: number, y: number): number[] {
+    if (sdSun(x, y) < 0) return [255, 214, 92];
+    if (sdHouse(x, y) < 0) {
+      if (sdRoof(x, y) < 0) return [150, 62, 52];
+      if (sdBox(x, y, 0.22, 0.52, 0.3, 0.6) < 0 || sdBox(x, y, 0.35, 0.52, 0.43, 0.6) < 0) return [170, 210, 240];
+      if (sdBox(x, y, 0.27, 0.63, 0.35, 0.77) < 0) return [96, 64, 44];
+      return [214, 168, 120];
+    }
+    if (sdGround(x, y) < 0) return [86, 150, 64];
+    const t = y / 0.7;
+    const glow = Math.max(0, 1 - (sdSun(x, y) + 0.1) / 0.25) ** 2 * 0.6;
+    return [lerp(lerp(110, 190, t), 255, glow), lerp(lerp(170, 220, t), 236, glow), lerp(lerp(235, 245, t), 170, glow)];
+  }
+
+  // ---------- the output, pixel by pixel ----------
+  const S = { n: 24, k: 60, i: 7, j: 7 };
+  /** n·n·C probabilities, and the n·n colours of the picture. */
+  let P = new Float32Array(0), RGB = new Uint8ClampedArray(0);
+  function compute() {
+    const n = S.n, SS = 4;
+    P = new Float32Array(n * n * C);
+    RGB = new Uint8ClampedArray(n * n * 3);
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const q = j * n + i;
+        // the network's answer at the pixel's centre
+        const p = softmax(scores((i + 0.5) / n, (j + 0.5) / n, S.k));
+        for (let c = 0; c < C; c++) P[q * C + c] = p[c];
+        // the camera averages the light over the whole pixel
+        const sum = [0, 0, 0];
+        for (let b = 0; b < SS; b++)
+          for (let a = 0; a < SS; a++) {
+            const col = colourAt((i + (a + 0.5) / SS) / n, (j + (b + 0.5) / SS) / n);
+            for (let k = 0; k < 3; k++) sum[k] += col[k] / (SS * SS);
+          }
+        for (let k = 0; k < 3; k++) RGB[q * 3 + k] = sum[k];
+      }
+    paint();
+  }
+
+  const off = () => document.createElement('canvas');
+  const photo = off(), chans = CLASSES.map(off), mask = off();
+  const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  let light = isLight(canvas);
+  const top = (q: number) => {
+    let b = 0;
+    for (let c = 1; c < C; c++) if (P[q * C + c] > P[q * C + b]) b = c;
+    return b;
+  };
+  function paint() {
+    const n = S.n, base = light ? [255, 255, 255] : [16, 17, 22];
+    const fill = (cv: HTMLCanvasElement, f: (q: number, o: Uint8ClampedArray, at: number) => void) => {
+      cv.width = cv.height = n;
+      const g = cv.getContext('2d')!, im = g.createImageData(n, n);
+      for (let q = 0; q < n * n; q++) {
+        f(q, im.data, 4 * q);
+        im.data[4 * q + 3] = 255;
+      }
+      g.putImageData(im, 0, 0);
+    };
+    fill(photo, (q, o, at) => { for (let k = 0; k < 3; k++) o[at + k] = RGB[q * 3 + k]; });
+    chans.forEach((cv, c) => {
+      const col = rgb(CLASSES[c].colour);
+      fill(cv, (q, o, at) => { for (let k = 0; k < 3; k++) o[at + k] = lerp(base[k], col[k], P[q * C + c]); });
+    });
+    // the mask, faded towards the background where the winner left a lot to the others
+    fill(mask, (q, o, at) => {
+      const b = top(q), col = rgb(CLASSES[b].colour), fade = clamp01((1 - P[q * C + b]) * 1.3);
+      for (let k = 0; k < 3; k++) o[at + k] = lerp(col[k], base[k], fade);
+    });
+  }
+
+  // ---------- layout ----------
+  type Plane = { ox: number; oy: number; ax: number; ay: number; vx: number; vy: number };
+  const flat = (ox: number, oy: number, s: number): Plane => ({ ox, oy, ax: s, ay: 0, vx: 0, vy: s });
+  const SZ = 200;
+  /** A channel seen at an angle: its width runs back and down, its height straight down. */
+  const skew = (ox: number, oy: number): Plane => ({ ox, oy, ax: 0.52 * SZ, ay: 0.24 * SZ, vx: 0, vy: SZ });
+  const PIC = flat(24, 120, 200);
+  const CH = CLASSES.map((_, c) => skew(272 + c * 118, 106));
+  const MASK = flat(786, 120, 196);
+  const at = (p: Plane, u: number, v: number) => ({ x: p.ox + u * p.ax + v * p.vx, y: p.oy + u * p.ay + v * p.vy });
+  function toUV(p: Plane, x: number, y: number) {
+    const det = p.ax * p.vy - p.ay * p.vx, dx = x - p.ox, dy = y - p.oy;
+    return { u: (dx * p.vy - dy * p.vx) / det, v: (p.ax * dy - p.ay * dx) / det };
+  }
+  const path = (pts: { x: number; y: number }[]) => {
+    ctx.beginPath();
+    pts.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    ctx.closePath();
+  };
+
+  /** A grid of pixels on a plane, with lines between them so each pixel can be told apart. */
+  function drawPlane(img: HTMLCanvasElement, p: Plane, edge: string) {
+    const n = S.n;
+    ctx.save();
+    ctx.transform(p.ax / n, p.ay / n, p.vx / n, p.vy / n, p.ox, p.oy);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0);
+    ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = inv(n > 32 ? 0.22 : 0.4);
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    for (let k = 1; k < n; k++) {
+      const a = at(p, k / n, 0), b = at(p, k / n, 1), c = at(p, 0, k / n), d = at(p, 1, k / n);
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1.2;
+    path([at(p, 0, 0), at(p, 1, 0), at(p, 1, 1), at(p, 0, 1)]);
+    ctx.stroke();
+    ctx.restore();
+  }
+  /** The outline of pixel (i, j) on a plane. */
+  function cell(p: Plane, i: number, j: number, colour: string, width = 2) {
+    const n = S.n, u0 = i / n, u1 = (i + 1) / n, v0 = j / n, v1 = (j + 1) / n;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    path([at(p, u0, v0), at(p, u1, v0), at(p, u1, v1), at(p, u0, v1)]);
+    ctx.strokeStyle = inv(0.95);
+    ctx.lineWidth = width + 2.5;
+    ctx.stroke();
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.stroke();
+    ctx.restore();
+  }
+  function arrow(x0: number, y0: number, x1: number, y1: number, text: string) {
+    ctx.save();
+    ctx.strokeStyle = ink(0.35);
+    ctx.fillStyle = ink(0.35);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1 - 6, y1);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - 9, y1 - 5);
+    ctx.lineTo(x1 - 9, y1 + 5);
+    ctx.fill();
+    ctx.restore();
+    say(ctx, text, (x0 + x1) / 2, y0 - 12, { colour: ink(0.5), size: 12, align: 'center' });
+  }
+
+  // ---------- drawing ----------
+  function draw() {
+    const l = isLight(canvas);
+    if (l !== light) { light = l; paint(); }
+    ctx.clearRect(0, 0, W, H);
+    const n = S.n, q = S.j * n + S.i, pr = CLASSES.map((_, c) => P[q * C + c]), b = top(q);
+
+    // titles
+    say(ctx, 'the picture', PIC.ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, `${n} × ${n} × 3`, PIC.ox, 58, { colour: ink(0.5), size: 13 });
+    say(ctx, 'the output: one channel per class', CH[0].ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, `${n} × ${n} × ${C}, each pixel a probability`, CH[0].ox, 58, { colour: ink(0.5), size: 13 });
+    say(ctx, 'the mask', MASK.ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, `${n} × ${n}, the largest of the four`, MASK.ox, 58, { colour: ink(0.5), size: 13 });
+
+    drawPlane(photo, PIC, ink(0.3));
+    arrow(PIC.ox + PIC.ax + 8, PIC.oy + PIC.vy / 2, CH[0].ox - 8, PIC.oy + PIC.vy / 2, 'network');
+    CLASSES.forEach((cl, c) => {
+      drawPlane(chans[c], CH[c], withAlpha(cl.colour, 0.7));
+      say(ctx, `p(${cl.name})`, CH[c].ox, CH[c].oy - 14, { colour: cl.colour, size: 14, weight: 650 });
+    });
+    const last = CH[C - 1];
+    arrow(last.ox + last.ax + 10, MASK.oy + MASK.vy / 2, MASK.ox - 8, MASK.oy + MASK.vy / 2, 'largest');
+    drawPlane(mask, MASK, ink(0.3));
+
+    // the same pixel everywhere, threaded together
+    const centre = (p: Plane) => at(p, (S.i + 0.5) / n, (S.j + 0.5) / n);
+    const thread = [centre(PIC), ...CH.map(centre), centre(MASK)];
+    ctx.save();
+    ctx.strokeStyle = ink(0.55);
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    thread.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.stroke();
+    ctx.restore();
+    cell(PIC, S.i, S.j, ink(0.95));
+    CH.forEach((p, c) => cell(p, S.i, S.j, CLASSES[c].colour));
+    cell(MASK, S.i, S.j, ink(0.95));
+    CH.forEach((p, c) => {
+      const t = centre(p);
+      say(ctx, pr[c].toFixed(2), t.x + 10, t.y - 12, { colour: ink(0.95), size: 13, weight: 700, halo: inv(0.9) });
+    });
+
+    // the pixel, written out
+    const y0 = 390;
+    const px = RGB.slice(q * 3, q * 3 + 3);
+    say(ctx, `pixel (${S.i}, ${S.j})`, PIC.ox, y0, { colour: ink(0.85), size: 14, weight: 650 });
+    ctx.fillStyle = `rgb(${px[0]},${px[1]},${px[2]})`;
+    roundRect(ctx, PIC.ox, y0 + 16, 34, 34, 4);
+    ctx.fill();
+    ctx.strokeStyle = ink(0.3);
+    ctx.stroke();
+    say(ctx, `r ${px[0]}`, PIC.ox + 44, y0 + 22, { colour: '#f87171', size: 12.5, weight: 600 });
+    say(ctx, `g ${px[1]}`, PIC.ox + 44, y0 + 36, { colour: '#4ade80', size: 12.5, weight: 600 });
+    say(ctx, `b ${px[2]}`, PIC.ox + 44, y0 + 50, { colour: '#60a5fa', size: 12.5, weight: 600 });
+    say(ctx, '3 numbers in', PIC.ox, y0 + 72, { colour: ink(0.5), size: 12 });
+
+    // four numbers out, as one bar that always fills to 1
+    const bx = CH[0].ox, bw = 400, bh = 30, by = y0 + 18;
+    say(ctx, 'the same pixel in the output: 4 numbers that add up to 1', bx, y0, { colour: ink(0.85), size: 14, weight: 650 });
+    let x = bx;
+    pr.forEach((p, c) => {
+      const w = p * bw;
+      ctx.fillStyle = CLASSES[c].colour;
+      ctx.fillRect(x, by, w, bh);
+      if (w > 64) say(ctx, `${CLASSES[c].name} ${p.toFixed(2)}`, x + 7, by + bh / 2, { colour: '#0d0e12', size: 12.5, weight: 650 });
+      x += w;
+    });
+    ctx.strokeStyle = ink(0.3);
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    say(ctx, '= 1', bx + bw + 8, by + bh / 2, { colour: ink(0.8), size: 14, weight: 700 });
+    say(ctx, pr.map((p, c) => `${CLASSES[c].name} ${p.toFixed(3)}`).join('  +  '), bx, by + bh + 20, { colour: ink(0.55), size: 12 });
+
+    // the label the mask stores
+    say(ctx, `label ${b} · ${CLASSES[b].name}`, MASK.ox, y0, { colour: CLASSES[b].colour, size: 14, weight: 650 });
+    say(ctx, `1 number out, ${pr[b] >= 0.9 ? 'and a sure one' : `though only ${pr[b].toFixed(2)} sure`}`, MASK.ox, y0 + 22, { colour: ink(0.55), size: 12 });
+    CLASSES.forEach((cl, k) => {
+      ctx.fillStyle = cl.colour;
+      roundRect(ctx, MASK.ox + (k % 2) * 104, y0 + 44 + Math.floor(k / 2) * 22, 12, 12, 2);
+      ctx.fill();
+      say(ctx, `${k} · ${cl.name}`, MASK.ox + (k % 2) * 104 + 18, y0 + 50 + Math.floor(k / 2) * 22, { colour: ink(0.7), size: 12 });
+    });
+
+    panelText(pr, b, px);
+  }
+
+  // ---------- numbers ----------
+  setEq({
+    rule: [
+      ['p_c(x, y) = \\dfrac{e^{z_c(x, y)}}{\\sum_k e^{z_k(x, y)}}', '#7c8cff'],
+      '\\qquad \\textstyle\\sum_c p_c(x, y) = 1 \\qquad',
+      '\\text{mask}(x, y) = \\arg\\max_c \\, p_c(x, y)',
+    ],
+  });
+  function panelText(pr: number[], b: number, px: Uint8ClampedArray) {
+    setRows({
+      'r-shape': `${S.n} × ${S.n} × ${C}`,
+      'r-pixel': `(${S.i}, ${S.j})`,
+      'r-rgb': `(${px[0]}, ${px[1]}, ${px[2]})`,
+      'r-sum': pr.reduce((s, p) => s + p, 0).toFixed(3),
+    });
+    setResult({
+      value: `${CLASSES[b].name} ${pr[b].toFixed(2)}`,
+      status: pr.map((p, c) => `${CLASSES[c].name} ${p.toFixed(2)}`).join(' · '),
+      note:
+        pr[b] > 0.9
+          ? 'One class takes nearly all of the probability: the network is sure what this pixel is.'
+          : 'The pixel is split between classes, usually because it sits on an edge. The mask still has to pick one.',
+      colour: CLASSES[b].colour,
+    });
+  }
+
+  // ---------- input ----------
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
+    for (const p of [PIC, ...CH, MASK]) {
+      const { u, v } = toUV(p, x, y);
+      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
+      canvas.style.cursor = 'crosshair';
+      const i = Math.floor(u * S.n), j = Math.floor(v * S.n);
+      if (i !== S.i || j !== S.j) { S.i = i; S.j = j; draw(); }
+      return;
+    }
+    canvas.style.cursor = '';
+  });
+
+  // ---------- panel ----------
+  /** Keep pointing at the same spot of the scene when the grid changes. */
+  function regrid(n: number) {
+    const u = (S.i + 0.5) / S.n, v = (S.j + 0.5) / S.n;
+    S.n = n;
+    S.i = Math.floor(u * n);
+    S.j = Math.floor(v * n);
+    compute();
+    draw();
+  }
+  const resSeg = segmented('res', (v) => regrid(+v));
+  const setSure = slider('sure', (v) => { S.k = v; compute(); draw(); });
+  const aim = (k: number, u: number, v: number) => {
+    S.k = k;
+    setSure(k);
+    if (S.n !== 24) { resSeg.select('24'); S.n = 24; }
+    S.i = Math.floor(u * S.n);
+    S.j = Math.floor(v * S.n);
+    compute();
+    draw();
+  };
+  tries({
+    edge: () => aim(60, 0.4, 0.36),
+    unsure: () => aim(4, 0.3, 0.6),
+    sure: () => aim(120, 0.3, 0.6),
+  });
+  new MutationObserver(() => draw()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  compute();
+  draw();
+</script>
+
+<style>
+  #seg {
+    touch-action: none;
+  }
+</style>
