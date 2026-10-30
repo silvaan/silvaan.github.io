@@ -508,7 +508,7 @@ export const AREAS: Area[] = [
         slug: 'contrastive-learning',
         title: 'Contrastive Learning',
         description:
-          'Nobody says where anything goes. Things of a kind are pulled together and everything else pushed apart, and the embedding arranges itself from that. Four losses say it four different ways, and you can watch each one push.',
+          'Nobody says where anything goes: you only say which two things are a pair. Pull pairs together, push the rest apart, and the space sorts itself by whatever the rule meant by alike. Labels, random versions or captions, and three losses that say it three ways.',
         href: '/simulations/deep-learning/contrastive-learning',
         status: 'live',
       },
