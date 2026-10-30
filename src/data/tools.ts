@@ -672,6 +672,14 @@ export const AREAS: Area[] = [
         href: '/simulations/biology/epidemics',
         status: 'live',
       },
+      {
+        slug: 'enzyme-kinetics',
+        title: 'Enzyme Kinetics',
+        description:
+          'An enzyme is a machine that grabs a molecule, changes it and lets go. Add more substrate and the reaction speeds up, until every machine is busy and the rate levels off at its maximum.',
+        href: '/simulations/biology/enzyme-kinetics',
+        status: 'live',
+      },
     ],
   },
   {

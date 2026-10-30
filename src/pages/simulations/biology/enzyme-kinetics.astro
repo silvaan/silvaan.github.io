@@ -1,0 +1,469 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="biology"
+  title="Enzyme Kinetics"
+  description="An enzyme is a machine that grabs a molecule, changes it and lets go. Add more substrate and the reaction speeds up, until every machine is busy and the rate levels off at its maximum."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="ek"
+          width="1000"
+          height="580"
+          role="img"
+          aria-label="A reaction chamber where enzymes with a binding pocket catch substrate molecules, change them into product and let go, beside the Michaelis–Menten curve of reaction rate against substrate with the measured rate on it, a row showing which enzymes are busy, and the rate over time."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'enzyme', color: '#7c8cff' },
+          { label: 'substrate', color: '#fbbf24' },
+          { label: 'product', color: '#5eead4' },
+          { label: 'inhibitor', color: '#f87171' },
+        ]}
+        hint="Change the amount of substrate and wait a few seconds for the measured rate to settle on the curve"
+      />
+      <Result label="Reaction rate" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running />
+      <Slider id="s" label="Substrate molecules [S]" min={0} max={300} step={5} value={40} hint={['none', 'flooded']} />
+      <Slider id="e" label="Enzymes" min={1} max={12} value={6} />
+      <Slider id="kcat" label="Catalysis speed k<sub>cat</sub>" min={0.3} max={3} step={0.1} value={1.2} display="1.2 per s" hint={['slow', 'fast']} />
+      <Slider id="koff" label="Lets go, k<sub>off</sub>" min={0} max={3} step={0.1} value={0.6} display="0.6 per s" hint={['tight grip', 'loose grip']} />
+      <Slider id="stick" label="Binds on contact (sets k<sub>on</sub>)" min={0.1} max={1} step={0.05} value={1} display="100%" hint={['rarely', 'always']} />
+      <Checks items={[{ id: 'inh', label: 'Add a competitive inhibitor (60 molecules)' }]} />
+      <Readout
+        title="Now"
+        rows={[
+          { id: 'r-busy', label: 'enzymes busy' },
+          { id: 'r-blocked', label: 'blocked by inhibitor' },
+          { id: 'r-meas', label: 'measured rate, last 10 s' },
+          { id: 'r-theory', label: 'Michaelis–Menten rate' },
+          { id: 'r-km', label: 'K<sub>m</sub> = (k<sub>off</sub> + k<sub>cat</sub>) / k<sub>on</sub>' },
+          { id: 'r-vmax', label: 'V<sub>max</sub> = k<sub>cat</sub>·[E] (all busy)' },
+          { id: 'r-kon', label: 'k<sub>on</sub>, per enzyme and molecule' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Loosen the grip (raise k<sub>off</sub>) and the curve moves right: substrate often leaves before it is
+      changed, so it takes more of it to keep the enzymes busy, but V<sub>max</sub> stays put. Speed up catalysis
+      instead and V<sub>max</sub> rises, and K<sub>m</sub> with it: the pocket empties sooner, so filling it takes
+      more substrate. <Try id="grip" label="Looser grip" /> <Try id="fast" label="Faster catalyst" />
+    </li>
+    <li>
+      At [S] = K<sub>m</sub> half the enzymes are busy at any moment and the rate is half its maximum. That is all
+      K<sub>m</sub> means: the substrate level at which the machines are half occupied. <Try id="half" />
+    </li>
+    <li>
+      Flood the chamber and the rate stops growing: every enzyme is already working, and a molecule that arrives
+      at a busy one just bounces off. Only more enzymes raise V<sub>max</sub>. <Try id="flood" />
+    </li>
+    <li>
+      A competitive inhibitor sits in the pocket without being changed, so it takes enzymes out of play for a
+      while. The curve moves right (a larger apparent K<sub>m</sub>), but enough substrate still outcompetes it and
+      the rate climbs back towards the same V<sub>max</sub>. <Try id="inhibit" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk } from '../../../lib/draw';
+  import { slider, check, result, readout, tries, transport } from '../../../lib/panel';
+  import { say, withAlpha, isLight, glows, clamp01 } from '../../../lib/story';
+  import { Chamber, K, K0, type Enz, type Mol } from '../../../lib/enzyme-kinetics';
+
+  // A chamber of enzymes and substrate, molecule by molecule, next to the
+  // Michaelis–Menten curve the same rates predict. The measured rate is just
+  // products counted over the last ten seconds, and it lands on the curve.
+  const canvas = document.getElementById('ek') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const glow = glows();
+
+  let light = isLight(canvas);
+  const pal = () =>
+    light
+      ? { enz: '#6366f1', s: '#d97706', p: '#0d9488', i: '#dc2626' }
+      : { enz: '#7c8cff', s: '#fbbf24', p: '#5eead4', i: '#f87171' };
+  let P = pal();
+
+  // ---------- the chamber ----------
+  const CH = { x: 18, y: 18, w: 560, h: 540 };
+  const NI = 60, WINDOW = 10;
+  const S = { s: 40, e: 6, inh: false };
+  const ch = new Chamber(CH.w, CH.h);
+  /** When the conditions last changed: the measurement only counts from then. */
+  let since = 0;
+  /** Settled measurements for the current enzymes and inhibitor: [S] → rate. */
+  let measured = new Map<number, number>();
+  /** The rate over time, sampled twice a second. */
+  let history: { t: number; v: number }[] = [];
+
+  /** The curve before the constants last changed, and the measurements that went with it, fading. */
+  let ghost: { vm: number; km: number } | null = null;
+  let fading: { s: number; v: number }[] = [], fadeAt = 0, lastConst = -Infinity;
+
+  function restart() {
+    ch.reset(S.s, S.e, S.inh ? NI : 0);
+    since = 0;
+    measured = new Map();
+    history = [];
+    ghost = null;
+    fading = [];
+  }
+  const vmax = () => K.kcat * S.e;
+  const kmApp = () => ch.km() * (S.inh ? 1 + NI / ch.ki() : 1);
+  const mm = (s: number, km = kmApp(), vm = vmax()) => (vm * s) / (km + s);
+
+  // ---------- drawing the molecules ----------
+  function dot(x: number, y: number, c: string, r: number, a = 1) {
+    const g = glow(c, r, light), R = g.width / 4;
+    ctx.globalAlpha = a;
+    ctx.drawImage(g, CH.x + x - R, CH.y + y - R, 2 * R, 2 * R);
+    ctx.globalAlpha = 1;
+  }
+  function inhibitor(x: number, y: number, rot: number, a = 1) {
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.translate(CH.x + x, CH.y + y);
+    ctx.rotate(rot);
+    ctx.fillStyle = P.i;
+    ctx.beginPath();
+    ctx.roundRect(-5, -5, 10, 10, 2.5);
+    ctx.fill();
+    ctx.restore();
+  }
+  /** The two halves the substrate is cut into, drifting apart as they leave. */
+  function product(m: Mol) {
+    const a = m.age > 1.8 ? clamp01((2.6 - m.age) / 0.8) : 1, sep = 3 + Math.min(1, m.age / 0.4) * 4;
+    const ux = Math.cos(m.spin), uy = Math.sin(m.spin);
+    dot(m.x + ux * sep, m.y + uy * sep, P.p, 3.6, a);
+    dot(m.x - ux * sep, m.y - uy * sep, P.p, 3.6, a);
+  }
+  /** An enzyme: a round body with a pocket cut into it, the shape of the substrate. */
+  function enzyme(e: Enz) {
+    const R = K.enzR, rn = 8.5, a = 2 * Math.asin(rn / (2 * R));
+    const x = CH.x + e.x, y = CH.y + e.y, ang = e.ang;
+    // a working enzyme flexes a little
+    const flex = e.m?.kind === 'S' ? 1 + 0.04 * Math.sin(e.busy * 18) : 1;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(flex, 1 / flex);
+    const nx = R * Math.cos(ang), ny = R * Math.sin(ang);
+    const p1 = { x: R * Math.cos(ang - a), y: R * Math.sin(ang - a) }, p0 = { x: R * Math.cos(ang + a), y: R * Math.sin(ang + a) };
+    ctx.beginPath();
+    ctx.arc(0, 0, R, ang + a, ang - a + Math.PI * 2);
+    ctx.arc(nx, ny, rn, Math.atan2(p1.y - ny, p1.x - nx), Math.atan2(p0.y - ny, p0.x - nx), true);
+    ctx.closePath();
+    ctx.fillStyle = withAlpha(P.enz, e.m ? (light ? 0.35 : 0.42) : light ? 0.18 : 0.24);
+    ctx.fill();
+    ctx.strokeStyle = withAlpha(P.enz, 0.95);
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function chamber() {
+    ctx.save();
+    ctx.fillStyle = ink(0.025);
+    ctx.strokeStyle = ink(0.2);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(CH.x, CH.y, CH.w, CH.h, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.clip();
+    for (const e of ch.enz) enzyme(e);
+    for (const m of ch.mols) {
+      if (m.kind === 'P') product(m);
+      else if (m.kind === 'S') dot(m.x, m.y, P.s, 5, m.e < 0 && m.age < 0.3 && m.shy <= 0 ? 0.4 + 2 * m.age : 1);
+      else inhibitor(m.x, m.y, m.spin);
+    }
+    ctx.restore();
+  }
+
+  // ---------- the curve ----------
+  const G = { x0: 650, x1: 966, y0: 40, y1: 282 };
+  const SMAX = 300;
+  let ymax = 1;
+  const gx = (s: number) => G.x0 + (s / SMAX) * (G.x1 - G.x0);
+  const gy = (v: number) => G.y1 - (v / ymax) * (G.y1 - G.y0);
+
+  function curve() {
+    ymax = 1.25 * Math.max(vmax(), ghost?.vm ?? 0, 0.8);
+    say(ctx, 'rate against substrate', G.x0, G.y0 - 22, { colour: ink(0.85), size: 13.5, weight: 650 });
+    ctx.save();
+    ctx.strokeStyle = ink(0.2);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(G.x0, G.y0); ctx.lineTo(G.x0, G.y1); ctx.lineTo(G.x1, G.y1);
+    ctx.stroke();
+    ctx.restore();
+    for (let s = 0; s <= SMAX; s += 100) say(ctx, String(s), gx(s), G.y1 + 12, { colour: ink(0.45), size: 11, align: 'center' });
+    say(ctx, '[S], free substrate molecules', G.x1, G.y1 + 28, { colour: ink(0.55), size: 11.5, align: 'right' });
+    const step = ymax > 24 ? 8 : ymax > 10 ? 4 : ymax > 4 ? 2 : ymax > 2 ? 1 : 0.5;
+    for (let v = step; v < ymax; v += step) say(ctx, String(v), G.x0 - 6, gy(v), { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, 'products per second', G.x0 + 6, G.y0 - 4, { colour: ink(0.55), size: 11.5 });
+
+    const km = kmApp(), vm = vmax();
+    // Vmax and Km
+    ctx.save();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = ink(0.4);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(G.x0, gy(vm)); ctx.lineTo(G.x1, gy(vm)); ctx.stroke();
+    if (km < SMAX) {
+      ctx.beginPath();
+      ctx.moveTo(gx(km), G.y1); ctx.lineTo(gx(km), gy(vm / 2)); ctx.lineTo(G.x0, gy(vm / 2));
+      ctx.stroke();
+    }
+    ctx.restore();
+    say(ctx, `Vmax = ${vm.toFixed(1)}/s: every enzyme busy`, G.x1 - 4, gy(vm) - 10, { colour: ink(0.7), size: 11.5, align: 'right' });
+    if (km < SMAX) say(ctx, `Km ≈ ${km.toFixed(0)}`, Math.min(gx(km) + 6, G.x1 - 62), G.y1 - 10, { colour: ink(0.7), size: 11.5, weight: 600 });
+    say(ctx, 'half', G.x0 + 4, gy(vm / 2) - 8, { colour: ink(0.5), size: 11 });
+
+    const line = (km: number, c: string, dash: number[], w: number, vm = vmax()) => {
+      ctx.save();
+      ctx.strokeStyle = c;
+      ctx.lineWidth = w;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      for (let k = 0; k <= 120; k++) {
+        const s = (k / 120) * SMAX;
+        k ? ctx.lineTo(gx(s), gy(mm(s, km, vm))) : ctx.moveTo(gx(s), gy(mm(s, km, vm)));
+      }
+      ctx.stroke();
+      ctx.restore();
+    };
+    if (S.inh) {
+      line(ch.km(), withAlpha(P.p, 0.4), [4, 4], 1.6);
+      say(ctx, 'without inhibitor', gx(70), gy(mm(70, ch.km())) - 12, { colour: withAlpha(P.p, 0.75), size: 11, align: 'center', halo: inv(0.8) });
+    }
+    if (ghost) {
+      line(ghost.km, ink(0.35), [2, 4], 1.6, ghost.vm);
+      say(ctx, 'before', gx(290), gy(mm(290, ghost.km, ghost.vm)) + (ghost.vm > vm ? -12 : 12), { colour: ink(0.55), size: 11, align: 'right', halo: inv(0.8) });
+    }
+    line(km, P.p, [], 2.4);
+
+    // measurements made with the old constants fade away
+    const fa = 0.75 * (1 - (performance.now() - fadeAt) / 4000);
+    if (fa > 0) for (const f of fading) {
+      ctx.fillStyle = ink(fa);
+      ctx.beginPath(); ctx.arc(gx(f.s), gy(f.v), 3.4, 0, 6.283); ctx.fill();
+    }
+    // the settled measurements, then this one as it builds up
+    for (const [s, v] of measured) {
+      ctx.fillStyle = ink(0.75);
+      ctx.beginPath(); ctx.arc(gx(s), gy(v), 3.4, 0, 6.283); ctx.fill();
+    }
+    const vt = mm(S.s);
+    ctx.fillStyle = P.s;
+    ctx.strokeStyle = inv(0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(gx(S.s), gy(vt), 6, 0, 6.283); ctx.fill(); ctx.stroke();
+    const v = ch.rate(WINDOW, since);
+    if (!Number.isNaN(v)) {
+      const settled = ch.t - since >= WINDOW;
+      ctx.save();
+      ctx.strokeStyle = ink(settled ? 0.9 : 0.45);
+      ctx.lineWidth = 2;
+      ctx.setLineDash(settled ? [] : [3, 3]);
+      ctx.beginPath(); ctx.arc(gx(S.s), gy(v), 9, 0, 6.283); ctx.stroke();
+      ctx.restore();
+      const right = gx(S.s) < G.x1 - 90;
+      say(ctx, settled ? 'measured' : `measuring… ${Math.ceil(WINDOW - (ch.t - since))} s`, gx(S.s) + (right ? 14 : -14), gy(v) - 16, {
+        colour: ink(0.8), size: 11.5, weight: 600, align: right ? 'left' : 'right', halo: inv(0.85),
+      });
+    }
+  }
+
+  // ---------- who is busy ----------
+  const B = { x0: 650, y: 352 };
+  function busyRow() {
+    const n = ch.enz.length, busy = ch.busy(), blocked = ch.blocked();
+    say(ctx, 'each enzyme, right now', B.x0, B.y - 30, { colour: ink(0.85), size: 13.5, weight: 650 });
+    const gap = Math.min(26, (G.x1 - B.x0) / n);
+    ch.enz.forEach((e, k) => {
+      const x = B.x0 + 11 + k * gap;
+      ctx.save();
+      ctx.strokeStyle = withAlpha(P.enz, 0.9);
+      ctx.lineWidth = 1.6;
+      ctx.fillStyle = e.m?.kind === 'S' ? P.s : e.m?.kind === 'I' ? P.i : 'transparent';
+      ctx.beginPath(); ctx.arc(x, B.y, 9, 0, 6.283); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    });
+    const theory = S.s / (kmApp() + S.s);
+    say(ctx, `${busy} of ${n} working${blocked ? `, ${blocked} blocked` : ''}`, B.x0, B.y + 26, { colour: ink(0.75), size: 12.5, weight: 600 });
+    say(ctx, `on average [S] / (Km + [S]) = ${(100 * theory).toFixed(0)}% are working`, B.x0, B.y + 44, { colour: ink(0.55), size: 12 });
+  }
+
+  // ---------- the rate over time ----------
+  const T = { x0: 650, x1: 966, y0: 452, y1: 548, span: 40 };
+  function timeline() {
+    say(ctx, `rate over the last ${T.span} s`, T.x0, T.y0 - 16, { colour: ink(0.85), size: 13.5, weight: 650 });
+    const ty = (v: number) => T.y1 - (v / ymax) * (T.y1 - T.y0);
+    const tx = (t: number) => T.x1 - ((ch.t - t) / T.span) * (T.x1 - T.x0);
+    ctx.save();
+    ctx.strokeStyle = ink(0.2);
+    ctx.beginPath(); ctx.moveTo(T.x0, T.y0); ctx.lineTo(T.x0, T.y1); ctx.lineTo(T.x1, T.y1); ctx.stroke();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = ink(0.35);
+    ctx.beginPath(); ctx.moveTo(T.x0, ty(vmax())); ctx.lineTo(T.x1, ty(vmax())); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = P.p;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    let first = true;
+    for (const h of history) {
+      if (h.t < ch.t - T.span) continue;
+      first ? ctx.moveTo(tx(h.t), ty(h.v)) : ctx.lineTo(tx(h.t), ty(h.v));
+      first = false;
+    }
+    ctx.stroke();
+    ctx.restore();
+    say(ctx, 'Vmax', T.x0 + 4, ty(vmax()) - 8, { colour: ink(0.5), size: 11 });
+    say(ctx, 'now', T.x1, T.y1 + 12, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, 'products per second, counted over 3 s', T.x0, T.y1 + 12, { colour: ink(0.45), size: 11 });
+  }
+
+  // ---------- numbers ----------
+  const f1 = (v: number) => (Number.isNaN(v) ? '…' : v.toFixed(1));
+  function panelText() {
+    const km = kmApp(), vm = vmax(), vt = mm(S.s), v = ch.rate(WINDOW, since), settled = ch.t - since >= WINDOW;
+    const busy = ch.busy(), n = ch.enz.length;
+    setEq({
+      rule: [
+        ['v', P.p], ' = ', '\\dfrac{V_{max}\\,', ['[S]', P.s], '}{', S.inh ? 'K_m\\,(1 + [I]/K_i)' : 'K_m', ' + ', ['[S]', P.s], '}',
+        '\\qquad V_{max} = k_{cat}\\,[E] \\qquad K_m = \\dfrac{k_{off} + k_{cat}}{k_{on}}',
+      ],
+      live: [
+        [`v = ${f1(vt)}`, P.p], `= \\dfrac{${vm.toFixed(1)} \\times ${S.s}}{${km.toFixed(0)} + ${S.s}}\\text{ per s}`,
+        [`\\quad\\text{measured } ${f1(v)}\\text{ per s}`, P.p],
+      ],
+    });
+    setRows({
+      'r-busy': `${busy} of ${n}`,
+      'r-blocked': S.inh ? `${ch.blocked()} of ${n}` : 'no inhibitor',
+      'r-meas': settled ? `${f1(v)} per s` : `${f1(v)} per s, still settling`,
+      'r-theory': `${vt.toFixed(2)} per s`,
+      'r-km': `${km.toFixed(0)} molecules`,
+      'r-vmax': `${vm.toFixed(1)} per s`,
+      'r-kon': `${ch.kon().toFixed(4)} per s`,
+    });
+    const frac = S.s / (km + S.s);
+    setResult({
+      value: Number.isNaN(v) ? '…' : `${v.toFixed(1)} per second`,
+      status: `${(100 * frac).toFixed(0)}% of the enzymes working on average · Vmax ${vm.toFixed(1)} per s · Km ${km.toFixed(0)} molecules${S.inh ? ' with the inhibitor' : ''}`,
+      note:
+        frac < 0.3
+          ? 'Most enzymes are idle, waiting for substrate to find them: the rate grows almost in proportion to [S].'
+          : frac < 0.7
+            ? 'Around [S] = Km about half the enzymes are working at once and the rate is about half its maximum.'
+            : 'Nearly every enzyme is already working, so more substrate barely helps: the rate levels off at Vmax, which only more enzymes can raise.',
+      colour: settled ? P.p : undefined,
+    });
+  }
+
+  // ---------- loop ----------
+  let last = 0, tick = 0, nextSample = 0;
+  const tp = transport({ onReset: () => { restart(); tp.setRunning(true); } });
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    light = isLight(canvas);
+    P = pal();
+    if (tp.running() && dt > 0) {
+      // two half steps keep fast molecules from skipping past a pocket
+      ch.step(dt / 2);
+      ch.step(dt / 2);
+      if (ch.t >= nextSample) {
+        nextSample = ch.t + 0.5;
+        const r = ch.rate(3);
+        if (!Number.isNaN(r)) history.push({ t: ch.t, v: r });
+        while (history.length && history[0].t < ch.t - T.span - 1) history.shift();
+        if (ch.t - since >= WINDOW) measured.set(S.s, ch.rate(WINDOW, since));
+      }
+    }
+    ctx.clearRect(0, 0, W, H);
+    chamber();
+    curve();
+    busyRow();
+    timeline();
+    if (tick++ % 8 === 0) panelText();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  const changed = () => (since = ch.t);
+  const setS = slider('s', (v) => { S.s = v; ch.set('S', v); changed(); });
+  /** New constants: keep the old curve as a ghost and fade its measurements, once per burst of dragging. */
+  function constants(apply: () => void) {
+    const now = performance.now();
+    if (now - lastConst > 1500) {
+      ghost = { vm: vmax(), km: kmApp() };
+      fading = [...measured].map(([s, v]) => ({ s, v }));
+      fadeAt = now;
+      measured = new Map();
+    }
+    apply();
+    lastConst = now;
+    changed();
+  }
+  const setE = slider('e', (v) => constants(() => { S.e = v; ch.setEnzymes(v); }));
+  const setKcat = slider('kcat', (v) => constants(() => (K.kcat = v)), (v) => `${v.toFixed(1)} per s`);
+  const setKoff = slider('koff', (v) => constants(() => (K.koff = v)), (v) => `${v.toFixed(1)} per s`);
+  const setStick = slider('stick', (v) => constants(() => (K.stick = v)), (v) => `${Math.round(v * 100)}%`);
+  const setInh = check('inh', (on) => { S.inh = on; ch.set('I', on ? NI : 0); changed(); measured = new Map(); });
+
+  const put = (s: number, e: number, inh: boolean) => {
+    if (e !== S.e) constants(() => { S.e = e; setE(e); ch.setEnzymes(e); });
+    if (inh !== S.inh) { S.inh = inh; setInh(inh); ch.set('I', inh ? NI : 0); measured = new Map(); }
+    S.s = s;
+    setS(s);
+    ch.set('S', s);
+    changed();
+    if (!tp.running()) tp.setRunning(true);
+  };
+  /** Set the three constants (defaults unless given), then the chamber. */
+  const rates = (kcat: number, koff: number, s: number) => {
+    lastConst = -Infinity;
+    constants(() => {
+      K.kcat = kcat; K.koff = koff; K.stick = K0.stick;
+      setKcat(kcat); setKoff(koff); setStick(K0.stick);
+    });
+    put(s, S.e, S.inh);
+  };
+  tries({
+    grip: () => rates(K0.kcat, 2.4, 100),
+    fast: () => rates(2.4, K0.koff, 100),
+    half: () => put(Math.round(kmApp() / 5) * 5, S.e, S.inh),
+    flood: () => put(300, S.e, S.inh),
+    inhibit: () => put(300, S.e, true),
+  });
+
+  restart();
+  requestAnimationFrame(loop);
+</script>
