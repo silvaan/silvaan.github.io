@@ -23,42 +23,30 @@ import Try from '../../../components/sim/Try.astro';
           width="1000"
           height="640"
           role="img"
-          aria-label="Little pictures of shapes in colours placed in a disc by a small network, pulled towards the things they are paired with and pushed away from everything else."
+          aria-label="Little pictures of shapes in colours placed on a sphere by a small network as it trains, pulled towards the things they are paired with and pushed away from everything else. A card follows one picture: its three numbers, the pulls and pushes on it, and its five nearest pictures."
         ></canvas>
       </div>
       <Caption
         legend={[
           { label: 'pull: a pair', color: '#5eead4' },
           { label: 'push: not a pair', color: '#f9736a' },
+          { label: 'a positive number', color: '#60a5fa' },
+          { label: 'a negative number', color: '#fb923c' },
         ]}
-        hint="Drag to turn · scroll to zoom · double-click to reset · hover a picture to follow it"
+        hint="Hover a picture to follow it · drag to turn · scroll to zoom · double-click to reset"
       />
       <Result label="Lookups that find the right thing" />
     </div>
 
     <div class="sim-panel">
-      <Seg
-        id="ch"
-        label="Chapter"
-        attr="c"
-        options={[
-          { value: '0', label: '1 · Near means alike' },
-          { value: '1', label: '2 · Who is a pair' },
-          { value: '2', label: '3 · Pull &amp; push' },
-          { value: '3', label: '4 · Three losses' },
-          { value: '4', label: '5 · What it is for' },
-        ]}
-      />
-      <Transport>
-        <button type="button" class="btn ghost" id="next">Next chapter →</button>
-      </Transport>
+      <Transport running />
       <Seg
         id="rule"
         label="Two things are a pair when they"
         attr="r"
         options={[
-          { value: 'shape', label: 'share a shape' },
           { value: 'colour', label: 'share a colour' },
+          { value: 'shape', label: 'share a shape' },
           { value: 'versions', label: 'are versions of one picture' },
           { value: 'caption', label: 'are a picture and its caption' },
         ]}
@@ -69,6 +57,7 @@ import Try from '../../../components/sim/Try.astro';
         attr="l"
         active="nce"
         options={[
+          { value: 'pull', label: 'Pull only' },
           { value: 'pairs', label: 'Pairs' },
           { value: 'triplet', label: 'Triplet' },
           { value: 'nce', label: 'InfoNCE' },
@@ -90,13 +79,18 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Pulling pairs together is all that <b>pull alone</b> asks, and putting everything in one place does it
+      Before training, the places mean nothing: the five nearest pictures in the
+      card are a random mix, mostly ✗. Run it and watch them turn ✓ as the
+      sphere sorts itself. <Try id="untrained" />
+    </li>
+    <li>
+      Pulling pairs together is all that <b>pull only</b> asks, and putting everything in one place does it
       perfectly. The loss reaches zero and the space is useless: <b>collapse</b>. The push is what rules it out.
       <Try id="collapse" />
     </li>
     <li>
-      Same pictures, same network, same loss: pair them by <b>colour</b> instead of shape and the space is sorted
-      by colour. What "alike" means is whatever the pairing rule says. <Try id="colour" />
+      Same pictures, same network, same loss: pair them by <b>shape</b> instead of colour and the space is sorted
+      by shape. What "alike" means is whatever the pairing rule says. <Try id="shape" />
     </li>
     <li>
       With <b>versions</b> there are no labels at all, yet the pictures group by shape: a random version keeps the
@@ -107,8 +101,8 @@ import Try from '../../../components/sim/Try.astro';
       caption lands among the pictures it describes, so a sentence can find a picture. <Try id="caption" />
     </li>
     <li>
-      The three losses agree on what is a pair, not on the shape of the space: pairs stop at the margin and leave
-      tight clumps, InfoNCE never quite stops pushing and spreads them out. <Try id="losses" />
+      The losses agree on what is a pair, not on the shape of the space: <b>pairs</b> stop at the margin and leave
+      tight clumps, <b>InfoNCE</b> never quite stops pushing and spreads them out. <Try id="losses" />
     </li>
   </Fragment>
 </SimLayout>
@@ -117,16 +111,19 @@ import Try from '../../../components/sim/Try.astro';
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
-  import { segmented, slider, result, readout, tries } from '../../../lib/panel';
+  import { segmented, slider, result, readout, tries, transport } from '../../../lib/panel';
   import { pictures, alter, rng, Run, pushes, lookup, CAPTIONS, SHAPES, COLOURS } from '../../../lib/contrastive';
   import type { Pic, Rule, Loss } from '../../../lib/contrastive';
   import { stageCamera } from '../../../lib/stage-camera';
-  import { story, headline, say, withAlpha, isLight, beat, lerp, clamp01 } from '../../../lib/story';
+  import { say, withAlpha, isLight, lerp, clamp01 } from '../../../lib/story';
+  import { strip } from '../../../lib/embedding';
 
-  // The general idea as one picture: little pictures on a sphere, placed by a
-  // small network whose output is normalised to length 1, as real systems do. The reader picks which two things count as a pair; the
-  // loss pulls pairs and pushes everything else, and the disc sorts itself
-  // by whatever the pairing rule meant by "alike".
+  // Little pictures on a sphere, placed by a small network whose output is
+  // normalised to length 1, as real systems do. The reader picks which two
+  // things count as a pair and the loss; training runs live, pulling pairs
+  // and pushing everything else, and the sphere sorts itself by whatever the
+  // pairing rule meant by "alike". A card follows one picture: its three
+  // numbers, the forces on it, and the five pictures nearest to it.
   const PULL = '#5eead4', PUSH = '#f9736a', ACC = '#7c8cff';
   const COL = ['#f87171', '#60a5fa', '#fbbf24', '#4ade80'];
   const SANS = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
@@ -141,31 +138,27 @@ import Try from '../../../components/sim/Try.astro';
 
   const P = pictures();
   const n = P.length, NC = CAPTIONS.length;
-  /** A blue star: the picture the story follows when nobody hovers. */
+  /** A blue star: the picture the card follows when nobody hovers. */
   const FOCAL = (3 * 4 + 1) * 3;
-  const S = { rule: 'shape' as Rule, loss: 'nce' as Loss, margin: 0.5, tau: 0.1, hover: -1 };
+  /** "blue star": the caption followed when pictures are paired with words. */
+  const FOCAL_CAP = n + 13;
+  const S = { rule: 'colour' as Rule, loss: 'nce' as Loss, margin: 0.5, tau: 0.1, hover: -1 };
   const params = () => ({ margin: S.margin, tau: S.tau });
 
   let run = new Run(P, S.rule, S.loss, params());
+  /** Seconds since this run started, and steps owed to it. */
   let runT = 0, acc = 0, hist: number[] = [];
-  /** Chapter 3 runs pull alone first, then the real loss. */
-  let phase: 'pull' | 'push' = 'push';
-  function fresh(rule: Rule, loss: Loss) {
-    run = new Run(P, rule, loss, params());
+  function fresh() {
+    run = new Run(P, S.rule, S.loss, params());
     runT = 0;
     acc = 0;
     hist = [];
   }
-  /** Chapter 4 keeps one run per loss, each trained in turn as it is shown. */
-  let trio: Record<string, Run> = {};
-  const makeTrio = () => {
-    trio = Object.fromEntries((['pairs', 'triplet', 'nce'] as Loss[]).map((l) => [l, new Run(P, S.rule, l, params())]));
-  };
 
   // ---------- geometry ----------
   type V3 = [number, number, number];
-  const O = { x: 676, y: 410, s: 196 };
-  const CARD = { x: 30, y: 236, w: 340 };
+  const O = { x: 690, y: 340, s: 210 };
+  const CARD = { x: 30, y: 20, w: 340 };
   const view3 = { ang: 0.6, tilt: 0.35, turned: false };
   const view = stageCamera(canvas, W, H, {
     canTurn: () => true,
@@ -190,93 +183,38 @@ import Try from '../../../components/sim/Try.astro';
   const hx = new Float64Array(n + NC), hy = new Float64Array(n + NC), hz = new Float64Array(n + NC), hf = new Float64Array(n + NC);
   /** Points on the far side of the sphere fade back. */
   const depthA = (i: number) => 0.3 + 0.7 * clamp01((hz[i] + 0.6) / 1.4);
-  const showsCaptions = (ch: number, rule: Rule) => rule === 'caption' && ch !== 0;
+  const showsCaptions = () => S.rule === 'caption';
 
-  // ---------- chapters ----------
-  const chapters = [
-    {
-      dur: 9,
-      title: 'A space where near means alike',
-      body: 'A network places every picture somewhere on a sphere. We want alike things close and different things far, so that finding similar things is just looking nearby. Untrained, the places mean nothing yet.',
-    },
-    {
-      dur: 16,
-      title: 'You only say who is a pair',
-      body: 'Nobody says where anything goes. You pick one rule for which two things count as a pair; everything else is not a pair. Labels, random versions of one picture, a picture and its caption: same method, different rule.',
-    },
-    {
-      dur: Infinity,
-      title: 'Pull the pairs, push the rest',
-      body: 'The loss pulls every pair together. Pull alone has a lazy perfect answer: put everything in one place. So it also pushes apart whatever is not a pair, and the space sorts itself out.',
-    },
-    {
-      dur: 18,
-      title: 'Three ways to say it',
-      body: 'Pairs, triplet and InfoNCE all pull pairs and push the rest. They differ in how hard they push and when they stop: at a margin, once the order is right, or never quite, with the nearest pushing hardest.',
-    },
-    {
-      dur: Infinity,
-      title: 'What it is for',
-      body: 'Now near means alike, in the sense the rule chose. Finding similar things is a lookup of the nearest points: the idea behind image search, face recognition and finding pictures from words.',
-    },
-  ];
-
-  const st = story({
-    chapters,
-    enter(i) {
-      if (i <= 1) fresh(S.rule, S.loss);
-      if (i === 2) { fresh(S.rule, 'pull'); phase = 'pull'; }
-      if (i === 3) makeTrio();
-      if (i === 4) {
-        const same = run.rule === S.rule && run.loss === S.loss && run.k.margin === S.margin && run.k.tau === S.tau;
-        if (!same) fresh(S.rule, S.loss);
-        query = 0;
-      }
-    },
-    done: (i, t) => (i === 2 ? phase === 'push' && run.step >= END && runT > 15 : t >= chapters[i].dur),
-    relevant: (i) => (i === 0 ? [] : i === 1 ? ['rule'] : i === 3 ? ['rule', 'mar', 'tau'] : null),
-    frame,
+  // ---------- training ----------
+  const tp = transport({
+    onRun: (on) => { if (on && run.step >= END) fresh(); },
+    onReset: () => { fresh(); tp.setRunning(true); },
   });
-
-  const shownLoss = (t: number): Loss => (st.manual() ? S.loss : t < 6 ? 'pairs' : t < 12 ? 'triplet' : 'nce');
-  const RULES: Rule[] = ['shape', 'colour', 'versions', 'caption'];
-  const shownRule = (ch: number, t: number): Rule => (ch === 1 && !st.manual() && t < 14.4 ? RULES[Math.floor(t / 3.6)] : S.rule);
-
-  function steps(k: number, r: Run, cap: number) {
-    acc += k;
-    while (acc >= 1 && r.step < cap) {
-      r.learn();
-      if (r === run) hist.push(r.L);
+  /** Steps per second: the whole run takes about ten seconds. */
+  const RATE = 40;
+  function train(dt: number) {
+    if (!tp.running() || dt <= 0) return;
+    runT += dt;
+    acc += RATE * dt;
+    while (acc >= 1 && run.step < END) {
+      run.learn();
+      hist.push(run.L);
       acc -= 1;
     }
-    if (r.step >= cap) acc = 0;
-  }
-  function train(ch: number, t: number, live: number) {
-    if (live <= 0) return;
-    if (ch === 2) {
-      runT += live;
-      if (phase === 'pull' && runT > 7 && !st.manual()) { fresh(S.rule, S.loss); phase = 'push'; }
-      const rate = phase === 'pull' ? 25 : runT < 4 ? 2 : Math.min(60, 2 + (runT - 4) ** 2 * 15);
-      steps(rate * live, run, END);
-    } else if (ch === 3) {
-      const r = trio[shownLoss(t)];
-      for (let k = 0; k < 12 && r.step < END; k++) r.learn();
-    } else if (ch === 4) steps(90 * live, run, END);
+    if (run.step >= END) { acc = 0; tp.setRunning(false); }
   }
 
-  // ---------- drawing ----------
+  // ---------- the loop ----------
   let before = 0;
-  function frame(ch: number, t: number, _dt: number, live: number) {
+  function frame(now: number) {
     const light = isLight(canvas);
-    const now = performance.now(), real = before ? Math.min(0.05, (now - before) / 1000) : 0;
+    const real = before ? Math.min(0.05, (now - before) / 1000) : 0;
     before = now;
     view.tick();
     if (!view3.turned && S.hover < 0) view3.ang += real * 0.12;
-    train(ch, t, live);
-    const r = ch === 3 ? trio[shownLoss(t)] : run;
-    const Y = r.layout();
-    const k = ch === 3 ? 0.08 : 0.3;
-    for (let i = 0; i < Yd.length; i++) Yd[i] = first ? Y[i] : lerp(Yd[i], Y[i], k);
+    train(real);
+    const Y = run.layout();
+    for (let i = 0; i < Yd.length; i++) Yd[i] = first ? Y[i] : lerp(Yd[i], Y[i], 0.3);
     first = false;
     // eased points slip off the sphere; put them back on it
     for (let i = 0; i < n + NC; i++) {
@@ -288,39 +226,34 @@ import Try from '../../../components/sim/Try.astro';
 
     ctx.clearRect(0, 0, W, H);
     sphere(light);
-    const rule = shownRule(ch, t);
-    const anchor = S.hover >= 0 ? S.hover : FOCAL;
+    const anchor = S.hover >= 0 ? S.hover : showsCaptions() ? FOCAL_CAP : FOCAL;
+    // while it learns, the forces on the followed item; once done, its lookup
+    if (run.step < END && run.step > 0) forces(run, anchor, 1);
+    else lookupArcs(anchor);
 
-    if (ch === 0) neighbours0(t, anchor);
-    if (ch === 1) pairsOf(rule, t, anchor);
-    if (ch === 2 || ch === 3) forces(r, anchor, ch === 3 ? 0.6 : 1);
-    if (ch === 4) lookups(t);
-
-    // the pictures, and the captions when they take part
-    const fade = ch === 0 ? (i: number) => beat(t, (i % 9) * 0.08, 0.6 + (i % 9) * 0.08) : () => 1;
-    const capA = ch === 1 ? (rule === 'caption' ? segA(t, 3) : 0) : showsCaptions(ch, S.rule) ? 1 : 0;
-    const order = Array.from({ length: capA > 0 ? n + NC : n }, (_, i) => i).sort((a, b) => hz[a] - hz[b]);
+    const order = Array.from({ length: showsCaptions() ? n + NC : n }, (_, i) => i).sort((a, b) => hz[a] - hz[b]);
     for (const i of order) {
-      if (i < n) icon(P[i], hx[i], hy[i], fade(i) * depthA(i), hf[i], light);
-      else pill(i - n, hx[i], hy[i], capA * depthA(i));
+      if (i < n) icon(P[i], hx[i], hy[i], depthA(i), hf[i], light);
+      else pill(i - n, hx[i], hy[i], depthA(i));
     }
-
-    if (ch === 1) versionsOf(rule, t, anchor, light);
-    if (ch === 2) words2(anchor);
     if (S.hover >= 0) ring(hx[S.hover], hy[S.hover]);
+    collapseNote();
 
-    if (ch === 0) lookupCard(anchor, beat(t, 2.6, 3.4), false, light);
-    if (ch === 1) ruleCards(rule, light);
-    if (ch === 2) forceCard(anchor);
-    if (ch === 3) lossCard(shownLoss(t), t);
-    if (ch === 4) lookupCard(queryNow(), 1, true, light);
+    ruleCard(light);
+    focusCard(anchor, light);
+    lossCard(light);
 
-    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 470, manual: st.manual() });
-    say(ctx, 'the embedding space', W - 24, 196, { colour: ink(0.55), size: 13, weight: 600, align: 'right' });
-    if (ch >= 2) say(ctx, `step ${r.step} · loss ${r.L.toFixed(3)}`, W - 24, 216, { colour: ink(0.42), size: 12, align: 'right' });
+    say(ctx, 'the embedding space', W - 24, 30, { colour: ink(0.55), size: 13, weight: 600, align: 'right' });
+    say(ctx, `step ${run.step} of ${END}`, W - 24, 50, { colour: ink(0.42), size: 12, align: 'right' });
     if (view.away) say(ctx, 'double-click to reset the view', W - 16, H - 14, { colour: ink(0.45), size: 12, align: 'right' });
-    panelText(ch, r, Y);
-    eqTick(ch, t);
+    panelText(Y);
+    eqTick();
+    requestAnimationFrame(frame);
+  }
+
+  function lookupArcs(q: number) {
+    for (const { j } of nearest(q)) arc(vecOf(q), vecOf(j), matches(q, j) ? PULL : PUSH, run.step === 0 ? 0.45 : 0.75, 1.8);
+    ring(hx[q], hy[q]);
   }
 
   function sphere(light: boolean) {
@@ -452,34 +385,6 @@ import Try from '../../../components/sim/Try.astro';
     return S.rule === 'colour' ? a.colour === b.colour : a.shape === b.shape;
   }
 
-  // chapter 1: an untrained network, and the nearest neighbours it gives
-  function neighbours0(t: number, i: number) {
-    const a = beat(t, 2.6, 3.4);
-    if (a <= 0) return;
-    for (const { j } of nearest(i)) arc(vecOf(i), vecOf(j), ACC, 0.7 * a, 1.6);
-    ring(hx[i], hy[i]);
-  }
-
-  // chapter 2: who is a pair under each rule
-  /** Fade of the i-th rule's turn in chapter 2, or 1 once the reader has picked. */
-  const segA = (t: number, i: number) => (st.manual() || t >= 14.4 ? 1 : beat(t - i * 3.6, 0, 0.5) * (i === 3 ? 1 : 1 - beat(t - i * 3.6, 3.1, 3.6)));
-  function pairsOf(rule: Rule, t: number, i: number) {
-    const a = segA(t, RULES.indexOf(rule));
-    if (rule === 'versions') return;
-    let posAt = -1, negAt = -1;
-    const targets = rule === 'caption' ? Array.from({ length: NC }, (_, c) => n + c) : Array.from({ length: n }, (_, j) => j);
-    for (const j of targets) {
-      if (j === i) continue;
-      const q = j < n ? P[j] : CAPTIONS[j - n], p = P[i];
-      const pair = rule === 'caption' ? p.shape === q.shape && p.colour === q.colour : rule === 'shape' ? p.shape === q.shape : p.colour === q.colour;
-      arc(vecOf(i), vecOf(j), pair ? PULL : PUSH, (pair ? 0.75 : 0.13) * a, pair ? 1.8 : 1);
-      if (pair && posAt < 0) posAt = j;
-      if (!pair && negAt < 0) negAt = j;
-    }
-    ring(hx[i], hy[i]);
-    if (posAt >= 0) say(ctx, 'a pair', (hx[i] + hx[posAt]) / 2, (hy[i] + hy[posAt]) / 2 - 10, { colour: PULL, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
-    if (negAt >= 0) say(ctx, 'not a pair', (hx[i] + hx[negAt]) / 2, (hy[i] + hy[negAt]) / 2 - 10, { colour: PUSH, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
-  }
   /** Two random versions of picture i, the same two every time it is shown. */
   const versionsCache = new Map<number, Pic[]>();
   function versionsOf2(i: number) {
@@ -491,35 +396,10 @@ import Try from '../../../components/sim/Try.astro';
     }
     return v;
   }
-  function versionsOf(rule: Rule, t: number, i: number, light: boolean) {
-    if (rule !== 'versions' || i >= n) return;
-    const a = segA(t, 2), [v1, v2] = versionsOf2(i);
-    const x1 = hx[i] - 44, x2 = hx[i] + 44, y = hy[i] - 46;
-    line(hx[i], hy[i], x1, y, ink(1), 0.4 * a, 1, true);
-    line(hx[i], hy[i], x2, y, ink(1), 0.4 * a, 1, true);
-    line(x1, y, x2, y, PULL, 0.9 * a, 2.2);
-    for (const [v, x] of [[v1, x1], [v2, x2]] as [Pic, number][]) {
-      ctx.save();
-      ctx.globalAlpha = a;
-      ctx.beginPath();
-      ctx.arc(x, y, 17, 0, Math.PI * 2);
-      ctx.fillStyle = inv(0.9);
-      ctx.fill();
-      ctx.strokeStyle = withAlpha(PULL, 0.8);
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-      icon(v, x, y, a, 1.15, light);
-    }
-    say(ctx, 'two random versions: a pair', hx[i], y - 30, { colour: PULL, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
-    say(ctx, 'every other picture: not a pair', hx[i], hy[i] + 26, { colour: PUSH, size: 12.5, weight: 600, align: 'center', alpha: a, halo: inv(0.85) });
-    ring(hx[i], hy[i]);
-  }
-
-  // chapters 3 and 4: the pull and push on one item, from the loss itself
+  // the pull and push on one item, from the loss itself
   const dd = new Float64Array(2 * (n + NC));
   const rowVec = (r: Run, j: number): V3 => [r.Z[3 * j], r.Z[3 * j + 1], r.Z[3 * j + 2]];
-  /** The batch row the story follows, and where each row of the batch is drawn. */
+  /** The batch row that stands for item i, and where each row of the batch is drawn. */
   function rowsOf(r: Run, i: number) {
     const vers = r.rule === 'versions';
     const a = vers ? (i < n ? i : FOCAL) : r.rule === 'caption' ? i : i < n ? i : FOCAL;
@@ -558,24 +438,18 @@ import Try from '../../../components/sim/Try.astro';
     const p = project(m);
     return { s, x: p.x, y: p.y };
   }
-  function words2(i: number) {
-    const A = { x: hx[i < n ? i : FOCAL], y: hy[i < n ? i : FOCAL] };
-    if (phase === 'pull') {
-      say(ctx, 'only pull: pairs together', A.x, A.y - 26, { colour: PULL, size: 14, weight: 650, align: 'center', alpha: 1 - beat(runT, 3, 3.6), halo: inv(0.85) });
-      const sp = spread();
-      if (sp.s < 0.06 && run.step > 20) {
-        const b = beat(-sp.s, -0.06, -0.02);
-        say(ctx, 'collapse: everything in one place', sp.x, sp.y - 42, { colour: PUSH, size: 15, weight: 650, align: 'center', alpha: b, halo: inv(0.85) });
-        say(ctx, 'every pair is perfect, and the space is useless', sp.x, sp.y - 22, { colour: ink(0.8), size: 13, align: 'center', alpha: b, halo: inv(0.85) });
-      }
-    } else {
-      const b = 1 - beat(runT, 5, 6);
-      say(ctx, 'now also push what is not a pair', A.x, A.y - 26, { colour: PUSH, size: 14, weight: 650, align: 'center', alpha: b, halo: inv(0.85) });
-    }
+  /** Pull alone squeezes everything into one place: say so where it happens. */
+  function collapseNote() {
+    if (run.loss !== 'pull') return;
+    const sp = spread();
+    if (sp.s >= 0.06 || run.step < 20) return;
+    const b = Math.min(1, (0.06 - sp.s) / 0.04);
+    say(ctx, 'collapse: everything in one place', sp.x, sp.y - 42, { colour: PUSH, size: 15, weight: 650, align: 'center', alpha: b, halo: inv(0.85) });
+    say(ctx, 'every pair is perfect, and the space is useless', sp.x, sp.y - 22, { colour: ink(0.8), size: 13, align: 'center', alpha: b, halo: inv(0.85) });
   }
 
-  // ---------- the card on the left ----------
-  function card(y: number, h: number, on: number, light: boolean) {
+  // ---------- the cards on the left ----------
+  function card(y: number, h: number, light: boolean) {
     ctx.save();
     ctx.beginPath();
     ctx.roundRect(CARD.x, y, CARD.w, h, 12);
@@ -584,31 +458,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     ctx.fillStyle = light ? 'rgba(28,30,36,0.035)' : 'rgba(255,255,255,0.03)';
     ctx.fill();
-    ctx.strokeStyle = on ? withAlpha(ACC, 0.7) : ink(0.08);
-    ctx.lineWidth = on ? 1.5 : 1;
+    ctx.strokeStyle = ink(0.08);
+    ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.restore();
-  }
-
-  function lookupCard(q: number, a: number, marks: boolean, light: boolean) {
-    if (a <= 0) return;
-    ctx.save();
-    ctx.globalAlpha = a;
-    card(CARD.y, 360, 0, light);
-    say(ctx, 'look up', CARD.x + 16, CARD.y + 22, { colour: ink(0.55), size: 12.5, weight: 600 });
-    if (q < n) icon(P[q], CARD.x + 100, CARD.y + 22, 1, 1.5, light);
-    else pill(q - n, CARD.x + 120, CARD.y + 22, 1, true);
-    say(ctx, 'its 5 nearest pictures', CARD.x + 16, CARD.y + 56, { colour: ink(0.55), size: 12.5, weight: 600 });
-    nearest(q).forEach(({ j, d }, k) => {
-      const y = CARD.y + 92 + k * 52;
-      icon(P[j], CARD.x + 40, y, 1, 1.4, light);
-      say(ctx, `distance ${d.toFixed(2)}`, CARD.x + 80, y, { colour: ink(0.65), size: 12.5 });
-      if (marks) {
-        const ok = matches(q, j);
-        say(ctx, ok ? '✓' : '✗', CARD.x + CARD.w - 30, y, { colour: ok ? PULL : PUSH, size: 18, weight: 700, align: 'center' });
-      }
-    });
-    if (!marks) say(ctx, 'untrained: nearby means nothing yet', CARD.x + 16, CARD.y + 340, { colour: ink(0.5), size: 12 });
     ctx.restore();
   }
 
@@ -618,143 +470,106 @@ import Try from '../../../components/sim/Try.astro';
     versions: { title: 'Two versions of one picture', tag: 'no labels · SimCLR' },
     caption: { title: 'A picture and its caption', tag: 'two networks · CLIP' },
   };
-  function ruleCards(rule: Rule, light: boolean) {
-    const star = P[FOCAL];
-    RULES.forEach((r, k) => {
-      const y = CARD.y + k * 92, on = r === rule;
-      ctx.save();
-      ctx.globalAlpha = on ? 1 : 0.42;
-      card(y, 82, on ? 1 : 0, light);
-      say(ctx, RULE_CARD[r].title, CARD.x + 14, y + 20, { colour: ink(0.95), size: 14, weight: 650 });
-      say(ctx, RULE_CARD[r].tag, CARD.x + 14, y + 38, { colour: ink(0.5), size: 11.5 });
-      const ey = y + 62;
-      icon(star, CARD.x + 26, ey, 1, 1.1, light);
-      say(ctx, '+', CARD.x + 48, ey, { colour: PULL, size: 16, weight: 700, align: 'center' });
-      if (r === 'shape') {
-        icon({ shape: 3, colour: 0 }, CARD.x + 70, ey, 1, 1.1, light);
-        say(ctx, 'pair', CARD.x + 88, ey, { colour: PULL, size: 12 });
-        icon({ shape: 0, colour: 1 }, CARD.x + 170, ey, 1, 1.1, light);
-        say(ctx, 'not a pair', CARD.x + 188, ey, { colour: PUSH, size: 12 });
-      } else if (r === 'colour') {
-        icon({ shape: 0, colour: 1 }, CARD.x + 70, ey, 1, 1.1, light);
-        say(ctx, 'pair', CARD.x + 88, ey, { colour: PULL, size: 12 });
-        icon({ shape: 3, colour: 0 }, CARD.x + 170, ey, 1, 1.1, light);
-        say(ctx, 'not a pair', CARD.x + 188, ey, { colour: PUSH, size: 12 });
-      } else if (r === 'versions') {
-        const [v1] = versionsOf2(FOCAL);
-        icon(v1, CARD.x + 70, ey, 1, 1.1, light);
-        say(ctx, 'pair: the same picture, altered', CARD.x + 88, ey, { colour: PULL, size: 12 });
-      } else {
-        pill(4 * 3 + 1, CARD.x + 92, ey, 1);
-        say(ctx, 'pair: the words for it', CARD.x + 128, ey, { colour: PULL, size: 12 });
-      }
-      ctx.restore();
+  /** The pairing rule in force, with one example of a pair and a non-pair. */
+  function ruleCard(light: boolean) {
+    const y = CARD.y, r = S.rule, star = P[FOCAL];
+    card(y, 84, light);
+    say(ctx, RULE_CARD[r].title, CARD.x + 14, y + 20, { colour: ink(0.95), size: 14, weight: 650 });
+    say(ctx, RULE_CARD[r].tag, CARD.x + CARD.w - 14, y + 20, { colour: ink(0.5), size: 11.5, align: 'right' });
+    const ey = y + 56;
+    icon(star, CARD.x + 26, ey, 1, 1.1, light);
+    say(ctx, '+', CARD.x + 48, ey, { colour: PULL, size: 16, weight: 700, align: 'center' });
+    if (r === 'shape' || r === 'colour') {
+      const yes = r === 'shape' ? { shape: 3, colour: 0 } : { shape: 0, colour: 1 };
+      const no = r === 'shape' ? { shape: 0, colour: 1 } : { shape: 3, colour: 0 };
+      icon(yes, CARD.x + 70, ey, 1, 1.1, light);
+      say(ctx, 'pair', CARD.x + 88, ey, { colour: PULL, size: 12 });
+      icon(no, CARD.x + 170, ey, 1, 1.1, light);
+      say(ctx, 'not a pair', CARD.x + 188, ey, { colour: PUSH, size: 12 });
+    } else if (r === 'versions') {
+      const [v1] = versionsOf2(FOCAL);
+      icon(v1, CARD.x + 70, ey, 1, 1.1, light);
+      say(ctx, 'pair: the same picture, altered', CARD.x + 88, ey, { colour: PULL, size: 12 });
+    } else {
+      pill(4 * 3 + 1, CARD.x + 92, ey, 1);
+      say(ctx, 'pair: the words for it', CARD.x + 128, ey, { colour: PULL, size: 12 });
+    }
+  }
+
+  /** The followed item as an embedding: its numbers, the forces on it, its nearest pictures. */
+  function focusCard(q: number, light: boolean) {
+    const y0 = 116, x = CARD.x;
+    card(y0, 312, light);
+    say(ctx, S.hover >= 0 ? 'under the mouse' : 'followed', x + CARD.w - 14, y0 + 20, { colour: ink(0.45), size: 11.5, align: 'right' });
+    say(ctx, q < n ? 'this picture' : 'this caption', x + 14, y0 + 20, { colour: ink(0.55), size: 12.5, weight: 600 });
+    if (q < n) icon(P[q], x + 34, y0 + 60, 1, 1.9, light);
+    else pill(q - n, x + 46, y0 + 60, 1, true);
+    // its place on the sphere, as three numbers
+    const v = vecOf(q), cell = 24, gap = 12, sx = x + 92, sy = y0 + 46;
+    const names = ['x', 'y', 'z'];
+    for (let k = 0; k < 3; k++) {
+      const cx = sx + k * (cell + gap);
+      strip(ctx, [v[k]], cx, sy, { light, ink, cell, scale: 1, more: false });
+      say(ctx, (v[k] < 0 ? '−' : '') + Math.abs(v[k]).toFixed(2), cx + cell / 2, sy + cell + 12, { colour: ink(0.85), size: 11.5, weight: 600, align: 'center' });
+      say(ctx, names[k], cx + cell / 2, sy + cell + 26, { colour: ink(0.4), size: 10.5, align: 'center' });
+    }
+    const dx = sx + 3 * (cell + gap) - 4;
+    for (let k = 0; k < 4; k++) {
+      ctx.fillStyle = ink(0.45 * (1 - k / 4));
+      ctx.beginPath();
+      ctx.arc(dx + 3 + k * 8, sy + cell / 2, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    say(ctx, 'real: hundreds', dx + 38, sy + cell / 2, { colour: ink(0.45), size: 11 });
+
+    // the forces from the loss, in this step's batch
+    const { a } = rowsOf(run, q);
+    let np = 0, nn = 0;
+    for (let j = 0; j < run.B.m; j++) if (run.B.cand[a * run.B.m + j]) run.B.pos[a * run.B.m + j] ? np++ : nn++;
+    const noPush = run.loss === 'pull';
+    line(x + 14, y0 + 112, x + 46, y0 + 112, PULL, 0.9, 3);
+    say(ctx, `pulled by its ${np} pair${np === 1 ? '' : 's'}`, x + 56, y0 + 112, { colour: ink(0.85), size: 12.5 });
+    line(x + 14, y0 + 134, x + 46, y0 + 134, PUSH, noPush ? 0.25 : 0.9, 3);
+    say(ctx, noPush ? 'no push: pull only' : `pushed by the ${nn} others`, x + 56, y0 + 134, { colour: ink(noPush ? 0.45 : 0.85), size: 12.5 });
+
+    // a lookup: the nearest pictures, right or wrong for the rule
+    say(ctx, 'its 5 nearest pictures', x + 14, y0 + 166, { colour: ink(0.55), size: 12.5, weight: 600 });
+    nearest(q).forEach(({ j, d }, k) => {
+      const y = y0 + 192 + k * 26, w = vecOf(j);
+      icon(P[j], x + 26, y, 1, 1.05, light);
+      strip(ctx, w, x + 48, y - 5, { light, ink, cell: 10, gap: 1.5, scale: 1, more: false });
+      say(ctx, `distance ${d.toFixed(2)}`, x + 96, y, { colour: ink(0.65), size: 12 });
+      const ok = matches(q, j);
+      say(ctx, ok ? '✓' : '✗', x + CARD.w - 26, y, { colour: ok ? PULL : PUSH, size: 17, weight: 700, align: 'center' });
     });
   }
 
-  function forceCard(i: number) {
-    const light = isLight(canvas);
-    card(CARD.y, 250, 0, light);
-    const { a } = rowsOf(run, i);
-    let np = 0, nn = 0;
-    for (let j = 0; j < run.B.m; j++) if (run.B.cand[a * run.B.m + j]) run.B.pos[a * run.B.m + j] ? np++ : nn++;
-    say(ctx, 'on the ringed picture', CARD.x + 16, CARD.y + 22, { colour: ink(0.55), size: 12.5, weight: 600 });
-    line(CARD.x + 16, CARD.y + 54, CARD.x + 52, CARD.y + 54, PULL, 0.9, 3);
-    say(ctx, `pulled by its ${np} pair${np === 1 ? '' : 's'}`, CARD.x + 64, CARD.y + 54, { colour: ink(0.85), size: 13 });
-    line(CARD.x + 16, CARD.y + 82, CARD.x + 52, CARD.y + 82, PUSH, phase === 'pull' ? 0.25 : 0.9, 3);
-    say(ctx, phase === 'pull' ? 'no push yet' : `pushed by the ${nn} others`, CARD.x + 64, CARD.y + 82, { colour: ink(phase === 'pull' ? 0.45 : 0.85), size: 13 });
-    // the loss so far
-    const x0 = CARD.x + 16, y0 = CARD.y + 226, w = CARD.w - 32, h = 100;
-    say(ctx, phase === 'pull' ? 'loss, pull alone' : `loss, ${LOSS_NAME[run.loss]}`, x0, y0 - h - 14, { colour: ink(0.55), size: 12 });
+  const LOSS_NAME: Record<Loss, string> = { pull: 'pull only', pairs: 'pairs (margin)', triplet: 'triplet', nce: 'InfoNCE' };
+  function lossCard(light: boolean) {
+    const y0 = 440, x0 = CARD.x + 14, w = CARD.w - 28, h = 70;
+    card(y0, 120, light);
+    say(ctx, `loss, ${LOSS_NAME[run.loss]}`, x0, y0 + 20, { colour: ink(0.55), size: 12.5, weight: 600 });
+    say(ctx, run.L.toFixed(3), CARD.x + CARD.w - 14, y0 + 20, { colour: ink(0.8), size: 12.5, weight: 650, align: 'right' });
+    const base = y0 + 106;
     if (hist.length > 1) {
       const top = Math.max(...hist, 1e-9);
       ctx.save();
-      ctx.strokeStyle = phase === 'pull' ? PULL : ACC;
+      ctx.strokeStyle = run.loss === 'pull' ? PULL : ACC;
       ctx.lineWidth = 1.8;
       ctx.beginPath();
       hist.forEach((v, k) => {
-        const x = x0 + (k / Math.max(END, hist.length - 1)) * w, y = y0 - (v / top) * h;
+        const x = x0 + (k / END) * w, y = base - (v / top) * h;
         k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
       ctx.stroke();
       ctx.restore();
     }
     ctx.strokeStyle = ink(0.15);
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x0 + w, y0);
-    ctx.stroke();
-  }
-
-  const LOSS_NAME: Record<Loss, string> = { pull: 'pull alone', pairs: 'pairs (margin)', triplet: 'triplet', nce: 'InfoNCE' };
-  const LOSS_SAYS: Record<string, string[]> = {
-    pairs: ['Pairs go to distance 0. Others are pushed', 'out to the margin m, then left alone.'],
-    triplet: ['Only the order counts: each pair nearer', 'than each other by m. Then nothing moves.'],
-    nce: ['A softmax: the nearest others push hardest,', 'far ones barely, and it never quite stops.'],
-  };
-  /** How hard the loss pulls a pair, and pushes a non-pair, at each distance. */
-  function curve(loss: Loss, d: number, pair: boolean) {
-    const m = S.margin, tau = S.tau;
-    if (loss === 'pairs') return pair ? d : Math.max(0, m - d);
-    // triplet: as seen with the others at 1 and the pairs at 0.2
-    if (loss === 'triplet') return pair ? (d - 1 + m > 0 ? 1 : 0) : (0.2 - d + m > 0 ? 1 : 0);
-    return pair ? d : d * Math.exp(-(d * d) / tau);
-  }
-  function lossCard(loss: Loss, t: number) {
-    const light = isLight(canvas);
-    card(CARD.y, 360, 0, light);
-    const a = st.manual() ? 1 : beat(t % 6, 0, 0.6);
-    say(ctx, LOSS_NAME[loss], CARD.x + 16, CARD.y + 24, { colour: ACC, size: 17, weight: 650, alpha: a });
-    const x0 = CARD.x + 30, y0 = CARD.y + 230, w = CARD.w - 50, h = 150;
-    ctx.strokeStyle = ink(0.2);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x0, y0 - h);
-    ctx.lineTo(x0, y0);
-    ctx.lineTo(x0 + w, y0);
+    ctx.moveTo(x0, base);
+    ctx.lineTo(x0 + w, base);
     ctx.stroke();
-    say(ctx, 'distance →', x0 + w, y0 + 14, { colour: ink(0.45), size: 11.5, align: 'right' });
-    say(ctx, 'force', x0 - 6, y0 - h - 10, { colour: ink(0.45), size: 11.5 });
-    for (const pair of [true, false]) {
-      let top = 1e-9;
-      for (let k = 0; k <= 120; k++) top = Math.max(top, curve(loss, (2 * k) / 120, pair));
-      ctx.save();
-      ctx.strokeStyle = withAlpha(pair ? PULL : PUSH, a);
-      ctx.lineWidth = 2.4;
-      ctx.beginPath();
-      for (let k = 0; k <= 120; k++) {
-        const d = (2 * k) / 120, x = x0 + (d / 2) * w, y = y0 - (curve(loss, d, pair) / top) * (h - 10) * 0.9;
-        k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
-    say(ctx, 'pull on a pair', x0 + w, y0 - h + 4, { colour: PULL, size: 12, weight: 600, align: 'right', alpha: a });
-    say(ctx, 'push on the rest', x0 + w, y0 - h + 22, { colour: PUSH, size: 12, weight: 600, align: 'right', alpha: a });
-    if (loss !== 'nce') {
-      const xm = x0 + (S.margin / 2) * w;
-      line(xm, y0 - h + 34, xm, y0, '#fbbf24', 0.7, 1.2, true);
-      say(ctx, 'm', xm, y0 + 14, { colour: '#fbbf24', size: 12, weight: 600, align: 'center' });
-    }
-    LOSS_SAYS[loss].forEach((l, k) => say(ctx, l, CARD.x + 16, CARD.y + 290 + k * 20, { colour: ink(0.75), size: 13, alpha: a }));
-    if (loss === 'triplet') say(ctx, '(drawn with pairs at 0.2, others at 1)', CARD.x + 16, CARD.y + 336, { colour: ink(0.4), size: 11 });
-  }
-
-  // chapter 5: lookups, one after another
-  let query = 0;
-  const QUERIES = { pics: [FOCAL, 4, 22, 30, 11], caps: [n + 13, n + 2, n + 8, n + 7, n + 4] };
-  function queryNow() {
-    if (S.hover >= 0) return S.hover;
-    const list = S.rule === 'caption' ? QUERIES.caps : QUERIES.pics;
-    return list[query % list.length];
-  }
-  let lastSwitch = 0;
-  function lookups(t: number) {
-    if (S.hover < 0 && t - lastSwitch > 3.2) { query++; lastSwitch = t; }
-    if (t < lastSwitch) lastSwitch = t;
-    const q = queryNow();
-    for (const { j } of nearest(q)) arc(vecOf(q), vecOf(j), matches(q, j) ? PULL : PUSH, 0.75, 1.8);
-    ring(hx[q], hy[q]);
   }
 
   // ---------- numbers ----------
@@ -765,9 +580,9 @@ import Try from '../../../components/sim/Try.astro';
     versions: 'For each picture: does its nearest neighbour have the same shape? No label was used; the random versions change colour, never shape.',
     caption: 'For each caption: is the nearest picture the one it describes?',
   };
-  function panelText(ch: number, r: Run, Y: Float64Array) {
+  function panelText(Y: Float64Array) {
     if (tick++ % 10) return;
-    const { B, Z } = r;
+    const { B, Z } = run;
     let sp = 0, cp = 0, sn = 0, cn = 0;
     for (let a = 0; a < B.m; a++)
       for (let b = a + 1; b < B.m; b++) {
@@ -776,36 +591,32 @@ import Try from '../../../components/sim/Try.astro';
         if (B.pos[a * B.m + b]) { sp += d; cp++; } else { sn += d; cn++; }
       }
     setRows({
-      'r-step': `${r.step}`,
-      'r-loss': r.L.toFixed(3),
+      'r-step': `${run.step}`,
+      'r-loss': run.L.toFixed(3),
       'r-pos': (sp / Math.max(1, cp)).toFixed(2),
       'r-neg': (sn / Math.max(1, cn)).toFixed(2),
     });
-    const k = lookup(Y, P, r.rule), collapsed = spread().s < 0.06;
+    const k = lookup(Y, P, run.rule), collapsed = spread().s < 0.06;
     setResult({
       value: `${Math.round(k * 100)}%`,
-      status: collapsed ? 'collapsed: every lookup is a guess' : r.step === 0 ? 'an untrained network' : k > 0.95 ? 'near means alike' : 'still sorting',
-      note: NOTE[r.rule],
+      status: collapsed ? 'collapsed: every lookup is a guess' : run.step === 0 ? 'an untrained network' : k > 0.95 ? 'near means alike' : 'still sorting',
+      note: NOTE[run.rule],
       colour: k > 0.95 && !collapsed ? PULL : collapsed ? PUSH : undefined,
     });
   }
 
   type Part = string | [string, string];
-  const EQ: Record<string, Part[]> = {
-    0: ['z = f(x)', '\\qquad \\text{near} \\iff \\text{alike}'],
-    1: ['\\text{you choose the pairs } (x,\\,', ['x^{+}', PULL], ')', '\\text{; every other } ', ['x^{-}', PUSH], '\\text{ is not a pair}'],
-    2: ['\\mathcal L = \\textstyle\\sum \\text{pull}(', ['d^{+}', PULL], ') + \\textstyle\\sum \\text{push}(', ['d^{-}', PUSH], ')'],
+  const EQ: Record<Loss, Part[]> = {
+    pull: ['\\mathcal L = \\textstyle\\sum', ['(d^{+})^2', PULL], '\\qquad \\text{and no push}'],
     pairs: ['\\mathcal L = ', ['(d^{+})^2', PULL], '+', ['\\max(0,\\, m - d^{-})^2', PUSH]],
     triplet: ['\\mathcal L = \\max(0,\\;', ['d^{+}', PULL], '-', ['d^{-}', PUSH], '+ m)'],
     nce: ['\\mathcal L = -\\log \\dfrac{e^{-', ['(d^{+})^2', PULL], '/\\tau}}{\\sum_j e^{-', ['d_j^2', PUSH], '/\\tau}}'],
-    4: ['\\text{look up } q:\\;\\; \\arg\\min_x \\|f(q) - f(x)\\|'],
   };
   let eqFor = '';
-  function eqTick(ch: number, t: number) {
-    const key = ch === 3 ? shownLoss(t) : String(ch);
-    if (key === eqFor) return;
-    eqFor = key;
-    setEq({ rule: EQ[key] });
+  function eqTick() {
+    if (run.loss === eqFor) return;
+    eqFor = run.loss;
+    setEq({ rule: EQ[run.loss], live: ['z = f(x),\\;\\; \\|z\\| = 1 \\qquad \\text{near} \\iff \\text{alike}'] });
   }
 
   // ---------- input ----------
@@ -814,7 +625,7 @@ import Try from '../../../components/sim/Try.astro';
     if (view.busy) return;
     const b = canvas.getBoundingClientRect();
     const x = ((e.clientX - b.left) / b.width) * W, y = ((e.clientY - b.top) / b.height) * H;
-    const ch = st.chapter(), m = showsCaptions(ch, S.rule) ? n + NC : n;
+    const m = showsCaptions() ? n + NC : n;
     let best = -1, bd = 12 * 12;
     for (let i = 0; i < m; i++) {
       const d = (hx[i] - x) ** 2 + (hy[i] - y) ** 2;
@@ -825,26 +636,27 @@ import Try from '../../../components/sim/Try.astro';
   });
 
   // ---------- panel ----------
-  /** New settings: redo what the current chapter shows, learning live where it learns. */
-  function restart() {
-    const c = st.chapter();
-    if (c === 2) { fresh(S.rule, S.loss); phase = 'push'; }
-    else if (c === 3) makeTrio();
-    else fresh(S.rule, S.loss);
-  }
+  /** New settings start a new run from an untrained network. */
+  const restart = () => { fresh(); tp.setRunning(true); };
   const ruleSeg = segmented('rule', (v) => { S.rule = v as Rule; restart(); });
   const lossSeg = segmented('loss', (v) => { S.loss = v as Loss; restart(); });
   slider('mar', (v) => { S.margin = v / 100; restart(); }, (v) => (v / 100).toFixed(2));
   slider('tau', (v) => { S.tau = v / 100; restart(); }, (v) => (v / 100).toFixed(2));
 
-  const pick = (rule: Rule) => { S.rule = rule; ruleSeg.select(rule); };
+  function put(rule: Rule, loss: Loss, go = true) {
+    S.rule = rule; ruleSeg.select(rule);
+    S.loss = loss; lossSeg.select(loss);
+    fresh();
+    tp.setRunning(go);
+  }
   tries({
-    collapse: () => { st.go(2); st.play(true); },
-    colour: () => { pick('colour'); st.go(4); st.play(true); },
-    versions: () => { pick('versions'); st.go(4); st.play(true); },
-    caption: () => { pick('caption'); st.go(4); st.play(true); },
-    losses: () => { S.loss = 'nce'; lossSeg.select('nce'); st.go(3); st.play(true); },
+    untrained: () => put('colour', 'nce', false),
+    collapse: () => put('colour', 'pull'),
+    shape: () => put('shape', 'nce'),
+    versions: () => put('versions', 'nce'),
+    caption: () => put('caption', 'nce'),
+    losses: () => put('colour', 'pairs'),
   });
 
-  st.start();
+  requestAnimationFrame(frame);
 </script>

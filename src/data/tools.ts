@@ -513,18 +513,18 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
-        slug: 'cosine-similarity',
-        title: 'Embeddings & Cosine Similarity',
+        slug: 'embeddings',
+        title: 'Embeddings',
         description:
           'A word is a list of numbers, which is an arrow, and words used alike point alike. In 3D, rank the words by angle, by dot product and by distance, watch length change the answer, then push every arrow onto the sphere and see the three agree.',
-        href: '/simulations/deep-learning/cosine-similarity',
+        href: '/simulations/deep-learning/embeddings',
         status: 'live',
       },
       {
         slug: 'positional-encoding',
         title: 'Positional Encoding',
         description:
-          'Attention reads a set, so order has to be written into the vectors. Added sinusoids make a score depend on where two words sit; rotary makes it depend on their offset alone.',
+          'Each position is stamped with a clock of many hands, each turning at its own speed. Neighbours read almost the same time, and stepping k places ahead turns every hand by the same angle, wherever you start.',
         href: '/simulations/deep-learning/positional-encoding',
         status: 'live',
       },

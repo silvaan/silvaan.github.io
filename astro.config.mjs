@@ -24,6 +24,7 @@ export default defineConfig({
     '/simulations/deep-learning/residual': '/simulations/deep-learning',
     '/simulations/deep-learning/attention': '/simulations/deep-learning',
     '/simulations/deep-learning/self-attention': '/simulations/deep-learning',
+    '/simulations/deep-learning/cosine-similarity': '/simulations/deep-learning/embeddings',
     '/simulations/deep-learning/recurrence': '/simulations/deep-learning',
     '/simulations/calculus/green-theorem': '/simulations/calculus/stokes-theorem',
     '/simulations/calculus/divergence': '/simulations/calculus/divergence-curl',

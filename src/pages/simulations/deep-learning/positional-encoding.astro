@@ -1,19 +1,19 @@
 ---
 import SimLayout from '../../../layouts/SimLayout.astro';
+import Transport from '../../../components/sim/Transport.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Actions from '../../../components/sim/Actions.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
-import Readout from '../../../components/sim/Readout.astro';
+import Checks from '../../../components/sim/Checks.astro';
 import Try from '../../../components/sim/Try.astro';
 ---
 
 <SimLayout
   areaSlug="deep-learning"
   title="Positional Encoding"
-  description="Attention looks at a set, not a sequence: shuffle the words and every score comes out the same. Position has to be written into the vectors, and the question is whether the score between two words then depends only on how far apart they are or also on where they sit."
-  shortcuts={['fullscreen']}
+  description="Attention reads a bag of words, so each word is stamped with its place. The stamp is a clock with many hands, each turning at its own speed: neighbours read almost the same time, and stepping k places ahead turns every hand by the same angle, wherever you start."
+  shortcuts={['run', 'fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -21,401 +21,1042 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="pe"
           width="1000"
-          height="620"
+          height="730"
           role="img"
-          aria-label="The positional encoding matrix as a heatmap of positions against dimensions, the vector for the chosen position, and the attention score between two words plotted against their offset, for the query at two different positions."
+          aria-label="A word plus its position code giving the vector attention sees, each as a strip of coloured cells. Below, eight clocks, one per pair of dimensions, each with its two numbers, each hand turning at its own speed as the position p advances. Beside each clock its sine wave runs across 128 positions, and above them a teal glow shows how much every position looks like p, with a second, pink position k steps ahead."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'query at position p', color: '#7c8cff' },
-          { label: 'query at position p′', color: '#f472b6' },
-          { label: 'a fast dimension', color: '#f59e0b' },
+          { label: 'position p', color: '#e8e9ec', id: 'lg-0' },
+          { label: 'position p + k', color: '#f472b6', id: 'lg-1' },
+          { label: 'how much it looks like p', color: '#5eead4', id: 'lg-2' },
+          { label: 'fast clock to slow clock', color: '#f59e0b', id: 'lg-3' },
+          { label: 'a positive number', color: '#60a5fa' },
+          { label: 'a negative number', color: '#fb923c' },
         ]}
-        hint="Click a row of the heatmap to move p"
+        hint="Drag on the stage to move p, or grab the pink line to change k"
       />
-      <Result label="Largest gap between the two curves" />
+      <Result label="How alike p and p + k are" />
     </div>
 
     <div class="sim-panel">
       <Seg
-        id="kind"
-        label="Encoding"
-        attr="k"
+        id="view"
+        label="View"
+        attr="v"
         options={[
-          { value: 'sin', label: 'Sinusoidal' },
-          { value: 'rope', label: 'Rotary' },
-          { value: 'table', label: 'Random table' },
-          { value: 'none', label: 'None' },
+          { value: 'clocks', label: 'Clocks' },
+          { value: 'donut', label: 'Donut (3D)' },
+          { value: 'words', label: 'Sentence (3D)' },
+        ]}
+      />
+      <Transport running reset={false} />
+      <Slider id="pos" label="Position p" min={0} max={127} value={0} />
+      <Slider id="off" label="Offset k" min={0} max={40} value={3} hint={['same place', 'far ahead']} />
+      <Slider id="base" label="Base B" min={10} max={40} value={20} display="100" hint={['every clock fast', 'most clocks frozen']} />
+      <Seg
+        id="pair"
+        label="The donut is made of"
+        attr="pr"
+        options={[
+          { value: 'mixed', label: 'a fast + a slow clock' },
+          { value: 'fast', label: 'two fast' },
+          { value: 'slow', label: 'two slow' },
         ]}
       />
       <Seg
-        id="words"
-        label="Query and key"
-        attr="w"
+        id="sent"
+        label="Sentence"
+        attr="s"
         options={[
-          { value: 'diff', label: 'Two words' },
-          { value: 'same', label: 'Same word' },
+          { value: 'a', label: 'the dog bites the man' },
+          { value: 'b', label: 'the man bites the dog' },
         ]}
       />
-      <Slider id="pos" label="Position p" min={0} max={63} value={8} />
-      <Slider id="pos2" label="Position p′" min={0} max={63} value={40} />
-      <Slider id="dim" label="Dimensions d" min={8} max={64} step={4} value={32} />
-      <Slider id="base" label="Base B" min={10} max={50} value={40} display="10000" hint={['every dimension fast', 'the last ones very slow']} />
-      <Actions>
-        <button type="button" class="btn ghost" id="shuffle">New words</button>
-      </Actions>
-      <Readout
-        title="Values"
-        rows={[
-          { id: 'r-0', label: 'score at offset 0, from p / p′' },
-          { id: 'r-1', label: 'score at offset 1, from p / p′' },
-          { id: 'r-10', label: 'score at offset 10, from p / p′' },
-          { id: 'r-slow', label: 'slowest wavelength' },
-        ]}
-      />
+      <Checks items={[{ id: 'peon', label: 'Add the position code', checked: true }]} />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      <b>Sinusoidal</b> adds the waves to the word vectors. The score then mixes
-      word with position, so the same offset scores differently from p and from
-      p′: the two curves part. <Try id="sin" />
+      Watch the strip on top: "dog" keeps its own numbers, only PE(p) changes
+      as p moves, so the sum that reaches attention is a different vector at
+      every position. Without it, <a href="/simulations/deep-learning/attention">attention</a>
+      sees the same words whatever their order.
     </li>
     <li>
-      <b>Rotary</b> rotates each pair of dimensions instead, and rotations
-      compose: (R<sub>p</sub>x)·(R<sub>q</sub>y) = x·R<sub>q−p</sub>y. The two curves
-      lie exactly on top of each other, for any words. <Try id="rope" label="New words" />
+      Each clock alone repeats. The fastest comes round every 6.3 steps, so it
+      can hardly tell p from p + 19, but the slower hands can. Read together,
+      the hands give every position its own time, like the hands of a watch.
+      <Try id="echo" />
     </li>
     <li>
-      Drag the <b>base</b> down and every dimension turns fast: the score
-      collapses to a narrow spike at offset 0. A large base keeps slow
-      dimensions that tell distant positions apart. <Try id="base" />
+      Neighbours look alike and distant positions less so: the teal glow is a
+      bump around p, and it keeps the same shape wherever p goes.
+      <Try id="glow" />
     </li>
     <li>
-      A <b>table</b> of one vector per position starts out as noise, shown here
-      untrained. Training shapes it, but it can only cover the positions it was
-      given rows for. <Try id="table" />
+      Stepping k ahead turns every hand by the same angle k·ω<sub>i</sub>, whatever
+      time the clock shows. The pink arcs never change size while p runs, and
+      neither does the similarity: a distance means the same thing everywhere
+      in the sentence. <Try id="shift" />
+    </li>
+    <li>
+      The base sets how slow the slowest clock is. A small base keeps every
+      hand fast and far positions start to echo p; a large one leaves most
+      hands frozen over a short sentence. Real models use B = 10 000 with
+      hundreds of clocks. <Try id="base" />
+    </li>
+    <li>
+      Switch to <b>Donut</b>: two clocks together make a donut. The slow hand
+      carries the point around the ring, the fast hand winds it around the
+      tube, so the positions form a coil. Every position gets its own spot and
+      neighbours sit side by side. <Try id="donut" />
+    </li>
+    <li>
+      On the donut, stepping k ahead is the same twist wherever you start: the
+      pink piece of coil slides along without changing shape. <Try id="twist" />
+    </li>
+    <li>
+      Make the donut of <b>two fast</b> clocks and the coil wraps round and
+      round: far-apart positions land close together (they stay dark, because
+      the other clocks still tell them apart). Of <b>two slow</b> clocks and
+      neighbours pile up on one spot. A fast and a slow clock are needed
+      together. <Try id="pairs" />
+    </li>
+    <li>
+      Switch to <b>Sentence</b> to see it on words. Each word sits in an
+      embedding space, and around it the same little donut: everywhere PE can
+      move it. A token is its word plus PE(its position), so it lands on its
+      word's donut at the spot for its position. <Try id="words" />
+    </li>
+    <li>
+      Switch the position code off: every donut shrinks to its word, the two
+      "the"s become one point, and both sentences give the same five vectors.
+      That is all attention would get. <Try id="nope" />
+    </li>
+    <li>
+      Swap the sentence: dog and man slide along their own donuts to their new
+      positions, while staying near their words. Position changes a token a
+      little; meaning still says which word it is. <Try id="swap" />
+    </li>
+    <li>
+      Rotary encoding (RoPE) uses these same rotations on the queries and keys
+      themselves, so an attention score depends on k alone.
     </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
-  import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
+  import { stageInk, fixed } from '../../../lib/draw';
+  import { slider, segmented, check, transport, result, tries } from '../../../lib/panel';
+  import { say, withAlpha, mix, isLight, glows } from '../../../lib/story';
+  import { strip, token } from '../../../lib/embedding';
 
-  const PICK = '#7c8cff', PICK2 = '#f472b6', SIM = '#5eead4', FAST = '#f59e0b';
-  const LEN = 64;
+  // Position p is written as d/2 = 8 clock hands, hand i at angle p·ω_i with
+  // ω_i = B^(−2i/d). The vector is (sin, cos) of every angle, so the dot
+  // product of positions p and p + k is Σ cos(k·ω_i): p drops out.
+  const FAST = '#f59e0b', SLOW = '#818cf8', PINK = '#f472b6', SIM = '#5eead4';
+  const N = 128, D = 16, PAIRS = D / 2, KMAX = 40, SPEED = 4.5;
 
-  type Kind = 'sin' | 'rope' | 'table' | 'none';
-  const state = { kind: 'sin' as Kind, same: false, pos: 8, pos2: 40, dim: 32, base: 10000, seed: 7 };
-
-  const canvas = el('pe') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => build());
-  const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const canvas = document.getElementById('pe') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const glow = glows();
   const setEq = equation();
   const setResult = result();
-  const setRows = readout();
+  let light = isLight(canvas);
+  /** Teal, deeper on a white stage. */
+  const simC = () => (light ? '#0d9488' : SIM);
 
-  function mulberry32(a: number) {
-    return () => {
-      a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  /** A vector of normal numbers with variance one half, the same size as a sinusoidal row. */
-  function gauss(rnd: () => number, d: number) {
-    const v = new Float64Array(d);
-    for (let i = 0; i < d; i++) {
-      const u = Math.max(1e-12, rnd()), w = rnd();
-      v[i] = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * w) * Math.SQRT1_2;
-    }
-    return v;
-  }
-
-  /** One row per position, one column per dimension: what is drawn in the heatmap. */
-  let PE: Float64Array[] = [];
-  /** Content vectors of the query word and the key word. */
-  let x = new Float64Array(1), y = new Float64Array(1);
-  /** Score against offset, for the query at p and at p′; null where the key falls off the sequence. */
-  let curves: (number | null)[][] = [[], []];
-
-  const omega = (i: number) => 1 / Math.pow(state.base, (2 * Math.floor(i / 2)) / state.dim);
-  const dot = (a: Float64Array, b: Float64Array) => a.reduce((s, v, i) => s + v * b[i], 0);
-  const cos = (a: Float64Array, b: Float64Array) => dot(a, b) / Math.max(1e-9, Math.sqrt(dot(a, a) * dot(b, b)));
-  /** Rotate each pair (2i, 2i+1) of v by p·ω_i. */
-  function rotate(v: Float64Array, p: number) {
-    const out = new Float64Array(v.length);
-    for (let i = 0; i + 1 < v.length; i += 2) {
-      const a = p * omega(i), c = Math.cos(a), s = Math.sin(a);
-      out[i] = c * v[i] - s * v[i + 1];
-      out[i + 1] = s * v[i] + c * v[i + 1];
-    }
-    return out;
-  }
-  const add = (a: Float64Array, b: Float64Array) => a.map((v, i) => v + b[i]);
-
-  /** The encoded vector of a word with content v at position p. */
-  function encode(v: Float64Array, p: number) {
-    if (state.kind === 'rope') return rotate(v, p);
-    if (state.kind === 'none') return v;
-    return add(v, PE[p]);
-  }
-
-  function build() {
-    const { dim } = state;
-    const rnd = mulberry32(state.seed);
-    x = gauss(rnd, dim);
-    y = state.same ? x : gauss(rnd, dim);
-    const trnd = mulberry32(1234);
-    PE = [];
-    for (let p = 0; p < LEN; p++) {
-      const v = new Float64Array(dim);
-      if (state.kind === 'table') v.set(gauss(trnd, dim));
-      else if (state.kind !== 'none')
-        // sinusoidal adds these to a word; rotary uses the same angles to rotate it
-        for (let i = 0; i < dim; i++) v[i] = i % 2 === 0 ? Math.sin(p * omega(i)) : Math.cos(p * omega(i));
-      PE.push(v);
-    }
-    curves = [state.pos, state.pos2].map((p) => {
-      const qv = encode(x, p);
-      const out: (number | null)[] = [];
-      for (let o = -(LEN - 1); o <= LEN - 1; o++) {
-        const q = p + o;
-        out.push(q < 0 || q >= LEN ? null : cos(qv, encode(y, q)));
-      }
-      return out;
-    });
-    draw();
-  }
-
-  /** Score at offset o from the query at position p (curve 0) or p′ (curve 1). */
-  const at = (c: number, o: number) => curves[c][o + LEN - 1];
-  /** Largest difference between the curves where both exist. */
-  function gap() {
-    let g = 0, where = 0;
-    for (let o = -(LEN - 1); o <= LEN - 1; o++) {
-      const a = at(0, o), b = at(1, o);
-      if (a === null || b === null) continue;
-      if (Math.abs(a - b) > g) { g = Math.abs(a - b); where = o; }
-    }
-    return { g, where };
-  }
-
-  // --- layout ----------------------------------------------------------------
-  const HM = { x: 122, y: 96, w: 412, h: 330 };
-  const VEC = { x: 122, y: 470, w: 412, h: 46 };
-  const PL = { x: 600, y: 96, w: 350, h: 330 };
-
-  const heat = (v: number) => {
-    // −1 amber, 0 background, +1 teal
-    const t = Math.max(-1, Math.min(1, v));
-    return t >= 0
-      ? `rgba(94,234,212,${0.08 + 0.72 * t})`
-      : `rgba(245,158,11,${0.08 + 0.72 * -t})`;
+  const S = { p: 0, k: 3, base: 100, dir: 1, view: 'clocks' as 'clocks' | 'donut' | 'words', pair: 'mixed', sent: 'a', peOn: true };
+  const omega = (i: number) => Math.pow(S.base, (-2 * i) / D);
+  const period = (i: number) => (2 * Math.PI) / omega(i);
+  /** PE_p · PE_(p+k), scaled so a position matches itself with 1. */
+  const sim = (k: number) => {
+    let s = 0;
+    for (let i = 0; i < PAIRS; i++) s += Math.cos(k * omega(i));
+    return s / PAIRS;
   };
+  const rowColour = (i: number) => mix(FAST, SLOW, i / (PAIRS - 1));
 
-  function heatmap() {
-    const titles: Record<Kind, [string, string]> = {
-      sin: ['the encoding, one row per position', 'left columns turn fast, right ones slowly'],
-      rope: ['the rotation angles, one row per position', 'sin and cos of each pair’s angle p·ω'],
-      table: ['a table of vectors, one row per position', 'random, as before training'],
-      none: ['nothing is added', 'every row is the same'],
-    };
-    label(titles[state.kind][0], HM.x, HM.y - 32, 0.5, 'left', 13);
-    label(titles[state.kind][1], HM.x, HM.y - 16, 0.3, 'left', 11);
-    const cw = HM.w / state.dim, rh = HM.h / LEN;
-    for (let p = 0; p < LEN; p++)
-      for (let i = 0; i < state.dim; i++) {
-        ctx.fillStyle = heat(PE[p][i]);
-        ctx.fillRect(HM.x + i * cw, HM.y + p * rh, cw + 0.5, rh + 0.5);
-      }
-    ctx.strokeStyle = ink(0.12);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(HM.x, HM.y, HM.w, HM.h);
+  // ---------- layout ----------
+  const WX0 = 196, WX1 = 972, CELL = (WX1 - WX0) / N;
+  const xq = (q: number) => WX0 + (q + 0.5) * CELL;
+  /** The similarity plot: s = 0 on SB, s = 1 SH above it. */
+  const SB = 104, SH = 50;
+  const ys = (s: number) => SB - Math.max(-0.6, s) * SH;
+  const PILL_Y = 140, PILL_H = 14;
+  const RY0 = 198, RH = 56, R = 22, CX = 118;
+  const rowY = (i: number) => RY0 + RH / 2 + i * RH;
+  /** Where each clock's two cells sit, between the dial and its wave. */
+  const CELLX = 151;
+  /** Room at the top for the word, its position code and their sum. */
+  const TOP = 70;
 
-    for (const [p, col, name] of [[state.pos, PICK, 'p'], [state.pos2, PICK2, 'p′']] as [number, string, string][]) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(HM.x - 2, HM.y + p * rh - 1, HM.w + 4, Math.max(3, rh) + 2);
-      label(`${name} = ${p}`, HM.x - 10, HM.y + p * rh + Math.max(3, rh) / 2 + 4, 1, 'right', 11.5, col);
-    }
-    label('dimension 0', HM.x, HM.y + HM.h + 18, 0.3, 'left', 11);
-    label(`${state.dim - 1}`, HM.x + HM.w, HM.y + HM.h + 18, 0.3, 'right', 11);
+  /** The band's word: a seeded handful of numbers, the same wherever it stands. */
+  const WORD = (() => {
+    let a = 7;
+    const r = () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296);
+    return Array.from({ length: D }, () => 0.55 * Math.sqrt(-2 * Math.log(Math.max(1e-9, r()))) * Math.cos(2 * Math.PI * r()));
+  })();
+  /** PE(p): sin and cos of every hand, pair by pair, in the order of the clocks. */
+  const peAt = (p: number) => {
+    const v: number[] = [];
+    for (let i = 0; i < PAIRS; i++) v.push(Math.sin(p * omega(i)), Math.cos(p * omega(i)));
+    return v;
+  };
+  // ---------- the donut view ----------
+  type V3 = [number, number, number];
+  /** The two clocks that make the donut: [around the tube, around the ring]. */
+  const DONUT: Record<string, [number, number]> = { mixed: [2, 5], fast: [0, 1], slow: [6, 7] };
+  const cam = { ang: 0, tilt: 0.6, turned: false, t: 0 };
+  const DN = { x: 610, y: 330, s: 88, R: 2.2, r: 0.95 };
+  const TAU = Math.PI * 2;
+  /** A point on the donut: th around the ring, ph around the tube. */
+  const onTorus = (th: number, ph: number): V3 => {
+    const d = DN.R + DN.r * Math.cos(ph);
+    return [d * Math.sin(th), DN.r * Math.sin(ph), d * Math.cos(th)];
+  };
+  /** Screen position, and how near the front it is (0 back, 1 front). */
+  function cam3(v: V3) {
+    const ca = Math.cos(cam.ang), sa = Math.sin(cam.ang);
+    const x = v[0] * ca + v[2] * sa, z = -v[0] * sa + v[2] * ca;
+    const ct = Math.cos(cam.tilt), st = Math.sin(cam.tilt);
+    const y = v[1] * ct - z * st, z2 = v[1] * st + z * ct;
+    const f = 12 / (12 - z2), ext = DN.R + DN.r;
+    return { x: DN.x + x * DN.s * f, y: DN.y - y * DN.s * f, front: Math.max(0, Math.min(1, (z2 + ext) / (2 * ext))) };
   }
 
-  function vector() {
-    const p0 = state.pos;
-    const v = encode(x, p0);
-    label(`the query word as it enters attention at position ${p0}`, VEC.x, VEC.y - 14, 0.45, 'left', 12);
-    const cw = VEC.w / state.dim;
-    const big = Math.max(1e-9, ...Array.from(v, Math.abs));
-    for (let i = 0; i < state.dim; i++) {
-      const h = (Math.abs(v[i]) / big) * (VEC.h / 2);
-      ctx.fillStyle = v[i] >= 0 ? SIM : FAST;
-      ctx.globalAlpha = 0.85;
-      const mid = VEC.y + VEC.h / 2;
-      ctx.fillRect(VEC.x + i * cw + 0.5, v[i] >= 0 ? mid - h : mid, Math.max(1, cw - 1), Math.max(1, h));
-      ctx.globalAlpha = 1;
+  /** Two clocks make a donut, and the positions a coil around it. */
+  function drawDonut(dt: number) {
+    if (!cam.turned) {
+      cam.t += dt;
+      cam.ang = 0.55 * Math.sin(cam.t * 0.18);
     }
-    ctx.strokeStyle = ink(0.18);
+    const [ti, ri] = DONUT[S.pair];
+    const wt = omega(ti), wr = omega(ri), ct = rowColour(ti), cr = rowColour(ri);
+    const at = (q: number) => cam3(onTorus(q * wr, q * wt));
+    const P = S.p, k = S.k, ghost = k > 0 && P + k <= N - 1;
+
+    // the donut: rings and tube circles, fainter at the back
+    const buckets = Array.from({ length: 5 }, () => new Path2D());
+    const seg = (a: V3, b: V3) => {
+      const pa = cam3(a), pb = cam3(b);
+      const bk = buckets[Math.min(4, Math.floor(((pa.front + pb.front) / 2) * 5))];
+      bk.moveTo(pa.x, pa.y);
+      bk.lineTo(pb.x, pb.y);
+    };
+    for (let m = 0; m < 36; m++) {
+      const th = (m / 36) * TAU;
+      for (let n = 0; n < 32; n++) seg(onTorus(th, (n / 32) * TAU), onTorus(th, ((n + 1) / 32) * TAU));
+    }
+    for (let n = 0; n < 8; n++) {
+      const ph = (n / 8) * TAU;
+      for (let m = 0; m < 96; m++) seg(onTorus((m / 96) * TAU, ph), onTorus(((m + 1) / 96) * TAU, ph));
+    }
+    ctx.lineWidth = 1;
+    buckets.forEach((b, i) => {
+      ctx.strokeStyle = ink(0.025 + i * 0.022);
+      ctx.stroke(b);
+    });
+
+    // the coil: every position from 0 to 127, glowing where it looks like p
+    const STEP = 0.2, base = light ? '#9ca3af' : '#6b7280';
+    let prev = at(0);
+    for (let q = STEP; q <= N - 1 + 1e-9; q += STEP) {
+      // only what really looks like p glows, so near misses on the donut stay dark
+      const c = at(q), s = Math.max(0, (sim(q - STEP / 2 - P) - 0.4) / 0.6), f = (prev.front + c.front) / 2;
+      const inK = ghost && q > P && q - STEP < P + k;
+      ctx.strokeStyle = inK
+        ? withAlpha(PINK, 0.35 + 0.65 * f)
+        : s > 0.02
+          ? withAlpha(mix(base, simC(), Math.min(1, s * 1.5)), 0.3 + 0.7 * f)
+          : ink(0.12 + 0.4 * f);
+      ctx.lineWidth = inK ? 3.2 : 1.2 + 2.6 * s * s * f;
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(c.x, c.y);
+      ctx.stroke();
+      prev = c;
+    }
+    for (let q = 0; q < N; q += 16) {
+      const c = at(q);
+      ctx.fillStyle = ink(0.3 + 0.5 * c.front);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 2.4, 0, TAU);
+      ctx.fill();
+      say(ctx, String(q), c.x + 7, c.y - 6, { colour: ink(0.25 + 0.5 * c.front), size: 11, halo: inv(0.7) });
+    }
+
+    // the two hands that place p: slow around the ring, then fast around the tube
+    const thP = P * wr;
+    const o = cam3([0, 0, 0]), core = cam3([DN.R * Math.sin(thP), 0, DN.R * Math.cos(thP)]);
+    ctx.strokeStyle = withAlpha(ct, 0.5);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let n = 0; n <= 48; n++) {
+      const c = cam3(onTorus(thP, (n / 48) * TAU));
+      n ? ctx.lineTo(c.x, c.y) : ctx.moveTo(c.x, c.y);
+    }
+    ctx.stroke();
+    const tip = at(P);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = cr;
+    ctx.beginPath();
+    ctx.moveTo(o.x, o.y);
+    ctx.lineTo(core.x, core.y);
+    ctx.stroke();
+    ctx.strokeStyle = ct;
+    ctx.beginPath();
+    ctx.moveTo(core.x, core.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    for (const [pt, col, r] of [[o, cr, 3.5], [core, ct, 3]] as const) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, r, 0, TAU);
+      ctx.fill();
+    }
+
+    if (ghost) {
+      const g = at(P + k);
+      ctx.drawImage(...dot(PINK, 5, g.x, g.y));
+      say(ctx, `p + k = ${Math.round(P + k)}`, g.x + 10, g.y + 16, { colour: PINK, size: 12.5, weight: 700, halo: inv(0.85) });
+    }
+    ctx.drawImage(...dot(light ? '#1c1e24' : '#e8e9ec', 6, tip.x, tip.y));
+    say(ctx, `p = ${Math.round(P)}`, tip.x + 11, tip.y - 10, { colour: ink(0.95), size: 13.5, weight: 700, halo: inv(0.85) });
+
+    // the two dials it is made of
+    const dial = (i: number, cy: number, title: string) => {
+      const col = rowColour(i), cx = 54, r = 24;
+      ctx.fillStyle = ink(0.035);
+      ctx.strokeStyle = ink(0.2);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 3, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+      ctx.lineCap = 'round';
+      if (ghost) {
+        const [gx, gy] = onCircle(cx, cy, r, (P + k) * omega(i));
+        ctx.strokeStyle = withAlpha(PINK, 0.8);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(gx, gy);
+        ctx.stroke();
+      }
+      const [hx, hy] = onCircle(cx, cy, r, P * omega(i));
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(hx, hy);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      say(ctx, title, cx + 38, cy - 4, { colour: col, size: 13, weight: 700 });
+      say(ctx, `comes round every ${fmtPeriod(period(i))} steps`, cx + 38, cy + 13, { colour: ink(0.5), size: 11.5 });
+    };
+    say(ctx, 'two of the eight clocks', 24, 182, { colour: ink(0.5), size: 12 });
+    dial(ri, 226, 'around the ring');
+    dial(ti, 296, 'around the tube');
+
+    // what it means
+    const turns = ((N - 1) * wr) / TAU;
+    const lines =
+      S.pair === 'fast'
+        ? ['Two fast clocks: the coil wraps round and round, and far-apart positions land close together.', 'Only the coil near p glows: the other six clocks still tell the near misses apart.']
+        : S.pair === 'slow'
+          ? ['Two slow clocks: all 128 positions fit on a short, smooth stretch of coil,', 'so p and p + 1 sit almost on top of each other. The fast clocks are what separate them.']
+          : turns < 0.8
+            ? [`The slow hand turns only ${Math.round(turns * 100)}% of the way round in 128 positions,`, 'so the coil covers part of the ring: a larger base slows every hand.']
+            : ['The slow hand carries p around the ring, the fast hand winds it around the tube.', 'Every position gets its own spot, neighbours sit side by side, and stepping k ahead is the same twist everywhere.'];
+    lines.forEach((t, i) => say(ctx, t, DN.x, 612 + i * 19, { colour: ink(0.7), size: 13, align: 'center' }));
+    say(ctx, 'drag to turn', W - 24, 22, { colour: ink(0.38), size: 11.5, align: 'right' });
+  }
+
+  // ---------- the sentence view ----------
+  /**
+   * Four words in a small 3D embedding space. Around each one sits the same
+   * little donut, made of two clocks: every place PE can move that word to.
+   * A token is its word plus PE(its position), so it lands on its word's
+   * donut at the spot for its position.
+   */
+  const VOCAB = [
+    { w: 'the', at: [0.3, -1.55, 0.5] as V3, colour: '#cbd5e1', deep: '#475569' },
+    { w: 'dog', at: [-2.35, 0.45, 0.8] as V3, colour: '#4ade80', deep: '#16a34a' },
+    { w: 'bites', at: [0.2, 1.65, -0.9] as V3, colour: '#fbbf24', deep: '#d97706' },
+    { w: 'man', at: [2.4, 0.35, 0.5] as V3, colour: '#c084fc', deep: '#9333ea' },
+  ].map((o, j) => {
+    let a = 11 + j * 97;
+    const r = () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296);
+    return { ...o, v: Array.from({ length: D }, () => 0.55 * Math.sqrt(-2 * Math.log(Math.max(1e-9, r()))) * Math.cos(2 * Math.PI * r())) };
+  });
+  const SENTS: Record<string, number[]> = { a: [0, 1, 2, 0, 3], b: [0, 3, 2, 0, 1] };
+  /** The clocks of the little donuts: the fastest round the tube, the second round the ring. */
+  const MINI = { R: 0.8, r: 0.24, tube: 0, ring: 1, upto: 5 };
+  const wcam = { ang: 0.25, tilt: 0.62, turned: false, t: 0 };
+  const WF = { x: 620, y: 318, s: 108 };
+  function wproj(v: V3) {
+    const ca = Math.cos(wcam.ang), sa = Math.sin(wcam.ang);
+    const x = v[0] * ca + v[2] * sa, z = -v[0] * sa + v[2] * ca;
+    const ct = Math.cos(wcam.tilt), st = Math.sin(wcam.tilt);
+    const y = v[1] * ct - z * st, z2 = v[1] * st + z * ct;
+    const f = 12 / (12 - z2);
+    return { x: WF.x + x * WF.s * f, y: WF.y - y * WF.s * f, z: z2, front: Math.max(0, Math.min(1, (z2 + 3.2) / 6.4)) };
+  }
+  /** Word plus PE(q), as drawn: the spot for q on the word's donut, scaled by how far PE is switched on. */
+  const onMini = (c: V3, q: number, amp: number, ph0 = q * omega(MINI.tube)): V3 => {
+    const th = q * omega(MINI.ring), d = MINI.R + MINI.r * Math.cos(ph0);
+    return [c[0] + amp * d * Math.sin(th), c[1] + amp * MINI.r * Math.sin(ph0), c[2] + amp * d * Math.cos(th)];
+  };
+  /** Where each token is drawn, eased so a change of sentence slides it along its donut. */
+  const qShown: Record<string, number> = {};
+  let peD = 1;
+  const tokensOf = (sent: number[]) => {
+    const seen: Record<number, number> = {};
+    return sent.map((j, q) => {
+      const occ = (seen[j] = (seen[j] ?? -1) + 1);
+      return { j, q, key: `${j}#${occ}` };
+    });
+  };
+  const wordCol = (j: number) => (light ? VOCAB[j].deep : VOCAB[j].colour);
+
+  /** The top band in this view: the five vectors attention receives. */
+  function drawTokens() {
+    const toks = tokensOf(SENTS[S.sent]);
+    const o = { light, ink, cell: 7, gap: 1.3, scale: 1.2, bg: inv(1), size: 15 };
+    say(ctx, 'attention', 24, 30, { colour: ink(0.55), size: 12 });
+    say(ctx, 'receives', 24, 46, { colour: ink(0.55), size: 12 });
+    toks.forEach((t, i) => {
+      const cx = 172 + i * 160, q = qShown[t.key] ?? t.q;
+      const pe = peAt(q);
+      say(ctx, `position ${t.q}`, cx, 9, { colour: ink(0.4), size: 10.5, align: 'center' });
+      token(ctx, VOCAB[t.j].w, VOCAB[t.j].v.map((x, k) => x + peD * pe[k]), cx, 15, { ...o, colour: wordCol(t.j) });
+    });
+    ctx.strokeStyle = ink(0.08);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(VEC.x, VEC.y + VEC.h / 2);
-    ctx.lineTo(VEC.x + VEC.w, VEC.y + VEC.h / 2);
+    ctx.moveTo(24, TOP - 4);
+    ctx.lineTo(W - 24, TOP - 4);
     ctx.stroke();
-    label(
-      state.kind === 'rope' ? 'the word rotated, pair by pair' : state.kind === 'none' ? 'the word alone' : 'the word plus its row',
-      VEC.x, VEC.y + VEC.h + 18, 0.3, 'left', 11
-    );
   }
 
-  function plot() {
-    label('score between the two words, by offset', PL.x, PL.y - 32, 0.5, 'left', 13);
-    label('cosine of query and key, key at query + offset', PL.x, PL.y - 16, 0.3, 'left', 11);
-    const R = LEN - 1;
-    const px = (o: number) => PL.x + ((o + R) / (2 * R)) * PL.w;
-    const py = (v: number) => PL.y + PL.h / 2 - (Math.max(-1, Math.min(1, v)) * PL.h) / 2;
-    ctx.strokeStyle = ink(0.12);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(PL.x, PL.y, PL.w, PL.h);
-    for (const v of [1, 0.5, 0, -0.5, -1]) {
-      ctx.strokeStyle = ink(v === 0 ? 0.24 : 0.07);
-      ctx.beginPath();
-      ctx.moveTo(PL.x, py(v));
-      ctx.lineTo(PL.x + PL.w, py(v));
-      ctx.stroke();
-      label(v.toFixed(1), PL.x - 8, py(v) + 4, 0.3, 'right', 11);
+  function drawWords(dt: number) {
+    if (!wcam.turned) {
+      wcam.t += dt;
+      wcam.ang = 0.25 + 0.5 * Math.sin(wcam.t * 0.16);
     }
-    ctx.strokeStyle = ink(0.2);
+    peD += ((S.peOn ? 1 : 0) - peD) * Math.min(1, dt * 4);
+    const toks = tokensOf(SENTS[S.sent]);
+    for (const t of toks) {
+      const q = qShown[t.key] ?? t.q;
+      qShown[t.key] = Math.abs(t.q - q) < 0.01 ? t.q : q + (t.q - q) * Math.min(1, dt * 2.5);
+    }
+
+    // faint axes: this is an embedding space
+    const O = wproj([0, 0, 0]);
+    for (const ax of [[2.9, 0, 0], [0, 2.3, 0], [0, 0, 2.3]] as V3[]) {
+      const a = wproj(ax), b = wproj(ax.map((x) => -x) as V3);
+      ctx.strokeStyle = ink(0.07);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(a.x, a.y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = ink(0.2);
+    ctx.beginPath();
+    ctx.arc(O.x, O.y, 2, 0, TAU);
+    ctx.fill();
+
+    const order = VOCAB.map((_, j) => j).sort((a, b) => wproj(VOCAB[a].at).z - wproj(VOCAB[b].at).z);
+    for (const j of order) {
+      const c = VOCAB[j].at, col = wordCol(j), cc = wproj(c);
+      // its donut: every place PE can put this word
+      if (peD > 0.02) {
+        const path = new Path2D();
+        for (let m = 0; m < 14; m++) {
+          const th = (m / 14) * TAU;
+          for (let n = 0; n <= 18; n++) {
+            const ph = (n / 18) * TAU, d = MINI.R + MINI.r * Math.cos(ph);
+            const p = wproj([c[0] + peD * d * Math.sin(th), c[1] + peD * MINI.r * Math.sin(ph), c[2] + peD * d * Math.cos(th)]);
+            n ? path.lineTo(p.x, p.y) : path.moveTo(p.x, p.y);
+          }
+        }
+        for (let n = 0; n < 4; n++) {
+          const ph = (n / 4) * TAU;
+          for (let m = 0; m <= 48; m++) {
+            const th = (m / 48) * TAU, d = MINI.R + MINI.r * Math.cos(ph);
+            const p = wproj([c[0] + peD * d * Math.sin(th), c[1] + peD * MINI.r * Math.sin(ph), c[2] + peD * d * Math.cos(th)]);
+            m ? path.lineTo(p.x, p.y) : path.moveTo(p.x, p.y);
+          }
+        }
+        ctx.strokeStyle = withAlpha(col, 0.13 * peD);
+        ctx.lineWidth = 1;
+        ctx.stroke(path);
+        // the coil of positions 0, 1, 2, ... on it
+        ctx.strokeStyle = withAlpha(col, 0.55 * peD);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let q = 0; q <= MINI.upto + 1e-9; q += 0.05) {
+          const p = wproj(onMini(c, q, peD));
+          q ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        }
+        ctx.stroke();
+        for (let q = 0; q <= MINI.upto; q++) {
+          const p = wproj(onMini(c, q, peD));
+          ctx.fillStyle = withAlpha(col, 0.7 * peD);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2, 0, TAU);
+          ctx.fill();
+          if (peD > 0.6) say(ctx, String(q), p.x + 6, p.y - 5, { colour: withAlpha(col, 0.85), size: 11, weight: 600, halo: inv(0.7) });
+        }
+      }
+      // the word itself, at the centre of its donut
+      ctx.fillStyle = inv(1);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(cc.x, cc.y, 5, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+      say(ctx, VOCAB[j].w, cc.x, cc.y + 22, { colour: col, size: 15, weight: 700, align: 'center', halo: inv(0.85) });
+
+      // its tokens: word + PE(position), a hand from the centre to the spot
+      const mine = toks.filter((t) => t.j === j);
+      for (const t of mine) {
+        const p = wproj(onMini(c, qShown[t.key], peD));
+        ctx.strokeStyle = withAlpha(col, 0.9);
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cc.x, cc.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.drawImage(...dot(col, 7, p.x, p.y));
+      }
+      // badges: the positions of its tokens, or "0 = 3" when they coincide
+      if (mine.length === 2 && peD < 0.12) {
+        say(ctx, `the ${mine[0].q} = the ${mine[1].q}`, cc.x + 14, cc.y - 12, { colour: light ? '#dc2626' : '#f9736a', size: 13, weight: 700, halo: inv(0.85) });
+      } else {
+        for (const t of mine) {
+          const p = wproj(onMini(c, qShown[t.key], peD));
+          const dx = p.x - cc.x, dy = p.y - cc.y, l = Math.hypot(dx, dy) || 1;
+          const ux = l > 4 ? dx / l : 0.7, uy = l > 4 ? dy / l : -0.7;
+          say(ctx, `${VOCAB[j].w} ${t.q}`, p.x + ux * 20, p.y + uy * 18 + 4, {
+            colour: ink(0.95), size: 12.5, weight: 700, align: ux < -0.3 ? 'right' : ux > 0.3 ? 'left' : 'center', halo: inv(0.9),
+          });
+        }
+      }
+    }
+
+    // a key, for reading the picture
+    const kx = 24;
+    say(ctx, 'how to read it', kx, 24, { colour: ink(0.5), size: 12 });
+    const kc = light ? '#475569' : '#cbd5e1';
+    ctx.fillStyle = inv(1);
+    ctx.strokeStyle = kc;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(kx + 8, 48, 5, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+    say(ctx, 'a word: where its meaning puts it', kx + 24, 52, { colour: ink(0.7), size: 12 });
+    ctx.strokeStyle = withAlpha(kc, 0.6);
+    ctx.beginPath();
+    ctx.ellipse(kx + 8, 76, 9, 4.5, 0, 0, TAU);
+    ctx.stroke();
+    say(ctx, 'its donut: everywhere PE can move it', kx + 24, 80, { colour: ink(0.7), size: 12 });
+    ctx.drawImage(...dot(kc, 5.5, kx + 8, 104));
+    say(ctx, 'a token: the word + PE(its position)', kx + 24, 108, { colour: ink(0.7), size: 12 });
+    say(ctx, 'every donut is the same: PE does not', kx, 136, { colour: ink(0.45), size: 11.5 });
+    say(ctx, 'know which word it is added to', kx, 151, { colour: ink(0.45), size: 11.5 });
+
+    const moving = toks.some((t) => Math.abs(qShown[t.key] - t.q) > 0.05);
+    const lines = !S.peOn
+      ? ['No position code: every token is just its word. The two "the"s are one point, and', '"the man bites the dog" gives the very same five points. Attention cannot tell the sentences apart.']
+      : moving
+        ? ['dog and man swap places in the sentence, so they slide along their donuts', 'to the spots for their new positions. the and bites stay where they were.']
+        : ['Each token sits on its word\'s donut, at the spot for its position. The word decides', 'which donut, the position where on it: the two "the"s are apart, and nothing loses its meaning.'];
+    lines.forEach((t, i) => say(ctx, t, WF.x, 614 + i * 19, { colour: !S.peOn ? (light ? '#dc2626' : '#f9736a') : ink(0.7), size: 13, align: 'center' }));
+    say(ctx, 'drag to turn', W - 24, 22, { colour: ink(0.38), size: 11.5, align: 'right' });
+  }
+
+  /** The word, plus its position code, is what attention receives. */
+  function drawBand() {
+    const P = Math.round(S.p), pe = peAt(S.p), sum = WORD.map((x, k) => x + pe[k]);
+    const o = { light, ink, cell: 8, gap: 1.5, scale: 1.2, bg: inv(1) };
+    const y = 12, w = 162;
+    token(ctx, 'dog', WORD, 24 + w / 2, y, o);
+    say(ctx, '+', 24 + w + 17, y + 24, { colour: ink(0.6), size: 20, weight: 600, align: 'center' });
+    token(ctx, `PE(${P})`, pe, 24 + w + 34 + w / 2, y, o);
+    say(ctx, '=', 24 + 2 * w + 51, y + 24, { colour: ink(0.6), size: 20, weight: 600, align: 'center' });
+    token(ctx, `dog at ${P}`, sum, 24 + 2 * w + 68 + w / 2, y, { ...o, focus: true });
+    const tx = 24 + 3 * w + 92;
+    say(ctx, 'Attention receives the sum: the same word at another', tx, y + 8, { colour: ink(0.7), size: 12.5 });
+    say(ctx, 'position arrives as a different vector.', tx, y + 25, { colour: ink(0.7), size: 12.5 });
+    say(ctx, S.view === 'clocks' ? 'The 16 numbers of PE(p) are the 8 clocks below.' : 'Below, two of its clocks, as a point on a donut.', tx, y + 44, { colour: ink(0.45), size: 12 });
+    ctx.strokeStyle = ink(0.08);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(24, TOP - 4);
+    ctx.lineTo(W - 24, TOP - 4);
+    ctx.stroke();
+  }
+
+  const fmtPeriod = (v: number) =>
+    v < 100 ? v.toFixed(1) : v < 1e4 ? String(Math.round(v)) : v < 1e6 ? `${Math.round(v / 1000)}k` : v.toExponential(0);
+
+  // ---------- drawing ----------
+  function drawSimilarity() {
+    const P = S.p;
+    say(ctx, 'how much every position looks like p', WX0, 30, { colour: ink(0.6), size: 12.5, weight: 600 });
+    say(ctx, '1 = identical to p', WX1, 30, { colour: ink(0.38), size: 11.5, align: 'right' });
+
+    ctx.strokeStyle = ink(0.1);
+    ctx.lineWidth = 1;
     ctx.setLineDash([3, 4]);
     ctx.beginPath();
-    ctx.moveTo(px(0), PL.y);
-    ctx.lineTo(px(0), PL.y + PL.h);
+    ctx.moveTo(WX0, SB);
+    ctx.lineTo(WX1, SB);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // p′ first and wider, so a curve lying exactly on it still shows both colours
-    for (const [c, col, w] of [[1, PICK2, 4.5], [0, PICK, 2]] as [number, string, number][]) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      let pen = false;
-      for (let o = -R; o <= R; o++) {
-        const v = at(c, o);
-        if (v === null) { pen = false; continue; }
-        pen ? ctx.lineTo(px(o), py(v)) : ctx.moveTo(px(o), py(v));
-        pen = true;
-      }
+    // the curve, sampled finer than the positions
+    ctx.beginPath();
+    const steps = N * 3;
+    for (let j = 0; j <= steps; j++) {
+      const q = (j / steps) * N - 0.5;
+      const x = xq(q), y = ys(sim(q - P));
+      j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.save();
+    ctx.lineTo(xq(N - 0.5), SB);
+    ctx.lineTo(xq(-0.5), SB);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, ys(1), 0, SB);
+    g.addColorStop(0, withAlpha(simC(), light ? 0.3 : 0.32));
+    g.addColorStop(1, withAlpha(simC(), 0));
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.restore();
+    ctx.beginPath();
+    for (let j = 0; j <= steps; j++) {
+      const q = (j / steps) * N - 0.5;
+      const x = xq(q), y = ys(sim(q - P));
+      j ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    if (!light) {
+      ctx.strokeStyle = withAlpha(simC(), 0.18);
+      ctx.lineWidth = 6;
       ctx.stroke();
     }
-    label(`−${R}`, PL.x, PL.y + PL.h + 18, 0.3, 'left', 11);
-    label('offset 0', px(0), PL.y + PL.h + 18, 0.3, 'center', 11);
-    label(`+${R}`, PL.x + PL.w, PL.y + PL.h + 18, 0.3, 'right', 11);
+    ctx.strokeStyle = simC();
+    ctx.lineWidth = 2;
+    ctx.stroke();
 
-    const { g } = gap();
-    label('largest gap between the curves', PL.x, PL.y + PL.h + 54, 0.45, 'left', 12);
-    label(g.toFixed(3), PL.x, PL.y + PL.h + 84, 1, 'left', 22, g < 1e-9 ? SIM : FAST);
-    label(
-      g < 1e-9 ? 'the score depends on the offset alone' : 'the score also depends on where the pair sits',
-      PL.x, PL.y + PL.h + 104, 0.35, 'left', 11
-    );
+    // one pill per position, lit by how alike it is
+    const pi = Math.round(P), gi = Math.round(P + S.k);
+    for (let q = 0; q < N; q++) {
+      const s = Math.max(0, sim(q - P));
+      const x = WX0 + q * CELL + 0.8, w = CELL - 1.6;
+      ctx.fillStyle = q === pi ? ink(0.95) : q === gi && S.k > 0 ? PINK : withAlpha(simC(), 0.07 + 0.85 * s * s);
+      ctx.beginPath();
+      ctx.roundRect(x, PILL_Y, w, PILL_H, 2);
+      ctx.fill();
+    }
+    for (let q = 0; q < N; q += 16)
+      say(ctx, String(q), xq(q), PILL_Y + PILL_H + 12, { colour: ink(0.4), size: 10.5, align: 'center' });
+    say(ctx, String(N - 1), xq(N - 1), PILL_Y + PILL_H + 12, { colour: ink(0.4), size: 10.5, align: 'center' });
+
+    // the peak at p, and the value at p + k where the reader can see it
+    if (S.k > 0 && P + S.k <= N - 0.5) {
+      const x = xq(P + S.k), y = ys(sim(S.k));
+      ctx.drawImage(...dot(PINK, 4.5, x, y));
+      const right = x < WX1 - 70;
+      say(ctx, fixed(sim(S.k), 2), x + (right ? 10 : -10), y - 10, {
+        colour: PINK, size: 13, weight: 700, align: right ? 'left' : 'right', halo: inv(0.85),
+      });
+    }
   }
 
-  function draw() {
-    ctx.clearRect(0, 0, W, H);
-    heatmap();
-    vector();
-    plot();
+  /** drawImage arguments for a glowing dot centred on (x, y). */
+  function dot(colour: string, r: number, x: number, y: number): [HTMLCanvasElement, number, number, number, number] {
+    const img = glow(colour, r, light);
+    const s = img.width / 2;
+    return [img, x - s / 2, y - s / 2, s, s];
+  }
 
-    const { g, where } = gap();
-    const wl = 2 * Math.PI * Math.pow(state.base, (state.dim - 2) / state.dim);
-    const pair = (o: number) => [0, 1].map((c) => { const v = at(c, o); return v === null ? 'off the end' : v.toFixed(3); }).join(' / ');
-    const rules: Record<Kind, [string, string][]> = {
-      sin: [['s(p,q) = \\cos\\angle\\big(x + PE_p,\\; y + PE_q\\big)', SIM]],
-      rope: [['(R_p x)\\cdot(R_q y) = x \\cdot R_{q-p}\\, y', SIM]],
-      table: [['s(p,q) = \\cos\\angle\\big(x + E_p,\\; y + E_q\\big)', SIM]],
-      none: [['s(p,q) = \\cos\\angle(x,\\, y)', SIM]],
-    };
+  /** Angle in maths orientation (counter-clockwise, y up) to a point on a circle. */
+  const onCircle = (cx: number, cy: number, r: number, a: number) => [cx + r * Math.cos(a), cy - r * Math.sin(a)];
+
+  function drawClocks(speed: number) {
+    say(ctx, 'comes round', 82, RY0 - 20, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, 'every', 82, RY0 - 7, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, 'clock', CX, RY0 - 12, { colour: ink(0.45), size: 11, align: 'center' });
+    say(ctx, 'sin', CELLX + 7.5, RY0 - 12, { colour: ink(0.45), size: 10.5, align: 'center' });
+    say(ctx, 'cos', CELLX + 26.5, RY0 - 12, { colour: ink(0.45), size: 10.5, align: 'center' });
+    say(ctx, 'the height of its hand, across all positions', WX0, RY0 - 12, { colour: ink(0.45), size: 11 });
+
+    const P = S.p, k = S.k;
+    const ghost = P + k <= N - 0.5 && k > 0;
+    for (let i = 0; i < PAIRS; i++) {
+      const cy = rowY(i), w = omega(i), col = rowColour(i);
+      const a = P * w, ag = (P + k) * w;
+
+      // period on the left
+      say(ctx, fmtPeriod(period(i)), 82, cy - 6, { colour: col, size: 13, weight: 700, align: 'right' });
+      say(ctx, 'steps', 82, cy + 9, { colour: ink(0.4), size: 10.5, align: 'right' });
+
+      // the wave: the hand's height, position by position
+      ctx.strokeStyle = ink(0.06);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(WX0, cy);
+      ctx.lineTo(WX1, cy);
+      ctx.stroke();
+      ctx.beginPath();
+      for (let x = WX0; x <= WX1; x += 1.5) {
+        const q = (x - WX0) / CELL - 0.5;
+        const y = cy - R * Math.sin(q * w);
+        x === WX0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      if (!light) {
+        ctx.strokeStyle = withAlpha(col, 0.13);
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      }
+      ctx.strokeStyle = withAlpha(col, 0.9);
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      // the shadow line from the hand tip to its point on the wave
+      const [tx, ty] = onCircle(CX, cy, R, a);
+      const wx = xq(P), wy = cy - R * Math.sin(a);
+      ctx.strokeStyle = ink(0.16);
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(wx, wy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // the dial
+      ctx.fillStyle = ink(0.035);
+      ctx.strokeStyle = ink(0.2);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(CX, cy, R + 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = ink(0.18);
+      for (let h = 0; h < 12; h++) {
+        const [x1, y1] = onCircle(CX, cy, R, (h / 12) * Math.PI * 2);
+        const [x2, y2] = onCircle(CX, cy, R - 3, (h / 12) * Math.PI * 2);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+
+      // a comet trail behind a turning hand
+      const span = Math.min(2.6, Math.abs(speed * w) * 0.3);
+      if (span > 0.02) {
+        const back = -Math.sign(speed);
+        const n = 14;
+        for (let j = 0; j < n; j++) {
+          const a0 = a + back * span * (j / n), a1 = a + back * span * ((j + 1) / n);
+          ctx.fillStyle = withAlpha(col, 0.32 * (1 - j / n));
+          ctx.beginPath();
+          ctx.moveTo(CX, cy);
+          ctx.arc(CX, cy, R - 1, -a0, -a1, a1 > a0);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+
+      // the pink hand k steps ahead, and the arc it is turned by
+      if (k > 0) {
+        let turn = (k * w) % (2 * Math.PI);
+        ctx.strokeStyle = withAlpha(PINK, 0.85);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(CX, cy, R * 0.5, -a, -(a + turn), true);
+        ctx.stroke();
+        const [gx, gy] = onCircle(CX, cy, R - 2, ag);
+        ctx.strokeStyle = withAlpha(PINK, ghost ? 0.9 : 0.4);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(CX, cy);
+        ctx.lineTo(gx, gy);
+        ctx.stroke();
+      }
+
+      // the hand itself
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(CX, cy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      ctx.drawImage(...dot(col, 3.2, tx, ty));
+      ctx.fillStyle = ink(0.9);
+      ctx.beginPath();
+      ctx.arc(CX, cy, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // the two numbers this clock adds to the vector
+      for (const [k2, v] of [[0, Math.sin(a)], [1, Math.cos(a)]] as [number, number][])
+        strip(ctx, [v], CELLX + k2 * 19, cy - 7.5, { light, ink, cell: 15, scale: 1, more: false });
+
+      // where p and p + k sit on the wave
+      if (ghost) ctx.drawImage(...dot(PINK, 3.4, xq(P + k), cy - R * Math.sin(ag)));
+      ctx.drawImage(...dot(col, 4.2, wx, wy));
+    }
+  }
+
+  function drawCursors() {
+    const top = 44, bottom = rowY(PAIRS - 1) + R + 6;
+    ctx.strokeStyle = ink(light ? 0.4 : 0.32);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xq(S.p), top);
+    ctx.lineTo(xq(S.p), bottom);
+    ctx.stroke();
+    if (S.k > 0 && S.p + S.k <= N - 0.5) {
+      ctx.strokeStyle = withAlpha(PINK, 0.55);
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(xq(S.p + S.k), top);
+      ctx.lineTo(xq(S.p + S.k), bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  function drawCorner() {
+    const P = Math.round(S.p);
+    say(ctx, 'position', 24, 46, { colour: ink(0.5), size: 12 });
+    say(ctx, `p = ${P}`, 24, 76, { colour: ink(0.95), size: 28, weight: 700 });
+    if (S.k > 0) {
+      say(ctx, `p + k = ${P + S.k}`, 24, 108, { colour: PINK, size: 14, weight: 650 });
+      say(ctx, `alike: ${fixed(sim(S.k), 2)}`, 24, 130, { colour: simC(), size: 13, weight: 600 });
+    } else {
+      say(ctx, 'k = 0', 24, 108, { colour: ink(0.45), size: 13 });
+    }
+  }
+
+  // ---------- numbers ----------
+  let lastKey = '';
+  function panelText() {
+    const P = Math.round(S.p), k = S.k, s = sim(k);
+    const key = `${P}|${k}|${S.base}|${light}`;
+    if (key === lastKey) return;
+    lastKey = key;
+
     setEq({
-      rule: rules[state.kind],
+      rule: [
+        '\\mathrm{PE}_p = \\big(\\sin p\\,\\omega_i,\\ \\cos p\\,\\omega_i\\big),\\ \\ \\omega_i = B^{-2i/d}',
+        '\\quad\\Rightarrow\\quad \\mathrm{PE}_p\\cdot\\mathrm{PE}_{p+',
+        ['k', PINK],
+        '} = \\textstyle\\sum_i \\cos(',
+        ['k', PINK],
+        '\\,\\omega_i)',
+      ],
       live: [
-        [`p = ${state.pos}`, PICK],
-        [`\\quad p' = ${state.pos2}`, PICK2],
-        `\\quad d = ${state.dim},\\; B = ${state.base}`,
-        [`\\quad \\text{gap} = ${g.toFixed(3)}`, g < 1e-9 ? SIM : FAST],
+        `\\tfrac{1}{8}\\textstyle\\sum_i \\cos(\\textcolor{${PINK}}{${k}}\\,\\omega_i) = \\textcolor{${simC()}}{${fixed(s, 3).replace('−', '-')}}`,
+        `\\quad\\text{for } p = ${P}\\text{ and for every other } p`,
       ],
     });
-    setRows({
-      'r-0': pair(0),
-      'r-1': pair(1),
-      'r-10': pair(10),
-      'r-slow': state.kind === 'sin' || state.kind === 'rope' ? `${wl > 1e5 ? wl.toExponential(1) : wl.toFixed(0)} positions` : 'no waves here',
-    });
+
+    const echo = k > 1 && s > sim(k - 1) && s > sim(k + 1);
     setResult({
-      value: g.toFixed(3),
-      colour: g < 1e-9 ? SIM : FAST,
-      status: g < 1e-9 ? 'the curves coincide' : `largest at offset ${where} · query at ${state.pos} and at ${state.pos2}`,
+      value: fixed(s, 3),
+      colour: simC(),
+      status: k === 0 ? 'p against itself' : `k = ${k} · the same number from every p`,
       note:
-        state.kind === 'none'
-          ? 'Nothing marks position, so the score is the same at every offset: attention sees a set, and word order does not exist for it.'
-          : state.kind === 'rope'
-            ? 'Rotating by p and by q leaves only the rotation by q − p between the two words, so the score is a function of the offset alone, whatever the words.'
-            : state.kind === 'table'
-              ? 'An untrained table is noise: neighbours score no closer than strangers. Training shapes the rows, but a position past the end of the table has no row at all.'
-              : 'Adding the waves to the words leaves cross terms like x · PE_q in the score, so the same offset scores differently depending on where the pair sits.',
+        k === 0
+          ? 'A position always matches itself perfectly. Move k to compare p with a position k steps ahead.'
+          : s > 0.9
+            ? 'Close neighbours: only the fastest hands have moved apart, so the two positions read almost the same time.'
+            : echo
+              ? 'An echo: the fast hands have come round to nearly where they were, so p + k looks more like p than its neighbours do. The slow hands keep it from matching.'
+              : 'Now the slower hands differ too. The number does not move while p runs, because stepping k ahead turns every hand by k·ω, wherever it starts.',
     });
   }
 
-  // --- interaction -----------------------------------------------------------
-  const setPos = slider('pos', (v) => { state.pos = v; build(); });
-  const setPos2 = slider('pos2', (v) => { state.pos2 = v; build(); });
-  canvas.addEventListener('pointerdown', (e) => {
-    const r = canvas.getBoundingClientRect();
-    const px = ((e.clientX - r.left) / r.width) * W;
-    const py = ((e.clientY - r.top) / r.height) * H;
-    if (px < HM.x - 20 || px > HM.x + HM.w + 20 || py < HM.y || py > HM.y + HM.h) return;
-    const p = Math.max(0, Math.min(LEN - 1, Math.floor(((py - HM.y) / HM.h) * LEN)));
-    state.pos = p;
-    setPos(p);
-    build();
-  });
-
-  const kinds = segmented('kind', (k) => { state.kind = k as Kind; build(); });
-  const words = segmented('words', (w) => { state.same = w === 'same'; build(); });
-  slider('dim', (v) => { state.dim = v; build(); });
+  // ---------- loop ----------
+  const tp = transport({});
+  const setPos = slider('pos', (v) => { S.p = v; tp.setRunning(false); });
+  const setOff = slider('off', (v) => { S.k = v; });
   const toBase = (v: number) => Math.round(10 ** (v / 10));
-  const setBase = slider('base', (v) => { state.base = toBase(v); build(); }, (v) => String(toBase(v)));
-  el('shuffle').addEventListener('click', () => { state.seed = 1 + Math.floor(Math.random() * 1e6); build(); });
+  const setBase = slider('base', (v) => { S.base = toBase(v); }, (v) => String(toBase(v)));
 
-  function show(kind: Kind, same: boolean, base = 40) {
-    state.kind = kind;
-    kinds.select(kind);
-    state.same = same;
-    words.select(same ? 'same' : 'diff');
-    state.base = toBase(base);
-    setBase(base);
-    state.pos = 8; setPos(8);
-    state.pos2 = 40; setPos2(40);
+  let last = 0, shownPos = -1;
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    let speed = 0;
+    if (tp.running()) {
+      // back and forth, so the hands never jump
+      const end = N - 1 - S.k;
+      S.p += S.dir * SPEED * dt;
+      if (S.p >= end) { S.p = end; S.dir = -1; }
+      if (S.p <= 0) { S.p = 0; S.dir = 1; }
+      speed = S.dir * SPEED;
+      const r = Math.round(S.p);
+      if (r !== shownPos) { shownPos = r; setPos(r); }
+    }
+    light = isLight(canvas);
+    ctx.clearRect(0, 0, W, H);
+    if (S.view === 'clocks') {
+      drawBand();
+      ctx.save();
+      ctx.translate(0, TOP);
+      drawCursors();
+      drawSimilarity();
+      drawClocks(speed);
+      drawCorner();
+      ctx.restore();
+    } else if (S.view === 'donut') {
+      drawBand();
+      ctx.save();
+      ctx.translate(0, TOP);
+      drawDonut(dt);
+      drawCorner();
+      ctx.restore();
+    } else {
+      drawTokens();
+      ctx.save();
+      ctx.translate(0, TOP);
+      drawWords(dt);
+      ctx.restore();
+    }
+    panelText();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- dragging on the stage ----------
+  let drag: 'p' | 'k' | null = null;
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H - TOP };
+  };
+  const qAt = (x: number) => Math.max(0, Math.min(N - 1, Math.round((x - WX0) / CELL - 0.5)));
+  const nearGhost = (x: number) => S.k > 0 && Math.abs(x - xq(S.p + S.k)) < 10 && Math.abs(x - xq(S.p)) > 5;
+  const inside = (x: number, y: number) => x > WX0 - 8 && x < WX1 + 8 && y > 40 && y < H - TOP - 4;
+  function move(x: number) {
+    if (drag === 'p') {
+      S.p = Math.min(qAt(x), N - 1);
+      setPos(S.p);
+    } else if (drag === 'k') {
+      S.k = Math.max(0, Math.min(KMAX, qAt(x) - Math.round(S.p)));
+      setOff(S.k);
+    }
+  }
+  let turning: { x: number; y: number } | null = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    const { x, y } = local(e);
+    if (S.view !== 'clocks') {
+      if (y < 0) return;
+      turning = { x, y };
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+    if (!inside(x, y)) return;
+    drag = nearGhost(x) ? 'k' : 'p';
+    S.p = Math.round(S.p);
+    tp.setRunning(false);
+    canvas.setPointerCapture(e.pointerId);
+    move(x);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const { x, y } = local(e);
+    if (S.view !== 'clocks') {
+      if (turning) {
+        const c = S.view === 'donut' ? cam : wcam;
+        c.turned = true;
+        c.ang += (x - turning.x) * 0.01;
+        c.tilt = Math.max(-1.4, Math.min(1.4, c.tilt + (y - turning.y) * 0.01));
+        turning = { x, y };
+      }
+      canvas.style.cursor = y >= 0 ? (turning ? 'grabbing' : 'grab') : '';
+      return;
+    }
+    if (drag) move(x);
+    else canvas.style.cursor = inside(x, y) ? (nearGhost(x) || Math.abs(x - xq(S.p)) < 8 ? 'ew-resize' : 'pointer') : '';
+  });
+  const end = () => { drag = null; turning = null; };
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointercancel', end);
+
+  const hintEl = document.getElementById('scene-hint');
+  const HINTS = {
+    clocks: 'Drag on the stage to move p, or grab the pink line to change k',
+    donut: 'Drag to turn the donut · the sliders move p and k',
+    words: 'Drag to turn · switch the sentence or the position code',
+  };
+  const pairCtl = document.getElementById('pair')?.closest('.control') as HTMLElement | null;
+  function showView(v: 'clocks' | 'donut' | 'words') {
+    S.view = v;
+    viewSeg.select(v);
+    if (hintEl) hintEl.textContent = HINTS[v];
+    const shown = (el: Element | null | undefined, on: boolean) => { if (el instanceof HTMLElement) el.style.display = on ? '' : 'none'; };
+    shown(pairCtl, v === 'donut');
+    for (const id of ['sent', 'peon']) shown(document.getElementById(id)?.closest('.control'), v === 'words');
+    for (const id of ['pos', 'off', 'base']) shown(document.getElementById(id)?.closest('.control'), v !== 'words');
+    shown(document.getElementById('run')?.closest('.actions'), v !== 'words');
+    shown(document.querySelector('.result-strip'), v !== 'words');
+    for (let i = 0; i < 4; i++) shown(document.getElementById(`lg-${i}`), v !== 'words');
+  }
+  const viewSeg = segmented('view', (v) => showView(v as 'clocks' | 'donut' | 'words'));
+  const pairSeg = segmented('pair', (v) => { S.pair = v; });
+  const sentSeg = segmented('sent', (v) => { S.sent = v; });
+  const setPeOn = check('peon', (on) => { S.peOn = on; });
+  showView('clocks');
+
+  // ---------- Try buttons ----------
+  function put(o: { p: number; k: number; base?: number; run: boolean; view?: 'clocks' | 'donut' | 'words'; pair?: string; sent?: string; pe?: boolean }) {
+    showView(o.view ?? 'clocks');
+    S.pair = o.pair ?? 'mixed'; pairSeg.select(S.pair);
+    if (o.sent) { S.sent = o.sent; sentSeg.select(o.sent); }
+    S.peOn = o.pe ?? true; setPeOn(S.peOn);
+    const b = o.base ?? 20;
+    S.base = toBase(b); setBase(b);
+    S.k = o.k; setOff(o.k);
+    S.p = o.p; setPos(o.p);
+    S.dir = 1;
+    tp.setRunning(o.run);
   }
   tries({
-    sin: () => { show('sin', false); build(); },
-    rope: () => { show('rope', false); state.seed = 1 + Math.floor(Math.random() * 1e6); build(); },
-    base: () => { show('rope', true, 12); build(); },
-    table: () => { show('table', true); build(); },
+    echo: () => put({ p: 30, k: 19, run: false }),
+    glow: () => put({ p: 0, k: 0, run: true }),
+    shift: () => put({ p: 0, k: 8, run: true }),
+    base: () => put({ p: 20, k: 25, base: 13, run: true }),
+    donut: () => put({ p: 0, k: 0, run: true, view: 'donut' }),
+    twist: () => put({ p: 0, k: 12, run: true, view: 'donut' }),
+    pairs: () => put({ p: 0, k: 0, run: true, view: 'donut', pair: 'fast' }),
+    words: () => put({ p: 0, k: 3, run: true, view: 'words', sent: 'a' }),
+    nope: () => put({ p: 0, k: 3, run: true, view: 'words', pe: false }),
+    swap: () => put({ p: 0, k: 3, run: true, view: 'words', sent: S.sent === 'a' ? 'b' : 'a' }),
   });
 
-  build();
+  tp.setRunning(true);
+  requestAnimationFrame(loop);
 </script>
 
 <style>
   #pe {
-    cursor: crosshair;
+    touch-action: none;
   }
 </style>

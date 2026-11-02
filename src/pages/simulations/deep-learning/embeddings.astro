@@ -2,7 +2,6 @@
 import SimLayout from '../../../layouts/SimLayout.astro';
 import Seg from '../../../components/sim/Seg.astro';
 import Slider from '../../../components/sim/Slider.astro';
-import Transport from '../../../components/sim/Transport.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Checks from '../../../components/sim/Checks.astro';
@@ -11,9 +10,9 @@ import Try from '../../../components/sim/Try.astro';
 
 <SimLayout
   areaSlug="deep-learning"
-  title="Embeddings & Cosine Similarity"
+  title="Embeddings"
   description="An embedding turns a word into a list of numbers, which is an arrow, and words used alike point alike. Rank the words by the angle, by the dot product and by distance, and see why search normalises every arrow first."
-  shortcuts={['run', 'reset', 'fullscreen']}
+  shortcuts={['fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
@@ -33,28 +32,24 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'royalty', color: '#c084fc' },
           { label: 'vehicles', color: '#fbbf24' },
           { label: 'food', color: '#f472b6' },
+          { label: 'a positive number', color: '#60a5fa' },
+          { label: 'a negative number', color: '#fb923c' },
         ]}
-        hint="Drag to turn · scroll to zoom · double-click to reset · click a word to point the query at it"
+        hint="Hover a word to see its numbers · click it to point the query there · drag to turn, scroll to zoom"
       />
       <Result label="Best match for the query" />
     </div>
 
     <div class="sim-panel">
       <Seg
-        id="ch"
-        label="Chapter"
-        attr="c"
+        id="shape"
+        label="Draw each word as"
+        attr="m"
         options={[
-          { value: '0', label: '1 · Numbers' },
-          { value: '1', label: '2 · Direction' },
-          { value: '2', label: '3 · Length' },
-          { value: '3', label: '4 · Distance' },
-          { value: '4', label: '5 · Normalise' },
+          { value: 'arrow', label: 'Arrows' },
+          { value: 'point', label: 'Points' },
         ]}
       />
-      <Transport>
-        <button type="button" class="btn ghost" id="next">Next chapter →</button>
-      </Transport>
       <Seg
         id="rank"
         label="Rank the words by"
@@ -66,14 +61,20 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Slider id="qlen" label="Query length" min={20} max={150} value={80} display="0.80" />
-      <Checks items={[{ id: 'norm', label: 'Normalise every arrow to length 1' }]} />
+      <Checks items={[{ id: 'norm', label: 'Normalise every word to length 1' }]} />
     </div>
   </div>
 
   <Fragment slot="observe">
     <li>
-      The cone around the query is every direction within some angle of it. Widening it lets words in in the order of
-      their cosine: <b>puppy</b>, then dog, then the rest of the animals. <Try id="cone" />
+      Hover a word: the card shows its three numbers, and dashed steps walk
+      them out along x, y and z to the tip of its arrow. A real embedding has
+      hundreds of numbers; three are enough to draw.
+    </li>
+    <li>
+      Rank by <b>cos θ</b> and only the angle θ between the query and a word
+      counts. Puppy and dog lead, short or long, because they point almost
+      the same way as the query. <Try id="cos" />
     </li>
     <li>
       Rank by <b>dot product</b> and <b>thing</b> takes first place. It is long, the way a frequent, vague word
@@ -81,11 +82,11 @@ import Try from '../../../components/sim/Try.astro';
     </li>
     <li>
       Point a short query along <b>cat</b> and rank by <b>distance</b>: <b>kitten</b> wins, and even puppy beats
-      cat, because short arrows sit near any short query. <Try id="dist" />
+      cat, because short arrows sit close to any short query. <Try id="dist" />
     </li>
     <li>
-      Make every arrow length 1 and the three rankings become the same list: on the sphere the dot product is the
-      cosine, and distance only depends on the angle. <Try id="norm" />
+      Make every word length 1 and the three rankings become the same list: on the sphere the dot product is the
+      cosine, and distance only depends on the angle. Switch to points to see them all on its surface. <Try id="norm" />
     </li>
   </Fragment>
 </SimLayout>
@@ -96,7 +97,8 @@ import Try from '../../../components/sim/Try.astro';
   import { stageInk } from '../../../lib/draw';
   import { segmented, slider, check, result, tries } from '../../../lib/panel';
   import { stageCamera } from '../../../lib/stage-camera';
-  import { story, headline, say, withAlpha, isLight, beat, lerp, clamp01 } from '../../../lib/story';
+  import { say, withAlpha, isLight, lerp, clamp01, glows } from '../../../lib/story';
+  import { strip, token, EMB } from '../../../lib/embedding';
 
   // Words as arrows in three dimensions. A hand-made embedding: words used
   // alike point alike, and length carries something else (here, as in real
@@ -132,12 +134,9 @@ import Try from '../../../components/sim/Try.astro';
     ] as [string, number, number, number, string][]
   ).map(([w, az, el, l, g]) => ({ w, dir: fromAngles(az, el), len: l, g }));
   const PUPPY = WORDS.findIndex((x) => x.w === 'puppy');
-  /** The word the first chapter takes apart into its numbers. */
-  const FIRST = WORDS.findIndex((x) => x.w === 'king');
   const CAT = WORDS.findIndex((x) => x.w === 'cat');
   const THING = WORDS.findIndex((x) => x.w === 'thing');
   const KITTEN = WORDS.findIndex((x) => x.w === 'kitten');
-  const DOG = WORDS.findIndex((x) => x.w === 'dog');
 
   const canvas = document.getElementById('cos') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas);
@@ -146,7 +145,10 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
 
   type Rank = 'cos' | 'dot' | 'dist';
-  const S = { rank: 'cos' as Rank, qlen: 0.8, norm: false, ang: 2.97, tilt: 0.35, hover: -1 };
+  const S = { rank: 'cos' as Rank, qlen: 0.8, norm: false, ang: 2.97, tilt: 0.35, hover: -1, points: false };
+  /** 0: words drawn as arrows, 1: as points at the arrow tips. */
+  let pm = 0;
+  const glow = glows();
   /** The view sways gently around one that shows the animals side on, until the reader turns it. */
   const BASE = 2.97;
   let turned = false, sway = 0;
@@ -167,7 +169,7 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- projection ----------
   const O = { x: 660, y: 420, s: 185 };
-  /** Chapter 4 leans in on the animals, where the short arrows are. */
+  /** Ranking by distance leans in on the animals, where the short arrows are. */
   let zf = 1;
   function project(p: V3) {
     const ca = Math.cos(S.ang), sa = Math.sin(S.ang);
@@ -191,36 +193,8 @@ import Try from '../../../components/sim/Try.astro';
   const ranking = (r: Rank) =>
     WORDS.map((_, i) => ({ i, s: score(i, r) })).sort((a, b) => (r === 'dist' ? a.s - b.s : b.s - a.s));
 
-  // ---------- chapters ----------
-  const chapters = [
-    {
-      dur: 11,
-      title: 'A word is a list of numbers',
-      body: 'An embedding gives every word a few hundred numbers. Three are enough to see the idea: three numbers are an arrow. Training makes words that are used alike point the same way.',
-    },
-    {
-      dur: 14,
-      title: 'Direction is meaning',
-      body: 'Compare a query with a word by the angle between them. cos θ is 1 when they point the same way, 0 at right angles, −1 opposite, and it ignores length entirely.',
-    },
-    {
-      dur: 12,
-      title: 'Length gets in the way',
-      body: 'The dot product is |q| |w| cos θ: the query’s length times the shadow the word casts on it. A long word casts a long shadow, so a vague, frequent word can beat the right one.',
-    },
-    {
-      dur: 12,
-      title: 'Distance is fooled too',
-      body: 'Straight-line distance mixes in length the other way: short arrows sit close to any short query. Point the query along cat, shorten it, and the nearest word is kitten.',
-    },
-    {
-      dur: Infinity,
-      title: 'Normalise, and they agree',
-      body: 'Push every arrow to length 1, onto the sphere. Then the dot product is the cosine and distance depends only on the angle, so all three give the same list. Search engines do this first.',
-    },
-  ];
-
   const rankSeg = segmented('rank', (v) => { S.rank = v as Rank; });
+  segmented('shape', (v) => { S.points = v === 'point'; });
   const setLen = slider('qlen', (v) => { S.qlen = v / 100; goal.len = S.qlen; }, (v) => (v / 100).toFixed(2));
   const setNorm = check('norm', (on) => { S.norm = on; });
   function setRank(r: Rank) { S.rank = r; rankSeg.select(r); }
@@ -231,63 +205,55 @@ import Try from '../../../components/sim/Try.astro';
     setLen(Math.round(len * 100));
   }
 
-  const st = story({
-    chapters,
-    enter(i) {
-      setRank(i === 2 ? 'dot' : i === 3 ? 'dist' : 'cos');
-      if (i === 3) aim(WORDS[CAT].dir, 0.45);
-      else aim(fromAngles(229, 12), 0.8);
-      S.norm = i === 4;
-      setNorm(S.norm);
-    },
-    relevant: (i) => (i === 0 ? [] : i === 4 ? null : ['rank', 'qlen']),
-    frame,
-  });
-
-  // ---------- drawing ----------
+  // ---------- the loop ----------
+  /** How much of each ranking's drawing is showing, so switching fades one into the next. */
+  const A = { angle: 0, shadow: 0, gap: 0 };
   let before = 0;
-  function frame(ch: number, t: number, dt: number) {
+  function frame(now: number) {
     const light = isLight(canvas);
-    const now = performance.now(), real = before ? Math.min(0.05, (now - before) / 1000) : 0;
+    const real = before ? Math.min(0.05, (now - before) / 1000) : 0;
     before = now;
     view.tick();
-    if (S.hover < 0) sway += dt;
-    if (!turned) S.ang = lerp(S.ang, BASE + (ch === 0 ? 0.6 : 0.3) * Math.sin(sway * 0.3), 1 - Math.exp(-real * 2));
-    // ease the query and the normalisation towards their goals
+    if (S.hover < 0) sway += real;
+    if (!turned) S.ang = lerp(S.ang, BASE + 0.3 * Math.sin(sway * 0.3), 1 - Math.exp(-real * 2));
+    // ease the query, the zoom, the normalisation and the drawings towards their goals
     const k = 1 - Math.exp(-real * 3);
     Q.dir = unit([lerp(Q.dir[0], goal.dir[0], k), lerp(Q.dir[1], goal.dir[1], k), lerp(Q.dir[2], goal.dir[2], k)]);
     Q.len = lerp(Q.len, goal.len, k);
-    zf = lerp(zf, ch === 3 ? 1.9 : 1, 1 - Math.exp(-real * 2));
-    nu = lerp(nu, S.norm && !(ch === 4 && t < 1.2 && !st.manual()) ? 1 : 0, 1 - Math.exp(-real * 1.6));
+    zf = lerp(zf, S.rank === 'dist' ? 1.6 : 1, 1 - Math.exp(-real * 2));
+    nu = lerp(nu, S.norm ? 1 : 0, 1 - Math.exp(-real * 1.6));
+    pm = lerp(pm, S.points ? 1 : 0, 1 - Math.exp(-real * 5));
+    const f = 1 - Math.exp(-real * 4);
+    A.angle = lerp(A.angle, S.rank === 'cos' ? 1 : 0, f);
+    A.shadow = lerp(A.shadow, S.rank === 'dot' ? 1 : 0, f);
+    A.gap = lerp(A.gap, S.rank === 'dist' ? 1 : 0, f);
 
     ctx.clearRect(0, 0, W, H);
-    sphere(ch === 4 ? 0.12 + 0.18 * nu : 0.06, light);
-    axes(ch === 0 ? beat(t, 1.5, 2.5) : 0.6);
+    sphere(0.3 * nu, light);
+    axes(0.6);
+    const top = ranking(S.rank)[0].i;
+    const compared = S.hover >= 0 ? S.hover : top;
 
-    const qa = ch === 0 ? 0 : ch === 1 ? beat(t, 0.6, 1.6) : 1;
-    const compared = S.hover >= 0 ? S.hover : ch === 1 ? DOG : ch === 2 ? THING : ch === 3 ? KITTEN : ranking(S.rank)[0].i;
+    shadows(compared, A.shadow);
+    gaps(A.gap);
+    arrows(compared);
+    angleArc(compared, Math.max(A.angle, A.shadow));
+    if (S.hover >= 0) walk(S.hover);
+    groupNames(0.7);
+    notes(top);
 
-    if (ch === 1) cone(t, light);
-    if (ch === 2) shadows(compared, qa);
-    if (ch === 3) gaps(qa);
+    focusCard(compared, light);
+    if (nu > 0.5) agreeCard(light);
+    else rankCard(S.rank, compared, light);
 
-    arrows(ch, t, qa, compared);
-    if (ch >= 1 && ch <= 2) angleArc(compared, qa);
-    if (ch === 0) walk(t);
-    groupNames(ch === 0 ? beat(t, 8, 9) : 0.7);
-    words2(ch, t);
-
-    if (ch === 0) numbersCard(t, light);
-    else if (ch === 4) agreeCard(light);
-    else rankCard(S.rank, ch === 1 ? coneCos(t) : null, compared, light);
-
-    headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 480, manual: st.manual() });
     if (view.away) say(ctx, 'double-click to reset the view', W - 16, H - 14, { colour: ink(0.45), size: 12, align: 'right' });
-    panelText(ch);
-    eqTick(ch);
+    panelText();
+    eqTick(compared);
+    requestAnimationFrame(frame);
   }
 
   function sphere(a: number, light: boolean) {
+    if (a < 0.005) return;
     ctx.save();
     ctx.strokeStyle = light ? `rgba(28,30,36,${a})` : `rgba(232,233,236,${a})`;
     ctx.lineWidth = 1;
@@ -356,57 +322,99 @@ import Try from '../../../components/sim/Try.astro';
     return p;
   }
 
+  /**
+   * A word as an arrow from the origin, as a point where the arrow ends, or
+   * on the way from one to the other. A point that is being compared keeps a
+   * faint ray to the origin, since the angle is measured there.
+   */
+  function mark(v: V3, col: string, a: number, wide: number, ray: boolean, query = false) {
+    if (pm < 0.999) arrow3(v, col, a * (1 - pm), wide);
+    const p = project(v);
+    if (pm > 0.001) {
+      const light = isLight(canvas);
+      const depth = clamp01((p.z + 1.5) / 3), al = a * pm * (0.5 + 0.5 * depth);
+      if (ray) {
+        const o = project([0, 0, 0]);
+        ctx.save();
+        ctx.globalAlpha = al * 0.5;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+      const r = (query ? 6 : 4.2) * p.f * (wide > 1 ? 1.2 : 1);
+      const img = glow(col, r, light), s = img.width / 2;
+      ctx.save();
+      ctx.globalAlpha = al;
+      ctx.drawImage(img, p.x - s / 2, p.y - s / 2, s, s);
+      if (query) {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    return p;
+  }
+
   /** Screen positions of the arrow tips this frame, for hovering and clicking. */
   const tipX = new Float64Array(WORDS.length), tipY = new Float64Array(WORDS.length);
-  function arrows(ch: number, t: number, qa: number, compared: number) {
+  function arrows(compared: number) {
+    if (pm > 0.01) {
+      const o = project([0, 0, 0]);
+      ctx.fillStyle = ink(0.6 * pm);
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      say(ctx, '0', o.x - 8, o.y + 10, { colour: ink(0.45 * pm), size: 11, align: 'right' });
+    }
     const order = WORDS.map((_, i) => ({ i, z: project(vec(i)).z })).sort((a, b) => a.z - b.z);
-    const top = ranking(S.rank);
-    const inCone = ch === 1 ? coneCos(t) : null;
+    const top = ranking(S.rank)[0].i;
     for (const { i } of order) {
-      // chapter 1 grows king first, then the rest
-      const grow = ch !== 0 ? 1 : i === FIRST ? beat(t, 4.6, 5.4) : beat(t, 5.6 + (i % 6) * 0.25, 6.4 + (i % 6) * 0.25);
-      if (grow <= 0) { tipX[i] = tipY[i] = -999; continue; }
-      const v = scale(vec(i), grow);
+      const v = vec(i);
       const col = GROUP[WORDS[i].g].colour;
-      const dim = inCone !== null ? (score(i, 'cos') >= inCone ? 1 : 0.35) : 1;
       const hi = i === compared ? 1.5 : 1;
-      const p = arrow3(v, col, dim, hi)!;
+      const p = mark(v, col, 1, hi, i === compared);
       tipX[i] = p.x;
       tipY[i] = p.y;
       const o = project([0, 0, 0]), dx = p.x - o.x, dy = p.y - o.y, L = Math.hypot(dx, dy) || 1;
       const lx = p.x + (dx / L) * 14, ly = p.y + (dy / L) * 12;
-      const first = ch >= 1 && top[0].i === i;
+      const first = top === i;
       say(ctx, WORDS[i].w, lx, ly, {
         colour: first ? ink(1) : withAlpha(col, 0.95), size: i === compared || first ? 15 : 13, weight: i === compared || first ? 700 : 550,
-        align: dx > 8 ? 'left' : dx < -8 ? 'right' : 'center', alpha: grow * dim, halo: inv(0.8),
+        align: dx > 8 ? 'left' : dx < -8 ? 'right' : 'center', halo: inv(0.8),
       });
     }
-    if (qa > 0) {
-      const p = arrow3(scale(qvec(), qa), ACC, 1, 1.7)!;
-      const o = project([0, 0, 0]), dx = p.x - o.x, dy = p.y - o.y, L = Math.hypot(dx, dy) || 1;
-      say(ctx, 'query', p.x + (dx / L) * 16, p.y + (dy / L) * 14 + 16, { colour: ACC, size: 14, weight: 700, align: dx > 0 ? 'left' : 'right', alpha: qa, halo: inv(0.85) });
-    }
+    const p = mark(qvec(), ACC, 1, 1.7, true, true);
+    const o = project([0, 0, 0]), dx = p.x - o.x, dy = p.y - o.y, L = Math.hypot(dx, dy) || 1;
+    say(ctx, 'query', p.x + (dx / L) * 16, p.y + (dy / L) * 14 + 16, { colour: ACC, size: 14, weight: 700, align: dx > 0 ? 'left' : 'right', halo: inv(0.85) });
   }
 
-  /** Chapter 1: king's three numbers walked out along the axes, one after another. */
-  function walk(t: number) {
-    const v = vec(FIRST), steps: V3[] = [[0, 0, 0], [v[0], 0, 0], [v[0], v[1], 0], [v[0], v[1], v[2]]];
-    const cols = ['#f87171', '#4ade80', '#60a5fa'];
+  /** A word's three numbers walked out along the axes to the tip of its arrow, in the strip's colours. */
+  function walk(i: number) {
+    const v = vec(i), steps: V3[] = [[0, 0, 0], [v[0], 0, 0], [v[0], v[1], 0], [v[0], v[1], v[2]]];
+    const light = isLight(canvas);
+    const cols = v.map((x) => (x >= 0 ? (light ? EMB.posLight : EMB.pos) : light ? EMB.negLight : EMB.neg));
+    const names = ['x', 'y', 'z'];
     for (let k = 0; k < 3; k++) {
-      const a = beat(t, 2.2 + k * 0.7, 2.8 + k * 0.7);
-      if (a <= 0) continue;
-      const end: V3 = [lerp(steps[k][0], steps[k + 1][0], a), lerp(steps[k][1], steps[k + 1][1], a), lerp(steps[k][2], steps[k + 1][2], a)];
-      const p0 = project(steps[k]), p1 = project(end);
+      const p0 = project(steps[k]), p1 = project(steps[k + 1]);
       ctx.save();
       ctx.strokeStyle = cols[k];
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.2;
       ctx.setLineDash([5, 4]);
-      ctx.globalAlpha = 1 - 0.6 * beat(t, 7, 8);
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
       ctx.lineTo(p1.x, p1.y);
       ctx.stroke();
       ctx.restore();
+      if (Math.hypot(p1.x - p0.x, p1.y - p0.y) > 18)
+        say(ctx, names[k], (p0.x + p1.x) / 2, (p0.y + p1.y) / 2 - 10, { colour: cols[k], size: 12, weight: 700, align: 'center', halo: inv(0.85) });
     }
   }
 
@@ -418,46 +426,6 @@ import Try from '../../../components/sim/Try.astro';
       const p = project(scale(c, 1.32));
       say(ctx, GROUP[g].name, p.x, p.y, { colour: withAlpha(GROUP[g].colour, 0.55 * a), size: 12, weight: 700, align: 'center' });
     }
-  }
-
-  // chapter 2: the cone of directions within an angle of the query
-  const coneCos = (t: number) => (st.manual() ? Math.cos((32 * Math.PI) / 180) : Math.cos((lerp(4, 40, beat(t, 3, 10)) * Math.PI) / 180));
-  function basis(q: V3) {
-    const a: V3 = Math.abs(q[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-    const u = unit(sub(a, scale(q, dot(a, q))));
-    const v: V3 = [q[1] * u[2] - q[2] * u[1], q[2] * u[0] - q[0] * u[2], q[0] * u[1] - q[1] * u[0]];
-    return { u, v };
-  }
-  function cone(t: number, light: boolean) {
-    const a = beat(t, 2.4, 3.2);
-    if (a <= 0) return;
-    const c = coneCos(t), s = Math.sqrt(1 - c * c), q = Q.dir, { u, v } = basis(q);
-    const rim = (phi: number): V3 => {
-      const r: V3 = [u[0] * Math.cos(phi) + v[0] * Math.sin(phi), u[1] * Math.cos(phi) + v[1] * Math.sin(phi), u[2] * Math.cos(phi) + v[2] * Math.sin(phi)];
-      return scale([q[0] * c + r[0] * s, q[1] * c + r[1] * s, q[2] * c + r[2] * s], 1.25);
-    };
-    const o = project([0, 0, 0]);
-    ctx.save();
-    ctx.globalAlpha = a;
-    ctx.beginPath();
-    for (let k = 0; k <= 48; k++) {
-      const p = project(rim((2 * Math.PI * k) / 48));
-      k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
-    }
-    ctx.fillStyle = withAlpha(ACC, light ? 0.1 : 0.08);
-    ctx.fill();
-    ctx.strokeStyle = withAlpha(ACC, 0.6);
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    ctx.strokeStyle = withAlpha(ACC, 0.25);
-    for (let k = 0; k < 6; k++) {
-      const p = project(rim((2 * Math.PI * k) / 6));
-      ctx.beginPath();
-      ctx.moveTo(o.x, o.y);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   /** The angle between the query and a word, as an arc near the origin. */
@@ -485,9 +453,9 @@ import Try from '../../../components/sim/Try.astro';
     say(ctx, `θ = ${Math.round((th * 180) / Math.PI)}°`, p.x, p.y, { colour: ink(0.9), size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
   }
 
-  /** Chapter 3: each word's shadow on the query's line, the part the dot product counts. */
+  /** Ranking by dot product: each word's shadow on the query's line, the part the dot product counts. */
   function shadows(compared: number, a: number) {
-    if (a <= 0) return;
+    if (a <= 0.01) return;
     const q = Q.dir;
     const l0 = project(scale(q, -0.6)), l1 = project(scale(q, 1.6));
     ctx.save();
@@ -522,9 +490,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
   }
 
-  /** Chapter 4: the straight gaps from the query's tip to the nearest few word tips. */
+  /** Ranking by distance: the straight gaps from the query's tip to the nearest few word tips. */
   function gaps(a: number) {
-    if (a <= 0) return;
+    if (a <= 0.01) return;
     const pq = project(qvec());
     ranking('dist').slice(0, 3).forEach(({ i, s }, k) => {
       const pw = project(vec(i));
@@ -542,21 +510,24 @@ import Try from '../../../components/sim/Try.astro';
     });
   }
 
-  function words2(ch: number, t: number) {
-    if (S.hover >= 0 || st.manual()) return;
-    const at = (i: number, text: string, a: number, dy = -26) =>
-      say(ctx, text, tipX[i], tipY[i] + dy, { colour: ink(0.9), size: 13.5, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
-    if (ch === 2) at(THING, 'long and vague: wins on dot product', beat(t, 4, 5));
-    if (ch === 3) at(KITTEN, 'short: nearest by distance', beat(t, 3, 4), 54);
-    if (ch === 3) at(CAT, 'right direction, but long', beat(t, 5.5, 6.5));
+  /** A line next to the word that wins for the wrong reason. */
+  function notes(top: number) {
+    if (S.hover >= 0 || nu > 0.5) return;
+    const at = (i: number, text: string, dy = -26) =>
+      say(ctx, text, tipX[i], tipY[i] + dy, { colour: ink(0.9), size: 13.5, weight: 650, align: 'center', halo: inv(0.85) });
+    if (S.rank === 'dot' && top === THING) at(THING, 'long and vague: wins on dot product');
+    if (S.rank === 'dist' && top === KITTEN) {
+      at(KITTEN, 'short: nearest by distance', 54);
+      at(CAT, 'right direction, but long');
+    }
   }
 
   // ---------- the card on the left ----------
-  const CARD = { x: 30, y: 226, w: 300 };
-  function card(h: number, light: boolean) {
+  const CARD = { x: 30, y: 196, w: 300 };
+  function card(h: number, light: boolean, y = CARD.y) {
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(CARD.x, CARD.y, CARD.w, h, 12);
+    ctx.roundRect(CARD.x, y, CARD.w, h, 12);
     // opaque, so a zoomed-in scene passes behind it
     ctx.fillStyle = inv(0.94);
     ctx.fill();
@@ -567,59 +538,53 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
   }
 
-  function numbersCard(t: number, light: boolean) {
-    card(250, light);
-    const v = vec(FIRST);
-    say(ctx, 'king', CARD.x + 18, CARD.y + 30, { colour: GROUP.r.colour, size: 22, weight: 700, alpha: beat(t, 0.3, 1) });
-    say(ctx, '=', CARD.x + 84, CARD.y + 30, { colour: ink(0.6), size: 20, alpha: beat(t, 0.6, 1.2) });
-    const cols = ['#f87171', '#4ade80', '#60a5fa'], names = ['x', 'y', 'z'];
+  /** The word in focus, as the site draws an embedding: its chip and its numbers. */
+  function focusCard(i: number, light: boolean) {
+    const y0 = 20;
+    card(162, light, y0);
+    const v = vec(i), cell = 30, gap = 14, sx = CARD.x + 18, sy = y0 + 60;
+    const col = GROUP[WORDS[i].g].colour;
+    ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
+    token(ctx, WORDS[i].w, [], sx + (ctx.measureText(WORDS[i].w).width + 22) / 2, y0 + 16, { light, ink, colour: col, focus: true });
+    say(ctx, S.hover >= 0 ? 'under the mouse' : 'best match', CARD.x + CARD.w - 16, y0 + 32, { colour: ink(0.45), size: 11.5, align: 'right' });
+    const names = ['x', 'y', 'z'];
     for (let k = 0; k < 3; k++) {
-      const a = beat(t, 0.9 + k * 0.25, 1.4 + k * 0.25), b = beat(t, 2.2 + k * 0.7, 2.8 + k * 0.7);
-      say(ctx, (v[k] < 0 ? '−' : '') + Math.abs(v[k]).toFixed(2), CARD.x + 108 + k * 60, CARD.y + 30, { colour: b > 0.5 ? cols[k] : ink(0.9), size: 17, weight: 650, alpha: a });
-      say(ctx, names[k], CARD.x + 126 + k * 60, CARD.y + 54, { colour: cols[k], size: 12, align: 'center', alpha: a * b });
+      const x = sx + k * (cell + gap);
+      strip(ctx, [v[k]], x, sy, { light, ink, cell, scale: 1, more: false });
+      say(ctx, (v[k] < 0 ? '−' : '') + Math.abs(v[k]).toFixed(2), x + cell / 2, sy + cell + 14, { colour: ink(0.9), size: 12.5, weight: 650, align: 'center' });
+      say(ctx, names[k], x + cell / 2, sy + cell + 29, { colour: ink(0.45), size: 11, align: 'center' });
     }
-    const lines = [
-      ['A real model uses hundreds of numbers', 2],
-      ['per word. With three, you can see', 2],
-      ['the arrow they make.', 2],
-      ['Words used alike point alike: animals', 7.4],
-      ['one way, royalty another, vehicles a third.', 7.4],
-    ] as [string, number][];
-    lines.forEach(([l, at], k) => say(ctx, l, CARD.x + 18, CARD.y + 100 + k * 21 + (k >= 3 ? 14 : 0), { colour: ink(0.72), size: 13, alpha: beat(t, at + 0.2 * k, at + 0.6 + 0.2 * k) }));
+    const x0 = sx + 3 * (cell + gap) - 6;
+    for (let k = 0; k < 4; k++) {
+      ctx.fillStyle = ink(0.45 * (1 - k / 4));
+      ctx.beginPath();
+      ctx.arc(x0 + 4 + k * 9, sy + cell / 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    say(ctx, 'a real model:', x0 + 46, sy + 7, { colour: ink(0.5), size: 12 });
+    say(ctx, 'hundreds more', x0 + 46, sy + 24, { colour: ink(0.5), size: 12 });
+    say(ctx, `length ${norm(v).toFixed(2)}   ·   cos θ with the query ${score(i, 'cos').toFixed(2)}`, sx, y0 + 144, { colour: ink(0.6), size: 12 });
   }
 
   const RANK_NAME: Record<Rank, string> = { cos: 'cos θ', dot: 'dot product q·w', dist: 'distance ‖q − w‖' };
   const rowY = new Float64Array(WORDS.length).fill(-1);
-  function rankCard(r: Rank, coneC: number | null, compared: number, light: boolean) {
-    card(410, light);
+  function rankCard(r: Rank, compared: number, light: boolean) {
+    card(386, light);
     say(ctx, `ranked by ${RANK_NAME[r]}`, CARD.x + 16, CARD.y + 22, { colour: ink(0.6), size: 12.5, weight: 600 });
     const list = ranking(r);
     const vals = list.map((x) => x.s), lo = Math.min(...vals, 0), hi = Math.max(...vals);
-    let cut = -1;
     list.forEach(({ i, s }, k) => {
       const target = CARD.y + 50 + k * 26.5;
       rowY[i] = rowY[i] < 0 ? target : lerp(rowY[i], target, 0.15);
       const y = rowY[i], col = GROUP[WORDS[i].g].colour, on = i === compared || k === 0;
       say(ctx, `${k + 1}`, CARD.x + 26, y, { colour: ink(0.4), size: 12, align: 'right' });
       say(ctx, WORDS[i].w, CARD.x + 36, y, { colour: on ? ink(1) : withAlpha(col, 0.9), size: 13, weight: on ? 700 : 500 });
-      const bw = 110 * ((s - lo) / (hi - lo || 1));
+      strip(ctx, vec(i), CARD.x + 96, y - 5, { light, ink, cell: 10, gap: 1.5, scale: 1, more: false, alpha: on ? 1 : 0.8 });
+      const bw = 92 * ((s - lo) / (hi - lo || 1));
       ctx.fillStyle = withAlpha(col, on ? 0.85 : 0.45);
-      ctx.fillRect(CARD.x + 104, y - 5, Math.max(1, bw), 10);
+      ctx.fillRect(CARD.x + 142, y - 5, Math.max(1, bw), 10);
       say(ctx, (s < 0 ? '−' : '') + Math.abs(s).toFixed(2), CARD.x + CARD.w - 14, y, { colour: ink(on ? 0.95 : 0.6), size: 12, align: 'right', weight: on ? 650 : 400 });
-      if (coneC !== null && s >= coneC) cut = k;
     });
-    if (coneC !== null && cut >= 0) {
-      const y = CARD.y + 50 + cut * 26.5 + 13;
-      ctx.save();
-      ctx.strokeStyle = withAlpha(ACC, 0.8);
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(CARD.x + 10, y);
-      ctx.lineTo(CARD.x + CARD.w - 10, y);
-      ctx.stroke();
-      ctx.restore();
-      say(ctx, `above the line: inside the cone, cos θ ≥ ${coneC.toFixed(2)}`, CARD.x + 16, CARD.y + 392, { colour: ACC, size: 11.5, weight: 600 });
-    }
   }
 
   /** Chapter 5: the three rankings side by side, which become one list on the sphere. */
@@ -642,7 +607,7 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- numbers ----------
   let tick = 0;
-  function panelText(ch: number) {
+  function panelText() {
     if (tick++ % 10) return;
     const best = ranking(S.rank)[0];
     const byCos = ranking('cos')[0];
@@ -650,27 +615,38 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: WORDS[best.i].w,
       status: `${RANK_NAME[S.rank]} = ${best.s.toFixed(2)}${agrees ? '' : ` · by angle alone it would be ${WORDS[byCos.i].w}`}`,
-      note: ch === 0 ? 'The word whose arrow best matches the query, by the ranking chosen in the panel.' : 'Only the cosine looks at direction alone; the other two let length change the answer unless every arrow has length 1.',
+      note:
+        nu > 0.5
+          ? 'Every word has length 1: the dot product is the cosine and distance follows the angle, so the three rankings agree.'
+          : S.rank === 'cos'
+            ? 'cos θ looks at direction alone: a long word and a short one pointing the same way score the same.'
+            : S.rank === 'dot'
+              ? 'The dot product is length times shadow, so a long word can win while pointing less well.'
+              : 'Distance mixes length in the other way: short arrows sit close to any short query.',
       colour: agrees ? '#5eead4' : '#f9736a',
     });
   }
 
   type Part = string | [string, string];
-  function eqTick(ch: number) {
-    const v = vec(FIRST), f = (x: number) => (x < 0 ? '-' : '') + Math.abs(x).toFixed(2);
+  let eqKey = '';
+  function eqTick(focus: number) {
+    const v = vec(focus), f = (x: number) => (x < 0 ? '-' : '') + Math.abs(x).toFixed(2);
     const q = '\\textcolor{' + ACC + '}{q}';
-    const EQ: Part[][] = [
-      [['\\text{king}', GROUP.r.colour], `\\;\\mapsto\\; (${f(v[0])},\\; ${f(v[1])},\\; ${f(v[2])})`],
-      [`\\cos\\theta = \\dfrac{${q} \\cdot w}{\\|${q}\\|\\,\\|w\\|}`],
-      [`${q} \\cdot w = \\|${q}\\|\\; \\underbrace{\\|w\\| \\cos\\theta}_{\\text{shadow}}`],
-      [`\\|${q} - w\\| = \\sqrt{\\|${q}\\|^2 + \\|w\\|^2 - 2\\, ${q} \\cdot w}`],
-      [`\\|${q}\\| = \\|w\\| = 1 \\;\\Rightarrow\\; ${q} \\cdot w = \\cos\\theta, \\;\\; \\|${q} - w\\|^2 = 2 - 2\\cos\\theta`],
-    ];
-    if (ch === eqFor) return;
-    eqFor = ch;
-    setEq({ rule: EQ[ch] });
+    const mode = nu > 0.5 ? 'norm' : S.rank;
+    const key = `${mode}|${focus}|${v.map((x) => x.toFixed(2)).join()}`;
+    if (key === eqKey) return;
+    eqKey = key;
+    const RULE: Record<string, Part[]> = {
+      cos: [`\\cos\\theta = \\dfrac{${q} \\cdot w}{\\|${q}\\|\\,\\|w\\|}`],
+      dot: [`${q} \\cdot w = \\|${q}\\|\\; \\underbrace{\\|w\\| \\cos\\theta}_{\\text{shadow}}`],
+      dist: [`\\|${q} - w\\| = \\sqrt{\\|${q}\\|^2 + \\|w\\|^2 - 2\\, ${q} \\cdot w}`],
+      norm: [`\\|${q}\\| = \\|w\\| = 1 \\;\\Rightarrow\\; ${q} \\cdot w = \\cos\\theta, \\;\\; \\|${q} - w\\|^2 = 2 - 2\\cos\\theta`],
+    };
+    setEq({
+      rule: RULE[mode],
+      live: [[`\\text{${WORDS[focus].w}}`, GROUP[WORDS[focus].g].colour], `\\;\\mapsto\\; (${f(v[0])},\\; ${f(v[1])},\\; ${f(v[2])})`],
+    });
   }
-  let eqFor = -1;
 
   // ---------- input ----------
   const local = (e: MouseEvent) => {
@@ -700,15 +676,20 @@ import Try from '../../../components/sim/Try.astro';
     const i = wordAt(p.x, p.y);
     if (i < 0) return;
     aim(WORDS[i].dir, S.qlen);
-    st.touch();
   });
 
+  function put(r: Rank, normalise: boolean, dir: V3 = fromAngles(229, 12), len = 0.8) {
+    setRank(r);
+    aim(dir, len);
+    S.norm = normalise;
+    setNorm(normalise);
+  }
   tries({
-    cone: () => { st.go(1); st.play(true); },
-    dot: () => { st.go(2); st.play(true); },
-    dist: () => { st.go(3); st.play(true); },
-    norm: () => { st.go(4); st.play(true); },
+    cos: () => put('cos', false),
+    dot: () => put('dot', false),
+    dist: () => put('dist', false, WORDS[CAT].dir, 0.45),
+    norm: () => put('cos', true),
   });
 
-  st.start();
+  requestAnimationFrame(frame);
 </script>
