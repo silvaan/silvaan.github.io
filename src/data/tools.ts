@@ -529,6 +529,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'attention',
+        title: 'Attention',
+        description:
+          'Alone, apple sits halfway between a fruit and a phone. Attention lets it weigh the other words and take in a mix of what they carry, so the sentence decides which corner it lands in.',
+        href: '/simulations/deep-learning/attention',
+        status: 'live',
+      },
+      {
         slug: 'convolution',
         title: 'Convolution',
         description:

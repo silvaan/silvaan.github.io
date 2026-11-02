@@ -1,0 +1,625 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Seg from '../../../components/sim/Seg.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Actions from '../../../components/sim/Actions.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Try from '../../../components/sim/Try.astro';
+---
+
+<SimLayout
+  areaSlug="deep-learning"
+  title="Attention"
+  description="On its own, apple is halfway between a fruit and a phone: one vector has to serve both meanings. Attention lets it look at the other words, weigh them, and take in a mix of what they carry, so the sentence decides which corner it lands in."
+  shortcuts={['fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas
+          id="att"
+          width="1000"
+          height="660"
+          role="img"
+          aria-label="A sentence as word chips, each with its embedding as a strip of coloured cells. Beams run from every word to apple, as thick as the attention it gets. Below, a map with a fruit corner and a tech corner where apple slides from the middle towards the corner its context points to, and the sum that moves it, written as strips."
+        ></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'fruit', color: '#4ade80' },
+          { label: 'tech', color: '#c084fc' },
+          { label: 'a positive number in the vector', color: '#60a5fa' },
+          { label: 'a negative number', color: '#fb923c' },
+        ]}
+        hint="Click a word to hide it from apple, click again to bring it back"
+      />
+      <Result label="What apple means here" />
+    </div>
+
+    <div class="sim-panel">
+      <Seg
+        id="sent"
+        label="Sentence"
+        attr="s"
+        active="ate"
+        options={[
+          { value: 'alone', label: 'apple' },
+          { value: 'ate', label: 'I ate an apple' },
+          { value: 'charged', label: 'I charged my apple' },
+          { value: 'ripe', label: 'a ripe apple from the tree' },
+          { value: 'mixed', label: 'I ate an apple on my phone' },
+        ]}
+      />
+      <Slider id="focus" label="Focus |q|" min={0} max={8} step={0.1} value={4} display="4.0" hint={['looks at every word', 'only the strongest']} />
+      <Actions>
+        <button type="button" class="btn ghost" id="shuffle">Shuffle words</button>
+      </Actions>
+      <Readout
+        title="Attention"
+        rows={[
+          { id: 'r-top', label: 'strongest pull' },
+          { id: 'r-self', label: 'on apple itself' },
+          { id: 'r-glue', label: 'on the empty words' },
+          { id: 'r-ft', label: 'fruit / tech in apple' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      Alone, apple sits halfway between the corners. A word gets one vector
+      however it is used, so that vector has to mix both meanings.
+      <Try id="alone" />
+    </li>
+    <li>
+      One verb is enough: "ate" takes almost all the attention, and what it
+      sends (its value) pushes apple into the fruit corner. "I" and "an" get
+      next to nothing. <Try id="ate" />
+    </li>
+    <li>
+      With both meanings in the sentence, the attention splits and apple lands
+      between them. The update is a weighted average of what the words send,
+      not a choice of one. <Try id="mixed" />
+    </li>
+    <li>
+      Lower the focus and the weights even out over every word, the empty ones
+      included, so apple moves less. Click "ate" to hide it and watch the pull
+      vanish. <Try id="focus" />
+    </li>
+    <li>
+      Shuffle the words: the beams move with them but the weights and the
+      result stay exactly the same. Attention alone cannot see order, which is
+      why models add a <a href="/simulations/deep-learning/positional-encoding">positional encoding</a>.
+      <Try id="shuffle" />
+    </li>
+    <li>
+      This is a toy: 12 numbers per word, one attention head, weights set by
+      hand. A real model repeats the same step in dozens of heads and layers,
+      on vectors with hundreds of numbers.
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas } from '../../../lib/sim';
+  import { equation } from '../../../lib/equation';
+  import { stageInk, fixed, arrow } from '../../../lib/draw';
+  import { segmented, slider, result, readout, tries, el } from '../../../lib/panel';
+  import { say, withAlpha, mix, isLight, glows, clamp01 } from '../../../lib/story';
+  import { strip, token, stripWidth } from '../../../lib/embedding';
+
+  // A toy transformer step. Every word is 12 numbers: a hidden meaning
+  // (fruit F, tech T, action V, thing N, how informative it is I, glue G)
+  // plus a few idiosyncratic numbers, all turned by one fixed rotation so no
+  // single cell means anything, as in a real model. Apple's query meets each
+  // word's key (q·k = |q|·I), softmax turns the scores into weights, and apple
+  // takes in the weighted sum of the values, which carry fruit and tech:
+  //   apple' = apple + Σ a_j v_j.
+  // The map shows two directions of the 12-dimensional space: tech − fruit
+  // across, things up and actions down.
+  const D = 12, GAMMA = 0.75, INHIBIT = 0.5, KAPPA = 2.5;
+
+  const canvas = el('att') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas);
+  const { ink, inv } = stageInk(canvas);
+  const glow = glows();
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  let light = isLight(canvas);
+  const fruitC = () => (light ? '#16a34a' : '#4ade80');
+  const techC = () => (light ? '#9333ea' : '#c084fc');
+  const glueC = () => (light ? '#6b7280' : '#9ca3af');
+
+  // ---------- the vocabulary ----------
+  type Word = { F: number; T: number; V: number; N: number; I: number; G: number };
+  const w = (F: number, T: number, V: number, N: number, I: number, G = 0): Word => ({ F, T, V, N, I, G });
+  const GLUE = w(0, 0, 0, 0, 0.02, 1);
+  const VOCAB: Record<string, Word> = {
+    I: GLUE, an: GLUE, my: GLUE, a: GLUE, from: GLUE, the: GLUE, on: GLUE,
+    apple: w(0.5, 0.5, 0, 1, 0.2),
+    ate: w(0.9, 0, 1, 0, 1),
+    charged: w(0, 0.9, 1, 0, 1),
+    ripe: w(0.95, 0, 0.3, 0, 0.9),
+    tree: w(0.75, 0, 0, 0.25, 0.7),
+    phone: w(0, 1, 0, 0.3, 0.9),
+  };
+  /** Words on the map that are not in any sentence, for orientation. */
+  const LANDMARKS: [string, Word][] = [
+    ['banana', w(1, 0, 0, 0.02, 1)],
+    ['juice', w(0.55, 0, 0, 0.12, 1)],
+    ['peel', w(0.72, 0, 0.62, 0, 1)],
+    ['sweet', w(0.58, 0, 0.3, 0, 1)],
+    ['laptop', w(0, 0.8, 0, 0.05, 1)],
+    ['screen', w(0, 0.55, 0, 0.18, 1)],
+    ['download', w(0, 0.72, 0.62, 0, 1)],
+    ['online', w(0, 0.55, 0.28, 0, 1)],
+  ];
+  const SENTENCES: Record<string, string[]> = {
+    alone: ['apple'],
+    ate: ['I', 'ate', 'an', 'apple'],
+    charged: ['I', 'charged', 'my', 'apple'],
+    ripe: ['a', 'ripe', 'apple', 'from', 'the', 'tree'],
+    mixed: ['I', 'ate', 'an', 'apple', 'on', 'my', 'phone'],
+  };
+
+  // ---------- 12 numbers per word ----------
+  function mulberry32(a: number) {
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const hash = (s: string) => [...s].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261);
+  const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(Math.max(1e-9, r()))) * Math.cos(2 * Math.PI * r());
+  /** A fixed random rotation of the 12 dimensions (Gram–Schmidt on noise). */
+  const ROT: number[][] = (() => {
+    const r = mulberry32(42), M: number[][] = [];
+    for (let i = 0; i < D; i++) {
+      let v = Array.from({ length: D }, () => gauss(r));
+      for (const u of M) {
+        const d = v.reduce((s, x, k) => s + x * u[k], 0);
+        v = v.map((x, k) => x - d * u[k]);
+      }
+      const n = Math.hypot(...v);
+      M.push(v.map((x) => x / n));
+    }
+    return M;
+  })();
+  const rotate = (h: number[]) => ROT.map((row) => row.reduce((s, x, k) => s + x * h[k], 0));
+  const hidden = (name: string, m: Word) => {
+    const r = mulberry32(hash(name));
+    const h = [m.F, m.T, m.V, m.N, m.I, m.G];
+    for (let k = 6; k < D; k++) h.push(0.3 * gauss(r));
+    return h;
+  };
+  const embed = (name: string) => rotate(hidden(name, VOCAB[name]));
+  /** What a word sends when it is attended to: fruit and tech, each holding the other back. */
+  const valueHidden = (m: Word) => {
+    const h = new Array(D).fill(0);
+    h[0] = GAMMA * (m.F - INHIBIT * m.T);
+    h[1] = GAMMA * (m.T - INHIBIT * m.F);
+    return h;
+  };
+  const SCALE = 0.75;
+
+  // ---------- state ----------
+  type Tok = { id: number; word: string; x: number; tx: number; w: number; muted: boolean; a: number };
+  const S = { sent: 'ate', focus: 4, t: 0 };
+  let toks: Tok[] = [];
+  let order: number[] = [];
+
+  ctx.font = `600 17px Inter, ui-sans-serif, system-ui, sans-serif`;
+  const chipW = (word: string) => Math.max(ctx.measureText(word).width + 22, stripWidth(D, { cell: 7, gap: 1.5, more: false }) + 12);
+  const GAP = 12, CHIP_Y = 120;
+
+  function layout(snap = false) {
+    ctx.font = `600 17px Inter, ui-sans-serif, system-ui, sans-serif`;
+    const ws = order.map((i) => chipW(toks[i].word));
+    let x = (W - ws.reduce((s, v) => s + v, 0) - GAP * (ws.length - 1)) / 2;
+    order.forEach((i, k) => {
+      toks[i].w = ws[k];
+      toks[i].tx = x + ws[k] / 2;
+      if (snap) toks[i].x = toks[i].tx;
+      x += ws[k] + GAP;
+    });
+  }
+  function load(name: string) {
+    S.sent = name;
+    toks = SENTENCES[name].map((word, id) => ({ id, word, x: 0, tx: 0, w: 0, muted: false, a: 0 }));
+    order = toks.map((_, i) => i);
+    layout(true);
+  }
+  const appleIdx = () => toks.findIndex((t) => t.word === 'apple');
+
+  /** The attention apple pays to every word, from scores q·k = |q|·I. */
+  function targets() {
+    const sc = toks.map((t) => (t.muted ? -Infinity : S.focus * VOCAB[t.word].I));
+    const m = Math.max(...sc);
+    const e = sc.map((s) => (isFinite(s) ? Math.exp(s - m) : 0));
+    const Z = e.reduce((s, v) => s + v, 0);
+    return e.map((v) => v / Z);
+  }
+  /** Apple's hidden meaning after taking in the weighted values, with the given weights. */
+  function appleAfter(a: number[]) {
+    const h = hidden('apple', VOCAB.apple);
+    toks.forEach((t, j) => {
+      const v = valueHidden(VOCAB[t.word]);
+      for (let k = 0; k < D; k++) h[k] += a[j] * v[k];
+    });
+    return h;
+  }
+  const fruitShare = (h: number[]) => 1 / (1 + Math.exp(-KAPPA * (h[0] - h[1])));
+  const tokColour = (word: string, share?: number) => {
+    if (word === 'apple') return mix(techC(), fruitC(), share ?? 0.5);
+    const m = VOCAB[word];
+    return m.G > 0.5 ? glueC() : m.F > m.T ? fruitC() : techC();
+  };
+
+  // ---------- layout of the stage ----------
+  const MAP = { x: 34, y: 236, w: 540, h: 404 };
+  const mx = (x: number) => MAP.x + MAP.w / 2 + (x * (MAP.w / 2 - 44)) / 1.15;
+  const my = (y: number) => MAP.y + MAP.h / 2 - (y * (MAP.h / 2 - 34)) / 1.25;
+  const mapX = (h: number[]) => h[1] - h[0];
+  const mapY = (m: Word) => m.N - m.V - 1.1 * m.G;
+  const PANEL = { x: 606, y: 236, w: 370 };
+
+  const dot = (colour: string, r: number, x: number, y: number) => {
+    const img = glow(colour, r, light), s = img.width / 2;
+    ctx.drawImage(img, x - s / 2, y - s / 2, s, s);
+  };
+
+  // ---------- the beams ----------
+  function bez(x0: number, y0: number, cx: number, cy: number, x1: number, y1: number, t: number) {
+    const u = 1 - t;
+    return [u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1];
+  }
+  function drawBeams(share: number) {
+    const ai = appleIdx(), A = toks[ai], top = CHIP_Y - 3;
+    say(ctx, 'how much apple looks at each word', 24, 26, { colour: ink(0.6), size: 12.5, weight: 600 });
+    say(ctx, 'softmax of q · k', 24, 44, { colour: ink(0.38), size: 11.5 });
+    toks.forEach((t, j) => {
+      if (t.a < 0.004) return;
+      const col = tokColour(t.word, share);
+      let x0: number, x1: number, cx: number, cy: number, x0b: number;
+      if (j === ai) {
+        // a loop over apple itself
+        x0 = A.x - 16; x1 = A.x + 16; cx = A.x; cy = top - 46; x0b = x0;
+      } else {
+        const dx = A.x - t.x;
+        x0 = t.x; x0b = x0;
+        x1 = A.x - Math.sign(dx) * Math.min(18, Math.abs(dx) * 0.06);
+        cx = (x0 + x1) / 2;
+        cy = top - Math.min(92, 34 + 0.3 * Math.abs(dx)) * 2;
+      }
+      ctx.strokeStyle = withAlpha(col, 0.18 + 0.6 * t.a);
+      ctx.lineWidth = 1 + 11 * t.a;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x0b, top);
+      ctx.quadraticCurveTo(cx, cy, x1, top);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      // what flows along it, towards apple
+      const n = Math.round(2 + 9 * t.a);
+      for (let k = 0; k < n; k++) {
+        const s = (S.t * 0.45 + k / n) % 1;
+        const [px, py] = bez(x0b, top, cx, cy, x1, top, s);
+        dot(col, 1.4 + 2.2 * t.a, px, py);
+      }
+      if (t.a >= 0.025) {
+        const [lx, ly] = bez(x0b, top, cx, cy, x1, top, 0.5);
+        say(ctx, `${Math.round(t.a * 100)}%`, lx, ly - 12 - 4 * t.a, {
+          colour: col, size: 12 + 4 * t.a, weight: 700, align: 'center', halo: inv(0.85),
+        });
+      }
+    });
+  }
+
+  function drawChips(share: number) {
+    const ai = appleIdx();
+    toks.forEach((t, j) => {
+      const box = token(ctx, t.word, embed(t.word), t.x, CHIP_Y, {
+        light, ink, cell: 7, gap: 1.5, scale: SCALE,
+        colour: tokColour(t.word, share), focus: j === ai, bg: inv(1),
+        alpha: t.muted ? 0.3 : 1,
+      });
+      (t as Tok & { box?: typeof box }).box = box;
+      if (t.muted) {
+        ctx.strokeStyle = ink(0.5);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(box.x + 8, box.y + box.h / 2);
+        ctx.lineTo(box.x + box.w - 8, box.y + box.h / 2);
+        ctx.stroke();
+      }
+    });
+    say(ctx, 'each word arrives as 12 numbers', W - 24, CHIP_Y + 64, { colour: ink(0.38), size: 11.5, align: 'right' });
+  }
+
+  // ---------- the map ----------
+  function drawMap(h: number[], share: number) {
+    const fx = mx(-0.85), tx = mx(0.85), cy = my(0.4);
+    for (const [x, c] of [[fx, fruitC()], [tx, techC()]] as [number, string][]) {
+      const g = ctx.createRadialGradient(x, cy, 0, x, cy, 190);
+      g.addColorStop(0, withAlpha(c, light ? 0.13 : 0.12));
+      g.addColorStop(1, withAlpha(c, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(MAP.x, MAP.y, MAP.w, MAP.h);
+    }
+    ctx.strokeStyle = ink(0.08);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(MAP.x, MAP.y, MAP.w, MAP.h, 12);
+    ctx.stroke();
+    say(ctx, '← fruit', MAP.x + 16, MAP.y + 20, { colour: fruitC(), size: 14, weight: 700 });
+    say(ctx, 'tech →', MAP.x + MAP.w - 16, MAP.y + 20, { colour: techC(), size: 14, weight: 700, align: 'right' });
+    say(ctx, 'things', MAP.x + MAP.w / 2, MAP.y + 20, { colour: ink(0.35), size: 11, align: 'center' });
+    say(ctx, 'actions', MAP.x + MAP.w / 2 - 70, MAP.y + MAP.h - 18, { colour: ink(0.35), size: 11, align: 'center' });
+    say(ctx, 'two directions of the 12-number space', MAP.x + MAP.w - 16, MAP.y + MAP.h - 18, { colour: ink(0.3), size: 10.5, align: 'right' });
+
+    const inSentence = new Set(toks.map((t) => t.word));
+    const place = (name: string, m: Word, bright: boolean) => {
+      const x = mx(m.T - m.F), y = my(mapY(m)), col = m.F > m.T ? fruitC() : techC();
+      if (bright) dot(col, 4.5, x, y);
+      else {
+        ctx.fillStyle = withAlpha(col, 0.55);
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      say(ctx, name, x + 8, y, { colour: bright ? col : withAlpha(col, 0.6), size: bright ? 13 : 11.5, weight: bright ? 700 : 500 });
+    };
+    for (const [name, m] of LANDMARKS) place(name, m, false);
+    for (const name of inSentence) if (name !== 'apple' && VOCAB[name].G < 0.5) place(name, VOCAB[name], true);
+    // the empty words all sit together, with no meaning to pull with
+    const glue = toks.filter((t) => VOCAB[t.word].G > 0.5).map((t) => t.word);
+    say(ctx, glue.length ? [...new Set(glue)].join(' · ') : 'I · an · my · the', mx(0), my(-1.1), {
+      colour: withAlpha(glueC(), glue.length ? 0.85 : 0.4), size: 11.5, align: 'center',
+    });
+
+    // apple: where it starts, the pieces that move it, where it ends up
+    const y0 = my(mapY(VOCAB.apple)), x0 = mx(0), x1 = mx(mapX(h));
+    const col = tokColour('apple', share);
+    ctx.strokeStyle = ink(0.35);
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(x0, y0, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (Math.abs(x1 - x0) > 56) say(ctx, 'apple alone', x0, y0 - 18, { colour: ink(0.45), size: 11, align: 'center' });
+
+    // one row per word that pushes, laid end to end
+    const parts = toks
+      .map((t) => {
+        const v = valueHidden(VOCAB[t.word]);
+        return { t, dx: t.a * (v[1] - v[0]) };
+      })
+      .filter((p) => Math.abs(p.dx) > 0.01)
+      .sort((p, q) => Math.abs(q.dx) - Math.abs(p.dx))
+      .slice(0, 4);
+    let cum = 0;
+    parts.forEach((p, r) => {
+      const y = y0 + 30 + r * 19, a = mx(cum), b = mx(cum + p.dx);
+      const c = tokColour(p.t.word, share);
+      ctx.strokeStyle = c;
+      ctx.fillStyle = c;
+      ctx.lineWidth = 2.5;
+      if (Math.abs(b - a) > 6) arrow(ctx, a, y, b, y, 7);
+      say(ctx, p.t.word, b + (p.dx > 0 ? 9 : -9), y, { colour: c, size: 11.5, weight: 600, align: p.dx > 0 ? 'left' : 'right', halo: inv(0.8) });
+      ctx.strokeStyle = ink(0.12);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(b, y);
+      ctx.lineTo(b, y + 19);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      cum += p.dx;
+    });
+
+    if (Math.abs(x1 - x0) > 4) {
+      ctx.strokeStyle = withAlpha(col, 0.9);
+      ctx.fillStyle = withAlpha(col, 0.9);
+      ctx.lineWidth = 3;
+      arrow(ctx, x0, y0, x1 + Math.sign(x0 - x1) * 9, y0, 9);
+    }
+    dot(col, 8, x1, y0);
+    say(ctx, 'apple', x1, y0 - 20, { colour: col, size: 15, weight: 750, align: 'center', halo: inv(0.85) });
+  }
+
+  // ---------- the sum, as strips ----------
+  function drawSum(h: number[], share: number) {
+    const P = PANEL, lx = P.x + 118, cell = 16, gap = 2;
+    say(ctx, 'what flows into apple', P.x, P.y + 14, { colour: ink(0.6), size: 12.5, weight: 600 });
+    say(ctx, 'apple + Σ weight × value', P.x, P.y + 32, { colour: ink(0.38), size: 11.5 });
+    let y = P.y + 56;
+    const row = (label: string, colour: string, v: number[], alpha = 1, bold = false) => {
+      say(ctx, label, lx - 12, y + cell / 2, { colour, size: 13, weight: bold ? 750 : 600, align: 'right', alpha });
+      strip(ctx, v, lx, y, { light, ink, cell, gap, scale: SCALE, alpha });
+      y += cell + 12;
+    };
+    row('apple', ink(0.85), embed('apple'));
+    const ranked = toks.map((t, j) => ({ t, j })).filter((p) => !p.t.muted).sort((p, q) => q.t.a - p.t.a);
+    const shown = ranked.slice(0, 4), rest = ranked.slice(4);
+    for (const { t } of shown) {
+      const v = rotate(valueHidden(VOCAB[t.word]).map((x) => x * t.a));
+      row(`+ ${Math.round(t.a * 100)}% · ${t.word}`, tokColour(t.word, share), v, 0.35 + 0.65 * Math.sqrt(t.a));
+    }
+    if (rest.length) {
+      const sumA = rest.reduce((s, p) => s + p.t.a, 0);
+      say(ctx, `+ ${Math.round(sumA * 100)}% over ${rest.map((p) => p.t.word).join(', ')}`, lx - 12, y + 6, { colour: ink(0.45), size: 11.5, align: 'right' });
+      y += 22;
+    }
+    ctx.strokeStyle = ink(0.3);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(lx - 100, y - 4);
+    ctx.lineTo(lx + stripWidth(D, { cell, gap }), y - 4);
+    ctx.stroke();
+    y += 6;
+    row('= apple here', tokColour('apple', share), rotate(h), 1, true);
+
+    // the gauge
+    const gy = Math.max(y + 34, P.y + 330), gx = P.x + 10, gw = P.w - 20;
+    const g = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+    g.addColorStop(0, fruitC());
+    g.addColorStop(1, techC());
+    ctx.fillStyle = g;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.roundRect(gx, gy, gw, 8, 4);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    const px = gx + gw * (1 - share);
+    ctx.fillStyle = tokColour('apple', share);
+    ctx.strokeStyle = inv(1);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(px, gy + 4, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    say(ctx, 'fruit', gx, gy + 26, { colour: fruitC(), size: 12, weight: 650 });
+    say(ctx, 'tech', gx + gw, gy + 26, { colour: techC(), size: 12, weight: 650, align: 'right' });
+    say(ctx, verdict(share), gx + gw / 2, gy - 22, { colour: tokColour('apple', share), size: 20, weight: 750, align: 'center' });
+  }
+  const verdict = (share: number) =>
+    Math.abs(share - 0.5) < 0.03 ? 'half and half' : share > 0.5 ? `${Math.round(share * 100)}% fruit` : `${Math.round((1 - share) * 100)}% tech`;
+
+  // ---------- numbers ----------
+  let lastKey = '';
+  function panelText(a: number[]) {
+    const h = appleAfter(a), share = fruitShare(h);
+    const key = `${S.sent}|${S.focus}|${toks.map((t) => +t.muted).join('')}|${light}`;
+    if (key === lastKey) return;
+    lastKey = key;
+    const ai = appleIdx();
+    const ranked = toks.map((t, j) => ({ t, a: a[j] })).filter((p) => !p.t.muted).sort((p, q) => q.a - p.a);
+    const others = ranked.filter((p) => p.t.word !== 'apple');
+    const top = others[0];
+    const glue = toks.reduce((s, t, j) => s + (VOCAB[t.word].G > 0.5 ? a[j] : 0), 0);
+
+    const tex = (c: string) => c;
+    const terms = ranked.slice(0, 3).map((p) => `${fixed(p.a, 2)}\\,\\textcolor{${tex(tokColour(p.t.word, share))}}{v_{\\text{${p.t.word}}}}`);
+    setEq({
+      rule: [
+        'a_j = \\mathrm{softmax}_j\\,(q\\cdot k_j)',
+        `\\qquad \\textcolor{${tokColour('apple', share)}}{\\text{apple}'} = \\text{apple} + \\textstyle\\sum_j a_j\\, v_j`,
+      ],
+      live: [
+        `\\textcolor{${tokColour('apple', share)}}{\\text{apple}'} = \\text{apple} + ${terms.join(' + ')}${ranked.length > 3 ? ' + \\dots' : ''}`,
+      ],
+    });
+
+    setRows({
+      'r-top': top ? `${top.t.word} · ${Math.round(top.a * 100)}%` : 'nothing else to look at',
+      'r-self': `${Math.round(a[ai] * 100)}%`,
+      'r-glue': toks.some((t) => VOCAB[t.word].G > 0.5) ? `${Math.round(glue * 100)}%` : 'none in this sentence',
+      'r-ft': `${fixed(h[0], 2)} / ${fixed(h[1], 2)}`,
+    });
+
+    const alone = others.length === 0;
+    const sense = share > 0.5 ? 'fruit' : 'tech';
+    setResult({
+      value: verdict(share),
+      colour: tokColour('apple', share),
+      status: alone ? 'apple alone · nothing to look at' : `pulled most by “${top.t.word}”, ${Math.round(top.a * 100)}% of the attention`,
+      note: alone
+        ? 'With no context, apple stays halfway: one vector has to serve both meanings of the word.'
+        : Math.abs(share - 0.5) < 0.2
+          ? 'Both meanings pull: the attention splits and apple lands between the corners. The update is a weighted average of what the words send, not a choice.'
+          : Math.abs(share - 0.5) > 0.4
+            ? `“${top.t.word}” takes most of the attention, and its value pushes apple into the ${sense} corner. The empty words get almost none.`
+            : 'The pull is partial: attention spread over words that carry no meaning waters the update down.',
+    });
+  }
+
+  // ---------- loop ----------
+  let last = 0;
+  function loop(now: number) {
+    const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
+    last = now;
+    S.t += dt;
+    light = isLight(canvas);
+    const target = targets();
+    const k = 1 - Math.exp(-dt * 2.6), kx = 1 - Math.exp(-dt * 6);
+    toks.forEach((t, j) => {
+      t.a += (target[j] - t.a) * k;
+      t.x += (t.tx - t.x) * kx;
+    });
+    const a = toks.map((t) => t.a);
+    const h = appleAfter(a), share = fruitShare(h);
+
+    ctx.clearRect(0, 0, W, H);
+    drawMap(h, share);
+    drawSum(h, share);
+    drawBeams(share);
+    drawChips(share);
+    panelText(target);
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- input ----------
+  const local = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  };
+  const hit = (x: number, y: number) =>
+    toks.find((t) => {
+      const b = (t as Tok & { box?: { x: number; y: number; w: number; bottom: number } }).box;
+      return b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.bottom;
+    });
+  canvas.addEventListener('pointerdown', (e) => {
+    const { x, y } = local(e);
+    const t = hit(x, y);
+    if (t && t.word !== 'apple') t.muted = !t.muted;
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const { x, y } = local(e);
+    const t = hit(x, y);
+    canvas.style.cursor = t && t.word !== 'apple' ? 'pointer' : '';
+  });
+
+  const sent = segmented('sent', (v) => load(v));
+  const setFocus = slider('focus', (v) => { S.focus = v; }, (v) => v.toFixed(1));
+  function shuffle() {
+    if (order.length < 2) return;
+    const before = order.join();
+    do {
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+    } while (order.join() === before);
+    layout();
+  }
+  el('shuffle').addEventListener('click', shuffle);
+
+  function put(name: string, focus = 4) {
+    load(name);
+    sent.select(name);
+    S.focus = focus;
+    setFocus(focus);
+  }
+  tries({
+    alone: () => put('alone'),
+    ate: () => put('ate'),
+    mixed: () => put('mixed'),
+    focus: () => put('ate', 0.6),
+    shuffle: () => { put('ripe'); toks.forEach((t) => (t.a = targets()[t.id])); shuffle(); },
+  });
+
+  load('ate');
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  #att {
+    touch-action: manipulation;
+  }
+</style>
