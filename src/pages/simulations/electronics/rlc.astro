@@ -12,12 +12,12 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="electronics"
   title="RC, RL and RLC Circuits"
-  description="A resistor, a coil and a capacitor in one loop. The two stores pass energy back and forth, so the circuit rings, and one number, the damping ratio ζ, decides whether it rings, settles as fast as it can or crawls. The same two poles decide which frequencies get through."
+  description="A resistor, a coil and a capacitor in one loop. The two stores pass energy back and forth, and one number, the damping ratio ζ, decides whether the circuit rings, settles fast or crawls."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="rlc" width="1000" height="660" role="img" aria-label="A series circuit with its source, current and capacitor voltage traced over time, beside a panel showing the energy, the poles in the s-plane or the Bode plot."></canvas>
+        <canvas id="rlc" width="1000" height="630" role="img" aria-label="A series circuit with its source, current and capacitor voltage traced over time, beside a panel showing the energy, the poles in the s-plane or the Bode plot."></canvas>
       </div>
       <Caption hint="The poles panel is the same circuit seen from the Laplace side: move R and watch the two poles travel" />
       <Result label="Current" />
@@ -57,14 +57,14 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Slider id="amp" label="Amplitude" min={5} max={120} value={50} display="5.0 V" />
-      <div id="ctl-f">
-        <Slider id="freq" label="Drive frequency" min={-170} max={70} value={-80} display="—" hint={['slow', 'far past resonance']} />
+      <div id="ctl-f" class="rlc-opt">
+        <Slider id="freq" label="Drive frequency" min={-170} max={70} value={-80} display="0.15× (0.0 Hz)" hint={['slow', 'far past resonance']} />
       </div>
       <Slider id="r" label="Resistance R" min={2} max={300} value={100} display="100 Ω" hint={['rings for ages', 'refuses to ring']} />
-      <div id="ctl-l">
+      <div id="ctl-l" class="rlc-opt">
         <Slider id="l" label="Inductance L" min={1} max={200} value={50} display="50.00 mH" />
       </div>
-      <div id="ctl-c">
+      <div id="ctl-c" class="rlc-opt">
         <Slider id="c" label="Capacitance C" min={1} max={200} value={20} display="2.00 µF" />
       </div>
       <Slider id="rate" label="Time rate" min={10} max={400} step={5} value={100} display="1.0×" />
@@ -78,7 +78,7 @@ import Try from '../../../components/sim/Try.astro';
   <Fragment slot="observe">
     <li>
       With R low the two stores argue: the capacitor dumps into the inductor,
-      which overshoots and charges it the other way, so the circuit
+      which overshoots and charges it the other way, so the circuit{' '}
       <b>rings</b>. The energy bars trade back and forth while R bleeds the
       total away. <Try id="ring" />
     </li>
@@ -103,7 +103,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { setupCanvas, makeText, subHtml, isCompact } from '../../../lib/sim';
+  import { eng as engRaw, fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, transport, result, tries } from '../../../lib/panel';
 
@@ -234,7 +235,8 @@ import Try from '../../../components/sim/Try.astro';
   const cssv = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const inkA = (a: number) => `rgba(${cssv('--stage-ink') || '232,233,236'},${a})`;
   const bg = () => cssv('--stage-bg') || '#0d0e12';
-  const { label } = makeText(ctx, inkA);
+  const { label, textWidth } = makeText(ctx, inkA, 1.42, undefined, 11);
+  let compact = false;
 
   const WARM = '#f59e0b'; // source voltage
   const TEAL = '#5eead4'; // capacitor
@@ -244,9 +246,9 @@ import Try from '../../../components/sim/Try.astro';
 
   // The loop and the scope are always there; the third panel is one of
   // energy / poles / Bode, picked in the side panel.
-  const CIRC = { x: 20, y: 74, w: 610, h: 300 };
-  const AUX = { x: 660, y: 74, w: 320, h: 300 };
-  const SCOPE = { x: 20, y: 418, w: 960, h: 220 };
+  const CIRC = { x: 20, y: 40, w: 610, h: 300 };
+  const AUX = { x: 660, y: 40, w: 320, h: 300 };
+  const SCOPE = { x: 20, y: 386, w: 960, h: 226 };
   const ENERGY = AUX, POLES = AUX, BODE = AUX;
 
   function rr(x: number, y: number, w: number, h: number, r: number) {
@@ -268,24 +270,15 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     rr(p.x, p.y, p.w, p.h, 10);
     ctx.stroke();
-    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+    label(title, p.x + 2, p.y - 10, 0.5, 'left', 11);
   }
 
-  function eng(v: number, unit: string, digits = 2): string {
-    const a = Math.abs(v);
-    if (a === 0) return `0 ${unit}`;
-    const steps: [number, string][] = [
-      [1e-15, 'f'], [1e-12, 'p'], [1e-9, 'n'], [1e-6, 'µ'], [1e-3, 'm'],
-      [1, ''], [1e3, 'k'], [1e6, 'M'], [1e9, 'G'],
-    ];
-    let pick = steps[0];
-    for (const s of steps) if (a >= s[0]) pick = s;
-    return `${(v / pick[0]).toFixed(digits)} ${pick[1]}${unit}`;
-  }
+  /** eng() with a real minus sign. */
+  const eng = (v: number, unit: string, digits = 2) => engRaw(v, unit, digits).replace('-', '−');
 
   // --- the circuit -----------------------------------------------------------
 
-  const LX = CIRC.x + 110, RX = CIRC.x + CIRC.w - 90;
+  const LX = CIRC.x + 110, RX = CIRC.x + CIRC.w - 110;
   const TY = CIRC.y + 80, BY = CIRC.y + CIRC.h - 70;
 
   function loopPath() {
@@ -379,7 +372,7 @@ import Try from '../../../components/sim/Try.astro';
       } else ctx.lineTo(cx + 14, cy - 8);
     }
     ctx.stroke();
-    label(`${vs >= 0 ? '+' : ''}${vs.toFixed(2)} V`, cx, cy - 36, 0.95, 'center', 13, WARM);
+    label(`${vs >= 0 ? '+' : ''}${fixed(vs, 2)} V`, cx + 36, cy + 6, 0.95, 'left', 13, WARM);
   }
 
   let dashPhase = 0;
@@ -402,21 +395,19 @@ import Try from '../../../components/sim/Try.astro';
 
     const rx = LX + (RX - LX) * (hasL() ? 0.33 : 0.5);
     resistor(rx, TY);
-    label('R', rx, TY - 26, 0.55, 'center', 12, WARM);
-    label(`${(i * state.R).toFixed(2)} V`, rx, TY - 40, 0.95, 'center', 12, WARM);
+    label(`${compact ? '' : 'R  '}${fixed(i * state.R, 2)} V`, rx, TY - 24, 0.95, 'center', 12, WARM);
 
     if (hasL()) {
       const lx = LX + (RX - LX) * 0.72;
       inductor(lx, TY);
-      label('L', lx, TY - 26, 0.55, 'center', 12, ACC);
       const vL = vs - i * state.R - (hasC() ? vC : 0);
-      label(`${vL.toFixed(2)} V`, lx, TY - 40, 0.95, 'center', 12, ACC);
+      label(`${compact ? '' : 'L  '}${fixed(vL, 2)} V`, lx, TY - 24, 0.95, 'center', 12, ACC);
     }
 
     if (hasC()) {
       capacitor(RX, midY);
-      label('C', RX + 34, midY - 8, 0.55, 'left', 12, TEAL);
-      label(`${vC.toFixed(2)} V`, RX + 34, midY + 10, 0.95, 'left', 12, TEAL);
+      if (!compact) label('C', RX + 30, midY - 10, 0.55, 'left', 12, TEAL);
+      label(`${fixed(vC, 2)} V`, RX + 30, midY + (compact ? 6 : 14), 0.95, 'left', 12, TEAL);
     }
 
     // the current, said out loud
@@ -436,9 +427,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(ax + dir * 26 - 8 * Math.cos(a + 0.4), BY + 22 - 8 * Math.sin(a + 0.4));
     ctx.closePath();
     ctx.fill();
-    label(eng(Math.abs(i), 'A'), ax, BY + 44, 0.95, 'center', 12, GREEN);
-
-    label('KVL: v_s = v_R + v_L + v_C', CIRC.x + CIRC.w - 12, CIRC.y + 20, 0.45, 'right', 11);
+    label(eng(Math.abs(i), 'A'), ax, BY + 48, 0.95, 'center', 12, GREEN);
   }
 
   // --- energy ----------------------------------------------------------------
@@ -450,39 +439,27 @@ import Try from '../../../components/sim/Try.astro';
     const emax = Math.max(1e-12, 0.5 * state.C * state.amp * state.amp * 1.2, eC, eL);
     const px = ENERGY.x + 24, pw = ENERGY.w - 48;
 
-    const bar = (y: number, v: number, col: string, name: string, sub: string) => {
+    const bar = (y: number, v: number, col: string, name: string) => {
       ctx.fillStyle = inkA(0.06);
       rr(px, y, pw, 18, 5);
       ctx.fill();
       ctx.fillStyle = col;
       rr(px, y, Math.max(2, (v / emax) * pw), 18, 5);
       ctx.fill();
-      label(name, px, y - 7, 0.8, 'left', 11, col);
-      label(eng(v, 'J'), px + pw, y - 7, 0.9, 'right', 11, col);
-      label(sub, px, y + 32, 0.35, 'left', 11);
+      label(name, px, y - 9, 0.8, 'left', 11, col);
+      if (!compact) label(eng(v, 'J'), px + pw, y - 9, 0.9, 'right', 11, col);
     };
 
-    bar(ENERGY.y + 40, eC, TEAL, '½ C v²  in the electric field', 'held as charge pushed apart');
-    bar(ENERGY.y + 112, eL, ACC, '½ L i²  in the magnetic field', 'held as current that will not stop');
-    bar(ENERGY.y + 190, eDiss, HOT, 'burnt in R since reset', 'gone for good, as heat');
-
-    label(
-      state.mode === 'rlc'
-        ? 'the two top bars trade back and forth; the bottom one only ever grows'
-        : 'one store, so there is nothing to trade with',
-      px,
-      ENERGY.y + ENERGY.h - 14,
-      0.4,
-      'left',
-      11.5
-    );
+    bar(ENERGY.y + 64, eC, TEAL, compact ? '½Cv²' : '½Cv²  electric');
+    bar(ENERGY.y + 150, eL, ACC, compact ? '½Li²' : '½Li²  magnetic');
+    bar(ENERGY.y + 236, eDiss, HOT, compact ? 'heat' : 'heat in R');
   }
 
   // --- the scope -------------------------------------------------------------
 
   function drawScope() {
-    panel(SCOPE, 'VOLTAGES AND CURRENT AGAINST TIME');
-    const px = SCOPE.x + 54, py = SCOPE.y + 20, pw = SCOPE.w - 74, ph = SCOPE.h - 60;
+    panel(SCOPE, 'OVER TIME');
+    const px = SCOPE.x + (compact ? 16 : 84), py = SCOPE.y + 36, pw = SCOPE.w - (compact ? 32 : 104), ph = SCOPE.h - (compact ? 50 : 72);
     const span = spanOf();
     const t1 = state.src === 'step' ? span : Math.max(span, clock);
     const t0 = t1 - span;
@@ -514,10 +491,12 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(px + pw, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(txt, px - 6, y + 4, 0.35, 'right', 11);
+      if (!compact) label(txt, px - 8, y + 5, 0.35, 'right', 11);
     }
-    label(`${vmax.toFixed(1)} V`, px - 6, Yv(vmax) + 4, 0.3, 'right', 11);
-    label(eng(imax, 'A', 1), px - 6, Yi(imax) + 4, 0.3, 'right', 11);
+    if (!compact) {
+      label(`${vmax.toFixed(1)} V`, px - 8, Yv(vmax) + 5, 0.3, 'right', 11);
+      label(eng(imax, 'A', 1), px - 8, Yi(imax) + 5, 0.3, 'right', 11);
+    }
 
     // the 63% mark, and where one time constant lands
     if (state.src !== 'sine' && state.mode !== 'rlc') {
@@ -529,7 +508,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(px + pw, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      label('63%', px + pw - 2, y - 5, 0.5, 'right', 11);
+      if (!compact) label('63%', px + pw - 2, y - 6, 0.5, 'right', 11);
       // one τ after the rising edge, which for a step is the start of time
       const edge = state.src === 'step' ? 0 : (hist.find((h) => h.vs > state.amp * 0.5)?.t ?? NaN);
       if (Number.isFinite(edge) && edge + tauOf() < t1 && edge + tauOf() > t0) {
@@ -541,7 +520,7 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineTo(xt, py + ph);
         ctx.stroke();
         ctx.setLineDash([]);
-        label('one τ', xt + 4, py + 14, 0.5, 'left', 11);
+        label('τ', xt + 6, py + 16, 0.5, 'left', 11);
       }
     }
 
@@ -561,7 +540,7 @@ import Try from '../../../components/sim/Try.astro';
         ctx.stroke();
       }
     }
-    let lx = px + 6;
+    let lx = px;
     const legend: [string, string, boolean][] = [
       [WARM, 'source', true],
       [TEAL, 'v_C', hasC()],
@@ -570,10 +549,10 @@ import Try from '../../../components/sim/Try.astro';
     ];
     for (const [c, t, on] of legend) {
       if (!on) continue;
-      label(t, lx, py + 12, 0.85, 'left', 11.5, c);
-      lx += 58;
+      label(t, lx, SCOPE.y + 24, 0.85, 'left', 11, c);
+      lx += textWidth(t, 11) + 20;
     }
-    label(`${eng(span, 's', 1)} across`, px + pw, py + ph + 18, 0.4, 'right', 11);
+    if (!compact) label(`${eng(span, 's', 1)} across`, px + pw, SCOPE.y + 24, 0.4, 'right', 11);
   }
 
   // --- the poles -------------------------------------------------------------
@@ -592,7 +571,10 @@ import Try from '../../../components/sim/Try.astro';
 
   function drawPoles() {
     panel(POLES, 'WHERE THE POLES SIT');
-    const px = POLES.x + 20, py = POLES.y + 22, pw = POLES.w - 40, ph = POLES.h - 70;
+    ctx.save();
+    rr(POLES.x, POLES.y, POLES.w, POLES.h, 10);
+    ctx.clip();
+    const px = POLES.x + 20, py = POLES.y + 22, pw = POLES.w - 40, ph = POLES.h - 64;
     const ps = poles();
     const scale = Math.max(...ps.map((p) => Math.hypot(p.re, p.im)), w0()) * 1.35;
     const ox = px + pw * 0.78, oy = py + ph / 2;
@@ -607,8 +589,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(ox, py);
     ctx.lineTo(ox, py + ph);
     ctx.stroke();
-    label('σ', px + pw - 2, oy + 14, 0.35, 'right', 11);
-    label('jω', ox + 6, py + 8, 0.35, 'left', 11);
+    label('σ', px + pw - 2, oy + 18, 0.35, 'right', 11);
+    label('jω', ox + 6, py + 12, 0.35, 'left', 11);
 
     // the circle of constant ω₀: the poles slide along it as R changes
     if (state.mode === 'rlc' && zeta() < 1) {
@@ -618,13 +600,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(ox, oy, (w0() / scale) * pw * 0.72, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      label('ω₀', ox - (w0() / scale) * pw * 0.72 - 6, oy - 8, 0.4, 'right', 11);
+      if (!compact) label('ω₀', ox - (w0() / scale) * pw * 0.72 - 6, oy + 20, 0.4, 'right', 11);
     }
 
     // anything to the right of the axis would grow instead of decay
     ctx.fillStyle = 'rgba(249,115,106,0.06)';
     ctx.fillRect(ox, py, px + pw - ox, ph);
-    label('unstable', px + pw - 4, py + ph - 4, 0.3, 'right', 11, HOT);
+    if (!compact) label('unstable', px + pw - 4, py + ph - 6, 0.3, 'right', 11, HOT);
 
     for (const p of ps) {
       const x = X(p.re), y = Y(p.im);
@@ -641,21 +623,14 @@ import Try from '../../../components/sim/Try.astro';
     const z = zeta();
     const regime =
       state.mode !== 'rlc'
-        ? 'one real pole: a plain exponential'
+        ? 'one real pole'
         : z < 0.98
-          ? 'underdamped: a complex pair, so it rings'
+          ? 'underdamped: it rings'
           : z < 1.02
-            ? 'critically damped: as fast as it gets without overshoot'
-            : 'overdamped: two real poles, sluggish';
-    label(regime, px, POLES.y + POLES.h - 30, 0.7, 'left', 11, z < 0.98 && state.mode === 'rlc' ? TEAL : ACC);
-    label(
-      'the real part sets how fast it dies, the imaginary part how fast it rings',
-      px,
-      POLES.y + POLES.h - 12,
-      0.35,
-      'left',
-      11
-    );
+            ? 'critically damped'
+            : 'overdamped: sluggish';
+    label(regime, px, POLES.y + POLES.h - 16, 0.7, 'left', 11, z < 0.98 && state.mode === 'rlc' ? TEAL : ACC);
+    ctx.restore();
   }
 
   // --- frequency response ----------------------------------------------------
@@ -670,8 +645,8 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function drawBode() {
-    panel(BODE, state.mode === 'rl' ? 'CURRENT THROUGH, BY FREQUENCY' : 'WHAT REACHES THE CAPACITOR, BY FREQUENCY');
-    const px = BODE.x + 50, py = BODE.y + 22, pw = BODE.w - 68, ph = BODE.h - 62;
+    panel(BODE, state.mode === 'rl' ? 'CURRENT, BY FREQUENCY' : 'v_C, BY FREQUENCY');
+    const px = BODE.x + (compact ? 16 : 70), py = BODE.y + 30, pw = BODE.w - (compact ? 32 : 86), ph = BODE.h - 66;
     const f0 = fchar();
     const lo = Math.log10(f0 / 100), hi = Math.log10(f0 * 100);
     const X = (f: number) => px + ((Math.log10(f) - lo) / (hi - lo)) * pw;
@@ -685,13 +660,13 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(px, py + ph);
     ctx.lineTo(px + pw, py + ph);
     ctx.stroke();
-    for (const db of [20, 0, -20, -40, -60]) {
+    for (const db of compact ? [0] : [20, 0, -20, -40, -60]) {
       ctx.strokeStyle = inkA(db === 0 ? 0.22 : 0.08);
       ctx.beginPath();
       ctx.moveTo(px, Y(db));
       ctx.lineTo(px + pw, Y(db));
       ctx.stroke();
-      label(`${db} dB`, px - 6, Y(db) + 4, 0.35, 'right', 11);
+      if (!compact) label(`${db} dB`.replace('-', '−'), px - 8, Y(db) + 5, 0.35, 'right', 11);
     }
     let tick = 0;
     for (let d = Math.ceil(lo); d <= hi; d++) {
@@ -701,7 +676,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(X(f), py);
       ctx.lineTo(X(f), py + ph);
       ctx.stroke();
-      if (tick++ % 2 === 0) label(eng(f, 'Hz', 0), X(f), py + ph + 16, 0.3, 'center', 11);
+      if (tick++ % 2 === 0 && !compact) label(eng(f, 'Hz', 0), X(f), py + ph + 20, 0.3, 'center', 11);
     }
 
     ctx.strokeStyle = TEAL;
@@ -724,9 +699,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.setLineDash([]);
     label(
-      state.mode === 'rlc' ? `f₀ = ${eng(f0, 'Hz', 1)}` : `1/2πτ = ${eng(f0, 'Hz', 1)}`,
-      X(f0) + 5,
-      py + 14,
+      compact ? (state.mode === 'rlc' ? 'f₀' : 'f_c') : state.mode === 'rlc' ? `f₀ = ${eng(f0, 'Hz', 1)}` : `f_c = ${eng(f0, 'Hz', 1)}`,
+      X(f0) + 6,
+      py + 4,
       0.8,
       'left',
       11,
@@ -743,15 +718,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fill();
       label(
         `gain ${mag(f).toFixed(2)}×`,
-        Math.min(X(fc) + 9, px + pw - 4),
-        y - 9,
+        X(fc) > px + pw - 110 ? X(fc) - 10 : X(fc) + 10,
+        y - 10,
         0.95,
-        X(fc) > px + pw - 80 ? 'right' : 'left',
+        X(fc) > px + pw - 110 ? 'right' : 'left',
         11,
         WARM
       );
-    } else {
-      label('a sine source puts its dot here', px + pw, py + 14, 0.35, 'right', 11);
     }
   }
 
@@ -793,9 +766,9 @@ import Try from '../../../components/sim/Try.astro';
   };
   function updateReadout() {
     const vs = vSource(clock);
-    setRow(1, 'Source', vs.toFixed(2) + ' V');
+    setRow(1, 'Source', fixed(vs, 2) + ' V');
     setRow(2, 'Current', eng(i, 'A'));
-    setRow(3, hasC() ? 'Capacitor v_C' : 'Inductor v_L', (hasC() ? vC : vs - i * state.R).toFixed(2) + ' V');
+    setRow(3, hasC() ? 'Capacitor v_C' : 'Inductor v_L', fixed(hasC() ? vC : vs - i * state.R, 2) + ' V');
     setRow(4, 'Time constant τ', eng(tauOf(), 's'));
     if (state.mode === 'rlc') {
       setRow(5, 'Natural f_0', eng(fchar(), 'Hz'));
@@ -809,7 +782,7 @@ import Try from '../../../components/sim/Try.astro';
     setRow(8, 'Heat burnt in R', eng(eDiss, 'J'));
     setResult({
       value: eng(i, 'A'),
-      status: `source ${vs.toFixed(2)} V · ${hasC() ? 'v_C' : 'v_L'} = ${(hasC() ? vC : vs - i * state.R).toFixed(2)} V · τ = ${eng(tauOf(), 's')}${state.mode === 'rlc' ? ` · ζ = ${zeta().toFixed(3)}, Q = ${(1 / (2 * zeta())).toFixed(2)}` : ''}`,
+      status: `source ${fixed(vs, 2)} V · ${hasC() ? "v_C" : "v_L"} = ${fixed(hasC() ? vC : vs - i * state.R, 2)} V · τ = ${eng(tauOf(), 's')}${state.mode === 'rlc' ? ` · ζ = ${zeta().toFixed(3)}, Q = ${(1 / (2 * zeta())).toFixed(2)}` : ''}`,
       note: state.mode === 'rlc'
         ? Math.abs(zeta() - 1) < 0.02
           ? 'Critically damped: the fastest settle there is without overshooting, with the two poles sitting together on the real axis.'
@@ -825,6 +798,7 @@ import Try from '../../../components/sim/Try.astro';
   function draw() {
     const vs = vSource(clock);
     ctx.clearRect(0, 0, W, H);
+    compact = isCompact(canvas);
     drawCircuit(vs);
     if (state.aux === 'poles') drawPoles();
     else if (state.aux === 'bode') drawBode();
@@ -878,9 +852,15 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function syncMode() {
-    el('ctl-l').style.display = hasL() ? '' : 'none';
-    el('ctl-c').style.display = hasC() ? '' : 'none';
-    el('ctl-f').style.display = state.src === 'step' ? 'none' : '';
+    // controls stay put and dim when the circuit has no use for them, so the
+    // panel never jumps when the circuit or the source changes
+    const use = (id: string, on: boolean) => {
+      el(id).classList.toggle('off', !on);
+      el(id).inert = !on;
+    };
+    use('ctl-l', hasL());
+    use('ctl-c', hasC());
+    use('ctl-f', state.src !== 'step');
     syncFreqLabel();
   }
 
@@ -939,5 +919,11 @@ import Try from '../../../components/sim/Try.astro';
 <style>
   #rlc {
     touch-action: none;
+  }
+  .rlc-opt {
+    transition: opacity 0.2s;
+  }
+  .rlc-opt.off {
+    opacity: 0.35;
   }
 </style>

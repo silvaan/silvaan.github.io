@@ -13,14 +13,21 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="electronics"
   title="Inductor"
-  description="A coil is a flywheel for charge. Drive it by hand and watch the electrons refuse to start, then refuse to stop, while the magnetic field they wind up stores every joule it takes to get them moving."
+  description="A coil is a flywheel for charge. Drive it by hand and watch the electrons refuse to start, then refuse to stop, while their magnetic field stores the energy it took."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="ind" class="ind-canvas" width="1000" height="880" role="img" aria-label="An inductor circuit with electrons as balls whose speed is the current, the magnetic field inside the coil, and traces of current and voltage over time."></canvas>
+        <canvas id="ind" class="ind-canvas" width="1000" height="700" role="img" aria-label="An inductor circuit with electrons as balls whose speed is the current, the magnetic field inside the coil, and traces of current and voltage over time."></canvas>
       </div>
-      <Caption hint="The balls are electrons and their speed is the current itself; nothing about them changes instantly" />
+      <Caption
+        legend={[
+          { label: 'electron', color: '#5b8cff' },
+          { label: 'magnetic field', color: '#34d399' },
+          { label: 'coil voltage', color: '#7c8cff' },
+        ]}
+        hint="The balls are electrons and their speed is the current itself; nothing about them changes instantly"
+      />
       <Result label="Current through the coil" />
     </div>
 
@@ -47,7 +54,7 @@ import Try from '../../../components/sim/Try.astro';
           hint={['drag me up and down', '']}
         />
       </div>
-      <div id="ctl-sw">
+      <div id="ctl-sw" class="ind-opt">
         <Seg
           id="mode"
           label="Switch"
@@ -59,8 +66,8 @@ import Try from '../../../components/sim/Try.astro';
           ]}
         />
       </div>
-      <div id="ctl-f">
-        <Slider id="freq" label="Frequency" min={5} max={200} step={5} value={15} display="—" hint={['slow', 'fast']} />
+      <div id="ctl-f" class="ind-opt">
+        <Slider id="freq" label="Frequency" min={5} max={200} step={5} value={15} display="0.0 Hz" hint={['slow', 'fast']} />
       </div>
       <Slider id="r" label="Resistor R" min={0} max={100} value={33} display="10 Ω" hint={['1 Ω', '1 kΩ']} />
       <Slider id="n" label="Turns N" min={40} max={500} step={10} value={200} />
@@ -82,7 +89,7 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Shove the source up. The electrons do not jump to speed, they
+      Shove the source up. The electrons do not jump to speed, they{' '}
       <b>accelerate</b>, and while they do the coil takes almost the whole
       source voltage. Once the current is steady the coil voltage falls to
       nothing and it is just a wire. <Try id="push" />
@@ -106,7 +113,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { setupCanvas, makeText, subHtml, isCompact, textPx } from '../../../lib/sim';
+  import { eng, fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, tries } from '../../../lib/panel';
 
@@ -203,17 +211,8 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- formatting ------------------------------------------------------------
 
-  function eng(x: number, unit: string, digits = 2): string {
-    const a = Math.abs(x);
-    if (a === 0) return `0 ${unit}`;
-    const steps: [number, string][] = [
-      [1e-12, 'p'], [1e-9, 'n'], [1e-6, 'µ'], [1e-3, 'm'],
-      [1, ''], [1e3, 'k'], [1e6, 'M'], [1e9, 'G'],
-    ];
-    let pick = steps[0];
-    for (const s of steps) if (a >= s[0]) pick = s;
-    return `${(x / pick[0]).toFixed(digits)} ${pick[1]}${unit}`;
-  }
+  /** eng() with a real minus sign. */
+  const engm = (x: number, unit: string, digits = 2) => eng(x, unit, digits).replace('-', '−');
   const fmtR = (r: number) =>
     r >= 1000 ? (r / 1000).toFixed(r >= 1e4 ? 0 : 2) + ' kΩ' : r.toFixed(r < 10 ? 1 : 0) + ' Ω';
 
@@ -225,16 +224,17 @@ import Try from '../../../components/sim/Try.astro';
   const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
   const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
   const bg = () => cssVar('--stage-bg') || '#0d0e12';
-  const { label, textWidth } = makeText(ctx, inkA);
+  const { label, textWidth } = makeText(ctx, inkA, 1.42, undefined, 11);
+  let compact = false;
 
   const CUR = '#5b8cff';
   const FIELD = '#34d399';
   const ACC = '#7c8cff';
   const WARM = '#f59e0b';
 
-  const SCENE = { x: 20, y: 76, w: 960, h: 560 };
-  const SCOPE = { x: 20, y: 668, w: 620, h: 192 };
-  const SIDE = { x: 660, y: 668, w: 320, h: 192 };
+  const SCENE = { x: 20, y: 16, w: 960, h: 464 };
+  const SCOPE = { x: 20, y: 524, w: 620, h: 160 };
+  const SIDE = { x: 660, y: 524, w: 320, h: 160 };
 
   function rr(x: number, y: number, w: number, h: number, r: number) {
     const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
@@ -255,7 +255,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     rr(p.x, p.y, p.w, p.h, 10);
     ctx.stroke();
-    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+    if (title) label(title, p.x + 2, p.y - 10, 0.5, 'left', 11);
+  }
+  /** A row of coloured names, right-aligned, spaced by their real widths. */
+  function keyRow(items: [string, string][], xRight: number, y: number) {
+    let x = xRight;
+    for (let k = items.length - 1; k >= 0; k--) {
+      const [name, col] = items[k];
+      label(name, x, y, 0.85, 'right', 11, col);
+      x -= textWidth(name, 11) + 18;
+    }
   }
   function arrow(x1: number, y1: number, x2: number, y2: number, size = 5) {
     ctx.beginPath();
@@ -282,9 +291,10 @@ import Try from '../../../components/sim/Try.astro';
   ) {
     const w = textWidth(text, size);
     const x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+    const px = textPx(canvas, size * 1.42, 11);
     ctx.fillStyle = bg();
     ctx.globalAlpha = 0.85;
-    ctx.fillRect(x0 - 7, y - size * 1.22 - 2, w + 14, size * 1.22 + 9);
+    ctx.fillRect(x0 - 7, y - px - 2, w + 14, px + 9);
     ctx.globalAlpha = 1;
     label(text, x, y, alpha, align, size, colour);
   }
@@ -303,9 +313,9 @@ import Try from '../../../components/sim/Try.astro';
   type Pt = { x: number; y: number };
 
   function geom() {
-    const cy = SCENE.y + 316;
+    const cy = SCENE.y + 236;
     const coilW = 400, bump = 46, turns = 8;
-    const cx = SCENE.x + 560;
+    const cx = SCENE.x + 520;
     return { cx, cy, coilW, bump, turns, x0: cx - coilW / 2, x1: cx + coilW / 2 };
   }
 
@@ -393,7 +403,7 @@ import Try from '../../../components/sim/Try.astro';
     for (const side of [-1, 1]) {
       for (let k = 0; k < n; k++) {
         const f = (k + 1) / (n + 0.4);
-        racetrack(g.cx, g.cy + side * g.bump * 0.5, g.coilW / 2 + 20 + f * 96, 10 + f * (g.bump * 0.5 + 40));
+        racetrack(g.cx, g.cy + side * g.bump * 0.5, g.coilW / 2 + 20 + f * 70, 10 + f * (g.bump * 0.5 + 40));
         ctx.stroke();
       }
     }
@@ -499,11 +509,11 @@ import Try from '../../../components/sim/Try.astro';
           k ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
         }
         ctx.stroke();
-        label('spark', x + 26, y - 44, 0.8, 'left', 11, WARM);
+        if (!compact) label('spark', x + 26, y - 44, 0.8, 'left', 11, WARM);
       }
     }
-    label(`${vsrc >= 0 ? '+' : ''}${vsrc.toFixed(2)} V`, x + 42, y - 4, 0.85, 'left', 14, WARM);
-    label(
+    label(`${vsrc >= 0 ? '+' : ''}${fixed(vsrc, 2)} V`, x + 42, y + (compact ? 6 : -4), 0.85, 'left', 14, WARM);
+    if (!compact) label(
       state.src === 'manual' ? 'you, driving it' : state.src === 'ac' ? 'AC source' : 'battery',
       x + 42,
       y + 14,
@@ -524,7 +534,7 @@ import Try from '../../../components/sim/Try.astro';
     for (let k = 0; k <= n; k++) ctx.lineTo(x + ((k + 0.5) * len) / (n + 1), y + (k % 2 ? amp : -amp));
     ctx.lineTo(x + len, y);
     ctx.stroke();
-    label(fmtR(state.r), x + len / 2, y - 20, 0.55, 'center', 12);
+    label(fmtR(state.r), x + len / 2, y + 36, 0.55, 'center', 12);
   }
 
   // --- the voltage ladder ----------------------------------------------------
@@ -534,7 +544,7 @@ import Try from '../../../components/sim/Try.astro';
    * and that leftover is what accelerates the current.
    */
   function drawLadder() {
-    const x = SCENE.x + SCENE.w - 96;
+    const x = SCENE.x + SCENE.w - 112;
     const top = SCENE.y + 78, bot = SCENE.y + SCENE.h - 96;
     const mid = (top + bot) / 2;
     const Y = (vv: number) => mid - (Math.max(-VMAX, Math.min(VMAX, vv)) / VMAX) * ((bot - top) / 2);
@@ -550,7 +560,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(x - 5, Y(vv));
       ctx.lineTo(x + 5, Y(vv));
       ctx.stroke();
-      if (vv % 6 === 0) label(`${vv}`, x - 9, Y(vv) + 4, 0.35, 'right', 11);
+      if (vv % 12 === 0 && !compact) label(`${vv}`.replace('-', '−'), x - 9, Y(vv) + 5, 0.35, 'right', 11);
     }
     const vsrc = vSource(), vr = i * state.r;
     ctx.fillStyle = 'rgba(124,140,255,0.25)';
@@ -568,20 +578,20 @@ import Try from '../../../components/sim/Try.astro';
       ctx.closePath();
       ctx.fill();
       // when the two markers land on top of each other, stack the labels
-      const clash = drawn.some((yy) => Math.abs(yy - Y(vv)) < 15);
-      label(name, x + 25, Y(vv) + (clash ? 17 : 4), 0.8, 'left', 11, col);
+      const gap = textPx(canvas, 16, 11) + 4;
+      const clash = drawn.some((yy) => Math.abs(yy - Y(vv)) < gap);
+      label(name, x + 25, Y(vv) + (clash ? gap + 5 : 5), 0.8, 'left', 11, col);
       drawn.push(Y(vv));
     }
-    label('volts', x, top - 14, 0.45, 'center', 11);
+    if (!compact) label('volts', x, top - 14, 0.45, 'center', 11);
     const dv = vCoil();
-    label(`across the coil ${dv >= 0 ? '+' : ''}${dv.toFixed(2)} V`, x - 4, bot + 24, 0.7, 'center', 12, ACC);
-    label('this is what speeds the current up', x - 4, bot + 42, 0.4, 'center', 11);
+    label(`${compact ? 'coil' : 'across the coil'} ${dv >= 0 ? '+' : ''}${engm(dv, 'V')}`, x - 4, bot + 30, 0.7, 'center', 12, ACC);
   }
 
   // --- the scene -------------------------------------------------------------
 
   function drawScene() {
-    panel(SCENE, 'INSIDE THE CIRCUIT');
+    panel(SCENE, '');
     const g = geom();
     const path = wirePath();
     const xLeft = SCENE.x + 120, yTop = SCENE.y + 62;
@@ -604,10 +614,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fillStyle = inkA(0.12);
       rr(g.x0 - 10, g.cy - 12, g.coilW + 20, 24, 5);
       ctx.fill();
-      chip(`iron core µ_r = ${state.mur}`, g.x0 - 4, g.cy + g.bump + 30, 0.5, 'left', 11);
+      if (!compact) chip(`iron core µ_r = ${state.mur}`, g.x0 - 4, g.cy + g.bump + 30, 0.5, 'left', 11);
     }
 
-    label(`N = ${state.turns} turns  ·  L = ${eng(ind(), 'H', 2)}`, g.cx, SCENE.y + 32, 0.85, 'center', 14, ACC);
+    label(`${compact ? '' : `N = ${state.turns} turns  ·  `}L = ${eng(ind(), 'H', 2)}`, g.cx, SCENE.y + 34, 0.85, 'center', 14, ACC);
 
     // the current, on the wire, pointing where the electrons actually go
     const yBot = SCENE.y + SCENE.h - 74;
@@ -619,16 +629,16 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fillStyle = CUR;
       ctx.lineWidth = 2;
       arrow(mx - dir * 36, yBot + 26, mx + dir * 36, yBot + 26, 8);
-      label(`electrons: ${eng(Math.abs(i), 'A')}`, mx, yBot + 48, 0.8, 'center', 12, CUR);
+      label(`I = ${eng(Math.abs(i), 'A')}`, mx, yBot + 50, 0.8, 'center', 12, CUR);
     } else {
-      label('nothing is moving yet', mx, yBot + 30, 0.5, 'center', 12);
+      label('nothing is moving yet', mx, yBot + 34, 0.5, 'center', 12);
     }
 
     const dIdt = vCoil() / ind();
-    label(
+    if (!compact) label(
       Math.abs(dIdt) < 1e-3
-        ? 'steady current: the coil is just wire now'
-        : `speeding up at ${eng(dIdt, 'A/s', 1)}`,
+        ? 'steady: the coil is just a wire'
+        : `speeding up at ${engm(dIdt, 'A/s', 1)}`,
       SCENE.x + SCENE.w - 20,
       SCENE.y + SCENE.h - 18,
       0.55,
@@ -637,15 +647,15 @@ import Try from '../../../components/sim/Try.astro';
       Math.abs(dIdt) < 1e-3 ? inkA(0.5) : WARM
     );
     if (isOpen() && !state.fly && Math.abs(i) > 1e-4)
-      label('slow motion: this really takes microseconds', g.cx, SCENE.y + 54, 0.5, 'center', 11, WARM);
+      label('slow motion', g.cx + 120, SCENE.y + 92, 0.5, 'center', 11, WARM);
     drawLadder();
   }
 
   // --- scope -----------------------------------------------------------------
 
   function drawScope() {
-    panel(SCOPE, 'WHAT THE SOURCE DOES, AND WHAT THE CURRENT DOES');
-    const px = SCOPE.x + 58, py = SCOPE.y + 22, pw = SCOPE.w - 78, ph = SCOPE.h - 58;
+    panel(SCOPE, 'OVER TIME');
+    const px = SCOPE.x + (compact ? 16 : 92), py = SCOPE.y + 22, pw = SCOPE.w - (compact ? 32 : 112), ph = SCOPE.h - (compact ? 34 : 56);
     const span = 10 * tauOn();
     const t1 = Math.max(span, histT), t0 = t1 - span;
     const X = (tt: number) => px + ((tt - t0) / span) * pw;
@@ -675,10 +685,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(px + pw, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(txt, px - 6, y + 4, 0.35, 'right', 11);
+      if (!compact) label(txt, px - 6, y + 5, 0.35, 'right', 11);
     }
-    label(`${vmax.toFixed(vmax > 100 ? 0 : 1)} V`, px - 6, Yv(vmax) + 4, 0.35, 'right', 11);
-    label(eng(imax, 'A', 1), px - 6, Yi(imax) + 4, 0.35, 'right', 11, CUR);
+    if (!compact) label(engm(vmax, 'V', 1), px - 6, Yv(vmax) + 5, 0.35, 'right', 11);
 
     if (hist.length > 1) {
       const series: [string, (h: (typeof hist)[0]) => number, number][] = [
@@ -694,11 +703,11 @@ import Try from '../../../components/sim/Try.astro';
         ctx.stroke();
       }
     }
-    label('current', px + pw, py + 12, 0.85, 'right', 11, CUR);
-    label('coil', px + pw - 62, py + 12, 0.85, 'right', 11, ACC);
-    label('source', px + pw - 108, py + 12, 0.85, 'right', 11, WARM);
-    label(`peak coil voltage ${eng(vPeak, 'V', 1)}`, px, py + ph + 18, 0.45, 'left', 11, ACC);
-    label(`window = 10 τ = ${eng(10 * tauOn(), 's')}`, px + pw, py + ph + 18, 0.4, 'right', 11);
+    keyRow([['source', WARM], ['coil', ACC], ['current', CUR]], px + pw, py + 4);
+    if (!compact) {
+      label(`coil peak ${engm(vPeak, 'V', 1)}`, px, py + ph + 24, 0.45, 'left', 11, ACC);
+      label(`window 10 τ = ${eng(10 * tauOn(), 's')}`, px + pw, py + ph + 24, 0.4, 'right', 11);
+    }
   }
 
   // --- side panel ------------------------------------------------------------
@@ -706,7 +715,7 @@ import Try from '../../../components/sim/Try.astro';
   function drawSide() {
     if (state.src === 'ac') {
       panel(SIDE, 'WHO LAGS WHOM');
-      const cx = SIDE.x + SIDE.w / 2, cy = SIDE.y + 62, rad = 40;
+      const cx = SIDE.x + 78, cy = SIDE.y + SIDE.h / 2, rad = 52;
       ctx.strokeStyle = inkA(0.14);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -727,31 +736,24 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineWidth = 2.2;
         arrow(cx, cy, cx + Math.cos(a) * rad * len, cy + Math.sin(a) * rad * len, 7);
       }
-      let lx = SIDE.x + 22;
-      for (const [, , col, name] of arms) {
+      // a fixed key, so nothing chases the spinning arrows around
+      const kx = SIDE.x + 156, step = textPx(canvas, 16, 11) + 6;
+      arms.forEach(([, , col, name], k) => {
+        const ky = SIDE.y + 30 + k * step;
         ctx.fillStyle = col;
         ctx.beginPath();
-        ctx.arc(lx, cy + rad + 16, 4, 0, Math.PI * 2);
+        ctx.arc(kx + 4, ky - 5, 4, 0, Math.PI * 2);
         ctx.fill();
-        label(name, lx + 9, cy + rad + 20, 0.7, 'left', 11, col);
-        lx += textWidth(name, 10) + 34;
-      }
-      label(
-        `current lags by ${((theta * 180) / Math.PI).toFixed(0)}°`,
-        SIDE.x + SIDE.w / 2,
-        SIDE.y + SIDE.h - 42,
-        0.75,
-        'center',
-        12,
-        CUR
-      );
-      label(`X_L = 2πfL = ${fmtR(xl)}`, SIDE.x + SIDE.w / 2, SIDE.y + SIDE.h - 24, 0.55, 'center', 11);
-      label(`at ${eng(freqHz(), 'Hz', 1)}`, SIDE.x + SIDE.w / 2, SIDE.y + SIDE.h - 8, 0.4, 'center', 11);
+        label(name, kx + 16, ky, 0.7, 'left', 11, col);
+      });
+      const ly = SIDE.y + 30 + 3 * step + 6;
+      label(`I lags ${((theta * 180) / Math.PI).toFixed(0)}°`, kx, ly, 0.75, 'left', 12, CUR);
+      if (!compact) label(`X_L = ${fmtR(xl)}`, kx, ly + step, 0.55, 'left', 11);
       return;
     }
     panel(SIDE, 'WHERE THE ENERGY WENT');
     const u = 0.5 * ind() * i * i;
-    const top = SIDE.y + 30, x0 = SIDE.x + 100, bw = SIDE.w - 124;
+    const top = SIDE.y + 18, x0 = SIDE.x + (compact ? 16 : 140), bw = SIDE.w - (compact ? 32 : 156);
     const scale = Math.max(1e-15, Math.abs(wSrc), u + wRes + wArc);
     const bars: [string, number, string][] = [
       ['source', wSrc, inkA(0.35)],
@@ -760,17 +762,17 @@ import Try from '../../../components/sim/Try.astro';
       [state.fly ? 'diode' : 'the spark', wArc, '#ef4444'],
     ];
     bars.forEach(([name, val, col], k) => {
-      const y = top + k * 32;
-      label(name, x0 - 10, y + 12, 0.55, 'right', 11);
+      const y = top + k * 30;
+      if (!compact) label(name, x0 - 10, y + 13, 0.55, 'right', 11);
       ctx.fillStyle = inkA(0.07);
       rr(x0, y, bw, 15, 4);
       ctx.fill();
       ctx.fillStyle = col;
       rr(x0, y, Math.max(1, (Math.abs(val) / scale) * bw), 15, 4);
       ctx.fill();
-      label(eng(val, 'J', 2), x0 + bw - 8, y + 12, 0.75, 'right', 11);
+      if (!compact) label(eng(val, 'J', 2), x0 + bw - 8, y + 13, 0.75, 'right', 11);
     });
-    label(`½LI² right now = ${eng(u, 'J', 2)}`, SIDE.x + SIDE.w / 2, top + 154, 0.6, 'center', 12, FIELD);
+    label(`½LI² = ${eng(u, 'J', 2)}`, SIDE.x + SIDE.w / 2, top + 134, 0.6, 'center', 12, FIELD);
   }
 
   // --- readouts --------------------------------------------------------------
@@ -807,7 +809,7 @@ import Try from '../../../components/sim/Try.astro';
     });
     setResult({
       value: eng(i, 'A'),
-      status: `V_L = ${eng(vCoil(), 'V')} · L = ${eng(ind(), 'H')} · energy ½LI² = ${eng(0.5 * ind() * i * i, 'J')}`,
+      status: `V_L = ${engm(vCoil(), 'V')} · ½LI² = ${eng(0.5 * ind() * i * i, 'J')}`,
       note: state.src === 'ac'
         ? 'Driven by a sine, the current lags the voltage by a quarter cycle: the coil is still accelerating its electrons when the push has already started to fall.'
         : 'The current builds with time constant τ = L/R and cannot jump. Open the switch and the coil forces the same current onward, at whatever voltage that takes.',
@@ -818,35 +820,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label(
-      state.src === 'manual'
-        ? 'drive it yourself: the current will not jump, only ramp'
-        : state.src === 'ac'
-          ? 'the current is always a quarter cycle late'
-          : 'a battery, a switch, and a coil that hates being cut off',
-      20,
-      34,
-      0.5,
-      'left',
-      11,
-      FIELD
-    );
-    const legend: [string, string][] = [
-      [CUR, 'electron'],
-      [FIELD, 'magnetic field'],
-      [ACC, 'coil voltage'],
-    ];
-    let x = W - 20;
-    for (let k = legend.length - 1; k >= 0; k--) {
-      const [c, tx] = legend[k];
-      const tw = textWidth(tx, 11);
-      label(tx, x, 30, 0.55, 'right', 11);
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(x - tw - 11, 26, 5, 0, Math.PI * 2);
-      ctx.fill();
-      x -= tw + 32;
-    }
+    compact = isCompact(canvas);
     drawScene();
     drawScope();
     drawSide();
@@ -890,8 +864,11 @@ import Try from '../../../components/sim/Try.astro';
   const setFly = check('fly', (on) => (state.fly = on));
   check('lines', (on) => (state.lines = on));
 
+  // the switch and the frequency stay in place, dimmed when the source has no
+  // use for them, so the panel never jumps
   const show = (id: string, on: boolean) => {
-    el(id).style.display = on ? '' : 'none';
+    el(id).classList.toggle('off', !on);
+    el(id).inert = !on;
   };
   function syncControls() {
     show('ctl-sw', state.src === 'dc');
@@ -956,5 +933,11 @@ import Try from '../../../components/sim/Try.astro';
 <style>
   .ind-canvas {
     touch-action: none;
+  }
+  .ind-opt {
+    transition: opacity 0.2s;
+  }
+  .ind-opt.off {
+    opacity: 0.35;
   }
 </style>

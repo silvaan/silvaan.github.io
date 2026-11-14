@@ -13,12 +13,12 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="electronics"
   title="MOSFET & CMOS Logic"
-  description="A metal plate over an insulator, close enough to a slab of silicon to pull a conducting channel into existence underneath. Nothing crosses the insulator, so control costs no current, and that is why a chip can hold billions of these. Stack a p-type over an n-type and you have an inverter."
+  description="A metal plate over an insulator pulls a conducting channel into the silicon beneath it, and nothing crosses the insulator, so control costs no current. Stack a p-type over an n-type and you have an inverter."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="mos" width="1040" height="620" role="img" aria-label="A MOSFET cross-section with its channel of carriers and the drain-current curves, or a CMOS logic gate schematic with its inputs and output."></canvas>
+        <canvas id="mos" width="1040" height="590" role="img" aria-label="A MOSFET cross-section with its channel of carriers and the drain-current curves, or a CMOS logic gate schematic with its inputs and output."></canvas>
       </div>
       <Caption hint="In the device view the channel appears only above threshold; in the gate view, click an input on the schematic to flip it" />
       <Result label="Drain current" />
@@ -33,6 +33,7 @@ import Try from '../../../components/sim/Try.astro';
         options={[{ value: 'device', label: 'The device' }, { value: 'gate', label: 'The logic gate' }]}
       />
 
+      <div class="mos-views">
       <div class="dev-only">
         <Seg id="type" label="Type" attr="t" options={[{ value: 'n', label: 'nMOS' }, { value: 'p', label: 'pMOS' }]} />
         <Seg id="curve" label="Curve" attr="c" options={[{ value: 'out', label: 'Output' }, { value: 'xfer', label: 'Transfer' }]} />
@@ -42,7 +43,7 @@ import Try from '../../../components/sim/Try.astro';
         <Slider id="wl" label="Width over length W/L" min={10} max={400} step={5} value={100} display="1.00" />
       </div>
 
-      <div class="gate-only" hidden>
+      <div class="gate-only off" inert>
         <Seg
           id="gate"
           label="Gate"
@@ -54,6 +55,7 @@ import Try from '../../../components/sim/Try.astro';
           <Slider id="vin" label="Or sweep A by hand" min={0} max={500} value={0} display="0.00 V" hint={['0 V', 'V_DD']} />
         </div>
         <Slider id="vdd" label="Supply V<sub>DD</sub>" min={100} max={500} step={5} value={300} display="3.00 V" />
+      </div>
       </div>
 
       <Readout
@@ -89,7 +91,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { setupCanvas, makeText, subHtml, isCompact } from '../../../lib/sim';
+  import { eng as engRaw } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -140,7 +143,8 @@ import Try from '../../../components/sim/Try.astro';
   const cssv = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const inkA = (a: number) => `rgba(${cssv('--stage-ink') || '232,233,236'},${a})`;
   const bg = () => cssv('--stage-bg') || '#0d0e12';
-  const { label } = makeText(ctx, inkA);
+  const { label } = makeText(ctx, inkA, 1.42, undefined, 11);
+  let compact = false;
 
   const ACC = '#7c8cff'; // gate, and the field it makes
   const TEAL = '#5eead4'; // electrons, and the channel
@@ -168,18 +172,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     rr(p.x, p.y, p.w, p.h, 10);
     ctx.stroke();
-    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+    label(title, p.x + 2, p.y - 10, 0.5, 'left', 11);
   }
-  function eng(v: number, unit: string, digits = 2): string {
-    const a = Math.abs(v);
-    if (a === 0) return `0 ${unit}`;
-    const steps: [number, string][] = [
-      [1e-12, 'p'], [1e-9, 'n'], [1e-6, 'µ'], [1e-3, 'm'], [1, ''], [1e3, 'k'],
-    ];
-    let pick = steps[0];
-    for (const s of steps) if (a >= s[0]) pick = s;
-    return `${(v / pick[0]).toFixed(digits)} ${pick[1]}${unit}`;
+  /** Keep a drawing inside its panel. */
+  function clipTo(p: Box) {
+    ctx.save();
+    rr(p.x, p.y, p.w, p.h, 10);
+    ctx.clip();
   }
+  /** eng() with a real minus sign. */
+  const eng = (v: number, unit: string, digits = 2) => engRaw(v, unit, digits).replace('-', '−');
 
   // ===========================================================================
   // THE DEVICE
@@ -187,8 +189,8 @@ import Try from '../../../components/sim/Try.astro';
 
   // The cross-section is the scene; one characteristic curve sits beside it,
   // and the side panel picks which of the two.
-  const CROSS: Box = { x: 20, y: 74, w: 660, h: 460 };
-  const PLOT: Box = { x: 700, y: 74, w: 320, h: 460 };
+  const CROSS: Box = { x: 20, y: 40, w: 660, h: 530 };
+  const PLOT: Box = { x: 700, y: 40, w: 320, h: 530 };
   const OUT = PLOT, XFER = PLOT;
 
   /** How much charge is left in the channel a fraction u of the way along. */
@@ -241,7 +243,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function drawCross() {
-    panel(CROSS, state.type === 'n' ? 'AN n-CHANNEL MOSFET, IN CROSS SECTION' : 'A p-CHANNEL MOSFET, IN CROSS SECTION');
+    panel(CROSS, state.type === 'n' ? 'n-CHANNEL MOSFET, CROSS SECTION' : 'p-CHANNEL MOSFET, CROSS SECTION');
     const nType = state.type === 'n';
     const bulk = nType ? 'p-type substrate' : 'n-type substrate';
     const wells = nType ? 'n+' : 'p+';
@@ -259,14 +261,14 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = inkA(0.2);
     ctx.lineWidth = 1;
     ctx.strokeRect(x0, top, x1 - x0, bot - top);
-    label(bulk, x1 - 8, bot - 10, 0.4, 'right', 11);
+    label(bulk, x1 - 8, bot - 12, 0.4, 'right', 11);
 
     // source and drain islands
     ctx.fillStyle = nType ? 'rgba(94,234,212,0.22)' : 'rgba(245,158,11,0.22)';
     ctx.fillRect(x0, top, sdW, 54);
     ctx.fillRect(x1 - sdW, top, sdW, 54);
-    label(wells, x0 + 10, top + 20, 0.55, 'left', 11, carrierCol);
-    label(wells, x1 - 10, top + 20, 0.55, 'right', 11, carrierCol);
+    label(wells, x0 + 10, top + 46, 0.55, 'left', 11, carrierCol);
+    label(wells, x1 - 10, top + 46, 0.55, 'right', 11, carrierCol);
 
     // the depletion region the gate pushes open under the oxide. It deepens
     // (as the square root of the surface potential) only until threshold;
@@ -282,14 +284,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(x1 - sdW, top + depth);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(
-        `depleted: the ${nType ? 'holes' : 'electrons'} are pushed away${drive >= 1 ? ', and no deeper past threshold' : ''}`,
-        (x0 + x1) / 2,
-        Math.max(top + depth + 16, top + 74),
-        0.32,
-        'center',
-        11
-      );
+      if (!compact) label('depleted', x1 - sdW - 8, Math.max(top + 76, top + depth + 30), 0.4, 'right', 11);
     }
 
     // the oxide and the gate: a capacitor with silicon as its lower plate
@@ -333,15 +328,7 @@ import Try from '../../../components/sim/Try.astro';
         ctx.setLineDash([3, 3]);
         ctx.strokeRect(x0 + sdW + pinch * chL, top, (1 - pinch) * chL, 26);
         ctx.setLineDash([]);
-        label(
-          'pinched off',
-          x0 + sdW + (pinch + (1 - pinch) / 2) * chL,
-          top - 6,
-          0.9,
-          'center',
-          11.5,
-          HOT
-        );
+        if (!compact) label('pinched off', x1 - sdW, top + 46, 0.9, 'right', 11, HOT);
       }
 
       // the carriers actually carrying the current
@@ -356,41 +343,25 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fill();
         ctx.globalAlpha = 1;
       }
-      label(
-        `an inverted layer of ${carrierName}`,
-        x0 + sdW,
-        top + 44,
-        0.45,
-        'left',
-        11.5,
-        carrierCol
-      );
+      if (!compact) label(`channel of ${carrierName}`, x0 + sdW + 8, top + 46, 0.6, 'left', 11, carrierCol);
     } else {
-      label(
-        'no channel: source and drain are two diodes back to back',
-        (x0 + x1) / 2,
-        top + 34,
-        0.55,
-        'center',
-        11.5,
-        HOT
-      );
+      label('no channel', (x0 + x1) / 2, top + 46, 0.7, 'center', 11, HOT);
     }
 
     // terminals
-    const term = (x: number, y: number, name: string, volts: string, col: string) => {
+    const term = (x: number, y: number, name: string, volts: string, col: string, align: CanvasTextAlign = 'center') => {
       ctx.strokeStyle = inkA(0.4);
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(x, y - 34);
       ctx.stroke();
-      label(name, x, y - 42, 0.85, 'center', 12, col);
-      label(volts, x, y - 58, 0.95, 'center', 12, col);
+      const dx = align === 'right' ? 12 : align === 'left' ? -12 : 0;
+      label(compact ? name : `${name}  ${volts}`, x + dx, y - 44, 0.9, align, 12, col);
     };
-    term(x0 + sdW / 2, top, 'S', '0.00 V', inkA(0.7));
-    term(x1 - sdW / 2, top, 'D', `${state.vds.toFixed(2)} V`, GREEN);
-    term((x0 + x1) / 2, oxT - 22, 'G', `${state.vgs.toFixed(2)} V`, ACC);
+    term(x0 + sdW / 2, top, 'S', '0.00 V', inkA(0.7), 'right');
+    term(x1 - sdW / 2, top, 'D', `${state.vds.toFixed(2)} V`, GREEN, 'left');
+    term((x0 + x1) / 2, oxT - 30, 'G', `${state.vgs.toFixed(2)} V`, ACC);
 
     // the current, where it flows
     const id = idOf(state.vgs, state.vds);
@@ -409,26 +380,27 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(x0 + sdW / 2 + 9, ay + 4);
       ctx.closePath();
       ctx.fill();
-      label(`I_D = ${eng(id, 'A')}`, (x0 + x1) / 2, ay + 18, 0.95, 'center', 12, GREEN);
+      label(`I_D = ${eng(id, 'A')}`, (x0 + x1) / 2, ay + 26, 0.95, 'center', 12, GREEN);
     } else {
-      label('no current at all', (x0 + x1) / 2, bot + 34, 0.5, 'center', 11);
+      label('no current', (x0 + x1) / 2, bot + 34, 0.5, 'center', 11);
     }
     // which of the three regimes it is, and the law that holds there
     const r = regime();
     const line =
       r === 'cutoff'
-        ? 'cut off · I_D = 0'
+        ? 'cut off'
         : r === 'triode'
-          ? 'triode · I_D = k(V_ov·V_DS − V_DS²/2)'
-          : 'saturation · I_D = k·V_ov²/2';
-    label(line, CROSS.x + 14, CROSS.y + CROSS.h - 16, 0.85, 'left', 12.5, r === 'cutoff' ? HOT : TEAL);
+          ? 'triode'
+          : 'saturation';
+    label(line, CROSS.x + 16, CROSS.y + 30, 0.85, 'left', 12, r === 'cutoff' ? HOT : TEAL);
   }
 
   // --- the two characteristic curves -----------------------------------------
 
   function drawOutput() {
-    panel(OUT, 'DRAIN CURRENT AGAINST DRAIN VOLTAGE');
-    const px = OUT.x + 52, py = OUT.y + 20, pw = OUT.w - 68, ph = OUT.h - 58;
+    panel(OUT, 'OUTPUT CURVES');
+    clipTo(OUT);
+    const px = OUT.x + (compact ? 16 : 30), py = OUT.y + 44, pw = OUT.w - (compact ? 32 : 46), ph = OUT.h - 80;
     const VMAX = 5;
     const imax = Math.max(idOf(VMAX, VMAX), 1e-6) * 1.1;
     const X = (v: number) => px + (v / VMAX) * pw;
@@ -441,9 +413,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(px, py + ph);
     ctx.lineTo(px + pw, py + ph);
     ctx.stroke();
-    label('V_DS', px + pw, py + ph + 16, 0.35, 'right', 11);
-    label('I_D', px - 8, py + 8, 0.35, 'right', 11);
-    label(eng(imax, 'A', 1), px - 8, py + 20, 0.3, 'right', 11);
+    label('V_DS', px + pw, py + ph + 22, 0.35, 'right', 11);
+    if (!compact) label(eng(imax, 'A', 1), px, py - 16, 0.4, 'left', 11);
 
     // a family of gate voltages, so the knob is visible as a family
     for (let g = 1; g <= 5; g++) {
@@ -458,7 +429,7 @@ import Try from '../../../components/sim/Try.astro';
         k ? ctx.lineTo(X(vd), y) : ctx.moveTo(X(vd), y);
       }
       ctx.stroke();
-      if (idOf(vg, VMAX) > imax * 0.04)
+      if (idOf(vg, VMAX) > imax * 0.04 && (on || !compact))
         label(`${vg.toFixed(1)}`, X(VMAX) - 2, Y(idOf(vg, VMAX)) - 5, on ? 0.9 : 0.35, 'right', 11, on ? TEAL : undefined);
     }
 
@@ -474,19 +445,16 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.stroke();
     ctx.setLineDash([]);
-    label('V_DS = V_GS − V_th', px + 6, py + 14, 0.7, 'left', 11, HOT);
-    label('triode', px + 12, py + ph - 12, 0.35, 'left', 11);
-    label('saturation', px + pw - 6, py + ph - 12, 0.35, 'right', 11);
-
     ctx.fillStyle = GREEN;
     ctx.beginPath();
     ctx.arc(X(state.vds), Y(idOf(state.vgs, state.vds)), 5, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   }
 
   function drawTransfer() {
-    panel(XFER, 'DRAIN CURRENT AGAINST GATE VOLTAGE');
-    const px = XFER.x + 52, py = XFER.y + 20, pw = XFER.w - 68, ph = XFER.h - 58;
+    panel(XFER, 'TRANSFER CURVE');
+    const px = XFER.x + (compact ? 16 : 30), py = XFER.y + 44, pw = XFER.w - (compact ? 32 : 46), ph = XFER.h - 80;
     const VMAX = 5;
     const imax = Math.max(idOf(VMAX, state.vds), 1e-6) * 1.1;
     const X = (v: number) => px + (v / VMAX) * pw;
@@ -499,8 +467,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(px, py + ph);
     ctx.lineTo(px + pw, py + ph);
     ctx.stroke();
-    label('V_GS', px + pw, py + ph + 16, 0.35, 'right', 11);
-    label('I_D', px - 8, py + 8, 0.35, 'right', 11);
+    label('V_GS', px + pw, py + ph + 22, 0.35, 'right', 11);
+    label('I_D', px, py - 16, 0.4, 'left', 11);
 
     ctx.strokeStyle = ACC;
     ctx.setLineDash([4, 4]);
@@ -510,7 +478,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(X(state.vth), py + ph);
     ctx.stroke();
     ctx.setLineDash([]);
-    label('V_th', X(state.vth) + 5, py + 14, 0.8, 'left', 11, ACC);
+    label('V_th', X(state.vth) + 6, py + 16, 0.8, 'left', 11, ACC);
 
     ctx.strokeStyle = TEAL;
     ctx.lineWidth = 2.4;
@@ -526,24 +494,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(X(state.vgs), Y(idOf(state.vgs, state.vds)), 5, 0, Math.PI * 2);
     ctx.fill();
-    label(
-      'flat until threshold, then a square law: nothing, then everything',
-      px - 30,
-      py + ph + 34,
-      0.4,
-      'left',
-      11
-    );
   }
 
   // ===========================================================================
   // THE LOGIC GATE
   // ===========================================================================
 
-  const SCHEM: Box = { x: 20, y: 74, w: 480, h: 520 };
-  const TRUTH: Box = { x: 530, y: 74, w: 490, h: 180 };
+  const SCHEM: Box = { x: 20, y: 40, w: 480, h: 530 };
+  const TRUTH: Box = { x: 530, y: 40, w: 490, h: 170 };
   // output voltage and supply current share one V_in axis in a single panel
-  const VTC: Box = { x: 530, y: 292, w: 490, h: 302 };
+  const VTC: Box = { x: 530, y: 248, w: 490, h: 322 };
 
   const VTHN = 0.8, VTHP = 0.8;
   const idn = (vgs: number, vds: number) => idOf(vgs, vds, VTHN, 1);
@@ -592,8 +552,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(x + 12, y + 11);
     ctx.lineTo(x + 12, y + 26);
     ctx.stroke();
-    label(name, x + 22, y + 4, on ? 0.9 : 0.4, 'left', 11, on ? GREEN : undefined);
-    label(type === 'p' ? 'p' : 'n', x - 4, y - 20, on ? 0.7 : 0.3, 'left', 11);
+    label(name, x + 22, y + 5, on ? 0.9 : 0.4, 'left', 11, on ? GREEN : undefined);
   }
 
   function wire(pts: [number, number][], on: boolean, lw = 2.2) {
@@ -729,7 +688,6 @@ import Try from '../../../components/sim/Try.astro';
       label(high ? '1' : '0', bx, nodeY - 17, 0.9, 'center', 11, col);
       inputHits.push({ x: bx, y: nodeY, which });
     }
-    label('click to flip', busX.a - 12, nodeY + 30, 0.35, 'left', 11);
 
     // the output node
     const outVolts = state.gate === 'inv' ? invOut(vinNow()) : out ? state.vdd : 0;
@@ -740,23 +698,13 @@ import Try from '../../../components/sim/Try.astro';
     ctx.arc(cx + 160, outY, 11, 0, Math.PI * 2);
     ctx.fill();
     label(outVolts > state.vdd / 2 ? '1' : '0', cx + 160, outY + 5, 1, 'center', 13, bg());
-    label('OUT', cx + 160, outY - 20, 0.8, 'center', 11, outCol);
-    label(`${outVolts.toFixed(2)} V`, cx + 160, outY + 32, 0.9, 'center', 12, outCol);
+    label('OUT', cx + 160, outY - 22, 0.8, 'center', 11, outCol);
+    label(`${outVolts.toFixed(2)} V`, cx + 160, outY + 36, 0.9, 'center', 12, outCol);
 
-    label(
-      state.gate === 'inv'
-        ? 'exactly one of the two is on, so the output is tied hard to a rail'
-        : state.gate === 'nand'
-          ? 'series below, parallel above: the top half is the dual of the bottom'
-          : 'parallel below, series above: again the dual, and again for free',
-      SCHEM.x + 16,
-      SCHEM.y + SCHEM.h - 18,
-      0.4,
-      'left',
-      11.5
-    );
-    label('the pull-up network', SCHEM.x + SCHEM.w - 16, yT + 24, 0.35, 'right', 11);
-    label('the pull-down network', SCHEM.x + SCHEM.w - 16, yB - 16, 0.35, 'right', 11);
+    if (!compact) {
+      label('pull-up', SCHEM.x + SCHEM.w - 16, yT + 28, 0.35, 'right', 11);
+      label('pull-down', SCHEM.x + SCHEM.w - 16, yB - 16, 0.35, 'right', 11);
+    }
   }
 
   function drawTruth() {
@@ -778,44 +726,32 @@ import Try from '../../../components/sim/Try.astro';
           [true, true, combine(true, true)],
         ];
 
-    const x = TRUTH.x + 26;
-    const y0 = TRUTH.y + 42;
-    const colW = 54;
-    label('A', x, y0 - 12, 0.4, 'center', 11);
-    if (!single) label('B', x + colW, y0 - 12, 0.4, 'center', 11);
-    label('OUT', x + colW * (single ? 1 : 2) + 6, y0 - 12, 0.4, 'center', 11);
+    const x = TRUTH.x + 40;
+    const y0 = TRUTH.y + 36;
+    const colW = 70;
+    label('A', x, y0 - 8, 0.4, 'center', 11);
+    if (!single) label('B', x + colW, y0 - 8, 0.4, 'center', 11);
+    label('OUT', x + colW * (single ? 1 : 2) + 6, y0 - 8, 0.4, 'center', 11);
     rows.forEach((r, k) => {
-      const yy = y0 + 6 + k * 28;
+      const yy = y0 + 26 + k * 30;
       const here = r[0] === A && (single || r[1] === B);
       if (here) {
         ctx.fillStyle = 'rgba(94,234,212,0.10)';
-        rr(x - 22, yy - 18, colW * (single ? 2 : 3) + 40, 26, 6);
+        rr(x - 26, yy - 20, colW * (single ? 2 : 3) + 44, 28, 6);
         ctx.fill();
       }
       label(r[0] ? '1' : '0', x, yy, here ? 1 : 0.4, 'center', 12, r[0] ? WARM : ACC);
       if (!single) label(r[1] ? '1' : '0', x + colW, yy, here ? 1 : 0.4, 'center', 12, r[1] ? WARM : ACC);
       label(r[2] ? '1' : '0', x + colW * (single ? 1 : 2) + 6, yy, here ? 1 : 0.4, 'center', 12, r[2] ? WARM : ACC);
     });
-    label(
-      state.gate === 'inv'
-        ? 'the whole of NOT'
-        : state.gate === 'nand'
-          ? 'NAND alone can build every other gate there is'
-          : 'NOR can too, on its own',
-      TRUTH.x + TRUTH.w - 20,
-      TRUTH.y + TRUTH.h - 18,
-      0.4,
-      'right',
-      11.5
-    );
   }
 
   /** V_out on top and the supply current under it, on one shared V_in axis. */
   function drawVTC() {
-    panel(VTC, 'THE OUTPUT, AND WHAT IT COSTS THE SUPPLY');
-    const px = VTC.x + 56, pw = VTC.w - 78;
-    const py1 = VTC.y + 24, ph1 = 158; // V_out
-    const py2 = py1 + ph1 + 30, ph2 = 64; // I_DD
+    panel(VTC, 'OUTPUT AND SUPPLY CURRENT');
+    const px = VTC.x + (compact ? 20 : 76), pw = VTC.w - (compact ? 40 : 98);
+    const py1 = VTC.y + 24, ph1 = 168; // V_out
+    const py2 = py1 + ph1 + 34, ph2 = 64; // I_DD
     const X = (v: number) => px + (v / state.vdd) * pw;
     const Yv = (v: number) => py1 + ph1 - (v / state.vdd) * ph1;
 
@@ -834,10 +770,11 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(px, py2 + ph2);
     ctx.lineTo(px + pw, py2 + ph2);
     ctx.stroke();
-    label('V_out', px - 8, py1 + 8, 0.35, 'right', 11);
-    label('V_DD', px - 8, Yv(state.vdd) + 12, 0.3, 'right', 11);
-    label('I_DD', px - 8, py2 + 8, 0.35, 'right', 11);
-    label('V_in', px + pw, py2 + ph2 + 16, 0.35, 'right', 11);
+    if (!compact) {
+      label('V_out', px - 8, py1 + 10, 0.35, 'right', 11);
+      label('I_DD', px - 8, py2 + 10, 0.35, 'right', 11, HOT);
+    }
+    label('V_in', px + pw, py2 + ph2 + 22, 0.35, 'right', 11);
 
     // the transfer curve
     ctx.strokeStyle = TEAL;
@@ -878,15 +815,6 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(X(vin), y, 5, 0, Math.PI * 2);
       ctx.fill();
     }
-    label(
-      'the current only flows where the output is mid-swing',
-      px + pw,
-      py2 - 8,
-      0.45,
-      'right',
-      11,
-      HOT
-    );
   }
 
   // --- readouts --------------------------------------------------------------
@@ -940,11 +868,16 @@ import Try from '../../../components/sim/Try.astro';
       });
     } else if (r === 'triode') {
       setEq({
-        rule: [ID, '= k\\big[(', VG, '-', VT, ')', VD, '- \\tfrac12', VD, '^2\\big]'],
-        live: [
-          `${k.toFixed(1)}\\big[(`, [f(state.vgs), ACC], '-', [f(state.vth), ACC], ')', [f(state.vds), GREEN],
-          '- \\tfrac12', [f(state.vds), GREEN], '^2\\big] =', [`${idmA}\\,\\text{mA}`, GREEN],
-        ],
+        rule: isCompact(canvas)
+          ? [ID, '= k(', ['V_{ov}', ACC], VD, '- \\tfrac12', VD, '^2)']
+          : [ID, '= k\\big[(', VG, '-', VT, ')', VD, '- \\tfrac12', VD, '^2\\big]'],
+        // on a phone only the result, so the line never wraps
+        live: isCompact(canvas)
+          ? [[`I_D = ${idmA}\\,\\text{mA}`, GREEN]]
+          : [
+              `${k.toFixed(1)}\\big[(`, [f(state.vgs), ACC], '-', [f(state.vth), ACC], ')', [f(state.vds), GREEN],
+              '- \\tfrac12', [f(state.vds), GREEN], '^2\\big] =', [`${idmA}\\,\\text{mA}`, GREEN],
+            ],
       });
     } else {
       setEq({
@@ -1008,6 +941,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    compact = isCompact(canvas);
     if (state.view === 'device') {
       drawCross();
       if (state.curve === 'xfer') drawTransfer();
@@ -1059,9 +993,15 @@ import Try from '../../../components/sim/Try.astro';
   slider('vdd', (n) => (state.vdd = n / 100), volts);
 
   function syncView() {
-    document.querySelectorAll<HTMLElement>('.dev-only').forEach((e) => (e.hidden = state.view !== 'device'));
-    document.querySelectorAll<HTMLElement>('.gate-only').forEach((e) => (e.hidden = state.view !== 'gate'));
-    el('ctl-vin').style.display = state.gate === 'inv' ? '' : 'none';
+    // both sets of controls share one slot, so switching views never moves
+    // the panel; the one not in use is hidden but keeps its space
+    const show = (e: HTMLElement, on: boolean) => {
+      e.classList.toggle('off', !on);
+      e.inert = !on;
+    };
+    document.querySelectorAll<HTMLElement>('.dev-only').forEach((e) => show(e, state.view === 'device'));
+    document.querySelectorAll<HTMLElement>('.gate-only').forEach((e) => show(e, state.view === 'gate'));
+    el('ctl-vin').style.visibility = state.gate === 'inv' ? '' : 'hidden';
     const lab = (id: string, html: string) => {
       const span = document.querySelector(`label[for="${id}"] > span`);
       if (span) span.innerHTML = html;
@@ -1182,8 +1122,14 @@ import Try from '../../../components/sim/Try.astro';
     flex-direction: column;
     gap: 18px;
   }
-  .dev-only[hidden],
-  .gate-only[hidden] {
-    display: none;
+  .mos-views {
+    display: grid;
+  }
+  .mos-views > div {
+    grid-area: 1 / 1;
+  }
+  .dev-only.off,
+  .gate-only.off {
+    visibility: hidden;
   }
 </style>

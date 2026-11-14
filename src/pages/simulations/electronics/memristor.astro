@@ -12,14 +12,21 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="electronics"
   title="Memristor"
-  description="A resistor that remembers how much charge went through it. Push current one way and the conducting layer grows, push it back and it shrinks, stop and it stays where you left it. Drive it with a sine and the I–V curve is a loop pinched at the origin."
+  description="A resistor that remembers the charge that went through it: push one way and its conducting layer grows, push back and it shrinks, stop and it stays. On AC its I–V curve is a pinched loop."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="mr" class="mr-canvas" width="1000" height="880" role="img" aria-label="A thin film with a moving boundary between doped and undoped halves, oxygen vacancies as dots, and the current–voltage curve tracing a pinched loop."></canvas>
+        <canvas id="mr" class="mr-canvas" width="1000" height="700" role="img" aria-label="A thin film with a moving boundary between doped and undoped halves, oxygen vacancies as dots, and the current–voltage curve tracing a pinched loop."></canvas>
       </div>
-      <Caption hint="Each dot is an oxygen vacancy you can count; the boundary between the halves is the device's entire memory" />
+      <Caption
+        legend={[
+          { label: 'oxygen vacancy', color: '#5eead4' },
+          { label: 'boundary', color: '#7c8cff' },
+          { label: 'current', color: '#34d399' },
+        ]}
+        hint="The boundary between the doped and undoped halves is the device's entire memory"
+      />
       <Result label="Resistance right now" />
     </div>
 
@@ -46,7 +53,7 @@ import Try from '../../../components/sim/Try.astro';
           hint={['drag me up and down', '']}
         />
       </div>
-      <div id="ctl-f">
+      <div id="ctl-f" class="mr-opt">
         <Slider id="freq" label="Frequency" min={10} max={600} step={5} value={100} display="1.00 Hz" hint={['slow, fat loop', 'fast, thin loop']} />
       </div>
       <Slider id="ron" label="R<sub>on</sub> (fully doped)" min={20} max={400} step={10} value={100} display="—" />
@@ -95,7 +102,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText, subHtml } from '../../../lib/sim';
+  import { setupCanvas, makeText, subHtml, isCompact } from '../../../lib/sim';
+  import { eng as engRaw, fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, transport, result, tries } from '../../../lib/panel';
 
@@ -206,17 +214,8 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- formatting ------------------------------------------------------------
 
-  function eng(v: number, unit: string, digits = 2): string {
-    const a = Math.abs(v);
-    if (a === 0) return `0 ${unit}`;
-    const steps: [number, string][] = [
-      [1e-15, 'f'], [1e-12, 'p'], [1e-9, 'n'], [1e-6, 'µ'], [1e-3, 'm'],
-      [1, ''], [1e3, 'k'], [1e6, 'M'], [1e9, 'G'],
-    ];
-    let pick = steps[0];
-    for (const s of steps) if (a >= s[0]) pick = s;
-    return `${(v / pick[0]).toFixed(digits)} ${pick[1]}${unit}`;
-  }
+  /** eng() with a real minus sign. */
+  const eng = (v: number, unit: string, digits = 2) => engRaw(v, unit, digits).replace('-', '−');
   const fmtR = (r: number) =>
     r >= 1e6 ? (r / 1e6).toFixed(r >= 1e7 ? 0 : 1) + ' MΩ'
     : r >= 1000 ? (r / 1000).toFixed(r >= 1e4 ? 0 : 1) + ' kΩ'
@@ -230,7 +229,8 @@ import Try from '../../../components/sim/Try.astro';
   const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
   const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
   const bg = () => cssVar('--stage-bg') || '#0d0e12';
-  const { label, textWidth } = makeText(ctx, inkA);
+  const { label, textWidth } = makeText(ctx, inkA, 1.42, undefined, 11);
+  let compact = false;
 
   const ACC = '#7c8cff';
   const WARM = '#f59e0b'; // voltage
@@ -238,11 +238,10 @@ import Try from '../../../components/sim/Try.astro';
   const VAC = '#5eead4'; // an oxygen vacancy
   const HOT = '#f9736a';
 
-  const FOUR = { x: 20, y: 70, w: 960, h: 48 };
-  const SCENE = { x: 20, y: 148, w: 960, h: 396 };
-  const SCOPE = { x: 20, y: 600, w: 400, h: 250 };
-  const LOOP = { x: 444, y: 600, w: 290, h: 250 };
-  const PHIQ = { x: 758, y: 600, w: 222, h: 250 };
+  const SCENE = { x: 20, y: 16, w: 960, h: 396 };
+  const SCOPE = { x: 20, y: 452, w: 400, h: 230 };
+  const LOOP = { x: 444, y: 452, w: 290, h: 230 };
+  const PHIQ = { x: 758, y: 452, w: 222, h: 230 };
 
   function rr(x0: number, y0: number, w: number, h: number, r: number) {
     const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
@@ -263,7 +262,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     rr(p.x, p.y, p.w, p.h, 10);
     ctx.stroke();
-    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+    if (title) label(title, p.x + 2, p.y - 10, 0.5, 'left', 11);
   }
   function arrow(x1: number, y1: number, x2: number, y2: number, size = 5) {
     ctx.beginPath();
@@ -277,44 +276,6 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(x2 - size * Math.cos(a + 0.4), y2 - size * Math.sin(a + 0.4));
     ctx.closePath();
     ctx.fill();
-  }
-
-  // --- the missing element ---------------------------------------------------
-
-  /**
-   * Four circuit variables give six pairwise relations. Five of them were
-   * spoken for; this is the sixth, and it is the only reason to call the thing
-   * fundamental rather than just another two-terminal gadget.
-   */
-  function drawFour() {
-    const items: [string, string, boolean][] = [
-      ['Resistor', 'dV = R · dI', false],
-      ['Capacitor', 'dQ = C · dV', false],
-      ['Inductor', 'dΦ = L · dI', false],
-      ['Memristor', 'dΦ = M · dQ', true],
-    ];
-    const bw = (FOUR.w - 3 * 16) / 4;
-    items.forEach(([name, rel, on], k) => {
-      const bx = FOUR.x + k * (bw + 16);
-      rr(bx, FOUR.y, bw, FOUR.h, 8);
-      ctx.fillStyle = on ? 'rgba(94,234,212,0.10)' : inkA(0.035);
-      ctx.fill();
-      if (on) {
-        ctx.strokeStyle = VAC;
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      }
-      label(name, bx + 14, FOUR.y + 19, on ? 0.9 : 0.4, 'left', 11, on ? VAC : undefined);
-      label(rel, bx + 14, FOUR.y + 37, on ? 1 : 0.55, 'left', 13, on ? VAC : undefined);
-    });
-    label(
-      'the fourth one, and the only one that needs a memory',
-      FOUR.x + FOUR.w,
-      FOUR.y - 9,
-      0.4,
-      'right',
-      11
-    );
   }
 
   // --- the film --------------------------------------------------------------
@@ -403,14 +364,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     rr(FILM.x + FILM.w, y0 - 10, 54, FILM.h + 20, 4);
     ctx.fill();
-    label('Pt', FILM.x - 27, midY() + 4, 0.55, 'center', 11);
-    label('Pt', FILM.x + FILM.w + 27, midY() + 4, 0.55, 'center', 11);
+    label('Pt', FILM.x - 27, midY() + 5, 0.55, 'center', 11);
+    label('Pt', FILM.x + FILM.w + 27, midY() + 5, 0.55, 'center', 11);
 
     // what the two halves are
-    label(`${n} vacancies`, FILM.x + 10, y1 + 22, 0.85, 'left', 12, VAC);
-    label('doped, conducting', FILM.x + 10, y1 + 40, 0.45, 'left', 11.5);
-    label('undoped, insulating', FILM.x + FILM.w - 10, y1 + 22, 0.55, 'right', 12, WARM);
-    label('no vacancies to carry charge', FILM.x + FILM.w - 10, y1 + 40, 0.4, 'right', 11.5);
+    label(compact ? 'doped' : `doped · ${n} vacancies`, FILM.x + 4, y1 + 26, 0.85, 'left', 11, VAC);
+    label('undoped', FILM.x + FILM.w - 4, y1 + 26, 0.7, 'right', 11, WARM);
 
     // the dimensions the model is written in
     ctx.strokeStyle = inkA(0.35);
@@ -419,11 +378,13 @@ import Try from '../../../components/sim/Try.astro';
     const wy = y0 - 44;
     arrow(FILM.x, wy, bx, wy, 5);
     arrow(bx, wy, FILM.x, wy, 5);
-    label(`w = ${(x * state.D * 1e9).toFixed(2)} nm`, (FILM.x + bx) / 2, wy - 8, 0.6, 'center', 11, ACC);
-    const dy = y1 + 62;
-    arrow(FILM.x, dy, FILM.x + FILM.w, dy, 5);
-    arrow(FILM.x + FILM.w, dy, FILM.x, dy, 5);
-    label(`D = ${(state.D * 1e9).toFixed(0)} nm`, FILM.x + FILM.w / 2, dy + 18, 0.5, 'center', 11);
+    label(`w = ${(x * state.D * 1e9).toFixed(2)} nm`, Math.max(FILM.x + 60, (FILM.x + bx) / 2), wy - 10, 0.6, 'center', 11, ACC);
+    if (!compact) {
+      const dy = y1 + 58;
+      arrow(FILM.x, dy, FILM.x + FILM.w, dy, 5);
+      arrow(FILM.x + FILM.w, dy, FILM.x, dy, 5);
+      label(`D = ${(state.D * 1e9).toFixed(0)} nm`, FILM.x + FILM.w / 2, dy + 22, 0.5, 'center', 11);
+    }
 
     return { n, i };
   }
@@ -466,19 +427,11 @@ import Try from '../../../components/sim/Try.astro';
       }
       ctx.stroke();
     }
-    label(`${v >= 0 ? '+' : ''}${v.toFixed(3)} V`, sx, sy - 44, 0.9, 'center', 14, WARM);
-    label(
-      state.src === 'manual' ? 'you, driving it' : state.src === 'ac' ? 'AC source' : 'pulse train',
-      sx,
-      sy + 50,
-      0.45,
-      'center',
-      11
-    );
+    label(`${v >= 0 ? '+' : ''}${fixed(v, 3)} V`, sx + 14, sy + 64, 0.9, 'left', 14, WARM);
   }
 
   function drawScene() {
-    panel(SCENE, 'INSIDE THE FILM');
+    panel(SCENE, '');
     const my = midY();
     const sx = SCENE.x + 130;
     const retY = my + 172;
@@ -508,14 +461,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineWidth = 2;
       const mx = (sx + FILM.x - 54) / 2;
       arrow(mx - dir * 30, my - 20, mx + dir * 30, my - 20, 8);
-      label(eng(Math.abs(i), 'A'), mx, my - 30, 0.85, 'center', 12, GREEN);
-    } else {
+      label(eng(Math.abs(i), 'A'), mx, my - 34, 0.85, 'center', 12, GREEN);
+    } else if (!compact) {
       label('no current', (sx + FILM.x - 54) / 2, my - 24, 0.45, 'center', 11);
-      label('so the boundary is frozen', (sx + FILM.x - 54) / 2, my - 8, 0.35, 'center', 11);
     }
 
     // the resistance, as a bar between the two rails it lives between
-    const bx = SCENE.x + 40, bw = 250, by = SCENE.y + SCENE.h - 46;
+    const bx = SCENE.x + 40, bw = 250, by = SCENE.y + SCENE.h - 30;
     const f = (mem() - state.ron) / Math.max(1, state.roff - state.ron);
     ctx.fillStyle = inkA(0.07);
     rr(bx, by, bw, 14, 4);
@@ -523,16 +475,18 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillStyle = ACC;
     rr(bx, by, Math.max(3, (1 - f) * bw), 14, 4);
     ctx.fill();
-    label('R_on', bx, by - 6, 0.4, 'left', 11);
-    label('R_off', bx + bw, by - 6, 0.4, 'right', 11);
-    label(`M = ${fmtR(mem())}`, bx + bw + 16, by + 12, 0.95, 'left', 14, ACC);
+    if (!compact) {
+      label('R_on', bx, by - 8, 0.4, 'left', 11);
+      label('R_off', bx + bw, by - 8, 0.4, 'right', 11);
+    }
+    label(`M = ${fmtR(mem())}`, bx + bw + 16, by + 14, 0.95, 'left', 14, ACC);
   }
 
   // --- scope -----------------------------------------------------------------
 
   function drawScope() {
-    panel(SCOPE, 'VOLTAGE, CURRENT AND THE BOUNDARY');
-    const px = SCOPE.x + 46, py = SCOPE.y + 18, pw = SCOPE.w - 62, ph = SCOPE.h - 52;
+    panel(SCOPE, compact ? 'TIME' : 'OVER TIME');
+    const px = SCOPE.x + (compact ? 16 : 56), py = SCOPE.y + 34, pw = SCOPE.w - (compact ? 32 : 72), ph = SCOPE.h - 50;
     const span = histSpan();
     const t1 = Math.max(span, clock), t0 = t1 - span;
     const X = (t: number) => px + ((t - t0) / span) * pw;
@@ -564,10 +518,8 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(px + pw, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(txt, px - 6, y + 4, 0.35, 'right', 11);
+      if (!compact) label(txt, px - 8, y + 5, 0.35, 'right', 11);
     }
-    label('1', px - 6, Yx(1) + 4, 0.3, 'right', 11);
-    label('0', px - 6, Yx(0) + 4, 0.3, 'right', 11);
 
     if (hist.length > 1) {
       const series: [string, (h: Sample) => number, number][] = [
@@ -583,24 +535,18 @@ import Try from '../../../components/sim/Try.astro';
         ctx.stroke();
       }
     }
-    label('voltage', px + 6, py + 12, 0.8, 'left', 11.5, WARM);
-    label('current', px + 68, py + 12, 0.8, 'left', 11.5, GREEN);
-    label('w/D', px + 130, py + 12, 0.8, 'left', 11.5, ACC);
-    label(
-      'the boundary only moves while a current flows',
-      px + pw,
-      py + ph + 18,
-      0.4,
-      'right',
-      11
-    );
+    let lx = px;
+    for (const [t, c] of (compact ? [] : [['voltage', WARM], ['current', GREEN], ['w/D', ACC]]) as [string, string][]) {
+      label(t, lx, SCOPE.y + 22, 0.8, 'left', 11, c);
+      lx += textWidth(t, 11) + 18;
+    }
   }
 
   // --- the pinched loop ------------------------------------------------------
 
   function drawLoop() {
-    panel(LOOP, 'CURRENT AGAINST VOLTAGE');
-    const px = LOOP.x + 40, py = LOOP.y + 20, pw = LOOP.w - 58, ph = LOOP.h - 62;
+    panel(LOOP, compact ? 'I–V' : 'CURRENT AGAINST VOLTAGE');
+    const px = LOOP.x + 20, py = LOOP.y + 16, pw = LOOP.w - 40, ph = LOOP.h - 32;
     const cx = px + pw / 2, cy = py + ph / 2;
     let vmax = 1e-6, imax = 1e-12;
     for (const s of loop) {
@@ -618,8 +564,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(cx, py);
     ctx.lineTo(cx, py + ph);
     ctx.stroke();
-    label('V', px + pw, cy + 14, 0.35, 'right', 11);
-    label('I', cx + 8, py + 8, 0.35, 'left', 11);
+    label('V', px + pw, cy + 20, 0.35, 'right', 11);
+    label('I', cx + 8, py + 12, 0.35, 'left', 11);
 
     // the trace, fading into the past so the direction of travel reads
     if (loop.length > 2) {
@@ -645,25 +591,17 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(cx, cy, 7, 0, Math.PI * 2);
     ctx.stroke();
-    label('pinched here', cx + 11, cy - 9, 0.75, 'left', 11, HOT);
-    label('v = M i, so i = 0 forces v = 0', px, py + ph + 18, 0.45, 'left', 11);
-    label(
-      state.src === 'manual'
-        ? 'switch to AC to close the loop'
-        : `${state.freq.toFixed(2)} Hz · faster driving flattens it into a line`,
-      px,
-      py + ph + 34,
-      0.4,
-      'left',
-      11
-    );
+    if (!compact) label('pinch', cx - 11, cy + 22, 0.75, 'right', 11, HOT);
   }
 
   // --- the constitutive curve ------------------------------------------------
 
   function drawPhiQ() {
-    panel(PHIQ, 'FLUX AGAINST CHARGE');
-    const px = PHIQ.x + 40, py = PHIQ.y + 20, pw = PHIQ.w - 56, ph = PHIQ.h - 62;
+    panel(PHIQ, compact ? 'Φ–q' : 'FLUX AGAINST CHARGE');
+    ctx.save();
+    rr(PHIQ.x, PHIQ.y, PHIQ.w, PHIQ.h - 40, 10);
+    ctx.clip();
+    const px = PHIQ.x + 16, py = PHIQ.y + 16, pw = PHIQ.w - 32, ph = PHIQ.h - 52;
 
     let q0 = 0, q1 = 0, p0 = 0, p1 = 0;
     for (const s of pq) {
@@ -684,8 +622,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(X(qm), py);
     ctx.lineTo(X(qm), py + ph);
     ctx.stroke();
-    label('q', px + pw, Y(pm) + 14, 0.35, 'right', 11);
-    label('Φ', X(qm) + 8, py + 8, 0.35, 'left', 11);
+    label('q', px + pw, Y(pm) + 20, 0.35, 'right', 11);
+    label('Φ', X(qm) + 8, py + 12, 0.35, 'left', 11);
 
     // The device's own curve, φ(q) = ∫M dq, drawn over the range in which the
     // boundary is still free to move. The trace has to lie on it whatever the
@@ -722,15 +660,8 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(X(last.q), Y(last.phi), 4, 0, Math.PI * 2);
       ctx.fill();
     }
-    label(
-      state.win === 'hard' ? 'the slope of this curve is M' : 'a sticky boundary loses the curve',
-      px - 24,
-      py + ph + 18,
-      0.45,
-      'left',
-      11
-    );
-    label('drive it any way you like', px - 24, py + ph + 34, 0.4, 'left', 11);
+    ctx.restore();
+    if (!compact && state.win === 'hard') label('slope = M', px, py + ph + 24, 0.45, 'left', 11);
   }
 
   // --- readouts --------------------------------------------------------------
@@ -748,7 +679,7 @@ import Try from '../../../components/sim/Try.astro';
   function updateReadout() {
     const v = vSource(clock);
     const i = v / mem();
-    setRow(1, 'Voltage V', v.toFixed(3) + ' V');
+    setRow(1, 'Voltage V', fixed(v, 3) + ' V');
     setRow(2, 'Current I', eng(i, 'A'));
     setRow(3, 'Resistance M', fmtR(mem()));
     setRow(4, 'State w/D', x.toFixed(4));
@@ -757,15 +688,12 @@ import Try from '../../../components/sim/Try.astro';
     setRow(7, 'On/off ratio', (state.roff / state.ron).toFixed(0) + '×');
     const xs = x.toFixed(3);
     setEq({
-      rule: [['v', WARM], ' = M(', ['x', ACC], ')\\,', ['i', GREEN], ',\\quad M = R_{on}', ['x', ACC], ' + R_{off}(1 - ', ['x', ACC], ')'],
-      live: [
-        `M = ${tex(fmtR(state.ron))} \\times `, [xs, ACC],
-        ` + ${tex(fmtR(state.roff))} \\times (1 - `, [xs, ACC], `) = ${tex(fmtR(mem()))}`,
-      ],
+      rule: [['v', WARM], ' = M(', ['x', ACC], ')\\,', ['i', GREEN]],
+      live: ['M = R_{on}\\,', [xs, ACC], ' + R_{off}(1 - ', [xs, ACC], `) = ${tex(fmtR(mem()))}`],
     });
     setResult({
       value: fmtR(mem()),
-      status: `V = ${v.toFixed(3)} V · I = ${eng(i, 'A')} · state w/D = ${x.toFixed(3)} · ${eng(q, 'C')} has passed through`,
+      status: `V = ${fixed(v, 3)} V · I = ${eng(i, 'A')} · w/D = ${x.toFixed(3)}`,
       note: state.src === 'manual'
         ? 'Stop pushing and the boundary stays exactly where it is: the resistance you read now depends on everything that has flowed before.'
         : 'The current–voltage curve is a loop pinched at the origin, the fingerprint no resistor, capacitor or inductor can produce.',
@@ -776,36 +704,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label(
-      state.src === 'manual'
-        ? 'push charge through and the boundary keeps a record of it'
-        : state.src === 'ac'
-          ? 'drive it back and forth and the loop closes, pinched at the origin'
-          : 'pulses latch it between a low and a high resistance',
-      20,
-      34,
-      0.5,
-      'left',
-      11,
-      VAC
-    );
-    const legend: [string, string][] = [
-      [VAC, 'oxygen vacancy'],
-      [ACC, 'boundary'],
-      [GREEN, 'current'],
-    ];
-    let lx = W - 20;
-    for (let k = legend.length - 1; k >= 0; k--) {
-      const [c, tx] = legend[k];
-      const tw = textWidth(tx, 11);
-      label(tx, lx, 30, 0.55, 'right', 11);
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(lx - tw - 11, 26, 5, 0, Math.PI * 2);
-      ctx.fill();
-      lx -= tw + 32;
-    }
-    drawFour();
+    compact = isCompact(canvas);
     drawScene();
     drawScope();
     drawLoop();
@@ -841,7 +740,9 @@ import Try from '../../../components/sim/Try.astro';
   slider('rate', (n) => (state.rate = n / 100), (n) => `${(n / 100).toFixed(1)}×`);
 
   function syncControls() {
-    el('ctl-f').style.display = state.src === 'manual' ? 'none' : '';
+    // stays in place, dimmed, so the panel never jumps
+    el('ctl-f').classList.toggle('off', state.src === 'manual');
+    el('ctl-f').inert = state.src === 'manual';
     el('vlab').textContent = state.src === 'manual' ? 'Drive it yourself' : 'Amplitude';
     el('ctl-v').querySelector('.scale-hint span')!.textContent =
       state.src === 'manual' ? 'drag me up and down' : 'peak volts';
@@ -882,5 +783,11 @@ import Try from '../../../components/sim/Try.astro';
 <style>
   .mr-canvas {
     touch-action: none;
+  }
+  .mr-opt {
+    transition: opacity 0.2s;
+  }
+  .mr-opt.off {
+    opacity: 0.35;
   }
 </style>

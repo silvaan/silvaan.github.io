@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="cosmology"
   title="A Journey Through the Universe"
-  description="Every star and galaxy here is a real measurement. Leave the planets for 45,000 stars catalogued by Hipparcos, visit nebulae and black holes, see the Milky Way from outside, cross to Andromeda, fly through 900,000 galaxies strung into a cosmic web, and keep going past the quasars to the glow of the Big Bang, 46 billion light-years away."
+  description="Every star and galaxy here is a real measurement. Fly from the planets past 45,000 stars, the Milky Way and Andromeda, through the cosmic web, out to the glow of the Big Bang."
   shortcuts={['run', 'reset', 'fullscreen']}
   standard={false}
 >
@@ -64,9 +64,11 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Transport />
+      <details class="numeric-details">
+        <summary>Layers</summary>
       <Slider id="lim" label="Faintest magnitude shown" min={2} max={12} step={0.1} value={7.5} display="7.5" hint={['naked eye: 6', 'deep']} />
       <Checks
-        label="Layers"
+        label="Show"
         items={[
           { id: 'l-planets', label: 'Planets', checked: true },
           { id: 'l-orbits', label: 'Planet orbits', checked: true },
@@ -83,6 +85,7 @@ import Try from '../../../components/sim/Try.astro';
           { id: 'l-rings', label: 'Distance rings', checked: true },
         ]}
       />
+      </details>
       <Readout
         title="Numbers"
         rows={[
@@ -130,15 +133,6 @@ import Try from '../../../components/sim/Try.astro';
       between the Sagittarius and Perseus arms, 26,000 light-years from the centre. <Try id="mw" />
     </li>
     <li>
-      The arms are where stars are born. Visit the <b>Orion Nebula</b>, 1,300 light-years away, or the <b>Crab
-      Nebula</b>, the wreck of a star that exploded in 1054 and was seen from Earth in daylight. <Try id="crab" />
-    </li>
-    <li>
-      The nearest known black hole, <b>Gaia BH1</b>, is only 1,560 light-years away and gives off no light at all:
-      Gaia found it from the wobble of the star that orbits it. At the centre of the galaxy sits
-      <b>Sagittarius A*</b>, 4.3 million times the Sun’s mass. <Try id="sgra" />
-    </li>
-    <li>
       <b>Andromeda</b> is 2.5 million light-years away: the light reaching you tonight left it before there
       were humans. <Try id="andromeda" />
     </li>
@@ -147,7 +141,7 @@ import Try from '../../../components/sim/Try.astro';
       The two wedges are the SDSS and 6dF fields; the gap between them is the band of sky our own galaxy's dust hides. <Try id="web" />
     </li>
     <li>
-      Past the quasars, whose light left them up to 13 billion years ago, the sky ends in the
+      Past the quasars, whose light left them up to 13 billion years ago, the sky ends in the{' '}
       <b>microwave background</b>, light from 380,000 years after the Big Bang. Space grew while it travelled,
       so that wall is now 46 billion light-years away, not 13.8. <Try id="edge" />
     </li>
@@ -332,6 +326,8 @@ import Try from '../../../components/sim/Try.astro';
   const ctx = canvas.getContext('2d')!;
   // the canvas takes whatever room the stage gives it, fullscreen included
   let W = 960, H = 600;
+  /** A font at this size on a wide stage, never under 10 px on a phone. */
+  const font = (size: number, weight = '') => `${weight ? weight + ' ' : ''}${W < 560 ? Math.max(10, size - 1.5) : size}px ui-sans-serif, system-ui, sans-serif`;
   const view = new View();
   view.tanY = 0.5;
   let dirty = true;
@@ -802,6 +798,9 @@ void main() {
     const placed: Placed[] = [];
     labelSpots = [];
     const free = (b: Placed) => !placed.some((p) => b.x < p.x + p.w && b.x + b.w > p.x && b.y < p.y + p.h && b.y + b.h > p.y);
+    const compact = W < 560;
+    // keep labels off the target card, the stage buttons and the bottom line
+    placed.push({ x: 0, y: 0, w: compact ? 200 : 420, h: compact ? 52 : 70 }, { x: W - 150, y: 0, w: 150, h: 64 }, { x: 0, y: H - 30, w: W, h: 30 });
 
     // --- rings of equal distance from the Sun, in the galactic plane -------
     if (state.layers.rings) {
@@ -809,7 +808,7 @@ void main() {
       const radii: number[] = [];
       for (let k = 0; k <= 4; k++) radii.push(10 ** k / AU_PER_PC);
       for (let k = 0; k <= 11; k++) radii.push(10 ** k / LY_PER_PC);
-      ctx.font = '11px ui-sans-serif, system-ui, sans-serif';
+      ctx.font = font(11.5);
       for (const rpc of radii) {
         const pix = view.pxPer(Math.max(eyeR, rpc)) * rpc;
         if (pix < 60 || rpc > eyeR * 3 || rpc < eyeR / 40) continue;
@@ -818,9 +817,12 @@ void main() {
         ctx.lineWidth = 1;
         ctx.stroke();
         const lp = view.project([rpc * Math.cos(state.yaw + 0.5), rpc * Math.sin(state.yaw + 0.5), 0], W, H);
-        if (lp && lp.x > 10 && lp.x < W - 60 && lp.y > 10 && lp.y < H - 10) {
+        const ringLabel = fmtDist(rpc);
+        const rb = lp && { x: lp.x + 4, y: lp.y - 16, w: ctx.measureText(ringLabel).width + 4, h: 15 };
+        if (lp && rb && rb.x + rb.w < W - 8 && lp.y > 10 && lp.y < H - 10 && free(rb)) {
+          placed.push(rb);
           ctx.fillStyle = 'rgba(94,234,212,0.7)';
-          ctx.fillText(fmtDist(rpc), lp.x + 4, lp.y - 4);
+          ctx.fillText(ringLabel, lp.x + 4, lp.y - 4);
         }
       }
       // the edge of what we can see
@@ -833,7 +835,9 @@ void main() {
         const lp = view.project([R_EDGE * Math.cos(state.yaw + 0.9), R_EDGE * Math.sin(state.yaw + 0.9), 0], W, H);
         if (lp) {
           ctx.fillStyle = 'rgba(245,194,107,0.85)';
-          ctx.fillText(`edge of the observable universe, ${fmtDist(R_EDGE)}`, lp.x + 6, lp.y - 6);
+          const edge = compact ? 'edge of the observable universe' : `edge of the observable universe, ${fmtDist(R_EDGE)}`;
+          const ew = ctx.measureText(edge).width;
+          ctx.fillText(edge, Math.max(8, Math.min(W - 8 - ew, lp.x + 6)), Math.max(84, Math.min(H - 36, lp.y - 6)));
         }
       }
     }
@@ -899,12 +903,13 @@ void main() {
       cand.sort((a, b) => b.s - a.s);
       let shown = 0;
       for (const c of cand) {
-        if (shown > 40) break;
+        if (shown > (compact ? 10 : 40)) break;
         if (c.o === state.target) continue;
         const big = c.o.kind === 'structure' || c.o === MW;
-        ctx.font = big ? '600 12px ui-sans-serif, system-ui, sans-serif' : '11px ui-sans-serif, system-ui, sans-serif';
+        ctx.font = big ? font(12.5, '600') : font(12);
         const w = ctx.measureText(c.o.name).width;
-        const box = { x: c.x + 6, y: c.y - 14, w: w + 4, h: 15 };
+        const box = { x: c.x + 6, y: c.y - 15, w: w + 4, h: 16 };
+        if (box.x + box.w > W - 4) continue;
         if (!free(box)) continue;
         placed.push(box);
         ctx.fillStyle = labelColour(c.o);
@@ -933,15 +938,16 @@ void main() {
           ctx.lineTo(q.x + dx * (s - 4), q.y + dy * s);
         }
         ctx.stroke();
-        ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
+        ctx.font = font(13, '600');
         ctx.fillStyle = GOLD;
-        ctx.fillText(state.target.name, q.x + s + 5, q.y + 4);
+        const tw = ctx.measureText(state.target.name).width;
+        ctx.fillText(state.target.name, q.x + s + 5 + tw > W - 8 ? q.x - s - 5 - tw : q.x + s + 5, q.y + 4);
         labelSpots.push({ o: state.target, x: q.x, y: q.y });
       }
     }
 
     // --- the bar at the bottom -------------------------------------------
-    ctx.font = '12px ui-sans-serif, system-ui, sans-serif';
+    ctx.font = font(12);
     ctx.fillStyle = 'rgba(232,233,236,0.75)';
     const span = 2 * state.r * view.tanY * view.aspect;
     ctx.fillText(`view ${fmtDist(span)} across`, 14, H - 14);
@@ -1028,25 +1034,30 @@ void main() {
     ctx.textBaseline = 'alphabetic';
     ctx.shadowColor = 'rgba(0,0,0,0.8)';
     ctx.shadowBlur = 4;
-    ctx.font = '600 17px ui-sans-serif, system-ui, sans-serif';
+    const compact = W < 560;
+    ctx.font = font(compact ? 15 : 17, '600');
     ctx.fillStyle = state.target ? GOLD : 'rgba(232,233,236,0.85)';
     ctx.fillText(state.target ? t.name : 'Free flight', x, y);
-    ctx.font = '12.5px ui-sans-serif, system-ui, sans-serif';
+    ctx.font = font(13);
     ctx.fillStyle = 'rgba(232,233,236,0.85)';
     if (state.target) {
-      y += 19;
-      ctx.fillText(t.info, x, y);
-      y += 17;
-      ctx.fillText(t === SUN ? 'Our star: its light takes 8.3 minutes to reach Earth' : `${dist} from Earth, its light left ${light}`, x, y);
+      y += compact ? 17 : 20;
+      ctx.fillText(compact ? dist : t.info, x, y);
+      if (!compact) {
+        y += 18;
+        ctx.fillText(t === SUN ? 'Its light takes 8.3 minutes to reach Earth' : `${dist} from Earth, its light left ${light}`, x, y);
+      }
     } else {
-      y += 19;
+      y += compact ? 17 : 20;
       ctx.fillText(`${fmtDist(v3.len(view.eye))} from the Sun`, x, y);
     }
-    ctx.font = '11.5px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(232,233,236,0.55)';
-    ctx.textAlign = 'right';
-    ctx.fillText(state.camMode === 'orbit' ? 'drag: turn · right-drag: slide · scroll: zoom · WASD QE: fly · double-click: go' : 'drag: look · WASD QE: fly (Shift faster) · scroll: speed · double-click: go', W - 14, H - 14);
-    ctx.textAlign = 'left';
+    if (!compact) {
+      ctx.font = font(12);
+      ctx.fillStyle = 'rgba(232,233,236,0.55)';
+      ctx.textAlign = 'right';
+      ctx.fillText(state.camMode === 'orbit' ? 'drag: turn · scroll: zoom · WASD: fly · double-click: go' : 'drag: look · WASD: fly · scroll: speed · double-click: go', W - 14, H - 14);
+      ctx.textAlign = 'left';
+    }
     ctx.shadowBlur = 0;
   }
 
@@ -1348,8 +1359,6 @@ void main() {
     proxima: () => { scaleSeg.clear(); const o = byName.get('proxima centauri'); if (o) { state.pitch = 0.3; flyTo(o, 6 / LY_PER_PC); } },
     mw: () => { scaleSeg.select('mw'); PRESETS.mw(); },
     andromeda: () => { scaleSeg.clear(); const o = byName.get('andromeda galaxy (m31)'); if (o) flyTo(o, 85000); },
-    crab: () => { scaleSeg.clear(); const o = byName.get('crab nebula (m1)'); if (o) flyTo(o); },
-    sgra: () => { scaleSeg.clear(); const o = byName.get('sagittarius a*'); if (o) flyTo(o); },
     web: () => { scaleSeg.select('web'); state.pitch = 0.02; flyTo(SUN, 420 * MPC); },
     edge: () => { scaleSeg.select('obs'); PRESETS.obs(); },
   });
@@ -1374,6 +1383,12 @@ void main() {
     aspect-ratio: 960 / 600;
     overflow: hidden;
     background: #010204;
+  }
+  /* on a phone the stage is squarer, so there is room to look around */
+  @media (max-width: 560px) {
+    .ua-wrap {
+      aspect-ratio: 1 / 1;
+    }
   }
   .ua-wrap canvas {
     position: absolute;
