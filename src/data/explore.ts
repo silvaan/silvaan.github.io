@@ -234,6 +234,7 @@ export const TRAILS: Trail[] = [
     title: 'Quantum, step by step',
     blurb: 'Waves of probability, measurement, spin and qubits.',
     steps: [
+      'physics/photons',
       'physics/schrodinger',
       'physics/wavefunction-collapse',
       'physics/stern-gerlach',

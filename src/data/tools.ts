@@ -745,6 +745,14 @@ export const AREAS: Area[] = [
         status: 'live',
       },
       {
+        slug: 'photons',
+        title: 'Waves and Photons',
+        description:
+          'A wave from an antenna spreads to every side, yet its energy comes in whole lumps: photons. Add them one at a time and watch the wave grow stronger, then see each one land at a single point.',
+        href: '/simulations/physics/photons',
+        status: 'live',
+      },
+      {
         slug: 'schrodinger',
         title: 'Quantum Tunnelling',
         description:

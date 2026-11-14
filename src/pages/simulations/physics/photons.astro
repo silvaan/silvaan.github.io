@@ -1,0 +1,825 @@
+---
+import SimLayout from '../../../layouts/SimLayout.astro';
+import Slider from '../../../components/sim/Slider.astro';
+import Checks from '../../../components/sim/Checks.astro';
+import Transport from '../../../components/sim/Transport.astro';
+import Readout from '../../../components/sim/Readout.astro';
+import Result from '../../../components/sim/Result.astro';
+import Caption from '../../../components/sim/Caption.astro';
+import Try from '../../../components/sim/Try.astro';
+
+const WAVE = '#a78bfa', HIT = '#fbbf24';
+const BINS = 12;
+---
+
+<SimLayout
+  areaSlug="physics"
+  title="Waves and Photons"
+  description="A wave from an antenna spreads to every side, yet its energy comes in whole lumps: photons. Add them one at a time and watch the wave grow stronger, then see each one land at a single point."
+  shortcuts={['run', 'reset', 'fullscreen']}
+>
+  <div class="sim">
+    <div class="sim-view">
+      <div class="sim-stage">
+        <canvas id="ph" class="ph-canvas" width="900" height="600" role="img" aria-label="An antenna at the centre of a sphere of detectors, seen in three dimensions. It sends out pulses of wave as glowing shells, strongest sideways and absent along the antenna, brighter the more photons they carry. Each photon is detected as one dot on the sphere."></canvas>
+      </div>
+      <Caption
+        legend={[
+          { label: 'the wave', color: WAVE },
+          { label: 'one photon detected', color: HIT },
+        ]}
+        hint="Drag to orbit · scroll to zoom"
+      />
+      <Result label="Energy of one pulse" />
+    </div>
+
+    <div class="sim-panel">
+      <Transport running />
+      <Slider id="count" label="Photons in each pulse N" min={0} max={19} step={1} value={9} display="10" hint={['one', 'many']} />
+      <Slider id="freq" label="Frequency f" min={0.8} max={2.4} step={0.02} value={1.4} display="1.40" hint={['small photons', 'big photons']} />
+      <div class="control lumps">
+        <span class="section-label">Energy in the wave</span>
+        <div class="lumps-body">
+          <div class="lumps-pile" id="pile" aria-hidden="true">
+            {Array.from({ length: 100 }).map(() => <i></i>)}
+          </div>
+          <p class="lumps-sum">
+            <span><b id="sumN">10</b> photons</span>
+            <span>× <b id="sumHf">1.40</b> each</span>
+            <span class="lumps-total">= <b id="sumE">14.0</b></span>
+          </p>
+        </div>
+      </div>
+      <Checks items={[{ id: 'wave', label: 'Show the wave', checked: true }]} />
+      <details class="numeric-details" id="dirDetails">
+        <summary>Where the photons landed</summary>
+        <div class="dir-chart">
+          <div class="dir-body" aria-hidden="true">
+            <div class="dir-axis"><span>up</span><span>sideways</span><span>down</span></div>
+            <div class="dir-plot" id="dirPlot">
+              {Array.from({ length: BINS }).map(() => <div class="dir-row"><i class="dir-bar"></i><i class="dir-wave"></i></div>)}
+            </div>
+          </div>
+          <div class="dir-key"><span class="k-bar">photons counted</span><span class="k-wave">strength of the wave</span></div>
+        </div>
+      </details>
+      <Readout
+        title="Values"
+        rows={[
+          { id: 'fOut', label: 'frequency f' },
+          { id: 'lamOut', label: 'wavelength λ = c / f' },
+          { id: 'eOut', label: 'energy of one photon hf' },
+          { id: 'nOut', label: 'photons in a pulse N' },
+          { id: 'pulseOut', label: 'energy of a pulse N · hf' },
+          { id: 'gotOut', label: 'photons detected' },
+          { id: 'sumOut', label: 'energy detected' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <Fragment slot="observe">
+    <li>
+      The least energy a wave of this frequency can carry is <b>one photon</b>,
+      hf. That faint wave still spreads to every side, yet it lands whole at a
+      single point. No little ball flies out: on the way there is only the
+      wave. <Try id="one" />
+    </li>
+    <li>
+      Add photons. Each one adds the same lump <b>hf</b> to the energy of the
+      whole wave, which grows stronger, and the pulse is detected as exactly
+      that many dots. Photons are not pieces of the wave: they count how much
+      energy it has. <Try id="add" />
+    </li>
+    <li>
+      With many photons the lumps are too fine to notice and the wave looks
+      smooth. The dots then draw its shape: crowded where the wave is strong,
+      none along the antenna. A real 1 W radio antenna sends out about
+      10<sup>25</sup> photons a second. <Try id="many" />
+    </li>
+    <li>
+      The size of the lump is set by the <b>frequency</b>. Raise it with the
+      same number of photons: the waves get shorter, each photon carries more,
+      and the pulse's energy grows with it. <Try id="freq" />
+    </li>
+  </Fragment>
+</SimLayout>
+
+<script>
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
+  import { equation } from '../../../lib/equation';
+  import { el, slider, check, transport, readout, result, tries } from '../../../lib/panel';
+  import { Camera3D, orbitControls, drawBackdrop, drawGizmo, fieldRamp, type Vec } from '../../../lib/scene3d';
+  import { VolumeView } from '../../../lib/volume3d';
+
+  const canvas = el('ph') as HTMLCanvasElement;
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
+  const isLight = () => css('--stage-light') === '1';
+  const ink = () => css('--stage-ink') || '232,233,236';
+
+  const TAU = Math.PI * 2;
+  const WAVE = '#a78bfa', HIT = '#fbbf24';
+
+  // Units: h = 1, lengths in scene units. The antenna stands along y at the
+  // origin; the detectors cover the sphere of radius R round it.
+  const R = 5;
+  const C = 2;         // speed of the wave, scene units per second
+  const ROD = 0.85;    // half the antenna's length
+  const SIG = 0.75;    // half-thickness of a pulse, along its way out
+  const LEAD = 1.3;    // the pulse's middle leaves the antenna this many SIG after it starts
+  /** The next pulse leaves as the middle of the last one reaches the detectors. */
+  const PERIOD = (R + LEAD * SIG) / C + 0.15;
+  const F_MIN = 0.8, F_MAX = 2.4;
+
+  // the slider's stops: single photons first, then bigger steps
+  const COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 100];
+
+  const state = { n: 10, f: 1.4, wave: true };
+
+  /**
+   * A pulse of wave: sent at `t0`, carrying `n` photons of frequency `f`. Each
+   * photon is detected at one of `arrivals`, spread over the moment the pulse
+   * crosses the detectors.
+   */
+  type Pulse = { t0: number; n: number; f: number; arrivals: Float64Array; next: number };
+
+  let t = 0;
+  let pulses: Pulse[] = [];
+  let total = 0;      // photons detected since the last reset
+  let energy = 0;     // and the energy they delivered
+  let ramp = -1;      // "add photons": which step of RAMP the next pulse takes
+  const RAMP = [1, 2, 3, 5, 10, 30, 100];
+
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(TAU * Math.random());
+  /** When the middle of a pulse sent at t0 leaves the antenna. */
+  const leaves = (t0: number) => t0 + (LEAD * SIG) / C;
+
+  function arrivalsFor(t0: number, n: number) {
+    const a = new Float64Array(n);
+    for (let i = 0; i < n; i++) a[i] = leaves(t0) + (R + SIG * Math.max(-2.2, Math.min(2.2, gauss()))) / C;
+    return a.sort();
+  }
+
+  function emit() {
+    if (ramp >= 0) {
+      setN(RAMP[ramp]);
+      ramp = ramp + 1 < RAMP.length ? ramp + 1 : -1;
+    }
+    pulses.push({ t0: t, n: state.n, f: state.f, arrivals: arrivalsFor(t, state.n), next: 0 });
+  }
+
+  /** A pulse still on its way takes the new settings; one being detected keeps its own. */
+  function retune() {
+    const pulse = pulses[pulses.length - 1];
+    if (!pulse || pulse.next > 0) return;
+    pulse.n = state.n;
+    pulse.f = state.f;
+    pulse.arrivals = arrivalsFor(pulse.t0, state.n);
+  }
+
+  // --- photons ----------------------------------------------------------------------
+
+  // where each photon landed, as a unit direction; the oldest are overwritten
+  const MAXHITS = 6000;
+  const hits = new Float32Array(MAXHITS * 3);
+  let nHits = 0;
+
+  // counts by direction, in bands of equal area on the sphere (equal steps of cos θ)
+  const BINS = 12;
+  const counts = new Float64Array(BINS);
+  /** The share of the wave's energy that crosses each band: ∫ sin²θ over the band. */
+  const expected = Array.from({ length: BINS }, (_, i) => {
+    const F = (u: number) => u - (u * u * u) / 3;
+    const u0 = -1 + (2 * i) / BINS, u1 = u0 + 2 / BINS;
+    return (F(u1) - F(u0)) / (4 / 3);
+  });
+
+  type Flash = { p: Vec; born: number; big: number };
+  let flashes: Flash[] = [];
+
+  /** One photon of frequency f: a direction drawn with the wave's intensity sin²θ as its odds. */
+  function detect(f: number, flash: boolean, alone = false) {
+    let u = 0;
+    do u = Math.random() * 2 - 1;
+    while (Math.random() > 1 - u * u);
+    const a = Math.random() * TAU, s = Math.sqrt(1 - u * u);
+    const o = (nHits % MAXHITS) * 3;
+    hits[o] = s * Math.cos(a);
+    hits[o + 1] = u;
+    hits[o + 2] = s * Math.sin(a);
+    nHits++;
+    total++;
+    energy += f;
+    counts[Math.min(BINS - 1, Math.floor(((u + 1) / 2) * BINS))]++;
+    if (flash && flashes.length < 14)
+      flashes.push({
+        p: { x: hits[o] * R, y: u * R, z: hits[o + 2] * R },
+        born: performance.now(),
+        // a photon of higher frequency carries more energy: a bigger flash
+        // (and when they come one by one, each is worth a longer look)
+        big: (0.55 + 0.45 * (f / F_MAX)) * (alone ? 1.7 : 1),
+      });
+  }
+
+  function clearHits() {
+    nHits = 0;
+    total = 0;
+    energy = 0;
+    counts.fill(0);
+    flashes = [];
+  }
+
+  function restart() {
+    t = 0;
+    pulses = [];
+    ramp = -1;
+    clearHits();
+  }
+
+  function advance(dt: number) {
+    t += dt;
+    const newest = pulses[pulses.length - 1];
+    if (!newest || t >= newest.t0 + PERIOD) emit();
+    for (const p of pulses)
+      while (p.next < p.arrivals.length && p.arrivals[p.next] <= t) {
+        detect(p.f, true, p.n <= 3);
+        p.next++;
+      }
+    // a pulse is done once the detectors have taken all of it in
+    pulses = pulses.filter((p) => p.next < p.arrivals.length || reach(p) < R + 3 * SIG);
+  }
+
+  // --- the wave ---------------------------------------------------------------------
+
+  // The radiated field is the same all the way round the antenna and goes as
+  // sin θ: full strength sideways, none along the wire. Each cell of the grid
+  // keeps that fixed shape and its distance; every frame only the profile of
+  // the pulse along the radius is worked out again.
+  const G = 80, NR = 400;
+  const amp = new Float32Array(G * G * G);
+  const ring = new Uint16Array(G * G * G);
+  const vol = new Float32Array(G * G * G);
+  const radial = new Float32Array(NR);
+  const step01 = (a: number, b: number, x: number) => {
+    const u = Math.max(0, Math.min(1, (x - a) / (b - a)));
+    return u * u * (3 - 2 * u);
+  };
+  let live: Int32Array;
+  {
+    const idx: number[] = [];
+    let n = 0;
+    for (let k = 0; k < G; k++)
+      for (let j = 0; j < G; j++)
+        for (let i = 0; i < G; i++, n++) {
+          const x = -R + ((i + 0.5) * 2 * R) / G, y = -R + ((j + 0.5) * 2 * R) / G, z = -R + ((k + 0.5) * 2 * R) / G;
+          const r = Math.hypot(x, y, z);
+          if (r >= R || r < 0.3) continue;
+          const sin = Math.hypot(x, z) / r;
+          // drawn fading more gently than the true 1/r, so the pulse still shows far out
+          amp[n] = Math.pow(sin, 2.4) * step01(0.3, 0.9, r) * (1 - step01(R - 0.3, R, r)) / Math.pow(0.6 + 0.4 * r, 0.6);
+          ring[n] = Math.round((r / R) * (NR - 1));
+          if (amp[n] > 0.003) idx.push(n);
+        }
+    live = Int32Array.from(idx);
+  }
+
+  /**
+   * How strong the wave is drawn: its amplitude goes as the square root of its
+   * energy N·hf. A floor keeps the wave of a single photon visible.
+   */
+  const strength = (n: number, f: number) => 0.17 + 0.83 * Math.sqrt((n * f) / (100 * F_MAX));
+
+  /** How far the middle of a pulse has got. */
+  const reach = (p: Pulse) => C * (t - leaves(p.t0));
+
+  const fog = VolumeView.create(canvas, W, H, 'scalar');
+  let fogKey = '', fogLight: boolean | null = null;
+
+  function updateFog() {
+    if (!fog) return;
+    const key = `${t}|${pulses.map((p) => `${p.n},${p.f}`).join('|')}`;
+    if (key === fogKey) return;
+    fogKey = key;
+    radial.fill(0);
+    for (const p of pulses) {
+      const rp = reach(p), k = (TAU * p.f) / C, b = strength(p.n, p.f);
+      for (let i = 0; i < NR; i++) {
+        const d = (i / (NR - 1)) * R - rp;
+        const env = Math.exp((-d * d) / (2 * SIG * SIG));
+        const c = Math.cos(k * d);
+        if (env > 0.01 && c > 0) radial[i] += b * env * c * c;
+      }
+    }
+    for (let m = 0; m < live.length; m++) {
+      const n = live[m];
+      vol[n] = amp[n] * radial[ring[n]];
+    }
+    fog.setVolume(vol, [G, G, G], [-R, -R, -R], [R, R, R]);
+  }
+
+  const cam = new Camera3D(W, H, { dist: 15, yaw: 0.6, pitch: -0.32, zoom: 0.92 });
+
+  // --- drawing ----------------------------------------------------------------------
+
+  // the sphere of detectors: a few circles of latitude and meridians
+  const CIRCLES: { pts: Vec[]; strong: boolean }[] = [];
+  {
+    const N = 72;
+    for (const u of [0.866, 0.5, 0, -0.5, -0.866]) {
+      const s = Math.sqrt(1 - u * u);
+      CIRCLES.push({
+        pts: Array.from({ length: N + 1 }, (_, i) => ({ x: s * Math.cos((i / N) * TAU) * R, y: u * R, z: s * Math.sin((i / N) * TAU) * R })),
+        strong: u === 0,
+      });
+    }
+    for (let m = 0; m < 6; m++) {
+      const a = (m / 6) * Math.PI;
+      CIRCLES.push({
+        pts: Array.from({ length: N + 1 }, (_, i) => {
+          const v = (i / N) * TAU;
+          return { x: Math.sin(v) * Math.cos(a) * R, y: Math.cos(v) * R, z: Math.sin(v) * Math.sin(a) * R };
+        }),
+        strong: false,
+      });
+    }
+  }
+
+  /** The half of the sphere's wires behind the antenna (back) or in front of it. */
+  function drawSphere(back: boolean) {
+    const light = isLight();
+    const fwd = cam.forward();
+    for (const strong of [false, true]) {
+      ctx.beginPath();
+      for (const c of CIRCLES) {
+        if (c.strong !== strong) continue;
+        let pen = false;
+        for (let i = 0; i < c.pts.length; i++) {
+          const p = c.pts[i];
+          const behind = p.x * fwd.x + p.y * fwd.y + p.z * fwd.z > 0;
+          if (behind !== back) { pen = false; continue; }
+          const pr = cam.project(p);
+          if (pen) ctx.lineTo(pr.sx, pr.sy);
+          else ctx.moveTo(pr.sx, pr.sy);
+          pen = true;
+        }
+      }
+      const a = (back ? 0.07 : 0.16) * (strong ? 1.7 : 1) * (light ? 1.25 : 1);
+      ctx.strokeStyle = `rgba(${ink()},${a})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  function drawHits(back: boolean) {
+    const light = isLight();
+    const n = Math.min(nHits, MAXHITS);
+    if (!n) return;
+    const fwd = cam.forward();
+    // a handful of dots are drawn big enough to find; thousands, small enough to tell apart
+    const sz = Math.max(1.8, Math.min(5, cam.zoom * (n < 150 ? 4.6 : n < 2500 ? 3.2 : 2.6)));
+    ctx.fillStyle = light
+      ? `rgba(194,65,12,${back ? 0.3 : 0.95})`
+      : `rgba(253,224,71,${back ? 0.28 : 0.9})`;
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = hits[i * 3], y = hits[i * 3 + 1], z = hits[i * 3 + 2];
+      if (x * fwd.x + y * fwd.y + z * fwd.z > 0 !== back) continue;
+      const pr = cam.project({ x: x * R, y: y * R, z: z * R });
+      ctx.rect(pr.sx - sz / 2, pr.sy - sz / 2, sz, sz);
+    }
+    ctx.fill();
+  }
+
+  const FLASH_MS = 650;
+  function drawFlashes() {
+    const now = performance.now();
+    const light = isLight();
+    flashes = flashes.filter((f) => now - f.born < FLASH_MS);
+    if (!flashes.length) return;
+    ctx.save();
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    for (const f of flashes) {
+      const u = (now - f.born) / FLASH_MS;
+      const pr = cam.project(f.p);
+      const rad = (7 + 34 * Math.sqrt(u)) * f.big;
+      const al = (1 - u) * (1 - u);
+      const g = ctx.createRadialGradient(pr.sx, pr.sy, 0, pr.sx, pr.sy, rad);
+      g.addColorStop(0, light ? `rgba(245,158,11,${0.75 * al})` : `rgba(255,251,235,${al})`);
+      g.addColorStop(0.25, `rgba(251,191,36,${0.6 * al})`);
+      g.addColorStop(1, 'rgba(251,191,36,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(pr.sx, pr.sy, rad, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+    for (const f of flashes) {
+      const pr = cam.project(f.p);
+      ctx.fillStyle = light ? '#b45309' : '#fffbeb';
+      ctx.beginPath();
+      ctx.arc(pr.sx, pr.sy, 2.4, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  function drawAntenna() {
+    const light = isLight();
+    const a = cam.project({ x: 0, y: -ROD, z: 0 }), b = cam.project({ x: 0, y: ROD, z: 0 });
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = light ? 'rgba(255,255,255,0.9)' : 'rgba(13,14,18,0.85)';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(a.sx, a.sy);
+    ctx.lineTo(b.sx, b.sy);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(${ink()},0.9)`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    // the charge runs up and down the wire for a moment: that shake is what sends the pulse
+    let y = 0;
+    for (const p of pulses) {
+      const dt = t - leaves(p.t0), u = (dt * C) / SIG;
+      y += ROD * 0.88 * Math.exp((-u * u) / 2) * Math.sin(TAU * p.f * dt);
+    }
+    const q = cam.project({ x: 0, y, z: 0 });
+    ctx.fillStyle = light ? '#6d28d9' : '#c4b5fd';
+    ctx.beginPath();
+    ctx.arc(q.sx, q.sy, 4.5, 0, TAU);
+    ctx.fill();
+    ctx.lineCap = 'butt';
+  }
+
+  // Without WebGL2 there is no fog: the crests of the pulse are drawn as rings
+  // in the plane through the middle of the antenna, where the wave is strongest.
+  function drawRings() {
+    const light = isLight();
+    for (const pulse of pulses) for (let m = -3; m <= 3; m++) {
+      const lam = C / pulse.f, rp = reach(pulse), b = strength(pulse.n, pulse.f);
+      const r = rp + m * lam, d = m * lam;
+      const env = Math.exp((-d * d) / (2 * SIG * SIG));
+      if (r < 0.4 || r > R || env < 0.05) continue;
+      ctx.beginPath();
+      for (let i = 0; i <= 72; i++) {
+        const pr = cam.project({ x: r * Math.cos((i / 72) * TAU), y: 0, z: r * Math.sin((i / 72) * TAU) });
+        if (i) ctx.lineTo(pr.sx, pr.sy);
+        else ctx.moveTo(pr.sx, pr.sy);
+      }
+      const al = Math.min(1, b * env * 1.4);
+      ctx.strokeStyle = light ? `rgba(109,40,217,${al})` : `rgba(167,139,250,${al})`;
+      ctx.lineWidth = 1 + 3 * b;
+      ctx.stroke();
+    }
+  }
+
+  function drawLabels() {
+    // on a phone the picture speaks for itself; labels this small would not read
+    if (isCompact(canvas)) return;
+    ctx.font = `500 ${textPx(canvas, 12, 12)}px 'JetBrains Mono', monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    const c = cam.project({ x: 0, y: 0, z: 0 });
+    const perUnit = cam.k / Math.sqrt(cam.dist * cam.dist - R * R);
+    ctx.fillStyle = `rgba(${ink()},0.6)`;
+    // above the sphere's outline, wherever the scene has been turned to
+    ctx.fillText('sphere of detectors', c.sx, Math.max(12, c.sy - R * perUnit - 14));
+    const rod = cam.project({ x: 0, y: -ROD, z: 0 });
+    ctx.fillText('antenna', rod.sx, rod.sy + 14);
+    // each pulse on its way, with what it carries
+    ctx.textAlign = 'left';
+    ctx.fillStyle = isLight() ? '#6d28d9' : '#c4b5fd';
+    for (const p of pulses) {
+      const rp = reach(p);
+      if (!state.wave || rp < 1.4 || rp > R - 0.6) continue;
+      ctx.fillText(`${p.n} photon${p.n > 1 ? 's' : ''}`, c.sx + (rp + SIG) * perUnit + 8, c.sy);
+    }
+  }
+
+  function draw() {
+    const light = isLight();
+    ctx.clearRect(0, 0, W, H);
+    if (!fog) drawBackdrop(ctx, W, H, light);
+    else {
+      if (fogLight !== light) {
+        fogLight = light;
+        fog.setColours(fieldRamp(light));
+        fog.canvas.style.background = `radial-gradient(circle at 50% 45%, rgba(99,102,241,${light ? 0.06 : 0.12}), rgba(99,102,241,0) 70%), var(--stage-bg)`;
+      }
+      if (state.wave) updateFog();
+      fog.render(cam, { cloud: state.wave, plane: false, gain: light ? 1.5 : 1.35, opacity: 0.8, len: 1.1, light });
+    }
+
+    drawSphere(true);
+    drawHits(true);
+    if (!fog && state.wave) drawRings();
+    drawAntenna();
+    drawSphere(false);
+    drawHits(false);
+    drawFlashes();
+    drawLabels();
+    if (!isCompact(canvas)) drawGizmo(ctx, cam, H);
+    sync();
+  }
+
+  // --- words and numbers --------------------------------------------------------------
+
+  const setEq = equation();
+  const setResult = result();
+  const setRows = readout();
+  const f2 = (v: number) => fixed(v, 2);
+  const f1 = (v: number) => fixed(v, 1);
+
+  // the pile of photons: one square each, bigger the more energy each carries
+  const pile = el('pile');
+  const lumps = Array.from(pile.querySelectorAll<HTMLElement>('i'));
+  let pileKey = '';
+  function drawPile() {
+    const key = `${state.n}|${state.f}`;
+    if (key === pileKey) return;
+    pileKey = key;
+    lumps.forEach((l, i) => l.classList.toggle('on', i < state.n));
+    pile.style.setProperty('--k', Math.sqrt(state.f / F_MAX).toFixed(3));
+    el('sumN').textContent = String(state.n);
+    el('sumHf').textContent = f2(state.f);
+    el('sumE').textContent = f1(state.n * state.f);
+  }
+
+  const rows = Array.from(el('dirPlot').querySelectorAll<HTMLElement>('.dir-row'));
+  const bars = rows.map((r) => r.querySelector<HTMLElement>('.dir-bar')!);
+  // the widest band of the wave sits at 80% of the plot's width
+  const SCALE = 80 / Math.max(...expected);
+  rows.forEach((r, i) => {
+    // rows run from up (cos θ = 1) at the top to down at the bottom
+    r.querySelector<HTMLElement>('.dir-wave')!.style.left = `${expected[BINS - 1 - i] * SCALE}%`;
+  });
+
+  function drawChart() {
+    bars.forEach((b, i) => {
+      // with only a few photons the bars stay short and grow toward the marks,
+      // instead of one lucky dot filling a whole row
+      const share = counts[BINS - 1 - i] / Math.max(total, 60);
+      b.style.width = `${Math.min(100, share * SCALE)}%`;
+    });
+  }
+
+  let lastSync = 0;
+  function sync(force = false) {
+    const now = performance.now();
+    if (!force && tr.running() && now - lastSync < 120) return;
+    lastSync = now;
+    const n = state.n, hf = state.f, E = n * hf;
+    setEq({
+      rule: [
+        'E_{\\text{wave}} =',
+        ['N', HIT],
+        '\\cdot h',
+        ['f', WAVE],
+      ],
+      live: [`E = ${n} \\times ${f2(hf)} = ${f1(E)}`],
+    });
+    setResult({
+      value: f1(E),
+      status: `${n} photon${n > 1 ? 's' : ''} × hf ${f2(hf)}`,
+      note: n === 1
+        ? 'The least a wave of this frequency can carry. It still spreads to every side, and lands whole at one point.'
+        : n < 10
+          ? `${n} photons: ${n} times the energy of one, in the same wave. It is detected as exactly ${n} dots.`
+          : n < 50
+            ? 'Every photon added makes the whole wave a little stronger. None of them sits in any one part of it.'
+            : 'With this many photons the lumps are too fine to notice: the wave looks smooth, and the dots draw its shape.',
+    });
+    setRows({
+      fOut: f2(hf),
+      lamOut: f2(C / hf),
+      eOut: f2(hf),
+      nOut: String(n),
+      pulseOut: f1(E),
+      gotOut: String(total),
+      sumOut: f1(energy),
+    });
+    drawPile();
+    drawChart();
+  }
+
+  // --- controls -----------------------------------------------------------------------
+
+  let sweep: { from: number; to: number; t: number } | null = null;
+
+  const tr = transport({
+    onRun: () => draw(),
+    onReset: () => { restart(); sweep = null; draw(); },
+  });
+  const setCount = slider('count', (v) => { state.n = COUNTS[v]; ramp = -1; retune(); draw(); }, (v) => String(COUNTS[v]));
+  const setFreq = slider('freq', (v) => { state.f = v; sweep = null; retune(); draw(); }, (v) => v.toFixed(2));
+  const setWave = check('wave', (on) => { state.wave = on; fogKey = ''; draw(); });
+
+  /** Set the number of photons from code, to the nearest stop of the slider. */
+  function setN(n: number) {
+    const i = COUNTS.reduce((best, c, j) => (Math.abs(c - n) < Math.abs(COUNTS[best] - n) ? j : best), 0);
+    state.n = COUNTS[i];
+    setCount(i);
+  }
+
+  orbitControls(canvas, cam, W, H, { changed: () => { if (!tr.running()) draw(); } });
+
+  /** Start over from a fresh pulse with these settings. */
+  function setup(n: number, f: number) {
+    restart();
+    sweep = null;
+    setN(n);
+    state.f = f; setFreq(f);
+    state.wave = true; setWave(true);
+    fogKey = '';
+    tr.setRunning(true);
+  }
+
+  tries({
+    one: () => {
+      setup(1, 1.4);
+      draw();
+    },
+    add: () => {
+      // one pulse after another, each carrying more photons than the last
+      setup(RAMP[0], 1.4);
+      ramp = 0;
+      draw();
+    },
+    many: () => {
+      setup(100, 1.4);
+      for (let i = 0; i < 1500; i++) detect(1.4, false);
+      (el('dirDetails') as HTMLDetailsElement).open = true;
+      draw();
+    },
+    freq: () => {
+      // the same ten photons throughout, the frequency rising slowly from end to end
+      setup(10, F_MIN);
+      sweep = { from: F_MIN, to: F_MAX, t: -1 };
+      draw();
+    },
+  });
+
+  const SWEEP_S = 9;
+  let last = 0;
+  function loop(ts: number) {
+    const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0;
+    last = ts;
+    if (tr.running()) {
+      if (sweep) {
+        sweep.t += dt;
+        const u = Math.max(0, Math.min(1, sweep.t / SWEEP_S));
+        state.f = +(sweep.from + (sweep.to - sweep.from) * u).toFixed(2);
+        setFreq(state.f);
+        retune();
+        if (u >= 1) sweep = null;
+      }
+      advance(dt);
+      draw();
+    } else if (flashes.length) draw();
+    requestAnimationFrame(loop);
+  }
+
+  // the page opens on an antenna that has been sending pulses for a while,
+  // with one already on its way; Reset starts it from nothing
+  for (let i = 0; i < 300; i++) detect(state.f, false);
+  t = 1.6;
+  pulses = [{ t0: 0, n: state.n, f: state.f, arrivals: arrivalsFor(0, state.n), next: 0 }];
+  draw();
+  requestAnimationFrame(loop);
+</script>
+
+<style>
+  .ph-canvas {
+    cursor: grab;
+    touch-action: none;
+  }
+  .ph-canvas:active {
+    cursor: grabbing;
+  }
+
+  /* the energy of the wave as a pile of photons: one square each, filling from the bottom */
+  .lumps-body {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    margin-top: 8px;
+  }
+  .lumps-pile {
+    display: grid;
+    grid-template-columns: repeat(10, 10px);
+    grid-auto-rows: 10px;
+    gap: 2px;
+    flex: none;
+    padding: 5px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transform: scaleY(-1);
+  }
+  .lumps-pile i {
+    border-radius: 2px;
+    background: #fbbf24;
+    opacity: 0;
+    transform: scale(var(--k, 0.75));
+    transition: opacity 0.12s ease, transform 0.12s ease;
+  }
+  .lumps-pile i.on {
+    opacity: 0.9;
+  }
+  .lumps-sum {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    font-size: 0.86rem;
+    color: var(--text-muted);
+  }
+  .lumps-sum b {
+    display: inline-block;
+    min-width: 3ch;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text);
+    text-align: right;
+  }
+  .lumps-sum .lumps-total {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+  .lumps-sum .lumps-total b {
+    min-width: 5ch;
+    color: #d97706;
+  }
+
+  /* photons counted by direction, against the strength of the wave there */
+  .dir-chart {
+    padding-bottom: 12px;
+  }
+  .dir-body {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .dir-axis {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-size: 0.74rem;
+    color: var(--text-faint);
+    text-align: right;
+  }
+  .dir-plot {
+    display: grid;
+    gap: 2px;
+    padding: 2px 0;
+    border-left: 1px solid var(--border);
+  }
+  .dir-row {
+    position: relative;
+    height: 7px;
+  }
+  .dir-bar {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: 0 2px 2px 0;
+    background: #fbbf24;
+    opacity: 0.85;
+  }
+  .dir-wave {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
+    background: #a78bfa;
+  }
+  .dir-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 8px;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+  }
+  .dir-key span::before {
+    content: '';
+    display: inline-block;
+    margin-right: 6px;
+    vertical-align: 0.05em;
+  }
+  .k-bar::before {
+    width: 10px;
+    height: 7px;
+    border-radius: 1px;
+    background: #fbbf24;
+  }
+  .k-wave::before {
+    width: 2px;
+    height: 9px;
+    border-radius: 1px;
+    background: #a78bfa;
+    vertical-align: -0.1em;
+  }
+</style>
