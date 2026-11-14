@@ -226,7 +226,7 @@ export function drawGizmo(ctx: CanvasRenderingContext2D, cam: Camera3D, H: numbe
     })
     .sort((a, b) => b.depth - a.depth);
   ctx.lineWidth = 2;
-  ctx.font = `600 ${textPx(ctx.canvas as HTMLCanvasElement, 11, 11)}px 'JetBrains Mono', monospace`;
+  ctx.font = `600 ${textPx(ctx.canvas as HTMLCanvasElement, 11, 11, 3)}px 'JetBrains Mono', monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   for (const a of pr) {

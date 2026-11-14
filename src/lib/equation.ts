@@ -86,7 +86,20 @@ function render(bar: HTMLElement, lines: Part[][], widths?: Widths) {
       if (colour) span.style.color = colour;
       if (i < 2) katex.render(tex, span, TEX);
       else span.innerHTML = esc(tex);
-      line.appendChild(span);
+      // On a phone the rule wraps between its parts; a part that only closes
+      // or punctuates ("," or "\\}, ...") stays on the line of the part
+      // before it instead of starting a line of its own.
+      const last = line.lastElementChild as HTMLElement | null;
+      if (i === 0 && last && /^\s*(,|;|\.|\)|\]|\\\}|\\right|\\rbrace|\\rangle)/.test(tex)) {
+        let glue = last;
+        if (!last.classList.contains('eq-glue')) {
+          glue = document.createElement('span');
+          glue.className = 'eq-glue';
+          line.replaceChild(glue, last);
+          glue.appendChild(last);
+        }
+        glue.appendChild(span);
+      } else line.appendChild(span);
     }
     bar.appendChild(line);
     // only the live numbers change from frame to frame; the prose line wraps
