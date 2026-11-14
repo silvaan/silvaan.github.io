@@ -122,6 +122,11 @@ export function makeText(
     const px = Math.round(size * scale);
     return minPx ? textPx(ctx.canvas as HTMLCanvasElement, px, minPx) : px;
   };
+  // sub- and superscripts are smaller, but never under the same floor
+  const scriptOf = (px: number) => {
+    const sp = Math.round(px * 0.72);
+    return minPx ? Math.max(sp, textPx(ctx.canvas as HTMLCanvasElement, sp, minPx)) : sp;
+  };
   /** lift: 0 on the line, -1 lowered, +1 raised. */
   type Part = { t: string; lift: -1 | 0 | 1 };
 
@@ -190,7 +195,7 @@ export function makeText(
   /** Width the same text would occupy, for laying out legends by hand. */
   function textWidth(text: string, size: number) {
     const px = sizeOf(size);
-    const sp = Math.round(px * 0.72);
+    const sp = scriptOf(px);
     let w = 0;
     for (const p of parts(text)) {
       ctx.font = `${p.lift ? sp : px}px ${font}`;
@@ -209,7 +214,7 @@ export function makeText(
     colour?: string
   ) {
     const px = sizeOf(size);
-    const sp = Math.round(px * 0.72);
+    const sp = scriptOf(px);
     const ps = parts(text);
     ctx.fillStyle = colour ?? ink(alpha);
     ctx.textAlign = 'left';
