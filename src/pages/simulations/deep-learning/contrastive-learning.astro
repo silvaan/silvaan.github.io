@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Contrastive Learning"
-  description="Nobody says where anything goes. You only say which two things count as a pair; the loss pulls pairs together and pushes everything else apart, and the space sorts itself out. Labels, random versions of one picture, or a picture and its caption: one method, different rules."
+  description="Nobody says where anything goes. You only say which two things are a pair; the loss pulls pairs together, pushes the rest apart, and the space sorts itself out."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -85,8 +85,9 @@ import Try from '../../../components/sim/Try.astro';
     </li>
     <li>
       Pulling pairs together is all that <b>pull only</b> asks, and putting everything in one place does it
-      perfectly. The loss reaches zero and the space is useless: <b>collapse</b>. The push is what rules it out.
-      <Try id="collapse" />
+      perfectly: <b>collapse</b>. The push rules it out. <b>Pairs</b> stop pushing at the margin and leave tight
+      clumps; <b>InfoNCE</b> never quite stops and spreads them out.
+      <Try id="collapse" label="Pull only" /> <Try id="losses" label="Pairs" />
     </li>
     <li>
       Same pictures, same network, same loss: pair them by <b>shape</b> instead of colour and the space is sorted
@@ -100,17 +101,13 @@ import Try from '../../../components/sim/Try.astro';
       With <b>captions</b> two different networks, one for pictures and one for words, learn one shared space. Each
       caption lands among the pictures it describes, so a sentence can find a picture. <Try id="caption" />
     </li>
-    <li>
-      The losses agree on what is a pair, not on the shape of the space: <b>pairs</b> stop at the margin and leave
-      tight clumps, <b>InfoNCE</b> never quite stops pushing and spreads them out. <Try id="losses" />
-    </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { segmented, slider, result, readout, tries, transport } from '../../../lib/panel';
   import { pictures, alter, rng, Run, pushes, lookup, CAPTIONS, SHAPES, COLOURS } from '../../../lib/contrastive';
   import type { Pic, Rule, Loss } from '../../../lib/contrastive';
@@ -158,6 +155,13 @@ import Try from '../../../components/sim/Try.astro';
   // ---------- geometry ----------
   type V3 = [number, number, number];
   const O = { x: 690, y: 340, s: 210 };
+  /** On a phone the cards are left out and the sphere takes the whole stage. */
+  let compact = false;
+  function fitLayout() {
+    compact = isCompact(canvas);
+    O.x = compact ? W / 2 : 690;
+    O.s = compact ? 270 : 210;
+  }
   const CARD = { x: 30, y: 20, w: 340 };
   const view3 = { ang: 0.6, tilt: 0.35, turned: false };
   const view = stageCamera(canvas, W, H, {
@@ -225,6 +229,7 @@ import Try from '../../../components/sim/Try.astro';
     }
 
     ctx.clearRect(0, 0, W, H);
+    fitLayout();
     sphere(light);
     const anchor = S.hover >= 0 ? S.hover : showsCaptions() ? FOCAL_CAP : FOCAL;
     // while it learns, the forces on the followed item; once done, its lookup
@@ -234,18 +239,19 @@ import Try from '../../../components/sim/Try.astro';
     const order = Array.from({ length: showsCaptions() ? n + NC : n }, (_, i) => i).sort((a, b) => hz[a] - hz[b]);
     for (const i of order) {
       if (i < n) icon(P[i], hx[i], hy[i], depthA(i), hf[i], light);
-      else pill(i - n, hx[i], hy[i], depthA(i));
+      else pill(i - n, hx[i], hy[i], depthA(i), false, !compact || i === anchor);
     }
     if (S.hover >= 0) ring(hx[S.hover], hy[S.hover]);
     collapseNote();
 
-    ruleCard(light);
-    focusCard(anchor, light);
-    lossCard(light);
-
-    say(ctx, 'the embedding space', W - 24, 30, { colour: ink(0.55), size: 13, weight: 600, align: 'right' });
-    say(ctx, `step ${run.step} of ${END}`, W - 24, 50, { colour: ink(0.42), size: 12, align: 'right' });
-    if (view.away) say(ctx, 'double-click to reset the view', W - 16, H - 14, { colour: ink(0.45), size: 12, align: 'right' });
+    if (!compact) {
+      ruleCard(light);
+      focusCard(anchor, light);
+      lossCard(light);
+      say(ctx, 'the embedding space', W - 24, 30, { colour: ink(0.55), size: 13, weight: 600, align: 'right' });
+    }
+    say(ctx, `step ${run.step} of ${END}`, W - 24, compact ? 30 : 52, { colour: ink(0.42), size: 12, align: 'right' });
+    if (view.away && !compact) say(ctx, 'double-click to reset the view', W - 16, H - 16, { colour: ink(0.45), size: 12, align: 'right' });
     panelText(Y);
     eqTick();
     requestAnimationFrame(frame);
@@ -332,12 +338,15 @@ import Try from '../../../components/sim/Try.astro';
 
   const capText = (c: number) => `${COLOURS[CAPTIONS[c].colour]} ${SHAPES[CAPTIONS[c].shape]}`;
   /** A caption, as a small label in its colour. */
-  function pill(c: number, x: number, y: number, a = 1, big = false) {
+  function pill(c: number, x: number, y: number, a = 1, big = false, words = true) {
     if (a <= 0) return;
     ctx.save();
     ctx.globalAlpha = a;
-    ctx.font = `600 ${big ? 13 : 11}px ${SANS}`;
-    const text = capText(c), w = ctx.measureText(text).width + 14, h = big ? 22 : 18;
+    // on a phone only the followed caption keeps its words; the rest are marks
+    const px = textPx(canvas, big ? 13 : 11, compact ? 9 : 11);
+    ctx.font = `600 ${px}px ${SANS}`;
+    const text = words ? capText(c) : '';
+    const w = words ? ctx.measureText(text).width + px * 1.2 : 18, h = words ? px * 1.6 : 10;
     ctx.beginPath();
     ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
     ctx.fillStyle = inv(0.92);
@@ -345,10 +354,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = COL[CAPTIONS[c].colour];
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    ctx.fillStyle = ink(0.92);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, x, y + 0.5);
+    if (words) {
+      ctx.fillStyle = ink(0.92);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y + 0.5);
+    }
     ctx.restore();
   }
 
@@ -444,8 +455,8 @@ import Try from '../../../components/sim/Try.astro';
     const sp = spread();
     if (sp.s >= 0.06 || run.step < 20) return;
     const b = Math.min(1, (0.06 - sp.s) / 0.04);
-    say(ctx, 'collapse: everything in one place', sp.x, sp.y - 42, { colour: PUSH, size: 15, weight: 650, align: 'center', alpha: b, halo: inv(0.85) });
-    say(ctx, 'every pair is perfect, and the space is useless', sp.x, sp.y - 22, { colour: ink(0.8), size: 13, align: 'center', alpha: b, halo: inv(0.85) });
+    say(ctx, compact ? 'collapse' : 'collapse: everything in one place', sp.x, sp.y - 42, { colour: PUSH, size: 15, weight: 650, align: 'center', alpha: b, halo: inv(0.85) });
+    if (!compact) say(ctx, 'every pair is perfect, and the space is useless', sp.x, sp.y - 20, { colour: ink(0.8), size: 13, align: 'center', alpha: b, halo: inv(0.85) });
   }
 
   // ---------- the cards on the left ----------
@@ -505,22 +516,14 @@ import Try from '../../../components/sim/Try.astro';
     if (q < n) icon(P[q], x + 34, y0 + 60, 1, 1.9, light);
     else pill(q - n, x + 46, y0 + 60, 1, true);
     // its place on the sphere, as three numbers
-    const v = vecOf(q), cell = 24, gap = 12, sx = x + 92, sy = y0 + 46;
+    const v = vecOf(q), cell = 24, gap = 26, sx = x + 100, sy = y0 + 46;
     const names = ['x', 'y', 'z'];
     for (let k = 0; k < 3; k++) {
       const cx = sx + k * (cell + gap);
       strip(ctx, [v[k]], cx, sy, { light, ink, cell, scale: 1, more: false });
-      say(ctx, (v[k] < 0 ? '−' : '') + Math.abs(v[k]).toFixed(2), cx + cell / 2, sy + cell + 12, { colour: ink(0.85), size: 11.5, weight: 600, align: 'center' });
-      say(ctx, names[k], cx + cell / 2, sy + cell + 26, { colour: ink(0.4), size: 10.5, align: 'center' });
+      say(ctx, fixed(v[k], 2), cx + cell / 2, sy + cell + 13, { colour: ink(0.85), size: 11.5, weight: 600, align: 'center' });
+      say(ctx, names[k], cx + cell / 2, sy + cell + 29, { colour: ink(0.4), size: 10.5, align: 'center' });
     }
-    const dx = sx + 3 * (cell + gap) - 4;
-    for (let k = 0; k < 4; k++) {
-      ctx.fillStyle = ink(0.45 * (1 - k / 4));
-      ctx.beginPath();
-      ctx.arc(dx + 3 + k * 8, sy + cell / 2, 1.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    say(ctx, 'real: hundreds', dx + 38, sy + cell / 2, { colour: ink(0.45), size: 11 });
 
     // the forces from the loss, in this step's batch
     const { a } = rowsOf(run, q);
@@ -577,7 +580,7 @@ import Try from '../../../components/sim/Try.astro';
   const NOTE: Record<Rule, string> = {
     shape: 'For each picture: does its nearest neighbour have the same shape?',
     colour: 'For each picture: does its nearest neighbour have the same colour?',
-    versions: 'For each picture: does its nearest neighbour have the same shape? No label was used; the random versions change colour, never shape.',
+    versions: 'For each picture: does its nearest neighbour have the same shape? No label was used.',
     caption: 'For each caption: is the nearest picture the one it describes?',
   };
   function panelText(Y: Float64Array) {

@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Receptive Field"
-  description="One convolution sees three pixels. Stack them and each layer sees three of the layer below, which saw three each of their own, so the window on the original image grows with depth. How fast it grows is decided by three numbers, and they do not all behave the same way."
+  description="One convolution sees three pixels. Stack them and each layer sees three of the layer below, so the window on the image grows with depth. Three numbers decide how fast, each in its own way."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -60,6 +60,7 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Readout
+        title="Numbers"
         rows={[
           { id: 'r-rf', label: 'receptive field' },
           { id: 'r-jump', label: 'distance between neighbours' },
@@ -93,7 +94,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
@@ -106,7 +107,15 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('rf') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => build());
   const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show below 11px (9px on a phone, which keeps only the essential ones)
+  let compact = false;
+  let { label } = makeText(ctx, ink);
+  function fitLayout() {
+    compact = isCompact(canvas);
+    ({ label } = makeText(ctx, ink, 1.42, undefined, compact ? 9 : 11));
+    GRID.x = compact ? 132 : 106;
+    GRID.w = compact ? W - GRID.x - 24 : 748;
+  }
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -125,6 +134,7 @@ import Try from '../../../components/sim/Try.astro';
   let lit: Set<number>[] = [];
 
   function build() {
+    fitLayout();
     layers = [];
     missing = { count: 0, width: 0, span: 0 };
     let width = IN_W, jump = 1, rf = 1, start = 0;
@@ -190,8 +200,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.clearRect(0, 0, W, H);
     const cw = cellW();
 
-    label('every layer drawn over the pixels it reads', GRID.x, GRID.y - 40, 0.5, 'left', 13);
-    label('the top row is the output, the bottom row is the image itself', GRID.x, GRID.y - 24, 0.3, 'left', 11);
+    if (!compact) {
+      label('every layer drawn over the pixels it reads', GRID.x, GRID.y - 42, 0.55, 'left', 13);
+      label('the top row is the output, the bottom row is the image itself', GRID.x, GRID.y - 22, 0.4, 'left', 11);
+    }
 
     // the cone, drawn behind the cells as soft connections
     for (let l = 0; l < layers.length; l++) {
@@ -224,10 +236,10 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fill();
         ctx.globalAlpha = 1;
       }
-      const name = l === 0 ? 'the image' : `layer ${l}`;
-      label(name, GRID.x - 12, y + 4, l === layers.length ? 0.85 : 0.4, 'right', 11.5, top ? PICK : undefined);
-      label(l === 0 ? `${IN_W} pixels` : `${width} cells`, GRID.x + GRID.w + 12, y + 4, 0.35, 'left', 11);
-      if (top) label(`sees ${layers[l - 1].rf}px`, GRID.x - 12, y + 17, 0.55, 'right', 11, SEEN);
+      const name = l === 0 ? (compact ? 'image' : 'the image') : `layer ${l}`;
+      label(name, GRID.x - 12, y + 4, l === layers.length ? 0.85 : 0.5, 'right', 11.5, top ? PICK : undefined);
+      if (!compact) label(l === 0 ? `${IN_W} pixels` : `${width} cells`, GRID.x + GRID.w + 12, y + 4, 0.45, 'left', 11);
+      if (top && !compact) label(`sees ${layers[l - 1].rf}px`, GRID.x - 12, y + 22, 0.6, 'right', 11, SEEN);
     }
 
     // the span of the field, marked on the image row itself
@@ -248,7 +260,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
       const rf = seen[seen.length - 1] - seen[0] + 1;
       label(
-        `${rf} pixels wide${holes ? `, but ${holes} of them are never read` : ''}`,
+        compact ? `${rf} pixels${holes ? `, ${holes} unread` : ''}` : `${rf} pixels wide${holes ? `, but ${holes} of them are never read` : ''}`,
         (x0 + x1) / 2,
         y + 22,
         0.75,
@@ -261,9 +273,13 @@ import Try from '../../../components/sim/Try.astro';
     // the arithmetic, in the space under the stack
     const top = layers[layers.length - 1];
     const y = 596;
-    label('one layer adds (k − 1) × jump, and multiplies the jump by the stride', GRID.x, y - 22, 0.4, 'left', 11.5);
-    label(`${layers.length} layer${layers.length === 1 ? '' : 's'} reach ${top.rf} pixels with a jump of ${top.jump}`, GRID.x, y, 0.9, 'left', 14, SEEN);
-    if (missing.count)
+    if (!compact) {
+      label('one layer adds (k − 1) × jump, and multiplies the jump by the stride', GRID.x, y - 24, 0.45, 'left', 11.5);
+      label(`${layers.length} layer${layers.length === 1 ? '' : 's'} reach ${top.rf} pixels with a jump of ${top.jump}`, GRID.x, y, 0.9, 'left', 14, SEEN);
+    }
+    if (missing.count && compact)
+      label(`${missing.count} more layer${missing.count === 1 ? '' : 's'} did not fit`, GRID.x + GRID.w, y, 0.9, 'right', 12, '#f87171');
+    else if (missing.count)
       label(
         `${missing.count} more layer${missing.count === 1 ? '' : 's'} did not fit: a window ${missing.span} wide on a row of ${missing.width}`,
         GRID.x + GRID.w,
@@ -298,16 +314,16 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: `${top.rf} pixels`,
       colour: SEEN,
-      status: `${frac > 1 ? 'wider than' : `${(frac * 100).toFixed(0)}% of`} a ${IN_W} pixel image · ${top.width} cells left in the top layer · each layer still holds only ${params} weights per channel pair`,
+      status: `${frac > 1 ? 'wider than' : `${(frac * 100).toFixed(0)}% of`} a ${IN_W} pixel image · ${top.width} cells left on top`,
       note: missing.count
-        ? `Without padding every layer is narrower than the one below, and after ${layers.length} the row is too short for the next window, so the stack stops there. Same padding keeps the width.`
+        ? `Without padding every row shrinks, and after ${layers.length} layers the next window no longer fits.`
         : holes
-          ? `The field spans more pixels than it reads: ${holes} inside it are never touched. The taps of one layer land further apart than the field of the layer below is wide.`
+          ? `The field spans more pixels than it reads: ${holes} inside it are never touched.`
           : state.dil === 'exp'
-          ? `Doubling the dilation doubles the reach at every layer without adding a weight, and each layer exactly fills the gaps of the next, so the field stays solid.${top.s > 1 ? ' The stride still divides the width of every row.' : state.pad === 'same' ? ' Same padding keeps every row full width.' : ' Without padding the rows still shrink, by the window span each time.'}${top.rf > IN_W ? ' The field is now wider than the whole image.' : ''}`
+          ? 'Doubling the dilation doubles the reach at every layer without adding a weight, and the field stays solid.'
           : top.s > 1
-            ? 'Stride multiplies the reach and divides the resolution. Every layer after it inherits the wider spacing, which is why one early stride changes everything above it.'
-            : 'With stride one the field grows by the same amount per layer, so reaching across an image this way costs depth in direct proportion to the distance.',
+            ? 'Stride multiplies the reach of every later layer and divides the resolution.'
+            : 'With stride one the field grows by the same amount per layer: reach costs depth.',
     });
   }
 

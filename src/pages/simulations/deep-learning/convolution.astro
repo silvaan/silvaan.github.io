@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Convolution"
-  description="A window of weights slides over a grid and each position gives one number. Padding, stride and dilation decide how many positions there are, and with several channels every filter reads all of them at once and sums the slices."
+  description="A window of weights slides over a grid and each position gives one number. Padding, stride and dilation decide how many positions there are, and every filter reads all the input channels at once."
 >
   <div class="sim">
     <div class="sim-view">
@@ -28,8 +28,8 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[
-          { label: 'where the window is', color: '#f59e0b' },
-          { label: 'what it has already read', color: '#a78bfa' },
+          { label: 'the window', color: '#f59e0b' },
+          { label: 'already read', color: '#a78bfa' },
           { label: 'positive output', color: '#5eead4' },
           { label: 'negative output', color: '#f472b6' },
           { label: 'padding', color: '#52525b', id: 'lg-pad' },
@@ -51,6 +51,8 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Slider id="k" label="Kernel" min={1} max={5} value={3} />
+      <!-- both views' controls share one slot, so switching never moves the panel -->
+      <div class="swap">
       <div class="group" id="g-arith">
         <Slider id="n" label="Input size" min={4} max={14} value={8} />
         <Slider id="s" label="Stride" min={1} max={4} value={1} />
@@ -58,9 +60,10 @@ import Try from '../../../components/sim/Try.astro';
         <Slider id="d" label="Dilation" min={1} max={3} value={1} />
         <Checks items={[{ id: 'nums', label: 'Show the numbers', checked: true }]} />
       </div>
-      <div class="group" id="g-chan" hidden>
+      <div class="group off" id="g-chan">
         <Slider id="cin" label="Input channels" min={1} max={4} value={3} />
         <Slider id="cout" label="Filters (output channels)" min={1} max={4} value={2} />
+      </div>
       </div>
       <Transport step>
         <button type="button" class="btn ghost" id="shuffle">New weights</button>
@@ -107,7 +110,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect, arrow } from '../../../lib/draw';
   import { el, slider, segmented, check, transport, result, readout, tries } from '../../../lib/panel';
@@ -132,7 +135,17 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('conv') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  // labels never show below 11px (9px on a phone); the numbers inside cells
+  // are sized to their cell instead, and a phone leaves them out
+  let compact = false;
+  let { label, textWidth } = makeText(ctx, ink);
+  const cellText = makeText(ctx, ink).label;
+  function sizeText() {
+    compact = isCompact(canvas);
+    ({ label, textWidth } = makeText(ctx, ink, 1.42, undefined, compact ? 9 : 11));
+  }
+  /** A secondary label: only where there is room to read it. */
+  const note = (...a: Parameters<typeof label>) => { if (!compact) label(...a); };
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -150,8 +163,10 @@ import Try from '../../../components/sim/Try.astro';
   }
   /** A number centred in a cell, sized to the cell. */
   function num(v: number, x: number, y: number, s: number, alpha: number, colour?: string) {
-    const size = Math.max(6, Math.min(11, s * 0.34));
-    label(minus(v), x + s / 2, y + s / 2 + size * 0.5, alpha, 'center', size, colour);
+    if (compact) return;
+    const t = minus(v);
+    const size = Math.max(6, Math.min(11, s * 0.42, (s - 4) / (0.88 * t.length)));
+    cellText(t, x + s / 2, y + s / 2 + size * 0.5, alpha, 'center', size, colour);
   }
   function glow(x: number, y: number, w: number, h: number, r = 5) {
     ctx.save();
@@ -233,7 +248,7 @@ import Try from '../../../components/sim/Try.astro';
     const win = fits ? NOW : NEVER;
 
     label('the input', inX, IN.y - 34, 0.55, 'left', 13);
-    label(state.p ? `${state.n} × ${state.n}, padded to ${P} × ${P}` : `${state.n} × ${state.n}, no padding`, inX, IN.y - 15, 0.32, 'left', 11);
+    note(state.p ? `${state.n} × ${state.n}, padded to ${P} × ${P}` : `${state.n} × ${state.n}, no padding`, inX, IN.y - 12, 0.4, 'left', 11);
     for (let y = 0; y < P; y++)
       for (let x = 0; x < P; x++) {
         const real = x >= state.p && y >= state.p && x < P - state.p && y < P - state.p;
@@ -283,23 +298,20 @@ import Try from '../../../components/sim/Try.astro';
     const sp = span(), sc = Math.min(30, 150 / sp);
     const wx = MID - (sp * sc) / 2, wy = 200;
     label('the window', MID, wy - 30, 0.55, 'center', 13);
-    label(`${state.k} × ${state.k}, ${state.k === 1 ? 'one weight' : 'random weights'}`, MID, wy - 12, 0.32, 'center', 11);
+    note(`${state.k} × ${state.k}, ${state.k === 1 ? 'one weight' : 'random weights'}`, MID, wy - 10, 0.4, 'center', 11);
     for (let y = 0; y < sp; y++)
       for (let x = 0; x < sp; x++) {
         const on = y % state.d === 0 && x % state.d === 0;
         cell(wx + x * sc, wy + y * sc, sc, on ? 'rgba(245,158,11,0.8)' : 'none', on ? NOW : ink(0.12), !on);
         if (on && state.nums) num(weight(y / state.d, x / state.d), wx + x * sc, wy + y * sc, sc, 0.9, '#111');
       }
-    label(`covers ${sp} × ${sp}`, MID, wy + sp * sc + 24, 0.35, 'center', 11);
+    note(`covers ${sp} × ${sp}`, MID, wy + sp * sc + 24, 0.45, 'center', 11);
 
     label('the output', fits ? outX : OUT.x, OUT.y - 34, 0.55, 'left', 13);
     if (!fits) {
-      label('empty', OUT.x, OUT.y - 15, 0.32, 'left', 11);
-      label(`the window spans ${sp} cells`, OUT.x + OUT.s / 2, OUT.y + OUT.s / 2 - 10, 0.5, 'center', 12, NEVER);
-      label(`but the padded input has only ${P}`, OUT.x + OUT.s / 2, OUT.y + OUT.s / 2 + 12, 0.5, 'center', 12, NEVER);
-      label('so there is nowhere to put it', OUT.x + OUT.s / 2, OUT.y + OUT.s / 2 + 34, 0.35, 'center', 11);
+      label('nowhere to put the window', OUT.x + OUT.s / 2, OUT.y + OUT.s / 2, 0.7, 'center', 12, NEVER);
     } else {
-      label(`${N} × ${N}, one cell per position`, outX, OUT.y - 15, 0.32, 'left', 11);
+      note(`${N} × ${N}, one cell per position`, outX, OUT.y - 12, 0.4, 'left', 11);
       for (let y = 0; y < N; y++)
         for (let x = 0; x < N; x++) {
           const on = done[y * N + x];
@@ -309,13 +321,13 @@ import Try from '../../../components/sim/Try.astro';
       glow(outX + ox * co, OUT.y + oy * co, co, co, 4);
     }
 
-    if (state.nums && fits) {
+    if (state.nums && fits && !compact) {
       const t = terms(ox, oy);
       const show = t.length <= 9 ? t : t.slice(0, 4);
       const w = (x: number) => (x < 0 ? `(${minus(x)})` : String(x));
       let text = show.map((q) => `${q.v}·${w(q.w)}`).join(' + ');
       if (show.length < t.length) text += ` + … (${t.length} products)`;
-      label(`${text} = ${minus(value(ox, oy))}`, W / 2, 530, 0.6, 'center', 11);
+      label(`${text} = ${minus(value(ox, oy))}`, W / 2, 530, 0.65, 'center', 11);
     }
 
     const num1 = `\\lfloor (${state.n} + 2\\cdot${state.p} - ${state.d}\\cdot${state.k - 1} - 1)/${state.s} \\rfloor + 1`;
@@ -339,18 +351,18 @@ import Try from '../../../components/sim/Try.astro';
       colour: fits ? OUTC : NEVER,
       status: `${state.n} × ${state.n} in · kernel ${state.k} · stride ${state.s} · padding ${state.p} · dilation ${state.d}`,
       note: !fits
-        ? 'The window is wider than the padded input, so it has no position at all. The formula comes out at zero or below, and there is no output.'
+        ? 'The window is wider than the padded input, so it has no position at all.'
         : lost.total
-          ? `${lost.gaps ? 'The window hops further than it reaches, leaving gaps between positions' : 'The next hop would fall off the edge, so it is dropped'}${lost.gaps && lost.tail ? ', and the last hop falls off the edge' : ''}. ${lost.total} of the ${state.n} rows (and as many columns) of the input are never read.`
+          ? `${lost.gaps ? 'The window hops further than it reaches' : 'The last hop would fall off the edge'}: ${lost.total} of the ${state.n} rows (and columns) are never read.`
           : N === state.n
-            ? 'The padding exactly covers what the window loses at the edges, so the picture comes out the size it went in.'
+            ? 'The padding covers what the window loses at the edges: the size is kept.'
             : state.k % 2 === 0 && state.s === 1 && state.d === 1
-              ? 'An even kernel has no centre, so (k − 1)/2 is not a whole number and no symmetric padding keeps the size.'
+              ? 'An even kernel has no centre, so no symmetric padding keeps the size.'
               : state.s > 1
-                ? 'The window hops rather than steps, so most positions never happen and the output is a fraction of the input.'
+                ? 'The window hops rather than steps, so the output is a fraction of the input.'
                 : state.p === 0 && state.k > 1
-                  ? 'With no padding the window has to stay inside, so the output is smaller by k − 1 in each direction.'
-                  : 'Every position of the window contributes exactly one cell, so counting positions is all there is to it.',
+                  ? 'With no padding the window stays inside: the output loses k − 1 each way.'
+                  : 'Each position of the window gives exactly one output cell.',
     });
   }
 
@@ -401,8 +413,7 @@ import Try from '../../../components/sim/Try.astro';
     // the input channels, the window at the same place on every one
     const inY = stack(cin, S * c);
     label('the input', IN_X, TOP - 44, 0.55, 'left', 13);
-    label(`${cin} × ${S} × ${S}`, IN_X, TOP - 25, 0.32, 'left', 11);
-    label(`${cin} channel${cin > 1 ? 's' : ''}`, IN_X, TOP - 9, 0.32, 'left', 11);
+    note(`${cin} × ${S} × ${S}`, IN_X, TOP - 22, 0.4, 'left', 11);
     for (let ch = 0; ch < cin; ch++) {
       const y0 = inY[ch];
       label(`x${ch + 1}`, IN_X - 12, y0 + (S * c) / 2 + 5, 0.9, 'right', 11, CH[ch]);
@@ -420,8 +431,7 @@ import Try from '../../../components/sim/Try.astro';
     // the filter: one slice of weights per input channel
     const kc = Math.min(30, c);
     label(`filter ${o + 1} of ${cout}`, CMID, TOP - 44, 0.55, 'center', 13);
-    label(`${cin} × ${k} × ${k}`, CMID, TOP - 25, 0.32, 'center', 11);
-    label('random weights', CMID, TOP - 9, 0.32, 'center', 11);
+    note(`${cin} × ${k} × ${k}`, CMID, TOP - 22, 0.4, 'center', 11);
     const parts: number[] = [];
     for (let ch = 0; ch < cin; ch++) {
       const my = inY[ch] + (S * c) / 2, ky = my - (k * kc) / 2, kx = CMID - (k * kc) / 2;
@@ -433,14 +443,13 @@ import Try from '../../../components/sim/Try.astro';
         }
       const part = partial(o, ch, ox, oy);
       parts.push(part);
-      label(`= ${minus(part)}`, kx + k * kc + 12, my + 5, 0.9, 'left', 11, CH[ch]);
+      note(`= ${minus(part)}`, kx + k * kc + 12, my + 5, 0.9, 'left', 11, CH[ch]);
     }
 
     // the output channels, one per filter
     const outY = stack(cout, n * c);
     label('the output', OUT_X, TOP - 44, 0.55, 'left', 13);
-    label(`${cout} × ${n} × ${n}`, OUT_X, TOP - 25, 0.32, 'left', 11);
-    label('one per filter', OUT_X, TOP - 9, 0.32, 'left', 11);
+    note(`${cout} × ${n} × ${n}`, OUT_X, TOP - 22, 0.4, 'left', 11);
     hit = outY.map((y) => ({ y, c }));
 
     // the slices' sums meet in one place, then become one output cell
@@ -460,7 +469,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.arc(SUM_X, sy, 14, 0, Math.PI * 2);
     ctx.stroke();
     label('Σ', SUM_X, sy + 6, 0.8, 'center', 12);
-    label(`+ b = ${minus(bias(o))}`, SUM_X, sy + 34, 0.5, 'center', 10);
+    note(`+ b = ${minus(bias(o))}`, SUM_X, sy + 36, 0.55, 'center', 11);
     ctx.strokeStyle = 'rgba(245,158,11,0.6)';
     ctx.fillStyle = 'rgba(245,158,11,0.6)';
     ctx.lineWidth = 1.2;
@@ -482,17 +491,16 @@ import Try from '../../../components/sim/Try.astro';
 
     // every filter at a glance, the one at work picked out
     label('the filters', WT_X, TOP - 44, 0.55, 'left', 13);
-    label(`${cout} × ${cin} × ${k} × ${k}`, WT_X, TOP - 25, 0.32, 'left', 11);
-    label('click to switch', WT_X, TOP - 9, 0.32, 'left', 11);
+    note('click one to switch', WT_X, TOP - 22, 0.4, 'left', 11);
     const colW = WT_W / cin, mc = Math.min(12, Math.floor((colW - 8) / k));
     const rowH = k * mc + 20, gy0 = TOP + (AREA - rowH * cout) / 2 + 10;
     rows = [];
     for (let ch = 0; ch < cin; ch++)
-      label(`x${ch + 1}`, WT_X + ch * colW + (k * mc) / 2, gy0 - 10, 0.8, 'center', 10, CH[ch]);
+      note(`x${ch + 1}`, WT_X + ch * colW + (k * mc) / 2, gy0 - 12, 0.8, 'center', 10, CH[ch]);
     for (let f = 0; f < cout; f++) {
       const ry = gy0 + f * rowH;
       rows.push({ y: ry - 6, h: rowH });
-      label(`f${f + 1}`, WT_X - 10, ry + (k * mc) / 2 + 4, f === o ? 0.9 : 0.4, 'right', 10, f === o ? NOW : undefined);
+      label(`f${f + 1}`, WT_X - 10, ry + (k * mc) / 2 + 4, f === o ? 0.9 : 0.5, 'right', 10, f === o ? NOW : undefined);
       for (let ch = 0; ch < cin; ch++)
         for (let u = 0; u < k; u++)
           for (let v = 0; v < k; v++)
@@ -507,10 +515,11 @@ import Try from '../../../components/sim/Try.astro';
     segs.push([` = ${minus(y)}`, OUTC]);
     const total = segs.reduce((a, [t]) => a + textWidth(t, 12), 0);
     let sx = W / 2 - total / 2;
-    for (const [t, col] of segs) {
-      label(t, sx, 530, 0.6, 'left', 12, col);
-      sx += textWidth(t, 12);
-    }
+    if (!compact)
+      for (const [t, col] of segs) {
+        label(t, sx, 530, 0.65, 'left', 12, col);
+        sx += textWidth(t, 12);
+      }
 
     const live: [string, string][] = [[`y_{${o + 1}} = ${b}`, OUTC]];
     parts.forEach((p, ch) => live.push([p < 0 ? ` - ${-p}` : ` + ${p}`, CH[ch]]));
@@ -536,10 +545,10 @@ import Try from '../../../components/sim/Try.astro';
       status: `${cin} in · ${cout} filters · ${k} × ${k} · ${params} weights`,
       note:
         k === 1
-          ? `A 1 × 1 filter never looks at neighbours: it just mixes the ${cin} numbers at each pixel into one, like a dense layer applied everywhere.`
+          ? `A 1 × 1 filter never looks at neighbours: it mixes the ${cin} numbers at each pixel into one.`
           : cin === 1
-            ? 'With one input channel each filter is a single flat slice, the familiar picture. Add channels and every filter grows a slice for each.'
-            : `Every filter reads all ${cin} channels, so each output cell is ${cin} sums added together, and each filter costs ${cin * k * k + 1} weights. The channel count never changes the picture size.`,
+            ? 'With one input channel each filter is a single flat slice. Add channels and it grows one per channel.'
+            : `Each output cell adds up ${cin} slices' sums, and each filter costs ${cin * k * k + 1} weights.`,
     });
   }
 
@@ -608,6 +617,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function draw() {
+    sizeText();
     ctx.clearRect(0, 0, W, H);
     if (state.mode === 'arith') drawArith();
     else drawChan();
@@ -669,9 +679,9 @@ import Try from '../../../components/sim/Try.astro';
 
   function showMode() {
     const arith = state.mode === 'arith';
-    el('g-arith').hidden = !arith;
-    el('g-chan').hidden = arith;
-    for (const id of ['lg-pad', 'lg-never']) el(id).style.display = arith ? '' : 'none';
+    el('g-arith').classList.toggle('off', !arith);
+    el('g-chan').classList.toggle('off', arith);
+    for (const id of ['lg-pad', 'lg-never']) el(id).style.visibility = arith ? '' : 'hidden';
   }
 
   const change = () => { reset(); draw(); };
@@ -729,7 +739,21 @@ import Try from '../../../components/sim/Try.astro';
     flex-direction: column;
     gap: 18px;
   }
-  .group[hidden] {
-    display: none;
+  .swap {
+    display: grid;
+  }
+  .swap > .group {
+    grid-area: 1 / 1;
+    min-width: 0;
+    align-self: start;
+  }
+  .swap > .off {
+    visibility: hidden;
+  }
+  /* stacked under the stage, the panel can change height without moving it */
+  @media (max-width: 820px) {
+    .swap > .off {
+      display: none;
+    }
   }
 </style>

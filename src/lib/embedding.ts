@@ -6,6 +6,7 @@
 // group) lives on the chip above the strip, never in the cells.
 
 import { withAlpha } from './story';
+import { textPx, isCompact } from './sim';
 
 const SANS = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
@@ -87,7 +88,9 @@ export type TokenStyle = StripStyle & {
  * centred on cx. Returns the chip's box, for lines that start or end on it.
  */
 export function token(ctx: CanvasRenderingContext2D, word: string, v: ArrayLike<number>, cx: number, y: number, o: TokenStyle) {
-  const size = o.size ?? 17, alpha = o.alpha ?? 1;
+  // the word never shows under 11px (9px on a phone), whatever the canvas scale
+  const canvas = ctx.canvas as HTMLCanvasElement;
+  const size = textPx(canvas, o.size ?? 17, isCompact(canvas) ? 9 : 11), alpha = o.alpha ?? 1;
   ctx.save();
   ctx.font = `${o.focus ? 700 : 600} ${size}px ${SANS}`;
   const tw = ctx.measureText(word).width;

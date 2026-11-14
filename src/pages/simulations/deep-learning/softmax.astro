@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Softmax & Temperature"
-  description="A network ends in a row of raw scores that mean nothing on their own. Softmax turns them into probabilities, and one number decides how strong an opinion it forms: temperature takes the same scores from a single confident answer to a shrug."
+  description="A network ends in raw scores that mean nothing on their own. Softmax turns them into probabilities, and temperature takes the same scores from one confident answer to a shrug."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -80,7 +80,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed, roundRect } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
@@ -99,7 +99,15 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('sm') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11px on a desktop, 9px on a phone, where the
+  // secondary ones are dropped instead
+  let compact = false;
+  let { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
+  function sizeText() {
+    compact = isCompact(canvas);
+    ({ label, textWidth } = makeText(ctx, ink, 1.42, undefined, compact ? 9 : 11));
+    fitColumns();
+  }
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -118,6 +126,12 @@ import Try from '../../../components/sim/Try.astro';
   // --- layout ----------------------------------------------------------------
   const Z = { x: 74, w: 350, mid: 206, half: 92 };
   const P = { x: 566, w: 384, base: 298, tall: 186 };
+  /** a phone gets wider columns, so the names under the bars stay apart */
+  function fitColumns() {
+    Z.x = compact ? 24 : 74;
+    Z.w = compact ? 410 : 350;
+    P.w = compact ? 410 : 384;
+  }
   const SW = { x: 74, y: 412, w: 876, h: 148 };
   const slotZ = (i: number) => Z.x + ((i + 0.5) * Z.w) / K;
   const slotP = (i: number) => P.x + ((i + 0.5) * P.w) / K;
@@ -125,9 +139,11 @@ import Try from '../../../components/sim/Try.astro';
 
   function scores(top: number) {
     label('the raw scores', Z.x, 66, 0.55, 'left', 13);
-    label('what the last layer actually produces', Z.x, 84, 0.32, 'left', 11);
+    if (!compact) label('what the last layer actually produces', Z.x, 90, 0.32, 'left', 11);
     const z = logits();
     const scale = Math.max(2.2, ...z.map(Math.abs)) * 1.12;
+    // room under a negative bar for its number, at whatever size it shows
+    const gap = Math.round(textWidth('0', 12) * 1.5) + 8;
     ctx.strokeStyle = ink(0.18);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -144,13 +160,13 @@ import Try from '../../../components/sim/Try.astro';
       roundRect(ctx, x, y, BARW, h, 5);
       ctx.fill();
       ctx.globalAlpha = 1;
-      label(fixed(v, 2), slotZ(i), v >= 0 ? y - 10 : y + h + 19, on ? 1 : 0.65, 'center', 12, on ? WIN : undefined);
+      label(fixed(v, compact ? 1 : 2), slotZ(i), v >= 0 ? y - 10 : y + h + gap, on ? 1 : 0.65, 'center', 12, on ? WIN : undefined);
     });
   }
 
   function bars(p: number[], top: number) {
     label('the probabilities', P.x, 66, 0.55, 'left', 13);
-    label('always adding to exactly 1', P.x, 84, 0.32, 'left', 11);
+    if (!compact) label('always adding to exactly 1', P.x, 90, 0.32, 'left', 11);
     ctx.strokeStyle = ink(0.18);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -166,7 +182,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(P.x + P.w + 8, even);
     ctx.stroke();
     ctx.setLineDash([]);
-    label('1/5', P.x + P.w + 12, even + 5, 0.35, 'left', 11);
+    if (!compact) label('1/5', P.x + P.w + 12, even + 5, 0.35, 'left', 11);
     p.forEach((v, i) => {
       const on = i === top;
       const h = Math.max(2, v * P.tall);
@@ -180,10 +196,11 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function names(top: number) {
+    const y = compact ? 352 : 334;
     for (let i = 0; i < K; i++) {
       const on = i === top;
-      label(NAMES[i], slotZ(i), 328, on ? 0.95 : 0.4, 'center', 12, on ? WIN : undefined);
-      label(NAMES[i], slotP(i), 328, on ? 0.95 : 0.4, 'center', 12, on ? WIN : undefined);
+      label(NAMES[i], slotZ(i), y, on ? 0.95 : 0.4, 'center', 12, on ? WIN : undefined);
+      label(NAMES[i], slotP(i), y, on ? 0.95 : 0.4, 'center', 12, on ? WIN : undefined);
     }
   }
 
@@ -202,14 +219,13 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(x1 - 11, y + 6);
     ctx.closePath();
     ctx.fill();
-    label('softmax', (x0 + x1) / 2, y - 16, 0.6, 'center', 12);
-    label(`τ = ${state.temp.toFixed(2)}`, (x0 + x1) / 2, y + 26, 0.85, 'center', 13, WIN);
+    if (!compact) label('softmax', (x0 + x1) / 2, y - 16, 0.6, 'center', 12);
+    label(compact ? state.temp.toFixed(2) : `τ = ${state.temp.toFixed(2)}`, (x0 + x1) / 2, y + (compact ? 36 : 28), 0.85, 'center', 13, WIN);
   }
 
   /** Every probability across the whole range of temperatures. */
   function sweep(top: number) {
-    label('the same scores at every temperature', SW.x, SW.y - 26, 0.55, 'left', 13);
-    label('one curve per class, from a single answer on the left to a shrug on the right', SW.x, SW.y - 8, 0.32, 'left', 11);
+    label(compact ? 'every temperature' : 'the same scores at every temperature', SW.x, SW.y - 14, 0.55, 'left', 13);
     const LO = 0.1, HI = 10;
     const gx = (t: number) => SW.x + (Math.log(t / LO) / Math.log(HI / LO)) * SW.w;
     const gy = (p: number) => SW.y + SW.h - p * SW.h;
@@ -222,7 +238,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(SW.x, gy(v));
       ctx.lineTo(SW.x + SW.w, gy(v));
       ctx.stroke();
-      label(v === 1 ? '100%' : v === 0.5 ? '50%' : '0', SW.x - 10, gy(v) + 5, 0.32, 'right', 11);
+      if (!compact || v !== 0.5) label(v === 1 ? '100%' : v === 0.5 ? '50%' : '0', SW.x - 10, gy(v) + 5, 0.32, 'right', 11);
     }
     ctx.strokeStyle = ink(0.18);
     ctx.setLineDash([4, 5]);
@@ -266,13 +282,16 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-    for (const t of [0.1, 0.3, 1, 3, 10]) label(`τ ${t}`, gx(t), SW.y + SW.h + 22, 0.35, 'center', 11);
-    label('one answer', SW.x + 4, SW.y + 20, 0.4, 'left', 11);
-    label('no opinion', SW.x + SW.w - 4, SW.y + 20, 0.4, 'right', 11);
+    for (const t of compact ? [0.1, 1, 10] : [0.1, 0.3, 1, 3, 10]) label(`τ ${t}`, gx(t), SW.y + SW.h + (compact ? 30 : 24), 0.35, 'center', 11);
+    if (!compact) {
+      label('one answer', SW.x + 10, SW.y + 22, 0.4, 'left', 11);
+      label('no opinion', SW.x + SW.w - 10, SW.y + 22, 0.4, 'right', 11);
+    }
   }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    sizeText();
     const p = probs();
     const top = argmax(p);
     scores(top);
@@ -303,12 +322,12 @@ import Try from '../../../components/sim/Try.astro';
       status: `${NAMES[top]} wins at τ = ${state.temp.toFixed(2)} · effectively ${eff.toFixed(2)} of the ${K} classes are in play`,
       note:
         state.temp < 0.35
-          ? 'Cold: the differences are divided by almost nothing, so they blow up and the largest score takes everything. This is what argmax looks like from the inside.'
+          ? 'Cold: the gaps are divided by almost nothing, so the largest score takes everything.'
           : state.temp > 3
-            ? 'Hot: the differences are divided away and every class converges on 1/5. The scores still differ, but nothing downstream can tell.'
+            ? 'Hot: the gaps are divided away and every class drifts towards 1/5.'
             : eff < 1.5
-              ? 'One class holds nearly all of it, so the model has committed. Raise the temperature and watch the others come back into play.'
-              : 'Softmax only ever reads differences, and temperature is the number those differences are divided by before they are exponentiated.',
+              ? 'One class holds nearly all of it: the model has committed.'
+              : 'Softmax reads only the gaps between scores, divided by τ.',
     });
   }
 

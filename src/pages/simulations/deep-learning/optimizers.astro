@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Optimizers"
-  description="Six optimizers descend the same loss: a 1D slice where too big a learning rate overshoots and diverges, a surface you can click on, or a density cloud in three parameters."
+  description="Six optimizers descend the same loss: a 1D slice where too big a learning rate overshoots, a surface you can click on, or a density cloud in three parameters."
 >
   <div class="sim">
     <div class="sim-view">
@@ -48,7 +48,8 @@ import Try from '../../../components/sim/Try.astro';
           { value: 'cloud', label: 'Density cloud' },
         ]}
       />
-      <div id="slicewrap" hidden>
+      <div class="swap">
+      <div id="slicewrap" class="off">
         <Seg
           id="curve"
           label="Curve"
@@ -80,21 +81,27 @@ import Try from '../../../components/sim/Try.astro';
           ]}
         />
       </div>
-      <Slider id="sp" label="Speed, steps per second" min={2} max={80} value={10} />
-      <div id="ptswrap" hidden>
-        <Slider id="pts" label="Point density" min={600} max={6000} step={200} value={3500} />
-      </div>
-      <div class="control">
-        <span class="section-label">Arrows</span>
-        <div class="seg" id="arrows">
-          <button type="button" data-a="grad" aria-pressed="false">Gradient</button>
-          <button type="button" data-a="mom" aria-pressed="false">Momentum</button>
-        </div>
       </div>
       <div class="control">
         <span class="section-label">Optimizers</span>
         <div id="sections"></div>
       </div>
+      <details class="numeric-details">
+        <summary>More</summary>
+        <div class="more">
+          <Slider id="sp" label="Speed, steps per second" min={2} max={80} value={10} />
+          <div class="control">
+            <span class="section-label">Arrows</span>
+            <div class="seg" id="arrows">
+              <button type="button" data-a="grad" aria-pressed="false">Gradient</button>
+              <button type="button" data-a="mom" aria-pressed="false">Momentum</button>
+            </div>
+          </div>
+          <div id="ptswrap" hidden>
+            <Slider id="pts" label="Point density" min={600} max={6000} step={200} value={3500} />
+          </div>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -124,7 +131,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { fixed, stageInk } from '../../../lib/draw';
   import { el, segmented, slider, transport, result, tries } from '../../../lib/panel';
@@ -136,7 +143,15 @@ import Try from '../../../components/sim/Try.astro';
   const isLight = () => css('--stage-light') === '1';
   const ink = () => css('--stage-ink') || '232,233,236';
   const { ink: inkA, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, inkA);
+  // labels never show under 11px on a desktop, 9px on a phone (where the minor
+  // ones are dropped instead)
+  let compact = false;
+  let { label } = makeText(ctx, inkA, 1.42, undefined, 11);
+  function sizeText() {
+    const was = compact;
+    compact = isCompact(canvas);
+    if (was !== compact) ({ label } = makeText(ctx, inkA, 1.42, undefined, compact ? 9 : 11));
+  }
   const CX = W / 2;
   const CY = H / 2;
   const CAM = 3.25;
@@ -619,9 +634,9 @@ import Try from '../../../components/sim/Try.astro';
     for (let i = 0; i <= 8; i++) {
       const xv = -XS + (2 * XS * i) / 8;
       ctx.beginPath(); ctx.moveTo(sx(xv), TOP.y); ctx.lineTo(sx(xv), TOP.y + TOP.h); ctx.stroke();
-      label(xv.toFixed(1), sx(xv), TOP.y + TOP.h + 18, 0.3, 'center', 11.5);
+      if (!compact || i % 2 === 0) label(fixed(xv, 1), sx(xv), TOP.y + TOP.h + (compact ? 30 : 20), 0.3, 'center', 11.5);
     }
-    label('x', TOP.x + TOP.w + 14, TOP.y + TOP.h + 4, 0.4, 'center', 11);
+    if (!compact) label('x', TOP.x + TOP.w + 14, TOP.y + TOP.h + 4, 0.4, 'center', 11);
 
     ctx.strokeStyle = LOSS;
     ctx.lineWidth = 2.4;
@@ -678,11 +693,11 @@ import Try from '../../../components/sim/Try.astro';
       ctx.strokeStyle = inv(0.9);
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(px, py, 6, 0, 6.2832); ctx.fill(); ctx.stroke();
-      if (o.dead) label('diverged', px, py + (py < TOP.y + 40 ? 22 : -14), 1, x < 0 ? 'left' : 'right', 11, def.color);
+      if (o.dead) label('diverged', px, py + (py < TOP.y + 40 ? (compact ? 34 : 24) : -14), 1, x < 0 ? 'left' : 'right', 11, def.color);
     });
 
     // the training curve: loss at each step, one line per optimizer
-    label('loss at each step', STRIP.x, STRIP.y - 10, 0.45, 'left', 11.5);
+    label('loss at each step', STRIP.x, STRIP.y - 12, 0.45, 'left', 11.5);
     ctx.strokeStyle = inkA(0.12);
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(STRIP.x, STRIP.y + STRIP.h); ctx.lineTo(STRIP.x + STRIP.w, STRIP.y + STRIP.h); ctx.stroke();
@@ -706,7 +721,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fillStyle = DEFS[i].color;
       ctx.beginPath(); ctx.arc(tx(k), ty(l[k]), 3.5, 0, 6.2832); ctx.fill();
     });
-    label(`k = ${state.iter}`, STRIP.x + STRIP.w, STRIP.y + STRIP.h + 16, 0.4, 'right', 11.5);
+    label(`k = ${state.iter}`, STRIP.x + STRIP.w, STRIP.y + STRIP.h + (compact ? 28 : 20), 0.4, 'right', 11.5);
   }
 
   /** What GD's last few steps have been doing, in one word. */
@@ -727,6 +742,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    sizeText();
     if (sliceMode()) {
       drawSlice();
       words();
@@ -812,8 +828,8 @@ import Try from '../../../components/sim/Try.astro';
       value: String(state.iter),
       status: `${on} of ${DEFS.length} optimizers running · ${s ? `${state.surf} surface, 2 parameters` : 'density cloud, 3 parameters'}`,
       note: s
-        ? 'The loss is the height. Every optimizer only ever asks one question, the gradient where it stands; the coloured arrow is the inertia a momentum method carries.'
-        : 'The loss is minus the density, so the balls climb into the bright cores. Past two parameters there is no height to read off, only the haze.',
+        ? 'The loss is the height. Every optimizer only ever asks for the gradient where it stands.'
+        : 'The loss is minus the density, so the balls climb into the bright cores.',
     });
   }
 
@@ -840,12 +856,12 @@ import Try from '../../../components/sim/Try.astro';
     });
     proj.sort((a, b) => a.depth - b.depth);
     ctx.lineWidth = 2;
-    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    ctx.font = `600 ${textPx(canvas, 12, compact ? 9 : 11, 3)}px 'JetBrains Mono', monospace`;
     for (const a of proj) {
       ctx.strokeStyle = a.c; ctx.fillStyle = a.c;
       ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(a.ex, a.ey); ctx.stroke();
       ctx.beginPath(); ctx.arc(a.ex, a.ey, 2.3, 0, 6.2832); ctx.fill();
-      ctx.fillText(a.l, a.ex + 3, a.ey - 3);
+      ctx.fillText(a.l, a.ex + 4, a.ey - 4);
     }
   }
 
@@ -969,8 +985,9 @@ import Try from '../../../components/sim/Try.astro';
   };
   function syncControls() {
     const m = state.mode;
-    el('slicewrap').hidden = m !== 'slice';
-    el('surfwrap').hidden = m !== 'surface';
+    // the two share one cell, so switching never changes the panel's height
+    el('slicewrap').classList.toggle('off', m !== 'slice');
+    el('surfwrap').classList.toggle('off', m !== 'surface');
     el('ptswrap').hidden = m !== 'cloud';
     el('newfield').hidden = m !== 'cloud';
     sections.classList.toggle('slice', m === 'slice');
@@ -1113,6 +1130,26 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  .swap {
+    display: grid;
+  }
+  .swap > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+    align-self: start;
+  }
+  .swap > .off {
+    visibility: hidden;
+  }
+  #slicewrap,
+  .more {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .more {
+    padding-bottom: 6px;
+  }
   .probe-canvas {
     cursor: crosshair;
     touch-action: none;

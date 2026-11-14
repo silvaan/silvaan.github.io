@@ -13,7 +13,7 @@ import Predict from '../../../components/sim/Predict.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Attention"
-  description="On its own, apple is halfway between a fruit and a phone: one vector has to serve both meanings. Attention lets it look at the other words, weigh them, and take in a mix of what they carry, so the sentence decides which corner it lands in."
+  description="On its own, apple sits halfway between a fruit and a phone. Attention lets it weigh the other words and take in a mix of what they carry, so the sentence decides where it lands."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -103,16 +103,11 @@ import Predict from '../../../components/sim/Predict.astro';
         <Try id="shuffle" />
       </Predict>
     </li>
-    <li>
-      This is a toy: 12 numbers per word, one attention head, weights set by
-      hand. A real model repeats the same step in dozens of heads and layers,
-      on vectors with hundreds of numbers.
-    </li>
   </Fragment>
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed, arrow } from '../../../lib/draw';
   import { segmented, slider, result, readout, tries, el } from '../../../lib/panel';
@@ -138,6 +133,10 @@ import Predict from '../../../components/sim/Predict.astro';
   const setResult = result();
   const setRows = readout();
   let light = isLight(canvas);
+  /** A phone shows the stage at a third of its size: it keeps the map, drawn
+   *  across the whole width, and only the labels that carry the story. */
+  let compact = false;
+  const cz = (n: number) => (compact ? Math.max(n, 15) : n);
   const fruitC = () => (light ? '#16a34a' : '#4ade80');
   const techC = () => (light ? '#9333ea' : '#c084fc');
   const glueC = () => (light ? '#6b7280' : '#9ca3af');
@@ -271,6 +270,11 @@ import Predict from '../../../components/sim/Predict.astro';
 
   // ---------- layout of the stage ----------
   const MAP = { x: 34, y: 236, w: 540, h: 404 };
+  function fitLayout() {
+    compact = isCompact(canvas);
+    MAP.x = compact ? 24 : 34;
+    MAP.w = compact ? W - 48 : 540;
+  }
   const mx = (x: number) => MAP.x + MAP.w / 2 + (x * (MAP.w / 2 - 44)) / 1.15;
   const my = (y: number) => MAP.y + MAP.h / 2 - (y * (MAP.h / 2 - 34)) / 1.25;
   const mapX = (h: number[]) => h[1] - h[0];
@@ -289,8 +293,10 @@ import Predict from '../../../components/sim/Predict.astro';
   }
   function drawBeams(share: number) {
     const ai = appleIdx(), A = toks[ai], top = CHIP_Y - 3;
-    say(ctx, 'how much apple looks at each word', 24, 26, { colour: ink(0.6), size: 12.5, weight: 600 });
-    say(ctx, 'softmax of q · k', 24, 44, { colour: ink(0.38), size: 11.5 });
+    if (!compact) {
+      say(ctx, 'how much apple looks at each word', 24, 26, { colour: ink(0.6), size: 12.5, weight: 600 });
+      say(ctx, 'softmax of q · k', 24, 46, { colour: ink(0.38), size: 11.5 });
+    }
     toks.forEach((t, j) => {
       if (t.a < 0.004) return;
       const col = tokColour(t.word, share);
@@ -323,7 +329,7 @@ import Predict from '../../../components/sim/Predict.astro';
       if (t.a >= 0.025) {
         const [lx, ly] = bez(x0b, top, cx, cy, x1, top, 0.5);
         say(ctx, `${Math.round(t.a * 100)}%`, lx, ly - 12 - 4 * t.a, {
-          colour: col, size: 12 + 4 * t.a, weight: 700, align: 'center', halo: inv(0.85),
+          colour: col, size: cz(12 + 4 * t.a), weight: 700, align: 'center', halo: inv(0.85),
         });
       }
     });
@@ -347,7 +353,7 @@ import Predict from '../../../components/sim/Predict.astro';
         ctx.stroke();
       }
     });
-    say(ctx, 'each word arrives as 12 numbers', W - 24, CHIP_Y + 64, { colour: ink(0.38), size: 11.5, align: 'right' });
+    if (!compact) say(ctx, 'each word arrives as 12 numbers', W - 24, CHIP_Y + 64, { colour: ink(0.38), size: 11.5, align: 'right' });
   }
 
   // ---------- the map ----------
@@ -365,11 +371,13 @@ import Predict from '../../../components/sim/Predict.astro';
     ctx.beginPath();
     ctx.roundRect(MAP.x, MAP.y, MAP.w, MAP.h, 12);
     ctx.stroke();
-    say(ctx, '← fruit', MAP.x + 16, MAP.y + 20, { colour: fruitC(), size: 14, weight: 700 });
-    say(ctx, 'tech →', MAP.x + MAP.w - 16, MAP.y + 20, { colour: techC(), size: 14, weight: 700, align: 'right' });
-    say(ctx, 'things', MAP.x + MAP.w / 2, MAP.y + 20, { colour: ink(0.35), size: 11, align: 'center' });
-    say(ctx, 'actions', MAP.x + MAP.w / 2 - 70, MAP.y + MAP.h - 18, { colour: ink(0.35), size: 11, align: 'center' });
-    say(ctx, 'two directions of the 12-number space', MAP.x + MAP.w - 16, MAP.y + MAP.h - 18, { colour: ink(0.3), size: 10.5, align: 'right' });
+    say(ctx, '← fruit', MAP.x + 16, MAP.y + (compact ? 28 : 20), { colour: fruitC(), size: cz(14), weight: 700 });
+    say(ctx, 'tech →', MAP.x + MAP.w - 16, MAP.y + (compact ? 28 : 20), { colour: techC(), size: cz(14), weight: 700, align: 'right' });
+    if (!compact) {
+      say(ctx, 'things', MAP.x + MAP.w / 2, MAP.y + 20, { colour: ink(0.35), size: 11, align: 'center' });
+      say(ctx, 'actions', MAP.x + MAP.w / 2 - 70, MAP.y + MAP.h - 18, { colour: ink(0.35), size: 11, align: 'center' });
+      say(ctx, 'two directions of the 12-number space', MAP.x + MAP.w - 16, MAP.y + MAP.h - 18, { colour: ink(0.3), size: 11, align: 'right' });
+    }
 
     const inSentence = new Set(toks.map((t) => t.word));
     const place = (name: string, m: Word, bright: boolean) => {
@@ -381,15 +389,16 @@ import Predict from '../../../components/sim/Predict.astro';
         ctx.arc(x, y, 3, 0, Math.PI * 2);
         ctx.fill();
       }
-      say(ctx, name, x + 8, y, { colour: bright ? col : withAlpha(col, 0.6), size: bright ? 13 : 11.5, weight: bright ? 700 : 500 });
+      if (bright || !compact) say(ctx, name, x + 8, y, { colour: bright ? col : withAlpha(col, 0.6), size: bright ? cz(13) : 11.5, weight: bright ? 700 : 500 });
     };
     for (const [name, m] of LANDMARKS) place(name, m, false);
     for (const name of inSentence) if (name !== 'apple' && VOCAB[name].G < 0.5) place(name, VOCAB[name], true);
     // the empty words all sit together, with no meaning to pull with
     const glue = toks.filter((t) => VOCAB[t.word].G > 0.5).map((t) => t.word);
-    say(ctx, glue.length ? [...new Set(glue)].join(' · ') : 'I · an · my · the', mx(0), my(-1.1), {
-      colour: withAlpha(glueC(), glue.length ? 0.85 : 0.4), size: 11.5, align: 'center',
-    });
+    if (glue.length || !compact)
+      say(ctx, glue.length ? [...new Set(glue)].join(' · ') : 'I · an · my · the', mx(0), my(-1.1), {
+        colour: withAlpha(glueC(), glue.length ? 0.85 : 0.4), size: cz(11.5), align: 'center',
+      });
 
     // apple: where it starts, the pieces that move it, where it ends up
     const y0 = my(mapY(VOCAB.apple)), x0 = mx(0), x1 = mx(mapX(h));
@@ -400,7 +409,7 @@ import Predict from '../../../components/sim/Predict.astro';
     ctx.arc(x0, y0, 7, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
-    if (Math.abs(x1 - x0) > 56) say(ctx, 'apple alone', x0, y0 - 18, { colour: ink(0.45), size: 11, align: 'center' });
+    if (!compact && Math.abs(x1 - x0) > 56) say(ctx, 'apple alone', x0, y0 - 18, { colour: ink(0.45), size: 11, align: 'center' });
 
     // one row per word that pushes, laid end to end
     const parts = toks
@@ -413,19 +422,20 @@ import Predict from '../../../components/sim/Predict.astro';
       .slice(0, 4);
     let cum = 0;
     parts.forEach((p, r) => {
-      const y = y0 + 30 + r * 19, a = mx(cum), b = mx(cum + p.dx);
+      const step = compact ? 34 : 19;
+      const y = y0 + (compact ? 40 : 30) + r * step, a = mx(cum), b = mx(cum + p.dx);
       const c = tokColour(p.t.word, share);
       ctx.strokeStyle = c;
       ctx.fillStyle = c;
       ctx.lineWidth = 2.5;
       if (Math.abs(b - a) > 6) arrow(ctx, a, y, b, y, 7);
-      say(ctx, p.t.word, b + (p.dx > 0 ? 9 : -9), y, { colour: c, size: 11.5, weight: 600, align: p.dx > 0 ? 'left' : 'right', halo: inv(0.8) });
+      say(ctx, p.t.word, b + (p.dx > 0 ? 9 : -9), y, { colour: c, size: cz(11.5), weight: 600, align: p.dx > 0 ? 'left' : 'right', halo: inv(0.8) });
       ctx.strokeStyle = ink(0.12);
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
       ctx.moveTo(b, y);
-      ctx.lineTo(b, y + 19);
+      ctx.lineTo(b, y + step);
       ctx.stroke();
       ctx.setLineDash([]);
       cum += p.dx;
@@ -438,7 +448,7 @@ import Predict from '../../../components/sim/Predict.astro';
       arrow(ctx, x0, y0, x1 + Math.sign(x0 - x1) * 9, y0, 9);
     }
     dot(col, 8, x1, y0);
-    say(ctx, 'apple', x1, y0 - 20, { colour: col, size: 15, weight: 750, align: 'center', halo: inv(0.85) });
+    say(ctx, 'apple', x1, y0 - (compact ? 28 : 20), { colour: col, size: cz(15), weight: 750, align: 'center', halo: inv(0.85) });
   }
 
   // ---------- the sum, as strips ----------
@@ -538,12 +548,12 @@ import Predict from '../../../components/sim/Predict.astro';
       colour: tokColour('apple', share),
       status: alone ? 'apple alone · nothing to look at' : `pulled most by “${top.t.word}”, ${Math.round(top.a * 100)}% of the attention`,
       note: alone
-        ? 'With no context, apple stays halfway: one vector has to serve both meanings of the word.'
+        ? 'With no context, one vector has to serve both meanings of the word.'
         : Math.abs(share - 0.5) < 0.2
-          ? 'Both meanings pull: the attention splits and apple lands between the corners. The update is a weighted average of what the words send, not a choice.'
+          ? 'Both meanings pull: the update is a weighted average of what the words send, not a choice.'
           : Math.abs(share - 0.5) > 0.4
-            ? `“${top.t.word}” takes most of the attention, and its value pushes apple into the ${sense} corner. The empty words get almost none.`
-            : 'The pull is partial: attention spread over words that carry no meaning waters the update down.',
+            ? `“${top.t.word}” takes most of the attention and pushes apple into the ${sense} corner.`
+            : 'A partial pull: attention spent on empty words waters the update down.',
     });
   }
 
@@ -554,6 +564,7 @@ import Predict from '../../../components/sim/Predict.astro';
     last = now;
     S.t += dt;
     light = isLight(canvas);
+    fitLayout();
     const target = targets();
     const k = 1 - Math.exp(-dt * 2.6), kx = 1 - Math.exp(-dt * 6);
     toks.forEach((t, j) => {
@@ -565,7 +576,8 @@ import Predict from '../../../components/sim/Predict.astro';
 
     ctx.clearRect(0, 0, W, H);
     drawMap(h, share);
-    drawSum(h, share);
+    // on a phone the sum is in the equation and the verdict in the result below
+    if (!compact) drawSum(h, share);
     drawBeams(share);
     drawChips(share);
     panelText(target);

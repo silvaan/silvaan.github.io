@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Initialisation & Normalisation"
-  description="Every layer multiplies the spread of the signal by a factor, and depth compounds it. Pick a weight scale and watch the activations survive, vanish or overflow, then normalise each layer and see the scale stop compounding."
+  description="Every layer multiplies the spread of the signal by a factor, and depth compounds it. Pick a weight scale, watch the signal survive, vanish or overflow, then normalise and see it stop."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -21,11 +21,12 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="sp"
           width="1000"
-          height="640"
+          height="600"
           role="img"
           aria-label="The spread of the activations and of the gradients at each layer drawn as two ribbons on a log scale; or one batch of activations before and after batch or layer normalisation."
         ></canvas>
       </div>
+      <div class="swap">
       <div id="depthcap">
         <Caption
           legend={[
@@ -36,7 +37,7 @@ import Try from '../../../components/sim/Try.astro';
           hint="The ribbon is the spread of what a layer holds, on a log scale"
         />
       </div>
-      <div id="layercap" hidden>
+      <div id="layercap" class="off">
         <Caption
           legend={[
             { label: 'above the mean', color: '#5eead4' },
@@ -46,6 +47,7 @@ import Try from '../../../components/sim/Try.astro';
           hint="One column is one feature, one dot one example · click the left grid to pick a slice"
           hintId="layer-hint"
         />
+      </div>
       </div>
       <Result label="Signal scale at the last layer" />
     </div>
@@ -70,6 +72,7 @@ import Try from '../../../components/sim/Try.astro';
           { value: 'layer', label: 'Layer norm' },
         ]}
       />
+      <div class="swap">
       <div id="depthwrap">
         <Seg
           id="scheme"
@@ -104,7 +107,7 @@ import Try from '../../../components/sim/Try.astro';
           ]}
         />
       </div>
-      <div id="layerwrap" hidden>
+      <div id="layerwrap" class="off">
         <Slider id="batch" label="Examples in the batch" min={1} max={16} value={12} hint={['a single example', 'a full batch']} />
         <Slider id="gamma" label="Learned scale γ" min={0} max={300} value={100} display="1.00" />
         <Slider id="beta" label="Learned shift β" min={-200} max={200} value={0} display="0.00" />
@@ -119,6 +122,7 @@ import Try from '../../../components/sim/Try.astro';
             { id: 'r-slice', label: 'numbers averaged per slice' },
           ]}
         />
+      </div>
       </div>
     </div>
   </div>
@@ -149,9 +153,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect } from '../../../lib/draw';
+  import { stageInk, roundRect, fixed } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   const FWD = '#5eead4', BWD = '#f59e0b', SLICE = '#7c8cff', BAD = '#f87171';
@@ -174,7 +178,15 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('sp') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => redraw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11px on a desktop; on a phone they are floored at
+  // 9px and the secondary ones are left out
+  let compact = false;
+  let { label } = makeText(ctx, ink, 1.42, undefined, 11);
+  function sizeText() {
+    const was = compact;
+    compact = isCompact(canvas);
+    if (was !== compact) ({ label } = makeText(ctx, ink, 1.42, undefined, compact ? 9 : 11));
+  }
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -418,14 +430,14 @@ import Try from '../../../components/sim/Try.astro';
 
   function ticks(box: { x: number; y: number; w: number; h: number }) {
     const px = (l: number) => box.x + (l / Math.max(1, state.depth)) * box.w;
-    const step = state.depth <= 12 ? 1 : state.depth <= 24 ? 4 : 8;
+    const step = compact ? (state.depth <= 12 ? 4 : 8) : state.depth <= 12 ? 1 : state.depth <= 24 ? 4 : 8;
     for (let l = 0; l <= state.depth; l += step) {
       ctx.strokeStyle = ink(0.1);
       ctx.beginPath();
       ctx.moveTo(px(l), box.y + box.h);
       ctx.lineTo(px(l), box.y + box.h + 5);
       ctx.stroke();
-      label(l === 0 ? 'in' : String(l), px(l), box.y + box.h + 20, 0.3, 'center', 11);
+      label(l === 0 ? 'in' : String(l), px(l), box.y + box.h + (compact ? 30 : 22), 0.3, 'center', 11);
     }
   }
 
@@ -443,17 +455,18 @@ import Try from '../../../components/sim/Try.astro';
     const gx = FWD_R.x + (at / Math.max(1, state.depth)) * FWD_R.w;
     const top = cy - halfOf(c[Math.min(at, c.length - 1)], base);
     // a curve pinned at the ceiling would put its name on the subtitle, so it goes underneath
-    label(name, gx, top - 7 < FWD_R.y - 2 ? top + 15 : top - 7, 0.35, 'center', 10.5);
+    if (!compact) label(name, gx, top - 8 < FWD_R.y - 2 ? top + 18 : top - 8, 0.35, 'center', 10.5);
   }
 
   function ribbons() {
-    label('how wide the signal is, layer by layer', FWD_R.x, FWD_R.y - 34, 0.5, 'left', 13);
-    label(
-      state.norm === 'none'
-        ? 'the ribbon is the spread of what that layer holds'
-        : `the spread after each layer's ${state.norm} norm; the outline is the same weights without it`,
-      FWD_R.x, FWD_R.y - 16, 0.3, 'left', 11
-    );
+    label(compact ? 'the signal, layer by layer' : 'how wide the signal is, layer by layer', FWD_R.x, compact ? FWD_R.y - 16 : FWD_R.y - 36, 0.5, 'left', 13);
+    if (!compact)
+      label(
+        state.norm === 'none'
+          ? 'the ribbon is the spread of what that layer holds'
+          : `after each layer's ${state.norm} norm; the outline is the same weights without it`,
+        FWD_R.x, FWD_R.y - 14, 0.3, 'left', 11
+      );
 
     // without normalisation: the schemes you did not pick, as outlines. With
     // it: what this same scheme would have done without
@@ -468,46 +481,29 @@ import Try from '../../../components/sim/Try.astro';
     ribbon(FWD_R, pass.fwd, FWD, frontOf(), 0);
     ticks(FWD_R);
 
-    label('and what the gradient has left when it gets back', BWD_R.x, BWD_R.y - 34, 0.5, 'left', 13);
-    label('the same weights, travelling the other way', BWD_R.x, BWD_R.y - 16, 0.3, 'left', 11);
+    label(compact ? 'the gradient, coming back' : 'and what the gradient has left when it gets back', BWD_R.x, compact ? BWD_R.y - 16 : BWD_R.y - 36, 0.5, 'left', 13);
+    if (!compact) label('the same weights, travelling the other way', BWD_R.x, BWD_R.y - 14, 0.3, 'left', 11);
     ribbon(BWD_R, pass.bwd, BWD, state.depth, backOf());
     ticks(BWD_R);
     const dead = pass.fwd[pass.fwd.length - 1] < 1e-6;
     const blown = !Number.isFinite(pass.fwd[pass.fwd.length - 1]);
     if (dead || blown)
       label(
-        blown ? 'off the top: these are infinities in a real network' : 'pinched out: nothing reaches the end',
+        compact ? (blown ? 'overflow' : 'vanished') : blown ? 'off the top: these are infinities in a real network' : 'pinched out: nothing reaches the end',
         FWD_R.x + FWD_R.w / 2,
-        FWD_R.y + FWD_R.h + 38,
+        FWD_R.y + FWD_R.h + (compact ? 58 : 46),
         0.8, 'center', 12, BAD
       );
   }
 
   /** The one multiplication that decides everything. */
   function arithmetic() {
+    // the sentence that explains it is the result note under the stage
     const g = growth();
-    const last = pass.fwd[pass.fwd.length - 1];
     const ok = Math.abs(Math.log(g || 1e-9)) < 0.12;
-    const n = survives();
     label(
       `${g.toFixed(3)} per layer   →   ${fmt(g ** state.depth)} after ${state.depth}`,
       SUM.x, SUM.y + 8, 1, 'left', 21, ok ? FWD : BAD
-    );
-    label(
-      ok
-        ? state.norm === 'none'
-          ? 'the signal arrives the size it left, so every layer is doing work'
-          : 'every layer is reset to spread 1, so the weight scale has nothing to compound'
-        : g < 1
-          ? 'every layer shrinks it, and the shrinking compounds until nothing is left'
-          : 'every layer amplifies it, and the amplification compounds until it overflows',
-      SUM.x, SUM.y + 34, 0.45, 'left', 12
-    );
-    label(
-      `measured at the last layer: ${fmt(last)}` +
-        (n === Infinity ? ' · it would survive any depth' : ` · it breaks down after about ${n} layers`),
-      SUM.x, SUM.y + 54, 0.3, 'left', 11,
-      n !== Infinity && n <= state.depth ? BAD : undefined
     );
   }
 
@@ -535,6 +531,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function drawDepth() {
     ctx.clearRect(0, 0, W, H);
+    sizeText();
     ribbons();
     arithmetic();
 
@@ -575,16 +572,16 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: fmt(last),
       colour: dead || blown ? BAD : FWD,
-      status: `${state.depth} layers of ${state.width} units, ${state.act}${normed ? `, ${state.norm} norm` : ''} · each one multiplies the spread by ${g.toFixed(3)} · the gradient reaching layer 1 is ${fmt(gradFirst)}`,
+      status: `${state.depth} layers of ${state.width}, ${state.act}${normed ? `, ${state.norm} norm` : ''} · ×${g.toFixed(3)} per layer · gradient at layer 1: ${fmt(gradFirst)}`,
       note: blown
-        ? 'The weights are too big. Each layer amplifies, the amplification compounds, and in a real network these numbers become infinities within a few more layers.'
+        ? 'Too big: every layer amplifies, and the amplification compounds until it overflows.'
         : dead
-          ? 'The weights are too small. Every layer shrinks the signal, and after this many layers there is nothing left to distinguish one input from another.'
+          ? 'Too small: every layer shrinks the signal until nothing is left to tell inputs apart.'
           : normed
-            ? 'Each layer divides by the spread it measured, so the weight scale cancels. On the way back the gradient is divided by the same spread, so it no longer compounds the weights either, though batch norm still lets it creep up layer by layer.'
+            ? 'Each layer divides by the spread it measured, so the weight scale cancels out.'
             : state.act === 'relu' && state.scheme === 'xavier'
-              ? 'Xavier assumes the activation passes the signal through. ReLU deletes half of it, so the scale shrinks by 1/√2 every layer, and He is exactly this scale with that factor of two put back.'
-              : 'The spread arrives at the top roughly as it left, so every layer is doing work and the gradient has something to come back through.',
+              ? 'ReLU deletes half the signal, so Xavier shrinks it by 1/√2 a layer. He puts the 2 back.'
+              : 'The spread arrives roughly as it left, so every layer is doing work.',
     });
   }
 
@@ -656,8 +653,8 @@ import Try from '../../../components/sim/Try.astro';
 
   /** One column per feature, one dot per example. */
   function grid(g: typeof GA, data: number[][], title: string, sub: string, outline: boolean) {
-    label(title, g.x, g.y - 34, 0.5, 'left', 13);
-    label(sub, g.x, g.y - 16, 0.3, 'left', 11);
+    label(title, g.x, compact ? g.y - 16 : g.y - 36, 0.5, 'left', 13);
+    if (!compact) label(sub, g.x, g.y - 14, 0.3, 'left', 11);
 
     let scale = 0.3;
     for (const r of data) for (const v of r) scale = Math.max(scale, Math.abs(v));
@@ -723,9 +720,9 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.restore();
 
+    if (compact) return;
     label(`± ${scale.toFixed(1)}`, g.x - 8, g.y + 12, 0.3, 'right', 11);
     label('0', g.x - 8, yv(0) + 4, 0.3, 'right', 11);
-    label('one column per feature, one dot per example', g.x, g.y + g.h + 20, 0.3, 'left', 11);
   }
 
   function middle() {
@@ -745,16 +742,17 @@ import Try from '../../../components/sim/Try.astro';
     ctx.closePath();
     ctx.fill();
     const name = state.norm === 'none' ? 'nothing' : state.norm === 'batch' ? 'down a column' : 'across a row';
+    if (compact) return;
     label(name, cx, cy - 16, 0.55, 'center', 11.5, state.norm === 'none' ? undefined : SLICE);
     if (state.norm !== 'none') {
-      label(`γ ${state.gamma.toFixed(2)}`, cx, cy + 22, 0.45, 'center', 11.5);
-      label(`β ${state.beta.toFixed(2)}`, cx, cy + 38, 0.45, 'center', 11.5);
+      label(`γ ${fixed(state.gamma, 2)}`, cx, cy + 26, 0.45, 'center', 11.5);
+      label(`β ${fixed(state.beta, 2)}`, cx, cy + 46, 0.45, 'center', 11.5);
     }
   }
 
   /** The two distributions, drawn on one axis so the change is the whole point. */
   function dists() {
-    label('everything in the batch, before and after', PL.x, PL.y - 22, 0.5, 'left', 13);
+    label(compact ? 'before and after' : 'everything in the batch, before and after', PL.x, PL.y - 16, 0.5, 'left', 13);
     const before = batchRows().flat(), after = Y.flat();
     let lim = 0.5;
     for (const v of before.concat(after)) lim = Math.max(lim, Math.abs(v));
@@ -768,9 +766,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(px(0), PL.y);
     ctx.lineTo(px(0), PL.y + PL.h);
     ctx.stroke();
-    label('0', px(0), PL.y + PL.h + 18, 0.3, 'center', 11);
-    label(`−${lim.toFixed(0)}`, PL.x + 4, PL.y + PL.h + 18, 0.3, 'left', 11);
-    label(`${lim.toFixed(0)}`, PL.x + PL.w - 4, PL.y + PL.h + 18, 0.3, 'right', 11);
+    const below = PL.y + PL.h + (compact ? 28 : 20);
+    label('0', px(0), below, 0.3, 'center', 11);
+    label(`−${lim.toFixed(0)}`, PL.x + 4, below, 0.3, 'left', 11);
+    label(`${lim.toFixed(0)}`, PL.x + PL.w - 4, below, 0.3, 'right', 11);
 
     const hist = (vals: number[], colour: string, alpha: number, fill: boolean) => {
       const BINS = 72;
@@ -802,8 +801,8 @@ import Try from '../../../components/sim/Try.astro';
     };
     hist(before, ink(0.5), 0.55, false);
     hist(after, FWD, 0.16, true);
-    label('before', PL.x + 10, PL.y + 18, 0.45, 'left', 11.5);
-    label('after', PL.x + 10, PL.y + 36, 0.9, 'left', 11.5, FWD);
+    label('before', PL.x + 10, PL.y + (compact ? 28 : 20), 0.45, 'left', 11.5);
+    label('after', PL.x + 10, PL.y + (compact ? 58 : 40), 0.9, 'left', 11.5, FWD);
   }
 
   /** Widest divided by narrowest, along whichever axis is asked for. */
@@ -824,6 +823,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function drawLayer() {
     ctx.clearRect(0, 0, W, H);
+    sizeText();
     Y = normaliseBatch();
     pick = { row: Math.min(pick.row, state.batch - 1), col: pick.col };
     grid(GA, batchRows(), 'what the layer receives', 'a row is an example, a column a feature', true);
@@ -859,15 +859,15 @@ import Try from '../../../components/sim/Try.astro';
       value: flat ? 'everything is β' : `${fmtR(rf)}×`,
       colour: flat ? BAD : rf < 1.05 ? FWD : BWD,
       status: flat
-        ? 'a column of one number has no spread, so every output collapses to β'
-        : `across examples the ratio is ${fmtR(re)}× · everything now has mean ${mean.toFixed(2)} and spread ${stdOf(all).toFixed(2)}`,
+        ? 'one number per column has no spread'
+        : `across examples ${fmtR(re)}× · mean ${fixed(mean, 2)}, spread ${fixed(stdOf(all), 2)}`,
       note: flat
-        ? 'Batch norm needs its neighbours in the batch. With a single example there is nothing to take a spread over, which is exactly the situation a model is in at inference.'
+        ? 'Batch norm needs neighbours in the batch: with one example there is no spread to take.'
         : state.norm === 'none'
-          ? 'Some features are many times wider than others, so a single learning rate is far too large for one and far too small for the next.'
+          ? 'Some features are many times wider than others, so no one learning rate suits them all.'
           : state.norm === 'batch'
-            ? 'Every feature now has the same spread, whatever the layer below did to it, so the next layer sees a fixed scale.'
-            : 'Every example is put on the same footing as itself and depends on no other example, which is what makes this the one that survives a batch of size one.',
+            ? 'Every feature now has the same spread, so the next layer sees a fixed scale.'
+            : 'Each example is scaled against itself alone, so a batch of one is no problem.',
     });
   }
 
@@ -908,10 +908,11 @@ import Try from '../../../components/sim/Try.astro';
   function setView(v: 'depth' | 'layer') {
     state.view = v;
     views.select(v);
-    el('depthwrap').hidden = v !== 'depth';
-    el('depthcap').hidden = v !== 'depth';
-    el('layerwrap').hidden = v !== 'layer';
-    el('layercap').hidden = v !== 'layer';
+    // each pair shares one cell, so switching views never changes a height
+    el('depthwrap').classList.toggle('off', v !== 'depth');
+    el('depthcap').classList.toggle('off', v !== 'depth');
+    el('layerwrap').classList.toggle('off', v !== 'layer');
+    el('layercap').classList.toggle('off', v !== 'layer');
     canvas.classList.toggle('pick', v === 'layer');
     anim.on = false;
     redraw();
@@ -973,6 +974,33 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  /* the two views write equations of different heights: the taller one sets
+     the room, so switching views never pushes the stage down */
+  .sim-stage :global(.stage-head) {
+    min-height: 100px;
+  }
+  @media (max-width: 560px) {
+    .sim-stage :global(.stage-head) {
+      min-height: 174px;
+    }
+  }
+  .swap {
+    display: grid;
+  }
+  .swap > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+    align-self: start;
+  }
+  .swap > .off {
+    visibility: hidden;
+  }
+  #depthwrap,
+  #layerwrap {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
   #sp.pick {
     cursor: crosshair;
   }

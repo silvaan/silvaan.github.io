@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Embeddings"
-  description="An embedding turns a word into a list of numbers, which is an arrow, and words used alike point alike. Rank the words by the angle, by the dot product and by distance, and see why search normalises every arrow first."
+  description="An embedding turns a word into a list of numbers, an arrow, and words used alike point alike. Rank words by angle, dot product or distance, and see why search normalises every arrow first."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -28,10 +28,6 @@ import Try from '../../../components/sim/Try.astro';
       <Caption
         legend={[
           { label: 'the query', color: '#7c8cff' },
-          { label: 'animals', color: '#5eead4' },
-          { label: 'royalty', color: '#c084fc' },
-          { label: 'vehicles', color: '#fbbf24' },
-          { label: 'food', color: '#f472b6' },
           { label: 'a positive number', color: '#60a5fa' },
           { label: 'a negative number', color: '#fb923c' },
         ]}
@@ -92,9 +88,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { segmented, slider, check, result, tries } from '../../../lib/panel';
   import { stageCamera } from '../../../lib/stage-camera';
   import { say, withAlpha, isLight, lerp, clamp01, glows } from '../../../lib/story';
@@ -169,6 +165,14 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- projection ----------
   const O = { x: 660, y: 420, s: 185 };
+  /** On a phone the cards are left out and the arrows take the whole stage. */
+  let compact = false;
+  function fitLayout() {
+    compact = isCompact(canvas);
+    O.x = compact ? W / 2 + 40 : 660;
+    O.y = compact ? 340 : 420;
+    O.s = compact ? 205 : 185;
+  }
   /** Ranking by distance leans in on the animals, where the short arrows are. */
   let zf = 1;
   function project(p: V3) {
@@ -229,6 +233,7 @@ import Try from '../../../components/sim/Try.astro';
     A.gap = lerp(A.gap, S.rank === 'dist' ? 1 : 0, f);
 
     ctx.clearRect(0, 0, W, H);
+    fitLayout();
     sphere(0.3 * nu, light);
     axes(0.6);
     const top = ranking(S.rank)[0].i;
@@ -240,13 +245,14 @@ import Try from '../../../components/sim/Try.astro';
     angleArc(compared, Math.max(A.angle, A.shadow));
     if (S.hover >= 0) walk(S.hover);
     groupNames(0.7);
-    notes(top);
+    if (!compact) {
+      notes(top);
+      focusCard(compared, light);
+      if (nu > 0.5) agreeCard(light);
+      else rankCard(S.rank, compared, light);
+    }
 
-    focusCard(compared, light);
-    if (nu > 0.5) agreeCard(light);
-    else rankCard(S.rank, compared, light);
-
-    if (view.away) say(ctx, 'double-click to reset the view', W - 16, H - 14, { colour: ink(0.45), size: 12, align: 'right' });
+    if (view.away && !compact) say(ctx, 'double-click to reset the view', W - 16, H - 14, { colour: ink(0.45), size: 12, align: 'right' });
     panelText();
     eqTick(compared);
     requestAnimationFrame(frame);
@@ -542,7 +548,7 @@ import Try from '../../../components/sim/Try.astro';
   function focusCard(i: number, light: boolean) {
     const y0 = 20;
     card(162, light, y0);
-    const v = vec(i), cell = 30, gap = 14, sx = CARD.x + 18, sy = y0 + 60;
+    const v = vec(i), cell = 30, gap = 26, sx = CARD.x + 22, sy = y0 + 60;
     const col = GROUP[WORDS[i].g].colour;
     ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
     token(ctx, WORDS[i].w, [], sx + (ctx.measureText(WORDS[i].w).width + 22) / 2, y0 + 16, { light, ink, colour: col, focus: true });
@@ -551,18 +557,9 @@ import Try from '../../../components/sim/Try.astro';
     for (let k = 0; k < 3; k++) {
       const x = sx + k * (cell + gap);
       strip(ctx, [v[k]], x, sy, { light, ink, cell, scale: 1, more: false });
-      say(ctx, (v[k] < 0 ? '−' : '') + Math.abs(v[k]).toFixed(2), x + cell / 2, sy + cell + 14, { colour: ink(0.9), size: 12.5, weight: 650, align: 'center' });
-      say(ctx, names[k], x + cell / 2, sy + cell + 29, { colour: ink(0.45), size: 11, align: 'center' });
+      say(ctx, fixed(v[k], 2), x + cell / 2, sy + cell + 15, { colour: ink(0.9), size: 12.5, weight: 650, align: 'center' });
+      say(ctx, names[k], x + cell / 2, sy + cell + 32, { colour: ink(0.45), size: 11, align: 'center' });
     }
-    const x0 = sx + 3 * (cell + gap) - 6;
-    for (let k = 0; k < 4; k++) {
-      ctx.fillStyle = ink(0.45 * (1 - k / 4));
-      ctx.beginPath();
-      ctx.arc(x0 + 4 + k * 9, sy + cell / 2, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    say(ctx, 'a real model:', x0 + 46, sy + 7, { colour: ink(0.5), size: 12 });
-    say(ctx, 'hundreds more', x0 + 46, sy + 24, { colour: ink(0.5), size: 12 });
     say(ctx, `length ${norm(v).toFixed(2)}   ·   cos θ with the query ${score(i, 'cos').toFixed(2)}`, sx, y0 + 144, { colour: ink(0.6), size: 12 });
   }
 
@@ -583,7 +580,7 @@ import Try from '../../../components/sim/Try.astro';
       const bw = 92 * ((s - lo) / (hi - lo || 1));
       ctx.fillStyle = withAlpha(col, on ? 0.85 : 0.45);
       ctx.fillRect(CARD.x + 142, y - 5, Math.max(1, bw), 10);
-      say(ctx, (s < 0 ? '−' : '') + Math.abs(s).toFixed(2), CARD.x + CARD.w - 14, y, { colour: ink(on ? 0.95 : 0.6), size: 12, align: 'right', weight: on ? 650 : 400 });
+      say(ctx, fixed(s, 2), CARD.x + CARD.w - 14, y, { colour: ink(on ? 0.95 : 0.6), size: 12, align: 'right', weight: on ? 650 : 400 });
     });
   }
 

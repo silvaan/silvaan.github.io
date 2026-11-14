@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Inside a Digit Classifier"
-  description="Draw a digit and watch a pretrained MNIST classifier read it, as a plain stack of layers or as a convolutional network. Every wire is lit by what it carries, and clicking a neuron opens it up to show the picture it looks for."
+  description="Draw a digit and watch a pretrained MNIST classifier read it, as plain layers or as a convolutional network. Every wire is lit by what it carries; click a neuron to see what it looks for."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -84,7 +84,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
@@ -104,7 +104,18 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('nn') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11px on a desktop; a phone floors them at 9px and
+  // drops the small print under each title instead (`note` is that small print)
+  let compact = false;
+  let { label } = makeText(ctx, ink, 1.42, undefined, 11);
+  function sizeText() {
+    const was = compact;
+    compact = isCompact(canvas);
+    if (was !== compact) ({ label } = makeText(ctx, ink, 1.42, undefined, compact ? 9 : 11));
+  }
+  const note = (text: string, x: number, y: number, alpha = 0.32, size = 11, colour?: string) => {
+    if (!compact) label(text, x, y, alpha, 'left', size, colour);
+  };
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -159,8 +170,8 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- the pad and what the network is handed --------------------------------
   function pad() {
-    label('draw a digit here', IMG.x, IMG.y - 30, 0.55, 'left', 13);
-    label('any size, anywhere on the pad', IMG.x, IMG.y - 12, 0.32, 'left', 11);
+    label(compact ? 'draw a digit' : 'draw a digit here', IMG.x, compact ? IMG.y - 14 : IMG.y - 32, 0.55, 'left', 13);
+    note('any size, anywhere on the pad', IMG.x, IMG.y - 12);
     ctx.fillStyle = inv(0.6);
     roundRect(ctx, IMG.x, IMG.y, IMG.s, IMG.s, 8);
     ctx.fill();
@@ -169,15 +180,15 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     roundRect(ctx, IMG.x + 0.5, IMG.y + 0.5, IMG.s - 1, IMG.s - 1, 8);
     ctx.stroke();
-    label('cropped and centred', IMG.x, IMG.y + IMG.s + 20, 0.32, 'left', 11);
+    note('cropped and centred', IMG.x, IMG.y + IMG.s + 22);
   }
 
   /** What the neuron you clicked is looking for, drawn at its own scale. */
   function inspector(run: { h1: Float32Array; h2: Float32Array } | null, cnn: ReturnType<typeof cnnForward> | null) {
-    label('inside one neuron', INS.x, INS.y - 30, 0.55, 'left', 13);
+    label(compact ? 'one neuron' : 'inside one neuron', INS.x, compact ? INS.y - 14 : INS.y - 32, 0.55, 'left', 13);
     const sel = state.sel;
     if (!sel) {
-      label('click a neuron', INS.x, INS.y - 12, 0.32, 'left', 11);
+      note('click a neuron', INS.x, INS.y - 12);
       ctx.strokeStyle = ink(0.1);
       ctx.setLineDash([4, 5]);
       ctx.lineWidth = 1;
@@ -188,16 +199,16 @@ import Try from '../../../components/sim/Try.astro';
     }
     if (state.model === 'mlp') {
       if (sel.layer === 0) {
-        label(`unit ${sel.i + 1}: one weight a pixel`, INS.x, INS.y - 12, 0.32, 'left', 11);
+        note(`unit ${sel.i + 1}: one weight a pixel`, INS.x, INS.y - 12);
         const img = mlpUnitImage(sel.i);
         let mx = 1e-6;
         for (const v of img) mx = Math.max(mx, Math.abs(v));
         tile(INS.x, INS.y, INS.s, 28, img, 0, (v) => signedFill(v, mx));
-        label('teal wants ink, red wants none', INS.x, INS.y + INS.s + 20, 0.32, 'left', 11);
-        if (run) label(`firing at ${run.h1[sel.i].toFixed(3)}`, INS.x, INS.y + INS.s + 38, 0.55, 'left', 12, run.h1[sel.i] > 0 ? POS : undefined);
+        note('teal wants ink, red wants none', INS.x, INS.y + INS.s + 22);
+        if (run) note(`firing at ${run.h1[sel.i].toFixed(3)}`, INS.x, INS.y + INS.s + 42, 0.55, 12, run.h1[sel.i] > 0 ? POS : undefined);
       } else {
         const nIn = sel.layer === 1 ? MLP_ARCH[1] : MLP_ARCH[2];
-        label(sel.layer === 1 ? `unit ${sel.i + 1}: one weight per unit below` : `output ${sel.i}: one weight per unit below`, INS.x, INS.y - 12, 0.32, 'left', 11);
+        note(sel.layer === 1 ? `unit ${sel.i + 1}: one weight per unit below` : `output ${sel.i}: one weight per unit below`, INS.x, INS.y - 12);
         const w = mlpWeightsInto(sel.layer, sel.i);
         let mx = 1e-6;
         for (const v of w) mx = Math.max(mx, Math.abs(v));
@@ -215,12 +226,12 @@ import Try from '../../../components/sim/Try.astro';
         ctx.moveTo(mid, INS.y);
         ctx.lineTo(mid, INS.y + INS.s);
         ctx.stroke();
-        label('teal listens for, red listens against', INS.x, INS.y + INS.s + 20, 0.32, 'left', 11);
+        note('teal listens for, red listens against', INS.x, INS.y + INS.s + 22);
       }
       return;
     }
     if (sel.layer === 0) {
-      label(`filter ${sel.i + 1}: the nine numbers`, INS.x, INS.y - 12, 0.32, 'left', 11);
+      note(`filter ${sel.i + 1}: the nine numbers`, INS.x, INS.y - 12);
       const f = cnnFilter(sel.i);
       let mx = 1e-6;
       for (const v of f) mx = Math.max(mx, Math.abs(v));
@@ -230,11 +241,11 @@ import Try from '../../../components/sim/Try.astro';
           ctx.fillStyle = signedFill(f[r * 3 + c], mx);
           roundRect(ctx, INS.x + c * cell + 2, INS.y + r * cell + 2, cell - 4, cell - 4, 5);
           ctx.fill();
-          label(f[r * 3 + c].toFixed(2), INS.x + c * cell + cell / 2, INS.y + r * cell + cell / 2 + 5, 0.95, 'center', 13);
+          label(f[r * 3 + c].toFixed(compact ? 1 : 2), INS.x + c * cell + cell / 2, INS.y + r * cell + cell / 2 + 5, 0.95, 'center', 13);
         }
-      label('the same nine, used at every position', INS.x, INS.y + INS.s + 20, 0.32, 'left', 11);
+      note('the same nine, used at every position', INS.x, INS.y + INS.s + 22);
     } else if (sel.layer === 1) {
-      label(`map ${sel.i + 1}: eight kernels, one per map below`, INS.x, INS.y - 12, 0.32, 'left', 11);
+      note(`map ${sel.i + 1}: eight kernels, one per map below`, INS.x, INS.y - 12);
       const cell = INS.s / 4 - 4;
       for (let d = 0; d < CNN.c1; d++) {
         const f = cnnFilter2(sel.i, d);
@@ -242,11 +253,11 @@ import Try from '../../../components/sim/Try.astro';
         for (const v of f) mx = Math.max(mx, Math.abs(v));
         const bx = INS.x + (d % 4) * (cell + 5), by = INS.y + Math.floor(d / 4) * (cell + 22);
         tile(bx, by, cell, 3, f, 0, (v) => signedFill(v, mx));
-        label(String(d + 1), bx + cell / 2, by + cell + 14, 0.32, 'center', 11);
+        if (!compact) label(String(d + 1), bx + cell / 2, by + cell + 16, 0.32, 'center', 11);
       }
-      label('added together to make one map', INS.x, INS.y + INS.s + 20, 0.32, 'left', 11);
+      note('added together to make one map', INS.x, INS.y + INS.s + 22);
     } else {
-      label(`output ${sel.i}: what it reads from the maps`, INS.x, INS.y - 12, 0.32, 'left', 11);
+      note(`output ${sel.i}: what it reads from the maps`, INS.x, INS.y - 12);
       const w = mlpWeightsInto(-1, sel.i); // the dense layer of the CNN
       let mx = 1e-6;
       for (const v of w) mx = Math.max(mx, Math.abs(v));
@@ -255,7 +266,7 @@ import Try from '../../../components/sim/Try.astro';
         const bx = INS.x + (c % 4) * (cell + 5), by = INS.y + Math.floor(c / 4) * (cell + 5);
         tile(bx, by, cell, CNN.p2, w, c * CNN.p2 * CNN.p2, (v) => signedFill(v, mx));
       }
-      label('one small picture per map below', INS.x, INS.y + INS.s + 20, 0.32, 'left', 11);
+      note('one small picture per map below', INS.x, INS.y + INS.s + 22);
       void cnn;
     }
   }
@@ -312,14 +323,14 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function outputs(p: Float32Array, top: number) {
-    label('the answer', O.x - 12, O.y - 30, 0.55, 'left', 13);
+    label('the answer', O.x - 12, compact ? O.y - 14 : O.y - 32, 0.55, 'left', 13);
     let mx = 1e-9;
     for (const v of p) mx = Math.max(mx, v);
     for (let d = 0; d < 10; d++) {
       const y = outY(d), on = d === top;
       neuron(O.x, y, O.r, p[d], mx, OUT, state.sel?.layer === 2 && state.sel.i === d);
       label(String(d), O.x, y + 5, on ? 1 : 0.55, 'center', 14, on ? OUT : undefined);
-      const bx = O.x + O.r + 10, bw = 78;
+      const bx = O.x + O.r + 10, bw = compact ? 46 : 78;
       ctx.fillStyle = ink(0.07);
       roundRect(ctx, bx, y - 6, bw, 12, 4);
       ctx.fill();
@@ -330,12 +341,13 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fill();
         ctx.globalAlpha = 1;
       }
-      label(`${(p[d] * 100).toFixed(0)}%`, bx + bw + 8, y + 5, on ? 0.95 : 0.35, 'left', 11, on ? OUT : undefined);
+      label(`${(p[d] * 100).toFixed(0)}%`, bx + bw + 8, y + (compact ? 8 : 5), on ? 0.95 : 0.35, 'left', 11, on ? OUT : undefined);
     }
   }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    sizeText();
     pad();
 
     const mlp = state.model === 'mlp';
@@ -373,15 +385,15 @@ import Try from '../../../components/sim/Try.astro';
       let m1 = 1e-9, m2 = 1e-9;
       for (const v of run.h1) m1 = Math.max(m1, v);
       for (const v of run.h2) m2 = Math.max(m2, v);
-      label(`${c1.n} units`, c1.x - 26, c1.y - 30, 0.55, 'left', 13);
-      label('reads all 784 pixels', c1.x - 26, c1.y - 12, 0.32, 'left', 11);
+      label(`${c1.n} units`, c1.x - 26, compact ? c1.y - 14 : c1.y - 32, 0.55, 'left', 13);
+      note('reads all 784 pixels', c1.x - 26, c1.y - 12);
       for (let i = 0; i < c1.n; i++) {
         neuron(c1.x, nodeY(c1, i), c1.r, run.h1[i], m1, POS, state.sel?.layer === 0 && state.sel.i === i);
         if (run.h1[i] <= 0) firing += 0; else firing++;
         total++;
       }
-      label(`${c2.n} units`, c2.x - 24, c2.y - 30, 0.55, 'left', 13);
-      label('reads layer 1', c2.x - 24, c2.y - 12, 0.32, 'left', 11);
+      label(`${c2.n} units`, c2.x - 24, compact ? c2.y - 24 : c2.y - 32, 0.55, 'left', 13);
+      note('reads layer 1', c2.x - 24, c2.y - 12);
       for (let i = 0; i < c2.n; i++) {
         neuron(c2.x, nodeY(c2, i), c2.r, run.h2[i], m2, POS, state.sel?.layer === 1 && state.sel.i === i);
         if (run.h2[i] > 0) firing++;
@@ -404,8 +416,8 @@ import Try from '../../../components/sim/Try.astro';
       }
       drawWires(w3);
 
-      label(`${CNN.c1} filtered copies`, g1.x, g1.y - 30, 0.55, 'left', 13);
-      label('one 3 × 3 kernel each', g1.x, g1.y - 12, 0.32, 'left', 11);
+      label(compact ? `${CNN.c1} maps` : `${CNN.c1} filtered copies`, g1.x, compact ? g1.y - 14 : g1.y - 32, 0.55, 'left', 13);
+      note('one 3 × 3 kernel each', g1.x, g1.y - 12);
       let m1 = 1e-9;
       for (const v of cnn.a1) m1 = Math.max(m1, v);
       for (let c = 0; c < CNN.c1; c++) {
@@ -416,8 +428,8 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineWidth = on ? 2.4 : 1;
         ctx.strokeRect(b.x, b.y, b.s, b.s);
       }
-      label(`${CNN.c2} deeper maps`, g2.x, g2.y - 30, 0.55, 'left', 13);
-      label('each mixes all eight', g2.x, g2.y - 12, 0.32, 'left', 11);
+      label(compact ? `${CNN.c2} maps` : `${CNN.c2} deeper maps`, g2.x, compact ? g2.y - 14 : g2.y - 32, 0.55, 'left', 13);
+      note('each mixes all eight', g2.x, g2.y - 12);
       let m2 = 1e-9;
       for (const v of cnn.a2) m2 = Math.max(m2, v);
       for (let c = 0; c < CNN.c2; c++) {
@@ -462,7 +474,7 @@ import Try from '../../../components/sim/Try.astro';
       colour: blank ? undefined : OUT,
       status: blank
         ? 'draw a digit on the pad, or load one it has never seen'
-        : `${(p[top] * 100).toFixed(1)}% sure, with ${second} behind it at ${(p[second] * 100).toFixed(1)}% · ${firing} of ${total} neurons firing · ${params.toLocaleString('en')} weights, ${mlp ? ACCURACY.mlp : ACCURACY.cnn}% right on digits it never saw`,
+        : `${(p[top] * 100).toFixed(1)}% sure · then ${second} · ${mlp ? ACCURACY.mlp : ACCURACY.cnn}% right on unseen digits`,
       note: blank
         ? 'The network was trained before this page loaded, so nothing here is learning. Every wire and every neuron is one forward pass.'
         : p[top] < 0.6

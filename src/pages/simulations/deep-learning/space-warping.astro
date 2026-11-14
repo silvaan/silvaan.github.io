@@ -21,7 +21,7 @@ const ACT_OPTIONS = [
 <SimLayout
   areaSlug="deep-learning"
   title="How Layers Bend Space"
-  description="A classifier can only draw a straight line. Everything else a network does is bending the space until a straight line is enough. Every hidden layer here is 2 or 3 units wide, so each space it produces can still be drawn."
+  description="A classifier can only draw a straight line. Everything else a network does is bend space until a straight line is enough. Every layer here is 2 or 3 units wide, so each space can be drawn."
 >
   <div class="sim" id="wrap">
     <div class="sim-view">
@@ -75,8 +75,11 @@ const ACT_OPTIONS = [
           }
         </div>
       </div>
-      <Slider id="lr" label="Learning rate" min={1} max={100} value={30} display="0.030" />
-      <Readout rows={[{ id: 'rstep', label: 'steps' }, { id: 'rloss', label: 'loss' }, { id: 'racc', label: 'accuracy' }, { id: 'rparams', label: 'weights' }]} />
+      <details class="numeric-details">
+        <summary>More</summary>
+        <Slider id="lr" label="Learning rate" min={1} max={100} value={30} display="0.030" />
+      </details>
+      <Readout title="Numbers" rows={[{ id: 'rstep', label: 'steps' }, { id: 'rloss', label: 'loss' }, { id: 'racc', label: 'accuracy' }, { id: 'rparams', label: 'weights' }]} />
     </div>
   </div>
 
@@ -107,7 +110,7 @@ const ACT_OPTIONS = [
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import type { Part } from '../../../lib/equation';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
@@ -599,11 +602,15 @@ const ACT_OPTIONS = [
   const UI = (size: number, weight = 400) =>
     `${weight} ${size}px 'Inter', system-ui, sans-serif`;
   const MONO = (size: number) => `${size}px 'JetBrains Mono', ui-monospace, monospace`;
+  // a phone shows the canvas at a third of its size: labels are floored at
+  // 9px there (11px on a desktop) and the secondary ones are left out
+  let compact = false;
+  const px = (size: number) => textPx(canvas, size + 1, compact ? 9 : 11, compact ? 3 : 2);
   function text(
     s: string, x: number, y: number, size: number, col: string,
     align: CanvasTextAlign = 'left', mono = false, weight = 400
   ) {
-    ctx.font = mono ? MONO(size) : UI(size, weight);
+    ctx.font = mono ? MONO(px(size)) : UI(px(size), weight);
     ctx.fillStyle = col;
     ctx.textAlign = align;
     ctx.fillText(s, x, y);
@@ -837,6 +844,14 @@ const ACT_OPTIONS = [
     return t === 'linear' ? LIN : t === 'act' ? ACTC : t === 'class' ? CUT : inkA(0.5);
   };
 
+  /** The thumbnail label, shortened when the full one would not fit. */
+  function thumbName(k: number, room: number) {
+    const full = shortName(k);
+    ctx.font = MONO(px(10));
+    if (ctx.measureText(full).width <= room) return full;
+    const t = kindOf(k);
+    return t === 'input' ? 'in' : t === 'class' ? 'out' : t === 'linear' ? `lin ${layerOf(k)}` : `act ${layerOf(k)}`;
+  }
   /** The name of a stage, as it appears on its thumbnail. */
   const shortName = (k: number) => {
     const t = kindOf(k);
@@ -882,7 +897,7 @@ const ACT_OPTIONS = [
   }
 
   function drawStrip() {
-    panel(STRIP, 'every step makes a new space: click one, then slide through it');
+    panel(STRIP, compact ? 'click a step' : 'every step makes a new space: click one, then slide through it');
     const boxes = thumbBoxes();
     boxes.forEach((b, k) => {
       drawSpace(k, b, 4, 3, 1.5);
@@ -892,8 +907,8 @@ const ACT_OPTIONS = [
       ctx.lineWidth = on ? 2.5 : 1;
       rr(b.x, b.y, b.w, b.h, 8);
       ctx.stroke();
-      text(shortName(k), b.x + b.w / 2, b.y - 8, 10, on ? col : inkA(0.55), 'center', true);
-      text(subName(k), b.x + b.w / 2, b.y + b.h + 14, 10, hexA(col, on ? 0.95 : 0.6), 'center', true);
+      text(thumbName(k, b.w + 6), b.x + b.w / 2, b.y - 8, 10, on ? col : inkA(0.55), 'center', true);
+      if (!compact) text(subName(k), b.x + b.w / 2, b.y + b.h + 17, 10, hexA(col, on ? 0.95 : 0.6), 'center', true);
       // where the slider sits while it is between two of them
       if (!on && state.pos > k && state.pos < k + 1) {
         const t = state.pos - k;
@@ -908,9 +923,9 @@ const ACT_OPTIONS = [
   // --- loss and architecture --------------------------------------------------------------
 
   function drawLoss() {
-    panel(LOSS, 'loss while it learns');
+    panel(LOSS, compact ? 'loss' : 'loss while it learns');
     // the live numbers ride on the title line, where they cannot crowd the curve
-    text(
+    if (!compact) text(
       `loss ${isFinite(state.loss) ? state.loss.toFixed(4) : '—'} · ${state.steps} steps · ${(
         state.acc * 100
       ).toFixed(1)}% correct`,
@@ -937,13 +952,15 @@ const ACT_OPTIONS = [
         else ctx.lineTo(px, py);
       });
       ctx.stroke();
-      text(max.toFixed(2), x0 + 5, y0 + 12, 10, inkA(0.32), 'left', true);
-      text('0', x0 + 5, y0 + h - 5, 10, inkA(0.32), 'left', true);
+      if (!compact) {
+        text(max.toFixed(2), x0 + 6, y0 + 16, 10, inkA(0.32), 'left', true);
+        text('0', x0 + 6, y0 + h - 6, 10, inkA(0.32), 'left', true);
+      }
     }
   }
 
   function drawArch() {
-    panel(ARCH, 'the network, all of it');
+    panel(ARCH, compact ? 'the network' : 'the network, all of it');
     const cols = state.L + 2;
     const x0 = ARCH.x + 44, span = ARCH.w - 88;
     const cy = ARCH.y + 130;
@@ -990,10 +1007,10 @@ const ACT_OPTIONS = [
         'center',
         true
       );
-      if (i > 0 && i < cols - 1) {
+      if (!compact && i > 0 && i < cols - 1) {
         // the activation is greyed out until the slider passes through it
         const done = state.pos >= 2 * i;
-        text(state.acts[i - 1], colX(i), cy + 82, 10, done ? inkA(0.5) : inkA(0.22), 'center', true);
+        text(state.acts[i - 1], colX(i), cy + 86, 10, done ? inkA(0.5) : inkA(0.22), 'center', true);
       }
     }
   }
@@ -1066,10 +1083,11 @@ const ACT_OPTIONS = [
   function draw() {
     ctx.clearRect(0, 0, W, H);
     ctx.textBaseline = 'alphabetic';
+    compact = isCompact(canvas);
     propagate();
     drawStrip();
 
-    panel(MAIN, longName(state.pos));
+    panel(MAIN, compact ? shortName(Math.round(state.pos)) : longName(state.pos));
     drawSpace(state.pos, MAIN, 18, 1, 4);
 
     drawLoss();

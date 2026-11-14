@@ -12,25 +12,27 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="deep-learning"
   title="Backpropagation"
-  description="One tiny network, one example, every number on screen. Push the input forward, send the error back down the same wires, then see why the activation's slope decides whether a gradient survives many layers."
+  description="One tiny network, one example, every number on screen. Push the input forward, send the error back down the same wires, and see why the activation's slope decides if a gradient survives."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
         <canvas id="bp" class="bp-canvas" width="1000" height="612" role="img" aria-label="A two-input, two-hidden, one-output network with every weight, activation and partial derivative printed beside it, and a strip of the ten steps of one training pass. A second view plots the activation, its slope, and the gradient left after many layers."></canvas>
       </div>
+      <div class="swap">
       <div id="netcap">
         <Caption
           legend={[{ label: 'values going forward', color: '#5eead4' }, { label: 'gradients coming back', color: '#fbbf24' }, { label: 'the update', color: '#7c8cff' }, { label: 'a negative weight', color: '#f87171' }]}
           hint="Wire thickness is the size of the weight · click a cell of the strip to jump to that step"
         />
       </div>
-      <div id="actcap" hidden>
+      <div id="actcap" class="off">
         <Caption
           legend={[{ label: 'activation φ(z)', color: '#5eead4' }, { label: 'slope φ′(z)', color: '#fbbf24' }, { label: 'saturated, |φ′| &lt; 0.1', color: 'rgba(248,113,113,0.6)' }]}
           hint="Click the top plot to move z"
           hintId="act-hint"
         />
+      </div>
       </div>
       <Result label="Step" />
     </div>
@@ -50,7 +52,8 @@ import Try from '../../../components/sim/Try.astro';
           { value: 'softplus', label: 'Softplus' },
         ]}
       />
-      <div id="actwrap" hidden>
+      <div class="swap">
+      <div id="actwrap" class="off">
         <Slider id="z" label="Pre-activation z" min={-5} max={5} step={0.05} value={0} display="0.00" />
         <Slider id="depth" label="Layers n" min={1} max={30} value={10} />
       </div>
@@ -63,6 +66,8 @@ import Try from '../../../components/sim/Try.astro';
         <Seg id="target" label="Target y" attr="y" options={[{ value: '1', label: '1' }, { value: '0', label: '0' }]} />
         <Slider id="lr" label="Learning rate η" min={0.05} max={5} step={0.05} value={0.5} display="0.50" />
         <Readout rows={[{ id: 'pass', label: 'passes done' }, { id: 'yhat', label: 'prediction a<sup>[2]</sup>' }, { id: 'loss', label: 'loss' }]} />
+        <details class="numeric-details">
+        <summary>Every gradient and the loss curve</summary>
         <div class="control">
           <span class="section-label">Gradients <b id="gstate">none yet</b></span>
           <div class="grads">
@@ -81,6 +86,8 @@ import Try from '../../../components/sim/Try.astro';
           <span class="section-label">Loss after each pass</span>
           <canvas id="losscurve" class="mini-canvas" width="300" height="120" role="img" aria-label="Loss after each training pass"></canvas>
         </div>
+        </details>
+      </div>
       </div>
     </div>
   </div>
@@ -111,7 +118,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import type { Part } from '../../../lib/equation';
   import { arrow, roundRect } from '../../../lib/theorem';
@@ -283,7 +290,17 @@ import Try from '../../../components/sim/Try.astro';
   const TEAL = () => css('--accent-2', '#5eead4');
   const AMB = () => (light() ? '#b45309' : '#fbbf24');
   const RED = () => css('--danger', '#f87171');
-  const { label, textWidth } = makeText(ctx, ink);
+  // labels never show under 11px on a desktop; a phone floors them at 9px and
+  // leaves the secondary ones out instead of shrinking them all
+  let compact = false;
+  let { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
+  function sizeText() {
+    const was = compact;
+    compact = isCompact(canvas);
+    if (was !== compact) ({ label, textWidth } = makeText(ctx, ink, 1.42, undefined, compact ? 9 : 11));
+  }
+  /** the logical height of a line of text asked for at `size` */
+  const lineOf = (size: number) => textPx(canvas, Math.round(size * 1.42), compact ? 9 : 11) + 3;
 
   const IN_X = 122, H_X = 434, O_X = 724, LOSS_X = 898;
   const IN_Y = [196, 388];
@@ -364,8 +381,9 @@ import Try from '../../../components/sim/Try.astro';
   function chip(cx: number, cy: number, lines: ChipLine[], glow = false) {
     let w = 0;
     for (const l of lines) w = Math.max(w, textWidth(l.t, l.s ?? 10.5));
+    const lh = lineOf(10.5);
     const bw = w + 18;
-    const bh = lines.length * 17 + 9;
+    const bh = lines.length * lh + 9;
     ctx.fillStyle = bg();
     ctx.globalAlpha = 0.94;
     roundRect(ctx, cx - bw / 2, cy - bh / 2, bw, bh, 6);
@@ -375,7 +393,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = glow ? 1.4 : 1;
     ctx.stroke();
     lines.forEach((l, i) =>
-      label(l.t, cx, cy - bh / 2 + 17 + i * 17 - 4, l.a ?? 0.72, 'center', l.s ?? 10.5, l.c)
+      label(l.t, cx, cy - bh / 2 + lh + i * lh - 4, l.a ?? 0.72, 'center', l.s ?? 10.5, l.c)
     );
   }
 
@@ -405,12 +423,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     }
     label(title, x, y - r - 11, 0.5, 'center', 12);
-    label(value, x, y + 5, value === '?' ? 0.25 : 0.92, 'center', value === '?' ? 15 : 14.5);
+    label(value, x, y + (compact ? 8 : 5), value === '?' ? 0.25 : 0.92, 'center', value === '?' ? 15 : compact ? 12 : 14.5);
   }
 
   // --- the activation view: φ and φ′ on top, φ′ multiplied over n layers below ---
   const AP = { x: 60, y: 36, w: W - 100, h: 300 };
-  const DP = { x: 60, y: 404, w: W - 100, h: 160 };
+  // narrower than the plot above, to leave the curves' names room on the right
+  const DP = { x: 60, y: 404, w: W - 180, h: 160 };
   const AXR = [-5, 5] as const, AYR = [-1.6, 3] as const;
   const ax = (z: number) => AP.x + ((z - AXR[0]) / (AXR[1] - AXR[0])) * AP.w;
   const ay = (y: number) => AP.y + AP.h - ((y - AYR[0]) / (AYR[1] - AYR[0])) * AP.h;
@@ -426,6 +445,7 @@ import Try from '../../../components/sim/Try.astro';
   function drawAct() {
     const A = ACTS[S.act];
     ctx.clearRect(0, 0, W, H);
+    sizeText();
 
     // where the slope has all but vanished
     for (let px = AP.x; px <= AP.x + AP.w; px += 3) {
@@ -467,7 +487,7 @@ import Try from '../../../components/sim/Try.astro';
       const z = Math.max(AXR[0], Math.min(AXR[1], C.z[j]));
       ctx.strokeStyle = ink(0.35);
       ctx.beginPath(); ctx.moveTo(ax(z), AP.y + AP.h - 10); ctx.lineTo(ax(z), AP.y + AP.h); ctx.stroke();
-      label(`z_${j + 1}`, ax(z), AP.y + AP.h - 14, 0.5, 'center', 10.5);
+      if (!compact) label(`z_${j + 1}`, ax(z), AP.y + AP.h - 14, 0.5, 'center', 10.5);
     }
 
     const zv = S.z;
@@ -481,7 +501,10 @@ import Try from '../../../components/sim/Try.astro';
     label(`z = ${zv.toFixed(2)}`, ax(zv) + 8, AP.y + 14, 0.6, 'left', 11.5);
 
     // --- depth: one line per preset, the chosen one bold -----------------------
-    label(`|φ′(z)|^k after k layers, every layer at z = ${zv.toFixed(2)} (log scale)`, DP.x, DP.y - 12, 0.5, 'left', 11.5);
+    label(
+      compact ? '|φ′(z)|^k after k layers (log)' : `|φ′(z)|^k after k layers, every layer at z = ${zv.toFixed(2)} (log scale)`,
+      DP.x, DP.y - 14, 0.5, 'left', 11.5
+    );
     const dy = (v: number) => {
       const l = v <= 0 ? LOG_LO - 1 : Math.log10(v);
       return DP.y + ((LOG_HI - Math.max(LOG_LO, Math.min(LOG_HI, l))) / (LOG_HI - LOG_LO)) * DP.h;
@@ -490,10 +513,11 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = ink(0.08);
     for (const e of [1, 0, -3, -6, -9, -12]) {
       ctx.beginPath(); ctx.moveTo(DP.x, dy(10 ** e)); ctx.lineTo(DP.x + DP.w, dy(10 ** e)); ctx.stroke();
-      label(e === 0 ? '1' : e === 1 ? '10' : `1e${e}`, DP.x - 8, dy(10 ** e) + 4, 0.3, 'right', 10.5);
+      // 10 sits too close to 1 to carry a number of its own
+      if (e !== 1 && (!compact || e === 0)) label(e === 0 ? '1' : `1e${e}`, DP.x - 8, dy(10 ** e) + 4, 0.3, 'right', 10.5);
     }
-    label('0 layers', DP.x, DP.y + DP.h + 16, 0.3, 'left', 11);
-    label(`${S.n}`, DP.x + DP.w, DP.y + DP.h + 16, 0.3, 'right', 11);
+    label(compact ? '0' : '0 layers', DP.x, DP.y + DP.h + lineOf(11), 0.3, 'left', 11);
+    label(`${S.n}`, DP.x + DP.w, DP.y + DP.h + lineOf(11), 0.3, 'right', 11);
     const order = PRESETS.filter((p) => p !== S.act).concat(S.act);
     for (const key of order) {
       const on = key === S.act;
@@ -509,8 +533,11 @@ import Try from '../../../components/sim/Try.astro';
       ctx.globalAlpha = 1;
     }
     // names at the right end, nudged apart so they never overprint
-    const ends = PRESETS.map((key) => ({ key, y: dy(survive(key, S.n)) })).sort((a, b) => a.y - b.y);
-    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 12);
+    // (on a phone only the chosen one is named)
+    const ends = PRESETS.filter((key) => !compact || key === S.act)
+      .map((key) => ({ key, y: dy(survive(key, S.n)) })).sort((a, b) => a.y - b.y);
+    const gapY = lineOf(10.5) - 2;
+    for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + gapY);
     for (const e of ends)
       label(ACTS[e.key].name, DP.x + DP.w + 6, e.y + 4, e.key === S.act ? 1 : 0.55, 'left', 10.5, PCOL[e.key]);
     words();
@@ -527,24 +554,28 @@ import Try from '../../../components/sim/Try.astro';
     const dim = k === 9 ? 0.5 : 1; // last pass's gradients, kept but faded
 
     ctx.clearRect(0, 0, W, H);
+    sizeText();
 
     // heading: which step just happened
     label(
-      k < 0 ? 'press Step to send the input forward' : `step ${k + 1} of 10 · ${TITLES[k]}`,
+      k < 0 ? (compact ? 'press Step' : 'press Step to send the input forward')
+        : compact ? `step ${k + 1} of 10` : `step ${k + 1} of 10 · ${TITLES[k]}`,
       W / 2, 30,
       k < 0 ? 0.35 : 0.72, 'center', 12.5,
       k < 0 ? undefined : flow
     );
 
     // column captions
-    label('a^[0] = x', IN_X, 62, 0.5, 'center', 12);
-    label('the example', IN_X, 80, 0.3, 'center', 11);
-    label('layer 1', H_X, 62, 0.5, 'center', 12);
-    label(`2 units, φ = ${ACTS[S.act].name}`, H_X, 80, 0.3, 'center', 11);
-    label('layer 2 = L', O_X, 62, 0.5, 'center', 12);
-    label('1 unit, σ', O_X, 80, 0.3, 'center', 11);
-    label('loss', LOSS_X, 62, 0.5, 'center', 12);
-    label('one number', LOSS_X, 80, 0.3, 'center', 11);
+    label('a^[0] = x', IN_X, 64, 0.5, 'center', 12);
+    label('layer 1', H_X, 64, 0.5, 'center', 12);
+    label('layer 2 = L', O_X, 64, 0.5, 'center', 12);
+    label('loss', LOSS_X, 64, 0.5, 'center', 12);
+    if (!compact) {
+      label('the example', IN_X, 84, 0.3, 'center', 11);
+      label(`2 units, φ = ${ACTS[S.act].name}`, H_X, 84, 0.3, 'center', 11);
+      label('1 unit, σ', O_X, 84, 0.3, 'center', 11);
+      label('one number', LOSS_X, 84, 0.3, 'center', 11);
+    }
 
     // --- wires, input to hidden ---------------------------------------------
     // labels sit at different points along the two crossing wires so the boxes
@@ -561,8 +592,8 @@ import Try from '../../../components/sim/Try.astro';
         const t = T1[i][j];
         const cx = IN_X + R_IN + t * (H_X - R_H - IN_X - R_IN);
         const cy = IN_Y[i] + t * (H_Y[j] - IN_Y[i]);
-        const lines: ChipLine[] = [{ t: `W^[1]_${j + 1}${i + 1} ${n2(P.w[j][i])}`, a: 0.8 }];
-        if (seen(8)) lines.push({ t: `∂ ${n3(g.dw[j][i])}`, c: amber, a: dim, s: 10 });
+        const lines: ChipLine[] = [{ t: compact ? n2(P.w[j][i]) : `W^[1]_${j + 1}${i + 1} ${n2(P.w[j][i])}`, a: 0.8 }];
+        if (seen(8) && !compact) lines.push({ t: `∂ ${n3(g.dw[j][i])}`, c: amber, a: dim, s: 10 });
         chip(cx, cy, lines, seen(8) && h.e1.some(([a, b]) => a === i && b === j));
       }
     }
@@ -574,8 +605,8 @@ import Try from '../../../components/sim/Try.astro';
       const t = 0.4;
       const cx = H_X + R_H + t * (O_X - R_O - H_X - R_H);
       const cy = H_Y[j] + t * (O_Y - H_Y[j]);
-      const lines: ChipLine[] = [{ t: `W^[2]_${j + 1} ${n2(P.v[j])}`, a: 0.8 }];
-      if (seen(6)) lines.push({ t: `∂ ${n3(g.dv[j])}`, c: amber, a: dim, s: 10 });
+      const lines: ChipLine[] = [{ t: compact ? n2(P.v[j]) : `W^[2]_${j + 1} ${n2(P.v[j])}`, a: 0.8 }];
+      if (seen(6) && !compact) lines.push({ t: `∂ ${n3(g.dv[j])}`, c: amber, a: dim, s: 10 });
       chip(cx, cy, lines, seen(6) && h.e2.includes(j));
     }
 
@@ -587,23 +618,33 @@ import Try from '../../../components/sim/Try.astro';
       const on = seen(j);
       node(H_X, H_Y[j], R_H, `a^[1]_${j + 1}`, on ? n2(C.a[j]) : '?', h.nh.includes(j), flow, on ? C.a[j] : 0);
       const y = H_Y[j] + R_H;
-      label(on ? `z^[1]_${j + 1} ${n2(C.z[j])}` : `z^[1]_${j + 1} ?`, H_X, y + 20, 0.45, 'center', 11.5);
-      label(
-        seen(8) ? `b^[1]_${j + 1} ${n2(P.b[j])}   ∂ ${n3(g.db[j])}` : `b^[1]_${j + 1} ${n2(P.b[j])}`,
-        H_X, y + 41, 0.45, 'center', 11.5
-      );
-      if (seen(7))
-        label(`δ^[1]_${j + 1} = ${n3(g.dh[j])}`, H_X, y + 62, dim, 'center', 11.5, amber);
+      const lh = lineOf(11.5);
+      if (compact) {
+        if (seen(7)) label(`δ ${n3(g.dh[j])}`, H_X, y + lh, dim, 'center', 11.5, amber);
+      } else {
+        label(on ? `z^[1]_${j + 1} ${n2(C.z[j])}` : `z^[1]_${j + 1} ?`, H_X, y + lh, 0.45, 'center', 11.5);
+        label(
+          seen(8) ? `b^[1]_${j + 1} ${n2(P.b[j])}   ∂ ${n3(g.db[j])}` : `b^[1]_${j + 1} ${n2(P.b[j])}`,
+          H_X, y + 2 * lh, 0.45, 'center', 11.5
+        );
+        if (seen(7))
+          label(`δ^[1]_${j + 1} = ${n3(g.dh[j])}`, H_X, y + 3 * lh, dim, 'center', 11.5, amber);
+      }
     }
 
     node(O_X, O_Y, R_O, 'a^[2]', seen(2) ? n2(C.yh) : '?', h.nout, flow, seen(2) ? C.yh : 0);
-    label(seen(2) ? `z^[2] ${n2(C.zo)}` : 'z^[2] ?', O_X, O_Y + R_O + 20, 0.45, 'center', 11.5);
-    label(
-      seen(6) ? `b^[2] ${n2(P.c)}   ∂ ${n3(g.dc)}` : `b^[2] ${n2(P.c)}`,
-      O_X, O_Y + R_O + 41, 0.45, 'center', 11.5
-    );
-    if (seen(5))
-      label(`δ^[2] = ${n3(g.dO)}`, O_X, O_Y + R_O + 62, dim, 'center', 11.5, amber);
+    const lo = lineOf(11.5);
+    if (compact) {
+      if (seen(5)) label(`δ ${n3(g.dO)}`, O_X, O_Y + R_O + lo, dim, 'center', 11.5, amber);
+    } else {
+      label(seen(2) ? `z^[2] ${n2(C.zo)}` : 'z^[2] ?', O_X, O_Y + R_O + lo, 0.45, 'center', 11.5);
+      label(
+        seen(6) ? `b^[2] ${n2(P.c)}   ∂ ${n3(g.dc)}` : `b^[2] ${n2(P.c)}`,
+        O_X, O_Y + R_O + 2 * lo, 0.45, 'center', 11.5
+      );
+      if (seen(5))
+        label(`δ^[2] = ${n3(g.dO)}`, O_X, O_Y + R_O + 3 * lo, dim, 'center', 11.5, amber);
+    }
 
     // --- the loss ------------------------------------------------------------
     arrow(ctx, O_X + R_O + 6, O_Y, BOX.x - 8, O_Y, h.nloss ? flow : ink(0.26), 1.6, 7);
@@ -613,11 +654,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = h.nloss ? flow : ink(0.2);
     ctx.lineWidth = h.nloss ? 2 : 1.2;
     ctx.stroke();
-    label('½(a^[2] − y)²', LOSS_X, BOX.y + 22, 0.45, 'center', 11.5);
-    label(seen(3) ? C.L.toFixed(4) : '?', LOSS_X, BOX.y + 50, seen(3) ? 0.92 : 0.25, 'center', 17);
-    label(`target y = ${S.y}`, LOSS_X, BOX.y + 70, 0.45, 'center', 11.5);
-    if (seen(4))
-      label(`∂L/∂a^[2] = ${n3(g.e)}`, LOSS_X, BOX.y + BOX.h + 22, dim, 'center', 11.5, amber);
+    if (compact) {
+      label(seen(3) ? C.L.toFixed(3) : '?', LOSS_X, BOX.y + BOX.h / 2 + 9, seen(3) ? 0.92 : 0.25, 'center', 15);
+      if (seen(4)) label(`∂ ${n3(g.e)}`, LOSS_X, BOX.y + BOX.h + lineOf(11.5), dim, 'center', 11.5, amber);
+    } else {
+      label('½(a^[2] − y)²', LOSS_X, BOX.y + 22, 0.45, 'center', 11.5);
+      label(seen(3) ? C.L.toFixed(4) : '?', LOSS_X, BOX.y + 50, seen(3) ? 0.92 : 0.25, 'center', 17);
+      label(`target y = ${S.y}`, LOSS_X, BOX.y + 72, 0.45, 'center', 11.5);
+      if (seen(4))
+        label(`∂L/∂a^[2] = ${n3(g.e)}`, LOSS_X, BOX.y + BOX.h + 24, dim, 'center', 11.5, amber);
+    }
 
     drawBar();
     words();
@@ -642,15 +688,16 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineWidth = 1.6;
         ctx.stroke();
       }
-      label(String(i + 1), x + cw / 2, BAR.y + 14, done ? 0.85 : 0.3, 'center', 11.5,
+      if (!compact) label(String(i + 1), x + cw / 2, BAR.y + BAR.h / 2 + lineOf(11.5) * 0.3, done ? 0.85 : 0.3, 'center', 11.5,
         i === S.k ? bg() : undefined);
     }
     // centre of the cells a..b inclusive
     const span = (a: number, b: number) =>
       BAR.x + (a * (cw + gap) + b * (cw + gap) + cw) / 2;
-    label('forward', span(0, 3), BAR.y + 38, 0.4, 'center', 11.5, TEAL());
-    label('backward', span(4, 8), BAR.y + 38, 0.4, 'center', 11.5, AMB());
-    label('update', span(9, 9), BAR.y + 38, 0.4, 'center', 11.5, accent());
+    const below = BAR.y + BAR.h + lineOf(11.5);
+    label('forward', span(0, 3), below, 0.4, 'center', 11.5, TEAL());
+    label('backward', span(4, 8), below, 0.4, 'center', 11.5, AMB());
+    if (!compact) label('update', span(9, 9), below, 0.4, 'center', 11.5, accent());
   }
 
   // --- the line of maths above the stage -------------------------------------
@@ -883,10 +930,11 @@ import Try from '../../../components/sim/Try.astro';
     S.view = v;
     views.select(v);
     if (v === 'act') S.playing = false;
-    el('netwrap').hidden = v !== 'net';
-    el('netcap').hidden = v !== 'net';
-    el('actwrap').hidden = v !== 'act';
-    el('actcap').hidden = v !== 'act';
+    // the two views share one cell, so swapping them never changes a height
+    el('netwrap').classList.toggle('off', v !== 'net');
+    el('netcap').classList.toggle('off', v !== 'net');
+    el('actwrap').classList.toggle('off', v !== 'act');
+    el('actcap').classList.toggle('off', v !== 'act');
   }
   const views = segmented('view', (v) => setView(v as 'net' | 'act'));
   const setZ = slider('z', (v) => { S.z = v; }, two);
@@ -971,6 +1019,17 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  /* on a phone the step's sentence wraps to a different number of lines each
+     step: hold room for the longest, so the page below never jumps */
+  @media (max-width: 600px) {
+    .sim-view :global(#result-status) {
+      display: block;
+      min-height: 3em;
+    }
+    .sim-view :global(#result-note) {
+      min-height: calc(4 * 1.6em);
+    }
+  }
   /* The header carries the rule for the current step. Each of its two lines
      reserves the room the tallest step needs, so the picture underneath never
      moves when the step changes. */
@@ -979,6 +1038,29 @@ import Try from '../../../components/sim/Try.astro';
   }
   .sim-stage :global(.stage-eq .eq-1) {
     min-height: 28px;
+  }
+  /* both views stacked in one grid cell: the hidden one keeps its room */
+  .swap {
+    display: grid;
+  }
+  .swap > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  .swap > .off {
+    visibility: hidden;
+  }
+  #actwrap,
+  #netwrap {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    align-self: start;
+  }
+  #yhat,
+  #loss {
+    min-width: 6ch;
+    text-align: right;
   }
   .grads {
     display: grid;
