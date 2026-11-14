@@ -1,6 +1,7 @@
 ---
 import BaseLayout from './BaseLayout.astro';
 import { getArea } from '../data/tools';
+import { sim, trailsFor, areaNeighbours, areaColor } from '../data/explore';
 
 type Shortcut = 'run' | 'animate' | 'step' | 'reset' | 'fullscreen';
 
@@ -35,52 +36,226 @@ const {
 } = Astro.props;
 const area = getArea(areaSlug);
 const hasObserve = Astro.slots.has('observe');
+
+const key = Astro.url.pathname.replace(/^\/simulations\//, '').replace(/\/$/, '');
+const me = sim(key);
+const paths = trailsFor(key);
+const around = paths.length ? {} : areaNeighbours(key);
 ---
 
-<BaseLayout title={title} description={description} wide>
-  <div class="breadcrumb">
-    <a href="/simulations">Simulations</a>
-    <span>/</span>
-    <a href={`/simulations/${areaSlug}`}>{area?.title ?? areaSlug}</a>
-    <span>/</span>
-    <span>{title}</span>
+<BaseLayout title={title} description={description} wide image={me?.og} mainClass="sim-main">
+  <div class="sim-page" style={`--area:${areaColor(areaSlug)}`}>
+    <div class="sim-top">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="/simulations">Simulations</a>
+        <span>/</span>
+        <a href={`/simulations/${areaSlug}`} class="crumb-area">{area?.title ?? areaSlug}</a>
+      </nav>
+      <button type="button" class="classroom-btn" data-classroom title="Classroom mode (c)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="12" rx="1.5"></rect>
+          <path d="M12 16v4 M8 20h8"></path>
+        </svg>
+        <span class="classroom-on">Classroom</span>
+        <span class="classroom-off">Exit classroom</span>
+      </button>
+    </div>
+
+    <div class="page-head sim-head">
+      <h1>{title}</h1>
+      <p class="lead">{description}</p>
+    </div>
+
+    <div data-sim-format={standard ? 'standard' : 'classic'}>
+      <slot />
+    </div>
+
+    {
+      hasObserve && (
+        <section class="observe" data-observe>
+          <div class="observe-head">
+            <h2>What to observe</h2>
+            <div class="observe-nav" hidden>
+              <button type="button" data-step="-1" aria-label="Previous">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+              </button>
+              <span class="observe-count" aria-live="polite"></span>
+              <button type="button" data-step="1" aria-label="Next">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+            </div>
+          </div>
+          <ol>
+            <slot name="observe" />
+          </ol>
+          <div class="observe-dots" hidden></div>
+        </section>
+      )
+    }
+
+    <nav class="sim-next" aria-label="Where to go next">
+      {
+        paths.map(({ trail, index, prev, next }) => (
+          <div class="sim-next-row">
+            <div class="sim-next-label">
+              <span>Path</span>
+              <a href={`/simulations#path-${trail.slug}`}>{trail.title}</a>
+              <ol class="sim-next-dots" aria-label={`Step ${index + 1} of ${trail.steps.length}`}>
+                {trail.steps.map((k, i) => {
+                  const s = sim(k)!;
+                  return (
+                    <li class={i === index ? 'here' : i < index ? 'done' : ''} style={`--area:${s.color}`}>
+                      <a href={s.href} title={s.title} aria-current={i === index ? 'page' : undefined}>
+                        <span class="sr-only">{s.title}</span>
+                      </a>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+            <div class="sim-next-links">
+              {prev ? (
+                <a class="prev" href={prev.href} style={`--area:${prev.color}`}>
+                  <small>← Before</small>
+                  {prev.title}
+                </a>
+              ) : (
+                <span />
+              )}
+              {next && (
+                <a class="next" href={next.href} style={`--area:${next.color}`}>
+                  <small>Next →</small>
+                  {next.title}
+                </a>
+              )}
+            </div>
+          </div>
+        ))
+      }
+      {
+        !paths.length && around.prev && around.next && around.prev !== me && (
+          <div class="sim-next-row">
+            <div class="sim-next-label">
+              <span>More in</span>
+              <a href={`/simulations/${areaSlug}`}>{area?.title}</a>
+            </div>
+            <div class="sim-next-links">
+              <a class="prev" href={around.prev.href}>
+                <small>← Previous</small>
+                {around.prev.title}
+              </a>
+              {around.next !== around.prev && (
+                <a class="next" href={around.next.href}>
+                  <small>Next →</small>
+                  {around.next.title}
+                </a>
+              )}
+            </div>
+          </div>
+        )
+      }
+    </nav>
+
+    <p class="sim-hint">
+      Shortcuts:
+      {shortcuts.map((name, i) => (
+        <>
+          {i > 0 && ' · '}
+          <kbd>{SHORTCUTS[name][0]}</kbd> {SHORTCUTS[name][1]}
+        </>
+      ))}
+      {' · '}<kbd>c</kbd> classroom · <kbd>/</kbd> search
+    </p>
   </div>
-
-  <div class="page-head">
-    <span class="eyebrow">{area?.title ?? 'Simulator'}</span>
-    <h1>{title}</h1>
-    <p class="lead">{description}</p>
-  </div>
-
-  <div data-sim-format={standard ? 'standard' : 'classic'}>
-    <slot />
-  </div>
-
-  {
-    hasObserve && (
-      <section class="observe">
-        <h2>What to observe</h2>
-        <ol>
-          <slot name="observe" />
-        </ol>
-      </section>
-    )
-  }
-
-  <p class="sim-hint">
-    Shortcuts:
-    {shortcuts.map((name, i) => (
-      <>
-        {i > 0 && ' · '}
-        <kbd>{SHORTCUTS[name][0]}</kbd> {SHORTCUTS[name][1]}
-      </>
-    ))}
-  </p>
 </BaseLayout>
 
 <script>
   import { initStageChrome } from '../lib/sim';
   initStageChrome();
+
+  const root = document.documentElement;
+  const sim = document.querySelector<HTMLElement>('.sim');
+  const panel = sim?.querySelector<HTMLElement>(':scope > .sim-panel');
+  const observe = document.querySelector<HTMLElement>('[data-observe]');
+
+  /* ---------- What to observe: beside the canvas, one item at a time ---------- */
+  if (observe) {
+    // The panel column has room under the controls; put the prompts there so
+    // "Show me" is pressed right next to what it changes.
+    // (Classic pages float their panel over a fullscreen stage and style it
+    // as a direct child of .sim, so they keep the prompts below.)
+    if (panel && sim?.closest('[data-sim-format="standard"]')) {
+      const side = document.createElement('div');
+      side.className = 'sim-side';
+      panel.replaceWith(side);
+      side.append(panel, observe);
+    }
+
+    const items = Array.from(observe.querySelectorAll<HTMLLIElement>(':scope > ol > li'));
+    if (items.length > 1) {
+      const nav = observe.querySelector<HTMLElement>('.observe-nav')!;
+      const count = observe.querySelector<HTMLElement>('.observe-count')!;
+      const dots = observe.querySelector<HTMLElement>('.observe-dots')!;
+      let at = 0;
+      dots.innerHTML = items
+        .map((_, i) => `<button type="button" aria-label="Item ${i + 1}" data-go="${i}"></button>`)
+        .join('');
+      const show = (i: number) => {
+        at = (i + items.length) % items.length;
+        items.forEach((li, j) => li.classList.toggle('on', j === at));
+        dots.querySelectorAll('button').forEach((d, j) => d.classList.toggle('on', j === at));
+        count.textContent = `${at + 1} / ${items.length}`;
+      };
+      observe.classList.add('stepped');
+      nav.hidden = false;
+      dots.hidden = false;
+      nav.querySelectorAll<HTMLButtonElement>('[data-step]').forEach((b) =>
+        b.addEventListener('click', () => show(at + Number(b.dataset.step)))
+      );
+      dots.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-go]');
+        if (b) show(Number(b.dataset.go));
+      });
+      show(0);
+    }
+  }
+
+  /* ---------- classroom mode: the stage, the rule and the prompt, big ---------- */
+  const toggleClassroom = (on = !root.classList.contains('classroom')) => {
+    root.classList.toggle('classroom', on);
+    // canvases sized from their box need a nudge to repaint at the new size
+    window.dispatchEvent(new Event('resize'));
+  };
+  document.querySelector('[data-classroom]')?.addEventListener('click', () => toggleClassroom());
+  document.addEventListener('keydown', (e) => {
+    const t = e.target as HTMLElement;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'c' || e.key === 'C') toggleClassroom();
+    else if (e.key === 'Escape' && root.classList.contains('classroom') && !document.fullscreenElement)
+      toggleClassroom(false);
+  });
+
+  /* ---------- phones: keep the stage in view while the controls scroll ---------- */
+  const stage = sim?.querySelector<HTMLElement>(':scope > .sim-view > .sim-stage');
+  if (stage) {
+    const fit = () => {
+      const narrow = innerWidth <= 820;
+      // only when it leaves at least half the screen for the controls
+      root.classList.toggle('sticky-stage', narrow && stage.offsetHeight < innerHeight * 0.5);
+    };
+    fit();
+    new ResizeObserver(fit).observe(stage);
+    addEventListener('resize', fit);
+  }
+
+  /* ---------- embedded in a post: tell the host page how tall we are ---------- */
+  if (root.classList.contains('embed') && parent !== window) {
+    const send = () =>
+      parent.postMessage({ type: 'sim-embed-height', path: location.pathname, h: document.documentElement.scrollHeight }, '*');
+    new ResizeObserver(send).observe(document.body);
+    send();
+  }
 </script>
 
 <style>
