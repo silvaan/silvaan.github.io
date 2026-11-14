@@ -13,14 +13,14 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Quantum Gates"
-  description="A gate is a rotation, a circuit is a product of rotations, and the state is four complex numbers whose squared lengths are all a measurement ever sees. Build a circuit on two qubits and watch the amplitudes, the two Bloch arrows and the odds move together. Then build the one circuit whose arrows both vanish."
+  description="A gate is a rotation and the state is four complex numbers. Build a two-qubit circuit and watch the amplitudes, the two Bloch arrows and the odds move together, until both arrows vanish."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
         <canvas id="qg" class="qg-canvas" width="960" height="480" role="img" aria-label="A two-qubit circuit you can edit, the four complex amplitudes of the state with their phases, one Bloch arrow per qubit, and the measured outcome counts."></canvas>
       </div>
-      <Caption hint="Click a wire to drop the selected gate there, click the same gate again to remove it; a two-qubit gate puts its control on the wire you clicked" />
+      <Caption hint="Click a wire to place the selected gate, click it again to remove it. Dial: phase · bar: probability" />
       <Result label="Entanglement" />
     </div>
 
@@ -62,6 +62,7 @@ import Try from '../../../components/sim/Try.astro';
         <button type="button" class="btn ghost" id="shoot">Measure ×200</button>
       </Actions>
       <Readout
+        title="Values"
         rows={[
           { id: 'conc', label: 'Entanglement C' },
           { id: 'blen', label: 'Length of each arrow' },
@@ -97,7 +98,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
   import { arrow, roundRect } from '../../../lib/theorem';
@@ -306,18 +308,21 @@ import Try from '../../../components/sim/Try.astro';
   const css = (k: string, f = '') =>
     getComputedStyle(canvas).getPropertyValue(k).trim() || f;
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11.5);
+  // the labels a phone keeps, floored so they still read there
+  const { label: big } = makeText(ctx, ink, 1.42, undefined, 10);
+  let compact = false;
   const accent = () => css('--accent', '#7c8cff');
 
   const KETS = ['00', '01', '10', '11'];
   const KCOL = ['#5eead4', '#60a5fa', '#f59e0b', '#a78bfa'];
 
-  const WIRE = [78, 134];
+  const WIRE = [74, 128];
   const COLX = (i: number) => 138 + i * 88;
   const CELL = 42;
-  const ROW0 = 208;
+  const ROW0 = 236;
   const RPITCH = 56;
-  const BLOCH = { r: 72, y: 300, x: [666, 856] };
+  const BLOCH = { r: 70, y: 318, x: [672, 862] };
 
   // --- the circuit -----------------------------------------------------------
   function gateLabel(g: GateId) {
@@ -329,14 +334,13 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function drawCircuit() {
-    label('THE CIRCUIT', 24, 38, 0.45, 'left', 12);
-    label('click a wire to place the chosen gate', 190, 38, 0.28, 'left', 11.5);
+    if (!compact) label('THE CIRCUIT', 24, 30, 0.45, 'left', 11);
 
     // the column being applied right now
     if (state.pc < COLS) {
       const x = COLX(state.pc);
       ctx.fillStyle = `${accent()}1f`;
-      roundRect(ctx, x - 34, 50, 68, 118, 8);
+      roundRect(ctx, x - 34, WIRE[0] - 30, 68, WIRE[1] - WIRE[0] + 60, 8);
       ctx.fill();
     }
 
@@ -347,8 +351,11 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(96, WIRE[w]);
       ctx.lineTo(W - 92, WIRE[w]);
       ctx.stroke();
-      label(`q_${w}`, 56, WIRE[w] + 4, 0.7, 'left', 12);
-      label('|0⟩', 76, WIRE[w] + 4, 0.4, 'left', 11);
+      if (compact) big(`q${"₀₁"[w]}`, 90, WIRE[w] + 6, 0.7, 'right', 11);
+      else {
+        label(`q${"₀₁"[w]}`, 40, WIRE[w] + 5, 0.7, 'left', 11);
+        label('|0⟩', 64, WIRE[w] + 5, 0.4, 'left', 10);
+      }
     }
 
     // how far the state has got: everything left of this has happened
@@ -405,7 +412,6 @@ import Try from '../../../components/sim/Try.astro';
             ctx.stroke();
           }
         }
-        label(g, x, WIRE[1] + 42, 0.3, 'center', 11);
       }
       for (const [w, g] of [[0, col.top], [1, col.bot]] as [number, GateId | undefined][]) {
         if (!g) continue;
@@ -416,8 +422,13 @@ import Try from '../../../components/sim/Try.astro';
         ctx.strokeStyle = ink(0.3);
         ctx.lineWidth = 1.2;
         ctx.stroke();
-        const t = gateLabel(g);
-        label(t, x, y + 4, 1, 'center', t.length > 2 ? 9 : 13, accent());
+        if (compact) {
+          // a phone has room for the gate's name only, not its angle
+          big(g === 'RX' ? 'Rx' : g === 'RY' ? 'Ry' : g === 'RZ' ? 'Rz' : g, x, y + 6, 1, 'center', 11, accent());
+        } else {
+          const t = gateLabel(g);
+          label(t, x, y + 5, 1, 'center', t.length > 2 ? 9 : 12, accent());
+        }
       }
       if (!used(state.cols[i])) {
         ctx.strokeStyle = ink(0.07);
@@ -435,8 +446,7 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- the four amplitudes ---------------------------------------------------
   function drawState(psi: Psi) {
-    label('THE STATE: FOUR COMPLEX NUMBERS', 24, 190, 0.45, 'left', 12);
-    label('dial = phase · bar = probability', 300, 190, 0.28, 'left', 11);
+    if (!compact) label('THE STATE', 24, 196, 0.45, 'left', 11);
 
     for (let i = 0; i < 4; i++) {
       const y = ROW0 + i * RPITCH;
@@ -445,10 +455,11 @@ import Try from '../../../components/sim/Try.astro';
       const mag = Math.sqrt(p);
       const col = KCOL[i];
 
-      label(`|${KETS[i]}⟩`, 30, y + 5, p > 0.001 ? 1 : 0.3, 'left', 15, col);
+      if (compact) big(`|${KETS[i]}⟩`, 24, y + 6, p > 0.001 ? 1 : 0.35, 'left', 11, col);
+      else label(`|${KETS[i]}⟩`, 30, y + 5, p > 0.001 ? 1 : 0.3, 'left', 13, col);
 
       // the phase dial
-      const dx = 116;
+      const dx = compact ? 150 : 116;
       ctx.strokeStyle = ink(0.12);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -472,29 +483,24 @@ import Try from '../../../components/sim/Try.astro';
         );
       }
 
-      const sign = a[1] < 0 ? '−' : '+';
-      label(
-        `${a[0].toFixed(3)} ${sign} ${Math.abs(a[1]).toFixed(3)}i`,
-        152,
-        y - 4,
-        p > 0.001 ? 0.75 : 0.25,
-        'left',
-        11
-      );
-      label(
-        mag > 0.004
-          ? `∠ ${((Math.atan2(a[1], a[0]) * 180) / Math.PI).toFixed(0)}°`
-          : 'amplitude zero',
-        152,
-        y + 14,
-        0.35,
-        'left',
-        11
-      );
+      // the amplitude in numbers: the dial says the same, so a phone skips it
+      if (!compact) {
+        const sign = a[1] < 0 ? '−' : '+';
+        label(
+          `${fixed(a[0], 3)} ${sign} ${fixed(Math.abs(a[1]), 3)}i`,
+          148,
+          y - 3,
+          p > 0.001 ? 0.75 : 0.25,
+          'left',
+          10
+        );
+        if (mag > 0.004)
+          label(`∠ ${fixed((Math.atan2(a[1], a[0]) * 180) / Math.PI, 0)}°`, 148, y + 15, 0.35, 'left', 10);
+      }
 
       // probability, and what the shots actually gave
-      const bx = 296;
-      const bw = 168;
+      const bx = compact ? 200 : 296;
+      const bw = compact ? 220 : 168;
       ctx.fillStyle = ink(0.07);
       roundRect(ctx, bx, y - 15, bw, 18, 5);
       ctx.fill();
@@ -503,7 +509,8 @@ import Try from '../../../components/sim/Try.astro';
         roundRect(ctx, bx, y - 15, Math.max(2, bw * p), 18, 5);
         ctx.fill();
       }
-      label(`${(p * 100).toFixed(1)}%`, bx + bw + 10, y - 2, 0.9, 'left', 11, col);
+      if (compact) big(`${fixed(p * 100, 0)}%`, bx + bw + 10, y + 4, 0.9, 'left', 11, col);
+      else label(`${fixed(p * 100, 1)}%`, bx + bw + 10, y - 1, 0.9, 'left', 10.5, col);
 
       if (state.total) {
         const f = state.shots[i] / state.total;
@@ -512,25 +519,9 @@ import Try from '../../../components/sim/Try.astro';
         ctx.strokeRect(bx, y + 7, bw, 7);
         ctx.fillStyle = ink(0.45);
         ctx.fillRect(bx, y + 7, bw * f, 7);
-        label(
-          `${state.shots[i]} shots`,
-          bx + bw + 10,
-          y + 14,
-          0.35,
-          'left',
-          11
-        );
+        if (!compact) label(`${state.shots[i]} shots`, bx + bw + 10, y + 16, 0.35, 'left', 10);
       }
     }
-    if (!state.total)
-      label(
-        'press measure to sample this state',
-        296,
-        ROW0 + 3 * RPITCH + 30,
-        0.28,
-        'left',
-        11
-      );
   }
 
   // --- one Bloch sphere per wire --------------------------------------------
@@ -543,8 +534,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function drawBloch(psi: Psi) {
-    label('EACH QUBIT ON ITS OWN', 566, 190, 0.45, 'left', 12);
-    const c = concurrence(psi);
+    if (!compact) label('EACH QUBIT', 600, 196, 0.45, 'left', 11);
 
     for (let w = 0; w < 2; w++) {
       const cx = BLOCH.x[w];
@@ -576,8 +566,9 @@ import Try from '../../../components/sim/Try.astro';
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
         ctx.stroke();
-        label(pos, a.x, a.y - 7, 0.34, 'center', 11);
-        if (neg) label(neg, b.x, b.y + 14, 0.34, 'center', 11);
+        if (compact) continue;
+        label(pos, a.x, a.y - 7, 0.34, 'center', 9);
+        if (neg) label(neg, b.x, b.y + 16, 0.34, 'center', 9);
       }
 
       // the state itself, as long as it still has one
@@ -600,28 +591,18 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fill();
       }
 
-      label(`q_${w}`, cx, cy + R + 26, 0.75, 'center', 12);
-      label(
-        `|r| = ${len.toFixed(2)}`,
-        cx,
-        cy + R + 42,
-        0.5,
-        'center',
-        11.5,
-        len < 0.02 ? '#f59e0b' : undefined
-      );
-      label(
-        c < 0.01
-          ? 'a state of its own'
-          : len < 0.02
-            ? 'no state of its own'
-            : 'partly given away',
-        cx,
-        cy + R + 57,
-        0.32,
-        'center',
-        11
-      );
+      // which qubit, and how much of a state of its own it has left
+      if (compact) big(`q${"₀₁"[w]}`, cx, cy + R + 44, 0.75, 'center', 11);
+      else
+        label(
+          `q${"₀₁"[w]}  |r| = ${fixed(len, 2)}`,
+          cx,
+          cy + R + 46,
+          0.6,
+          'center',
+          10.5,
+          len < 0.02 ? '#f59e0b' : undefined
+        );
     }
   }
 
@@ -646,6 +627,7 @@ import Try from '../../../components/sim/Try.astro';
       }
     }
     const psi = evolve();
+    compact = isCompact(canvas);
     ctx.clearRect(0, 0, W, H);
     drawCircuit();
     drawState(psi);
@@ -655,11 +637,11 @@ import Try from '../../../components/sim/Try.astro';
 
   function sentence(psi: Psi, c: number) {
     if (c > 0.99)
-      return 'maximally entangled: the pair is in one exact state and neither qubit has any state of its own';
+      return 'maximally entangled: the pair has one exact state, neither qubit has its own';
     if (c > 0.01)
-      return 'partly entangled: each arrow has shrunk inside its sphere, and its length is √(1−C²)';
-    if (state.pc === 0) return 'nothing has happened yet: both qubits sit at the north pole, definitely |0⟩';
-    return 'still a product state: these two arrows are the whole of it, one per qubit';
+      return 'partly entangled: each arrow has shrunk to length √(1−C²)';
+    if (state.pc === 0) return 'nothing has happened yet: both qubits sit at |0⟩';
+    return 'a product state: the two arrows are the whole story';
   }
 
   function sync(psi: Psi) {
@@ -668,9 +650,9 @@ import Try from '../../../components/sim/Try.astro';
     let bi = 0;
     for (let i = 1; i < 4; i++) if (cabs2(psi[i]) > cabs2(psi[bi])) bi = i;
     setRows({
-      conc: c.toFixed(3),
-      blen: len.toFixed(3),
-      likely: `|${KETS[bi]}⟩ ${(cabs2(psi[bi]) * 100).toFixed(0)}%`,
+      conc: fixed(c, 3),
+      blen: fixed(len, 3),
+      likely: `|${KETS[bi]}⟩ ${fixed(cabs2(psi[bi]) * 100, 0)}%`,
       shots: String(state.total),
     });
 
@@ -680,7 +662,7 @@ import Try from '../../../components/sim/Try.astro';
       .map((a, i) =>
         cabs2(a) > 1e-6
           ? ([
-              `${shown++ > 0 ? '+' : ''}(${a[0].toFixed(2)}${a[1] < 0 ? '-' : '+'}${Math.abs(a[1]).toFixed(2)}i)|${KETS[i]}\\rangle`,
+              `${shown++ > 0 ? '+' : ''}(${fixed(a[0], 2)}${a[1] < 0 ? '-' : '+'}${Math.abs(a[1]).toFixed(2)}i)|${KETS[i]}\\rangle`,
               KCOL[i],
             ] as [string, string])
           : ''
@@ -689,10 +671,10 @@ import Try from '../../../components/sim/Try.astro';
 
     const said = sentence(psi, c);
     setResult({
-      value: c.toFixed(3),
+      value: fixed(c, 3),
       colour: c > 0.5 ? accent() : undefined,
-      status: `each Bloch arrow has length ${len.toFixed(3)} · most likely outcome |${KETS[bi]}⟩ at ${(cabs2(psi[bi]) * 100).toFixed(0)}% · ${state.total} shots recorded`,
-      note: said.charAt(0).toUpperCase() + said.slice(1) + '. Measuring samples the state as it stands and never changes it here.',
+      status: `arrow length ${fixed(len, 2)} · most likely |${KETS[bi]}⟩ ${fixed(cabs2(psi[bi]) * 100, 0)}%`,
+      note: said.charAt(0).toUpperCase() + said.slice(1) + '.',
     });
     // each basis ket in the colour of its amplitude bar
     setEq({

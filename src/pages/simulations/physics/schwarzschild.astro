@@ -15,7 +15,7 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
 <SimLayout
   areaSlug="physics"
   title="General Relativity"
-  description="Mass changes the measure of time and of distance. Hang two clocks above a black hole, a neutron star or the Earth and the low one runs slow, so its light arrives stretched. Lay a ruler between two circles and it comes out longer than the circles allow: space itself is curved."
+  description="Mass changes the measure of time and distance. Of two clocks hung above a mass the low one runs slow, so its light arrives stretched; a ruler between two circles comes out too long."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -39,12 +39,12 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
       </div>
       <Caption
         legend={[
-          { label: 'clocks', color: AMBER, id: 'lg-clock' },
           { label: 'light', color: SKY, id: 'lg-light' },
+          { label: 'clocks', color: AMBER, id: 'lg-clock' },
           { label: 'clock carried down', color: VIOLET, id: 'lg-twin' },
           { label: 'ruler', color: TEAL, id: 'lg-ruler' },
         ]}
-        hint="Drag a clock up or down. The bow-ties are light cones: light from that point can only go inside them, and near the mass they flatten, so light barely climbs."
+        hint="Drag a clock up or down · in Space, drag to turn the sheet"
       />
       <Result label="Low clock, timed by the high clock" />
     </div>
@@ -74,15 +74,18 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
       />
       <Slider id="r1" label="Lower radius r<sub>1</sub>" min={0} max={1000} value={33} display="1.25 rₛ" />
       <Slider id="r2" label="Upper radius r<sub>2</sub>" min={0} max={1000} value={713} display="6.00 rₛ" />
-      <div id="time-ctl">
-        <Transport running>
-          <button type="button" class="btn ghost" id="twin">Carry a clock down</button>
-        </Transport>
-      </div>
-      <div id="space-ctl" hidden>
-        <Actions>
-          <button type="button" class="btn" id="radar">Send a radar pulse</button>
-        </Actions>
+      <!-- each view's buttons share one grid cell and swap in place -->
+      <div class="view-ctl">
+        <div id="time-ctl">
+          <Transport running>
+            <button type="button" class="btn ghost" id="twin">Carry a clock down</button>
+          </Transport>
+        </div>
+        <div id="space-ctl" class="off">
+          <Actions>
+            <button type="button" class="btn" id="radar">Send a radar pulse</button>
+          </Actions>
+        </div>
       </div>
       <Readout
         title="Numbers"
@@ -126,7 +129,7 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { Camera3D, orbitControls, type Vec } from '../../../lib/scene3d';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
@@ -325,8 +328,21 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
   let dirtyT = true, dirtyS = true;
   const { ctx: xt } = setupCanvas(cT, () => { dirtyT = true; dirtyS = true; });
   const { ctx: xs } = setupCanvas(cS, () => { dirtyT = true; dirtyS = true; });
-  const tT = makeText(xt, ink);
-  const tS = makeText(xs, ink);
+  // labels never show under 11.5px; on a phone (`compact`) the secondary ones
+  // are left out instead, since the rest are drawn twice their size there
+  // a phone shows the 1000-wide canvas at a third of its size: there every label
+  // starts from at least 11, so the floor in makeText can reach 10px on screen
+  const phoneText = (t: ReturnType<typeof makeText>, c: HTMLCanvasElement) => {
+    const up = (size: number) => (isCompact(c) ? Math.max(size, 11) : size);
+    return {
+      label: (s: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 11, colour?: string) =>
+        t.label(s, x, y, alpha, align, up(size), colour),
+      textWidth: (s: string, size: number) => t.textWidth(s, up(size)),
+    };
+  };
+  const tT = phoneText(makeText(xt, ink, 1.42, undefined, 11.5), cT);
+  const tS = phoneText(makeText(xs, ink, 1.42, undefined, 11.5), cS);
+  const compact = () => isCompact(state.view === 'space' ? cS : cT);
 
   function glowDot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, k: PalKey, a = 1) {
     const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
@@ -348,7 +364,7 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
   }
 
   function badge(ctx: CanvasRenderingContext2D, label: typeof tT.label) {
-    if (!weak()) return;
+    if (!weak() || compact()) return;
     const b = body();
     label(`Drawn ${heavier()} so the effect shows. The numbers are for the real ${b.short}.`, 16, 24, 0.5, 'left', 9.5);
     void ctx;
@@ -533,22 +549,25 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
     ctx.moveTo(DG.x0, TW.yBot + 0.5);
     ctx.lineTo(DG.x1, TW.yBot + 0.5);
     ctx.stroke();
-    label(b.floor, DG.x0 + 6, TW.yBot + 22, 0.55, 'left', 9.5);
-    label('far-away time t →', DG.x1, TW.yBot + 46, 0.5, 'right', 9.5);
+    const small = compact();
+    if (!small) {
+      label(b.floor, DG.x0 + 6, TW.yBot + 22, 0.55, 'left', 9.5);
+      label('far-away time t →', DG.x1, TW.yBot + 46, 0.5, 'right', 9.5);
+    }
 
     const { ticks, title } = heightTicks();
     ctx.lineWidth = 1;
     for (const tk of ticks) {
       const y = Math.round(yOf(tk.p)) + 0.5;
-      if (y > TW.yBot - 2) { label(tk.text, DG.x0 - 10, y + 4, 0.45, 'right', 9); continue; }
+      if (y > TW.yBot - 2) { if (!small) label(tk.text, DG.x0 - 10, y + 4, 0.45, 'right', 9); continue; }
       ctx.strokeStyle = ink(0.06);
       ctx.beginPath();
       ctx.moveTo(DG.x0, y);
       ctx.lineTo(DG.x1, y);
       ctx.stroke();
-      label(tk.text, DG.x0 - 10, y + 4, 0.45, 'right', 9);
+      if (!small) label(tk.text, DG.x0 - 10, y + 4, 0.45, 'right', 9);
     }
-    label(title, DG.x0 - 10, TW.yTop - 34, 0.5, 'right', 9);
+    if (!small) label(title, DG.x0 - 10, TW.yTop - 34, 0.5, 'right', 9);
     ctx.strokeStyle = ink(0.25);
     ctx.beginPath();
     ctx.moveTo(DG.x0 + 0.5, TW.yTop - 20);
@@ -740,10 +759,10 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
     ctx.lineTo(xn + 0.5, TW.yBot);
     ctx.stroke();
     ctx.setLineDash([]);
-    label('now', xn, TW.yTop - 28, 0.5, 'center', 9);
+    if (!compact()) label('now', xn, TW.yTop - 28, 0.5, 'center', 9);
 
-    // the stretch, written once two flashes are in
-    if (lastArr.length >= 2) {
+    // the stretch, written once two flashes are in (the result line says it on a phone)
+    if (lastArr.length >= 2 && !compact()) {
       const a = lastArr[lastArr.length - 2], c = lastArr[lastArr.length - 1];
       const xa = xOf(a), xc = xOf(c);
       const per = (D.a2 / D.a1).toFixed(2);
@@ -797,17 +816,17 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
     dial(TW.x, y1, 18, el1 / D.P, 'amber', heads.length || el1 > 0 ? Math.max(0, 1 - sinceEmit * 3) : 0);
     const name = (txt: string, y: number, n: number) => {
       label(txt, TW.x + 28, y - 3, 1, 'left', 10, col('amber'));
-      label(`${Math.floor(n)} tick${Math.floor(n) === 1 ? "" : "s"}`, TW.x + 28, y + 15, 0.7, "left", 9.5);
+      if (!compact()) label(`${Math.floor(n)} tick${Math.floor(n) === 1 ? "" : "s"}`, TW.x + 28, y + 17, 0.7, "left", 9.5);
     };
-    name('high clock', y2, el2 / D.P);
-    name('low clock', y1, el1 / D.P);
+    name(compact() ? 'high' : 'high clock', y2, el2 / D.P);
+    name(compact() ? 'low' : 'low clock', y1, el1 / D.P);
 
     if (trip) {
       const y = yOf(trip.p), x = 54;
       dial(x, y, 15, trip.tau / D.P, 'violet', 0);
-      label('carried', x, y - 23, 1, 'center', 9, col('violet'));
-      label(`${(trip.tau / D.P).toFixed(1)}`, x, y + 31, 0.8, 'center', 9.5);
-      if (trip.phase === 'done') {
+      if (!compact()) label('carried', x, y - 23, 1, 'center', 9, col('violet'));
+      label(`${(trip.tau / D.P).toFixed(1)}`, x, y + 33, 0.8, 'center', 9.5);
+      if (trip.phase === 'done' && !compact()) {
         label(`stayed: ${(trip.home / D.P).toFixed(1)}`, TW.x + 28, y2 + 33, 0.7, 'left', 9.5, col('amber'));
       }
     }
@@ -1040,8 +1059,9 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
       return best;
     };
     const l1 = rightmost(D.p1), l2 = rightmost(D.p2);
-    label('C₁ = 2πr₁', l1.sx + 8, l1.sy + 4, 0.85, 'left', 9.5);
-    label('C₂ = 2πr₂', Math.min(l2.sx + 8, 560), l2.sy + 4, 0.85, 'left', 9.5);
+    const small = compact();
+    label(small ? 'C₁' : 'C₁ = 2πr₁', l1.sx + 8, l1.sy + 4, 0.85, 'left', 9.5);
+    label(small ? 'C₂' : 'C₂ = 2πr₂', Math.min(l2.sx + 8, 560), l2.sy + 4, 0.85, 'left', 9.5);
     {
       // the two counts, on either side of the ruler's chord on screen, clear of both lines
       const S = proj(wpt(D.p1, PHI_R, 0.006)), E = proj(wpt(D.p2, PHI_R, 0.006));
@@ -1059,10 +1079,10 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
         label(txt, lx, ly + 1, alpha, 'center', 9.5, colour);
       };
       const mid = proj(wpt(invert(Dd, Dd(D.p1) + ru.D / 2, D.p1, D.p2), PHI_R, 0.006));
-      tag(`ruler: ${ru.n.toFixed(1)} rungs`, mid.sx, mid.sy, -side, col('teal'), 1);
-      tag(`Δr flat: ${ru.gap.toFixed(1)} rungs`, dashMid.x, dashMid.y, side, ink(0.85), 0.85);
+      tag(small ? `ruler ${ru.n.toFixed(1)}` : `ruler: ${ru.n.toFixed(1)} rungs`, mid.sx, mid.sy, -side, col('teal'), 1);
+      tag(small ? `Δr ${ru.gap.toFixed(1)}` : `Δr flat: ${ru.gap.toFixed(1)} rungs`, dashMid.x, dashMid.y, side, ink(0.85), 0.85);
     }
-    label("the curved space around the mass (Flamm's paraboloid)", 18, H - 16, 0.5, 'left', 9);
+    if (!small) label("the curved space around the mass (Flamm's paraboloid)", 18, H - 16, 0.5, 'left', 9);
 
     // ---- the flat sheet on the right
     const FX0 = 652;
@@ -1075,7 +1095,7 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
     const cxF = 816, cyF = 352, RM = 158;
     const reach = D.p1 + ru.D;
     const sf = RM / reach;
-    label('the same ruler on a flat sheet', cxF, 72, 0.6, 'center', 10);
+    if (!small) label('the same ruler on a flat sheet', cxF, 72, 0.6, 'center', 10);
     // body
     if (state.key === 'bh') ctx.fillStyle = theme.light ? '#111318' : '#000';
     else ctx.fillStyle = `rgba(${bodyRgb()},${theme.light ? 0.4 : 0.5})`;
@@ -1128,22 +1148,25 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
       ctx.lineTo(cxF + 9, yB);
       ctx.stroke();
       const extra = ru.n - ru.gap;
-      label(`${extra.toFixed(1)} rungs past C₂`, cxF + 20, (yA + yB) / 2 + 4, 1, 'left', 9.5, col('rose'));
+      label(small ? `+${extra.toFixed(1)}` : `${extra.toFixed(1)} rungs past C₂`, cxF + 20, (yA + yB) / 2 + 4, 1, 'left', 9.5, col('rose'));
     }
     // flat radar ghost
     if (radar.on || radar.done) {
       const r = radarState();
       if (radar.on && r.flatP !== null) glowDot(ctx, cxF - 14, fy(r.flatP), 3, 'sky', 0.7);
     }
-    const lx = FX0, ly = H - 70;
-    label(`gap from the circles  Δr = ${ru.gap.toFixed(1)} rungs`, lx, ly, 0.75, 'left', 9.5);
-    label(`laid along the ruler  ${ru.n.toFixed(1)} rungs`, lx, ly + 20, 1, 'left', 9.5, col('teal'));
-    if (radar.on || radar.done) {
+    // the same two counts as the tags on the sheet; a phone keeps only those
+    const lx = FX0, ly = H - 76;
+    if (!small) {
+      label(`circles give Δr = ${ru.gap.toFixed(1)} rungs`, lx, ly, 0.75, 'left', 9.5);
+      label(`the ruler lays ${ru.n.toFixed(1)} rungs`, lx, ly + 22, 1, 'left', 9.5, col('teal'));
+    }
+    if ((radar.on || radar.done) && !small) {
       const r = radarState();
       const txt = radar.done
-        ? `radar echo: ${r.ratio.toFixed(2)}× the flat-space time 2Δr/c`
-        : r.flatBack ? 'flat-space echo is back; the real one is not' : 'radar pulse on its way';
-      label(txt, lx, ly + 40, 1, 'left', 9.5, col('sky'));
+        ? `echo: ${r.ratio.toFixed(2)}× the flat 2Δr/c`
+        : r.flatBack ? 'flat echo back, real one not yet' : 'radar pulse on its way';
+      label(txt, lx, ly + 44, 1, 'left', 9.5, col('sky'));
     }
 
     badge(ctx, label);
@@ -1174,7 +1197,6 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
     const b = body();
     const AM = hex('amber'), TE = hex('teal');
     const s1 = slow(state.r1);
-    const x1 = state.r1 / b.rs;
     const rateTex = s1 < 1e-3 ? `1 - ${texSci(s1)}` : (1 - s1).toFixed(3);
     const strTex = s1 < 1e-3 ? `1 + ${texSci(s1 / (1 - s1))}` : (1 / (1 - s1)).toFixed(3);
     setEq({
@@ -1184,10 +1206,11 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
         ['+\\,\\dfrac{dr^2}{1-r_s/r}', TE],
         '+\\,r^2\\,d\\Omega^2',
       ],
+      // r₁ itself is on its slider; the line keeps to the two effects
       live: [
-        `r_1 = ${x1 > 999 ? texSci(x1) : x1.toFixed(2)}\\,r_s`,
-        [`\\quad d\\tau/dt = ${rateTex}`, AM],
-        [`\\quad d\\ell/dr = ${strTex}`, TE],
+        [`d\\tau/dt = ${rateTex}`, AM],
+        // on a phone the stretch term would wrap the line once the numbers go tiny
+        ...(compact() ? [] : [[`\\quad d\\ell/dr = ${strTex}`, TE] as [string, string]]),
       ],
     });
 
@@ -1315,13 +1338,10 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
     views.select(v);
     cT.hidden = v !== 'time';
     cS.hidden = v !== 'space';
-    el('time-ctl').hidden = v !== 'time';
-    el('space-ctl').hidden = v !== 'space';
+    el('time-ctl').classList.toggle('off', v !== 'time');
+    el('space-ctl').classList.toggle('off', v !== 'space');
     for (const id of ['lg-clock', 'lg-twin']) el(id).style.display = v === 'time' ? '' : 'none';
     el('lg-ruler').style.display = v === 'space' ? '' : 'none';
-    el('scene-hint').textContent = v === 'time'
-      ? 'Drag a clock up or down. The bow-ties are light cones: light from that point can only go inside them, and near the mass they flatten, so light barely climbs.'
-      : 'Drag to turn the sheet, scroll to zoom. The faint rings are equal steps of r: near the mass one rung spans fewer of them.';
     dirtyT = dirtyS = true;
     sync();
   }
@@ -1445,10 +1465,17 @@ const AMBER = '#f59e0b', SKY = '#38bdf8', VIOLET = '#c084fc', TEAL = '#2dd4bf';
 
 <style>
   :global(#gt[hidden]),
-  :global(#gs[hidden]),
-  :global(#time-ctl[hidden]),
-  :global(#space-ctl[hidden]) {
+  :global(#gs[hidden]) {
     display: none !important;
+  }
+  .view-ctl {
+    display: grid;
+  }
+  .view-ctl > div {
+    grid-area: 1 / 1;
+  }
+  .view-ctl > .off {
+    visibility: hidden;
   }
   #gs {
     cursor: grab;

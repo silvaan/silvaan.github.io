@@ -12,14 +12,21 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Nuclear Fusion"
-  description="Two light nuclei repel each other fiercely, and only by slamming them together hard enough to tunnel through that wall do they merge and pour out energy. Every star and every reactor lives or dies on one line: whether the power out beats the power leaking away."
+  description="Two light nuclei repel fiercely; only slammed together hard enough to tunnel through that wall do they merge and release energy. Every star and reactor lives on whether power out beats power lost."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="fus" class="fus-canvas" width="1000" height="720" role="img" aria-label="Nuclei in a hot plasma colliding and occasionally fusing, with the power balance and the Lawson criterion drawn beside them."></canvas>
+        <canvas id="fus" class="fus-canvas" width="1000" height="600" role="img" aria-label="Nuclei in a hot plasma colliding and occasionally fusing, with the power balance and the Lawson criterion drawn beside them."></canvas>
       </div>
-      <Caption hint="The box is a portrait, not a headcount; the reactivity, the power balance and the Lawson line are computed from the numbers you dial" />
+      <Caption
+        legend={[
+          { label: 'deuterium', color: '#5b8cff', id: 'lg-a' },
+          { label: 'tritium', color: '#34d399', id: 'lg-b' },
+          { label: 'fusion', color: '#ffb03a' },
+        ]}
+        hint="A portrait of the plasma, not a headcount"
+      />
       <Result label="Fusion power" />
     </div>
 
@@ -71,8 +78,8 @@ import Try from '../../../components/sim/Try.astro';
       reactivity curve climbs almost vertically with temperature. <Try id="heat" label="Run" />
     </li>
     <li>
-      In the <b>Tokamak</b> the triple product n·T·τ crosses the Lawson line and
-      the alphas outheat every loss: <b>ignited</b>. Drop the confinement time
+      In the <b>Tokamak</b> the triple product n·T·τ passes the Lawson value for
+      ignition and the alphas outheat every loss: <b>ignited</b>. Drop the confinement time
       and it dies, though the fuel never changed. <Try id="tokamak" label="Run" />
     </li>
     <li>
@@ -89,8 +96,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
+  import { fixed } from '../../../lib/draw';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   // ---------------------------------------------------------------------------
@@ -284,7 +292,10 @@ import Try from '../../../components/sim/Try.astro';
   const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const inkRGB = () => cssVar('--stage-ink') || '232,233,236';
   const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
-  const { label, textWidth } = makeText(ctx, inkA);
+  const { label } = makeText(ctx, inkA, 1.42, undefined, 11.5);
+  // the few labels a phone keeps, floored so they still read there
+  const { label: big } = makeText(ctx, inkA, 1.42, undefined, 11.5);
+  let compact = false;
 
   const D_COL = '#5b8cff';
   const T_COL = '#34d399';
@@ -296,10 +307,11 @@ import Try from '../../../components/sim/Try.astro';
   const BAD = '#ef4444';
   const DIM = '#8a8f9c';
 
-  const BOX = { x: 20, y: 84, w: 592, h: 620 };
-  const RX = { x: 632, y: 84, w: 348, h: 210 };
-  const PB = { x: 632, y: 316, w: 348, h: 178 };
-  const LAW = { x: 632, y: 512, w: 348, h: 192 };
+  // the plasma on the left; on the right why temperature matters (reactivity)
+  // and whether it pays (the power balance). The Lawson numbers are under the stage.
+  const BOX = { x: 20, y: 44, w: 560, h: 536 };
+  const RX = { x: 610, y: 44, w: 370, h: 246 };
+  const PB = { x: 610, y: 334, w: 370, h: 246 };
 
   function rr(x: number, y: number, w: number, h: number, r: number) {
     const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
@@ -316,7 +328,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     rr(p.x, p.y, p.w, p.h, 10);
     ctx.stroke();
-    label(title, p.x + 2, p.y - 9, 0.5, 'left', 11);
+    if (!compact) label(title, p.x + 2, p.y - 12, 0.5, 'left', 10);
   }
 
   function fuelColour(sp: number) {
@@ -327,7 +339,7 @@ import Try from '../../../components/sim/Try.astro';
   function drawBox() {
     const b = balance();
     panel(BOX, 'THE PLASMA');
-    const ix = BOX.x + 24, iy = BOX.y + 44, iw = BOX.w - 48, ih = BOX.h - 96;
+    const ix = BOX.x + 20, iy = BOX.y + 20, iw = BOX.w - 40, ih = BOX.h - 40;
 
     // a warm floor whose glow tracks how hard the plasma is burning
     const glow = ignitedGlow;
@@ -373,27 +385,6 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     }
 
-    // header readout
-    label(`T = ${fmtTemp(state.T)}`, BOX.x + 6, BOX.y + 22, 0.85, 'left', 13, HOT);
-    label(`n = ${eng(state.n, '/m³', 1)}`, BOX.x + BOX.w - 6, BOX.y + 22, 0.85, 'right', 13, ACC);
-
-    // legend + confinement note along the bottom
-    const ly = BOX.y + BOX.h - 14;
-    if (state.fuel === 'pp') {
-      dot(BOX.x + 10, ly - 4, D_COL);
-      label('protons', BOX.x + 22, ly, 0.55, 'left', 11);
-    } else {
-      dot(BOX.x + 10, ly - 4, D_COL);
-      label('deuterium', BOX.x + 22, ly, 0.55, 'left', 11);
-      dot(BOX.x + 118, ly - 4, T_COL);
-      label(state.fuel === 'dhe3' ? 'helium-3' : 'tritium', BOX.x + 130, ly, 0.55, 'left', 11);
-    }
-    dot(BOX.x + 250, ly - 4, FIRE);
-    label('fusion', BOX.x + 262, ly, 0.55, 'left', 11);
-    if (state.gravity)
-      label('gravity holds it, radiation trapped', BOX.x + BOX.w - 6, ly, 0.5, 'right', 11, WARN);
-    else
-      label(`confinement τ = ${eng(state.tau, 's', 1)}`, BOX.x + BOX.w - 6, ly, 0.5, 'right', 11, DIM);
   }
   function dot(x: number, y: number, c: string) {
     ctx.fillStyle = c;
@@ -404,13 +395,15 @@ import Try from '../../../components/sim/Try.astro';
 
   function drawReactivity() {
     panel(RX, 'REACTIVITY vs TEMPERATURE');
-    const px = RX.x + 40, py = RX.y + 18, pw = RX.w - 56, ph = RX.h - 52;
+    const px = RX.x + 24, py = RX.y + 20, pw = RX.w - 48, ph = RX.h - (compact ? 40 : 60);
     const f = FUELS[state.fuel];
     const Tmin = 0.3, Tmax = 300;
     const LX = (T: number) => px + (Math.log(T / Tmin) / Math.log(Tmax / Tmin)) * pw;
     // sample the curve to find its own vertical range
     const svMax = Math.max(reactivity(Tmax, f), 1e-30);
-    const svFloor = 1e-30;
+    // nine decades below the curve's own top, so even p-p (whose ⟨σv⟩ sits
+    // twenty decades under D-T) draws a curve rather than a flat line
+    const svFloor = svMax * 1e-9;
     const LY = (sv: number) =>
       py + ph - (Math.log(Math.max(sv, svFloor) / svFloor) / Math.log(svMax / svFloor)) * ph;
 
@@ -447,30 +440,32 @@ import Try from '../../../components/sim/Try.astro';
     ctx.arc(cx, cy, 5, 0, Math.PI * 2);
     ctx.fill();
 
-    for (const T of [1, 10, 100]) label(`${T}`, LX(T), py + ph + 15, 0.4, 'center', 11);
-    label('keV', px + pw, py + ph + 15, 0.4, 'right', 11);
-    label(`${f.label}`, px + 4, py + 12, 0.75, 'left', 12, HOT);
-    label('almost vertical: fusion is fierce about temperature', px, RX.y + RX.h - 12, 0.4, 'left', 11);
+    if (!compact) {
+      for (const T of [1, 10, 100]) label(`${T}`, LX(T), py + ph + 22, 0.45, 'center', 9.5);
+      label('keV', px + pw, py + ph + 22, 0.45, 'right', 9.5);
+    }
+    big(`${f.label}`, px + 6, py + 16, 0.8, 'left', compact ? 12 : 10, HOT);
   }
 
   function drawBalance() {
     const b = balance();
     panel(PB, 'POWER: OUT vs LOST');
-    const px = PB.x + 16, pw = PB.w - 32;
-    let y = PB.y + 26;
+    const px = PB.x + 18, pw = PB.w - 36;
+    let y = PB.y + 34;
 
     if (state.gravity) {
-      label('GRAVITY-CONFINED STAR', px, y, 0.95, 'left', 14, WARN);
-      y += 22;
-      label('radiation is trapped and reabsorbed, so it simply', px, y, 0.5, 'left', 11);
-      y += 16;
-      label('burns at whatever rate its own weight allows', px, y, 0.5, 'left', 11);
+      big('A STAR', px, y, 0.95, 'left', compact ? 13 : 11, WARN);
+      if (compact) return;
+      y += 30;
+      label('gravity holds it and traps', px, y, 0.55, 'left', 10);
+      y += 20;
+      label('its radiation', px, y, 0.55, 'left', 10);
+      y += 36;
+      label(`≈ ${eng(b.pFus, 'W/m³', 1)}`, px, y, 0.85, 'left', 11, FIRE);
       y += 26;
-      label(`fusion power ≈ ${eng(b.pFus, 'W/m³', 1)}`, px, y, 0.8, 'left', 13, FIRE);
-      y += 22;
-      label('less per litre than a warm compost heap,', px, y, 0.45, 'left', 11);
-      y += 15;
-      label('and yet it has shone for billions of years', px, y, 0.45, 'left', 11);
+      label('less per litre than', px, y, 0.45, 'left', 10);
+      y += 20;
+      label('a warm compost heap', px, y, 0.45, 'left', 10);
       return;
     }
 
@@ -481,92 +476,30 @@ import Try from '../../../components/sim/Try.astro';
     const BW = (v: number) =>
       Math.max(2, (Math.log(Math.max(v, bot) / bot) / Math.log(top / bot)) * pw);
 
-    label('self-heating (α)', px, y, 0.55, 'left', 11, FIRE);
-    label(eng(b.pAlpha, 'W/m³', 1), px + pw, y, 0.7, 'right', 11, FIRE);
-    y += 8;
+    big('α heating', px, y, 0.65, 'left', compact ? 12 : 10, FIRE);
+    if (!compact) label(eng(b.pAlpha, 'W/m³', 1), px + pw, y, 0.75, 'right', 10, FIRE);
+    y += 12;
     ctx.fillStyle = FIRE;
-    rr(px, y, BW(b.pAlpha), 12, 3);
+    rr(px, y, BW(b.pAlpha), 14, 3);
     ctx.fill();
-    y += 26;
-    label('losses (radiation + leak)', px, y, 0.55, 'left', 11, ACC);
-    label(eng(b.pLoss, 'W/m³', 1), px + pw, y, 0.7, 'right', 11, ACC);
-    y += 8;
+    y += 46;
+    big('losses', px, y, 0.65, 'left', compact ? 12 : 10, ACC);
+    if (!compact) label(eng(b.pLoss, 'W/m³', 1), px + pw, y, 0.75, 'right', 10, ACC);
+    y += 12;
     ctx.fillStyle = ACC;
-    rr(px, y, BW(b.pLoss), 12, 3);
+    rr(px, y, BW(b.pLoss), 14, 3);
     ctx.fill();
-    y += 30;
+    y += 58;
 
     if (b.ignited) {
-      label('IGNITED: the fire feeds itself', px, y, 0.95, 'left', 15, GOOD);
-      y += 22;
-      label('the alphas alone outheat every loss', px, y, 0.5, 'left', 11);
+      big('IGNITED', px, y, 0.95, 'left', compact ? 13 : 12, GOOD);
+      if (!compact) label('the fire feeds itself', px, y + 26, 0.55, 'left', 10);
     } else {
-      const qtxt = b.Q === Infinity ? '∞' : b.Q < 0.01 ? b.Q.toExponential(1) : b.Q.toFixed(2);
-      label(`not igniting · gain Q = ${qtxt}`, px, y, 0.9, 'left', 14, b.Q > 1 ? WARN : DIM);
-      y += 22;
-      if (b.pAlpha <= b.pBrem)
-        label('bremsstrahlung alone beats it: too cold', px, y, 0.5, 'left', 11, DIM);
-      else
-        label('heat leaks out faster than fusion makes it', px, y, 0.5, 'left', 11, DIM);
+      const qtxt = b.Q === Infinity ? '∞' : b.Q < 0.01 ? b.Q.toExponential(1) : fixed(b.Q, 2);
+      big(compact ? 'not igniting' : `not igniting · Q = ${qtxt}`, px, y, 0.9, 'left', compact ? 13 : 11, b.Q > 1 ? WARN : DIM);
+      if (!compact)
+        label(b.pAlpha <= b.pBrem ? 'too cold: radiation alone wins' : 'heat leaks faster than it is made', px, y + 26, 0.55, 'left', 10, DIM);
     }
-  }
-
-  function drawLawson() {
-    const b = balance();
-    panel(LAW, 'THE LAWSON LINE  (n · T · τ)');
-    const px = LAW.x + 16, pw = LAW.w - 32;
-    let y = LAW.y + 28;
-
-    if (state.gravity) {
-      label(`a proton here waits`, px, y, 0.6, 'left', 12);
-      y += 24;
-      label(fmtYears(b.waitYears), px, y, 0.95, 'left', 20, WARN);
-      y += 26;
-      label('to fuse. Only the Sun’s sheer size turns that', px, y, 0.5, 'left', 11);
-      y += 15;
-      label('trickle into a star. Multiply this rate by 10⁵⁷', px, y, 0.5, 'left', 11);
-      y += 15;
-      label('nuclei and you get a steady 4×10²⁶ watts.', px, y, 0.5, 'left', 11);
-      return;
-    }
-
-    const tp = b.tripleProduct;
-    const thr = b.tripleThreshold;
-    // a log bar from 1e18 to 1e24 keV·s/m³
-    const lo = 1e18, hi = 1e24;
-    const LX = (v: number) => px + (Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo)) * pw;
-    const barY = y + 6;
-    ctx.fillStyle = inkA(0.07);
-    rr(px, barY, pw, 14, 4);
-    ctx.fill();
-    const grd = ctx.createLinearGradient(px, 0, px + pw, 0);
-    grd.addColorStop(0, DIM);
-    grd.addColorStop(1, GOOD);
-    ctx.fillStyle = grd;
-    rr(px, barY, Math.max(3, LX(tp) - px), 14, 4);
-    ctx.fill();
-    // ignition threshold marker
-    if (isFinite(thr) && thr > lo && thr < hi) {
-      const tx = LX(thr);
-      ctx.strokeStyle = GOOD;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(tx, barY - 5);
-      ctx.lineTo(tx, barY + 19);
-      ctx.stroke();
-      label('ignition', tx, barY - 9, 0.6, 'center', 11, GOOD);
-    }
-    label('10¹⁸', px, barY + 30, 0.4, 'left', 11);
-    label('10²⁴', px + pw, barY + 30, 0.4, 'right', 11);
-    y = barY + 48;
-    label(`n·T·τ = ${eng(tp, ' keV·s/m³', 1)}`, px, y, 0.85, 'left', 13, GOOD);
-    y += 22;
-    if (!isFinite(thr))
-      label('no τ can ignite this: raise the temperature first', px, y, 0.5, 'left', 11, DIM);
-    else if (tp >= thr)
-      label('past the line: this plasma ignites', px, y, 0.6, 'left', 11, GOOD);
-    else
-      label('below the line: hotter, denser, or held longer', px, y, 0.55, 'left', 11, WARN);
   }
 
   // --- formatting ------------------------------------------------------------
@@ -624,11 +557,19 @@ import Try from '../../../components/sim/Try.astro';
     });
     el('r3').style.color = FIRE;
     el('r5').style.color = col;
+    // the Lawson criterion: the triple product against what ignition needs
+    const thr = b.tripleThreshold;
     setResult({
       value: eng(b.pFus, 'W/m³', 1),
       colour: col,
-      status: `${st} · T = ${fmtTemp(state.T)} · ⟨σv⟩ = ${b.sv.toExponential(1)} m³/s · a nucleus waits ${fmtYears(b.waitYears)}`,
-      note: b.ignited ? 'Ignited: the fusion power heats the plasma faster than it leaks, so the fire feeds itself.' : 'Nuclei have to tunnel through their own repulsion, which is why temperature matters so much. Then heat it, squeeze it or hold it longer: the Lawson criterion is the product of density and confinement time.',
+      status: state.gravity
+        ? `${st} · a proton waits ${fmtYears(b.waitYears)}`
+        : `n·T·τ = ${eng(b.tripleProduct, '', 1)}${isFinite(thr) ? ` · ignition needs ${eng(thr, '', 1)}` : ' · no τ can ignite this'} keV·s/m³`,
+      note: state.gravity
+        ? 'It shines because it is enormous and gravity holds it, not because it burns hard.'
+        : b.ignited
+          ? 'Ignited: fusion heats the plasma faster than it leaks, so the fire feeds itself.'
+          : 'Nuclei must tunnel through their own repulsion, so temperature matters most.',
     });
     setEq({
       rule: [
@@ -648,12 +589,11 @@ import Try from '../../../components/sim/Try.astro';
   // --- loop ------------------------------------------------------------------
 
   function draw() {
+    compact = isCompact(canvas);
     ctx.clearRect(0, 0, W, H);
-    label('tunnel through the barrier, then beat the losses', 20, 34, 0.5, 'left', 11, GOOD);
     drawBox();
     drawReactivity();
     drawBalance();
-    drawLawson();
   }
 
   let last = performance.now();
@@ -708,6 +648,10 @@ import Try from '../../../components/sim/Try.astro';
     state.fuel = f;
     fuels.select(f);
     buildIons();
+    // the legend names the species; hidden by visibility so the caption keeps its place
+    el('lg-a').textContent = f === 'pp' ? 'protons' : 'deuterium';
+    el('lg-b').textContent = f === 'dhe3' ? 'helium-3' : 'tritium';
+    el('lg-b').style.visibility = f === 'pp' ? 'hidden' : '';
   }
   const fuels = segmented('fuel', (f) => setFuel(f as FuelKey));
 

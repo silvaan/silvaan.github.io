@@ -14,10 +14,10 @@ import Predict from '../../../components/sim/Predict.astro';
 <SimLayout
   areaSlug="physics"
   title="Black Hole"
-  description="See a black hole the way its light does. Every pixel is a photon traced back along its bent path, so the far side of the glowing disk rises over the top and the whole sky folds round a shadow 2.6 times the size of the horizon. Then put a particle in orbit: it traces rosettes that never close, cannot circle closer than 3 rₛ, and its clock runs slow near the hole."
+  description="Every pixel is a photon traced back through curved space: the disk's far side rises over the top and the hole casts a shadow 2.6 times its horizon. Then put a particle in orbit."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
-  <div class="sim">
+  <div class="sim" id="bh-sim">
     <div class="sim-view">
       <div class="sim-stage">
         <div class="gr-wrap" id="gr-wrap">
@@ -33,14 +33,14 @@ import Predict from '../../../components/sim/Predict.astro';
       </div>
       <Caption
         legend={[
-          { label: 'approaching side: brighter, bluer', color: '#9cc4ff', id: 'lg-blue' },
-          { label: 'receding side: dimmer, redder', color: '#ff7a3d', id: 'lg-red' },
-          { label: 'orbit, coloured by its clock rate', color: '#c084fc', id: 'lg-orbit' },
+          { label: 'approaching: brighter, bluer', color: '#9cc4ff', id: 'lg-blue' },
+          { label: 'receding: dimmer, redder', color: '#ff7a3d', id: 'lg-red' },
+          { label: 'orbit, by clock rate', color: '#c084fc', id: 'lg-orbit' },
           { label: 'Newton', color: '#8b909c', id: 'lg-newton' },
-          { label: 'photon sphere 1.5 r<sub>s</sub>', color: '#f59e0b', id: 'lg-ps' },
-          { label: 'innermost stable orbit 3 r<sub>s</sub>', color: '#2dd4bf', id: 'lg-isco' },
+          { label: 'photon sphere', color: '#f59e0b', id: 'lg-ps' },
+          { label: 'last stable orbit', color: '#2dd4bf', id: 'lg-isco' },
         ]}
-        hint="Drag to orbit the camera, scroll to move closer or farther"
+        hint="Drag to turn the camera · scroll to zoom"
       />
       <Result label="Shadow radius" />
     </div>
@@ -56,6 +56,8 @@ import Predict from '../../../components/sim/Predict.astro';
       />
       <Transport running />
 
+      <!-- the two views' controls share one grid cell, so switching never moves the page -->
+      <div class="view-ctl">
       <div id="see-ctl">
         <Slider id="dist" label="Camera distance r" min={6} max={60} step={0.5} value={22} display="22 rₛ" />
         <Slider id="tilt" label="Height above the disk" min={-85} max={85} step={1} value={8} display="8°" />
@@ -79,7 +81,7 @@ import Predict from '../../../components/sim/Predict.astro';
         />
       </div>
 
-      <div id="orb-ctl" hidden>
+      <div id="orb-ctl" class="off">
         <Seg
           id="preset"
           label="Orbit"
@@ -107,6 +109,7 @@ import Predict from '../../../components/sim/Predict.astro';
             { id: 'r-tau', label: 'Particle clock τ' },
           ]}
         />
+      </div>
       </div>
     </div>
   </div>
@@ -140,7 +143,8 @@ import Predict from '../../../components/sim/Predict.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -177,6 +181,9 @@ import Predict from '../../../components/sim/Predict.astro';
   const wrap = el('gr-wrap');
   const canvas = el('gr') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => { dirty = true; });
+  // text sized by what it shows as: ≥ 11.5px on a desktop, ≥ 10px on a phone
+  const compact = () => isCompact(canvas);
+  const fontPx = (size: number) => textPx(canvas, size, compact() ? 10 : 11.5, 2.8);
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   // the theme, read once per frame rather than on every stroke
   const theme = { ink: '232,233,236', inv: '13,14,18', light: false };
@@ -594,9 +601,10 @@ void main() {
   }
 
   function txt(s: string, x: number, y: number, colour: string, align: CanvasTextAlign = 'left', size = 12, weight = '') {
-    ctx.font = `${weight} ${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    const fs = fontPx(size);
+    ctx.font = `${weight} ${fs}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = align;
-    ctx.lineWidth = 3.5;
+    ctx.lineWidth = (3.5 * fs) / size;
     ctx.strokeStyle = 'rgba(0,0,0,0.75)';
     ctx.strokeText(s, x, y);
     ctx.fillStyle = colour;
@@ -616,6 +624,8 @@ void main() {
     const cam = camera();
     const cx = W / 2, cy = H / 2;
     const pxPerTan = H / 2 / cam.tanY;
+    const small = compact();
+    const lh = fontPx(11) * 1.3; // one line of the two-line labels
     if (state.guides) {
       const Rs = pxPerTan * Math.tan(shadowAngle());
       ctx.setLineDash([6, 5]);
@@ -644,10 +654,12 @@ void main() {
       ctx.lineTo(lx + 56, ly - 34);
       ctx.stroke();
       if (state.flat) {
-        txt('black ball, radius 1.00 rₛ', lx + 60, ly - 30, 'rgba(255,255,255,0.92)');
+        txt(small ? 'black ball, rₛ' : 'black ball, radius 1.00 rₛ', lx + 60, ly - 30, 'rgba(255,255,255,0.92)');
       } else {
-        txt(`shadow, radius ${BC.toFixed(2)} rₛ`, lx + 60, ly - 30, AMBER, 'left', 12, '600');
-        txt('the photon ring hugs its edge', lx + 60, ly - 14, 'rgba(255,255,255,0.7)', 'left', 11);
+        txt(small ? `shadow ${fixed(BC)} rₛ` : `shadow, radius ${fixed(BC)} rₛ`, lx + 60, ly - 30, AMBER, 'left', 12, '600');
+      }
+      if (!state.flat && !small) {
+        txt('the photon ring hugs its edge', lx + 60, ly - 30 + lh, 'rgba(255,255,255,0.7)', 'left', 11);
         const Rh = pxPerTan * Math.tan(Math.asin(1 / state.D));
         const hx = cx - Rh * 0.71, hy = cy + Rh * 0.71;
         ctx.strokeStyle = 'rgba(255,255,255,0.45)';
@@ -667,15 +679,15 @@ void main() {
         ctx.lineTo(cx - 70, y + sgn * 26);
         ctx.lineTo(cx - 80, y + sgn * 26);
         ctx.stroke();
-        txt('far side of the disk,', cx - 84, y + sgn * 26 - 2, 'rgba(255,255,255,0.9)', 'right', 11);
-        txt(state.tilt >= 0 ? 'bent up over the top' : 'bent down under the bottom', cx - 84, y + sgn * 26 + 12, 'rgba(255,255,255,0.7)', 'right', 11);
+        if (small) txt('far side', cx - 84, y + sgn * 26 + 4, 'rgba(255,255,255,0.9)', 'right', 11);
+        else {
+          txt('far side of the disk,', cx - 84, y + sgn * 26 - 2, 'rgba(255,255,255,0.9)', 'right', 11);
+          txt(state.tilt >= 0 ? 'bent up over the top' : 'bent down under the bottom', cx - 84, y + sgn * 26 - 2 + lh, 'rgba(255,255,255,0.7)', 'right', 11);
+        }
       }
     }
-    // where you are
-    const clock = Math.sqrt(1 - 1 / state.D);
-    txt(`camera at r = ${state.D.toFixed(1)} rₛ`, 16, H - 34, 'rgba(255,255,255,0.75)', 'left', 12);
-    txt(`your clock runs at ${clock.toFixed(3)} of a far clock`, 16, H - 16, 'rgba(160,200,255,0.85)', 'left', 12);
-    if (state.flat) txt('FLAT SPACE: light goes straight', W - 16, 26, 'rgba(255,255,255,0.85)', 'right', 12, '600');
+    // the camera's place and clock are in the result line below the picture
+    if (state.flat) txt('flat space', W - 16, 16 + fontPx(12), 'rgba(255,255,255,0.85)', 'right', 12, '600');
   }
 
   // =====================================================================
@@ -887,7 +899,7 @@ void main() {
   const sy = (y: number) => OC.y - y * pxPerRs;
 
   function label(s: string, x: number, y: number, colour: string, align: CanvasTextAlign = 'left', size = 11) {
-    ctx.font = `${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.font = `${fontPx(size)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = align;
     ctx.fillStyle = colour;
     ctx.fillText(s, x, y);
@@ -905,10 +917,13 @@ void main() {
     const target = Math.min(32, Math.max(6.5, far * 1.12));
     orb.view += (target - orb.view) * 0.08;
     pxPerRs = 270 / orb.view;
+    // a phone keeps the orbit alone in the middle; the dτ/dt and the clocks are in the numbers below
+    const small = compact();
+    OC.x = small ? W / 2 : 330;
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, 640, H);
+    ctx.rect(0, 0, small ? W : 640, H);
     ctx.clip();
     // rings of constant r
     ctx.lineWidth = 1;
@@ -918,7 +933,7 @@ void main() {
       ctx.beginPath();
       ctx.arc(OC.x, OC.y, r * pxPerRs, 0, Math.PI * 2);
       ctx.stroke();
-      label(`${r} rₛ`, OC.x + r * pxPerRs * 0.7071 + 4, OC.y + r * pxPerRs * 0.7071 + 12, ink(0.3), 'left', 10);
+      if (!small) label(`${r} rₛ`, OC.x + r * pxPerRs * 0.7071 + 4, OC.y + r * pxPerRs * 0.7071 + 14, ink(0.4), 'left', 10);
     }
     // the hole
     const hr = pxPerRs;
@@ -949,9 +964,7 @@ void main() {
     ctx.arc(OC.x, OC.y, 3 * pxPerRs, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
-    if (pxPerRs > 14) {
-      label('ISCO', OC.x, OC.y - 3 * pxPerRs - 5, TEAL, 'center', 10);
-    }
+    if (pxPerRs > 14 && !small) label('3 rₛ', OC.x, OC.y - 3 * pxPerRs - 6, TEAL, 'center', 10);
 
     // Newton's orbit for the same start
     if (state.newton && orb.ntrail.length > 1) {
@@ -1005,7 +1018,7 @@ void main() {
     ctx.arc(px, py, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    if (orb.fate === 'frozen') label('frozen at the horizon, as seen from far away', px + 12, py - 10, ink(0.8), 'left', 11);
+    if (orb.fate === 'frozen') label('frozen at the horizon', px + 12, py - 10, ink(0.85), 'left', 11);
 
     // the launch arrow and the path it would take
     if (dragging && drag) {
@@ -1033,10 +1046,11 @@ void main() {
       ctx.lineTo(x1 - 10 * Math.cos(ang + 0.4), y1 - 10 * Math.sin(ang + 0.4));
       ctx.fill();
       const v = Math.min(0.98, Math.hypot(x1 - x0, y1 - y0) / VPX);
-      label(`v = ${v.toFixed(2)}c`, x1 + 8, y1 - 8, ink(0.85), 'left', 11);
+      label(`v = ${fixed(v)}c`, x1 + 8, y1 - 8, ink(0.85), 'left', 11);
     }
     ctx.restore();
 
+    if (small) return;
     drawPotential();
     drawClocks();
   }
@@ -1106,8 +1120,8 @@ void main() {
     ctx.lineTo(PB.x + PB.w, Y(E));
     ctx.stroke();
     ctx.restore();
-    label(`E = ${E.toFixed(4)}`, PB.x + PB.w, Y(E) - 5, CLOCK, 'right', 10.5);
-    if (1 > lo && 1 < hi) {
+    label(`E = ${fixed(E, 4)}`, PB.x + PB.w, Y(E) - 5, CLOCK, 'right', 10.5);
+    if (1 > lo && 1 < hi && Math.abs(Y(1) - Y(E)) > fontPx(10.5) * 1.3) {
       ctx.strokeStyle = ink(0.15);
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
@@ -1115,7 +1129,7 @@ void main() {
       ctx.lineTo(PB.x + PB.w, Y(1));
       ctx.stroke();
       ctx.setLineDash([]);
-      label('E = 1: at rest far away', PB.x + PB.w - 2, Y(1) - 4, ink(0.4), 'right', 9.5);
+      label('E = 1: at rest far away', PB.x + PB.w - 2, Y(1) - 4, ink(0.5), 'right', 9.5);
     }
     // the particle on its energy line
     const r = orb.p.r;
@@ -1126,18 +1140,21 @@ void main() {
       ctx.fill();
     }
     // r axis ticks: photon sphere, ISCO
+    // the two ticks crowd together once the axis reaches far out: then only 3 is numbered
+    const roomy = X(3) - X(1.5) > fontPx(9.5) * 2.2;
+    const ay = PB.y + PB.h + 6 + fontPx(9.5);
     for (const [rv, c, t] of [[1.5, AMBER, '1.5'], [3, TEAL, '3']] as [number, string, string][]) {
       ctx.strokeStyle = c;
       ctx.beginPath();
       ctx.moveTo(X(rv), PB.y + PB.h);
       ctx.lineTo(X(rv), PB.y + PB.h + 5);
       ctx.stroke();
-      label(t, X(rv), PB.y + PB.h + 16, c, 'center', 9.5);
+      if (roomy || rv === 3) label(t, X(rv), ay, c, roomy ? 'center' : 'left', 9.5);
     }
-    label(`${rMax.toFixed(0)} rₛ`, PB.x + PB.w, PB.y + PB.h + 16, ink(0.4), 'right', 9.5);
-    label('r', PB.x + PB.w / 2 + 30, PB.y + PB.h + 16, ink(0.4), 'center', 10);
-    if (ex) label('barrier top', X(ex.top) + 9, Y(Math.min(hi - 0.006, Math.sqrt(V2(ex.top, L)))) + 4, ink(0.5), 'left', 9.5);
-    else label('no barrier, no stable orbit', PB.x + PB.w - 4, PB.y + 14, ink(0.55), 'right', 10);
+    label(`${rMax.toFixed(0)} rₛ`, PB.x + PB.w, ay, ink(0.5), 'right', 9.5);
+    label('r', PB.x + PB.w / 2 + 30, ay, ink(0.5), 'center', 10);
+    if (ex) label('barrier top', X(ex.top) + 9, Y(Math.min(hi - 0.006, Math.sqrt(V2(ex.top, L)))) + 4, ink(0.6), 'left', 9.5);
+    else label('no barrier', PB.x + PB.w - 4, PB.y + 6 + fontPx(10), ink(0.6), 'right', 10);
   }
 
   // --- the two clocks ------------------------------------------------------
@@ -1167,8 +1184,9 @@ void main() {
     ctx.beginPath();
     ctx.arc(x, y, 3, 0, Math.PI * 2);
     ctx.fill();
-    label(name, x, y + R + 16, ink(0.65), 'center', 10.5);
-    label(value, x, y + R + 30, colour, 'center', 11);
+    const fs = fontPx(10.5);
+    label(name, x, y + R + 4 + fs, ink(0.7), 'center', 10.5);
+    label(value, x, y + R + 6 + 2.2 * fs, colour, 'center', 11);
   }
 
   function drawClocks() {
@@ -1178,12 +1196,12 @@ void main() {
     label('Clocks', PB.x - 2, y0 - 16, ink(0.7), 'left', 11.5);
     const q = rate(orb.p.r);
     dial(PB.x + 58, y0 + 50, 44, orb.t, ink(0.85), 'far away', `t = ${orb.t.toFixed(0)}`);
-    dial(PB.x + PB.w - 58, y0 + 50, 44, orb.tau, rateColour(q, 1), 'on the particle', `τ = ${orb.tau.toFixed(0)}`);
-    label('dτ/dt now', PB.x + PB.w / 2, y0 + 150, ink(0.5), 'center', 10.5);
+    dial(PB.x + PB.w - 58, y0 + 50, 44, orb.tau, rateColour(q, 1), 'particle', `τ = ${orb.tau.toFixed(0)}`);
+    label('dτ/dt now', PB.x + PB.w / 2, y0 + 156, ink(0.6), 'center', 10.5);
     ctx.font = '600 22px ui-monospace, SFMono-Regular, Menlo, monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = rateColour(q, 1);
-    ctx.fillText(q.toFixed(3), PB.x + PB.w / 2, y0 + 176);
+    ctx.fillText(fixed(q, 3), PB.x + PB.w / 2, y0 + 186);
     ctx.textAlign = 'left';
   }
 
@@ -1197,7 +1215,7 @@ void main() {
     return 'plunging';
   }
 
-  const deg = (a: number) => `${((a * 180) / Math.PI).toFixed(1)}°`;
+  const deg = (a: number) => `${fixed((a * 180) / Math.PI, 1)}°`;
 
   function updateSeeText() {
     const D = state.D, clock = Math.sqrt(1 - 1 / D);
@@ -1206,30 +1224,30 @@ void main() {
     if (state.flat)
       setEq({
         rule: ['\\frac{d^2u}{d\\phi^2}+u = 0', '\\quad u = 1/r', '\\quad\\text{(straight lines)}'],
-        live: [`b_c = r_s`, `\\quad r_{cam} = ${D.toFixed(1)}\\,r_s`],
+        live: [`b_c = r_s`, `\\quad r_{cam} = ${fixed(D, 1)}\\,r_s`],
       });
     else
       setEq({
         rule: ['\\frac{d^2u}{d\\phi^2}+u =', ['\\tfrac{3}{2}\\,r_s\\,u^2', AMBER], '\\quad u = 1/r'],
         live: [
           [`b_c = \\tfrac{3\\sqrt3}{2}\\,r_s = ${BC.toFixed(2)}\\,r_s`, AMBER],
-          `\\quad r_{cam} = ${D.toFixed(1)}\\,r_s`,
-          [`\\quad d\\tau/dt = \\sqrt{1-r_s/r} = ${clock.toFixed(3)}`, CLOCK],
+          `\\quad r_{cam} = ${fixed(D, 1)}\\,r_s`,
+          [`\\quad d\\tau/dt = \\sqrt{1-r_s/r} = ${fixed(clock, 3)}`, CLOCK],
         ],
       });
     el('result-label').textContent = 'Shadow radius';
     setResult({
-      value: `${b.toFixed(2)} rₛ`,
+      value: `${fixed(b)} rₛ`,
       colour: state.flat ? '' : AMBER,
-      status: `${deg(ang)} across your sky from r = ${D.toFixed(1)} rₛ, where your clock runs at ${clock.toFixed(3)}`,
+      status: `${deg(ang)} across your sky · your clock runs at ${fixed(clock, 3)}`,
       note: state.flat
-        ? 'With straight rays the hole is just a black ball the size of its horizon, and the disk is a plain flat ring.'
-        : 'Light that comes closer than 2.6 rₛ spirals in, so the hole casts a shadow 2.6 times its horizon; light just outside it can circle the hole and come back.',
+        ? 'With straight rays the hole is a black ball the size of its horizon.'
+        : 'Light passing closer than 2.6 rₛ spirals in, so the shadow is 2.6 times the horizon.',
     });
     setRows({
-      'r-cam': D.toFixed(1),
-      'r-camclock': clock.toFixed(4),
-      'r-bc': `${b.toFixed(3)} rₛ`,
+      'r-cam': fixed(D, 1),
+      'r-camclock': fixed(clock, 4),
+      'r-bc': `${fixed(b, 3)} rₛ`,
       'r-ang': deg(ang),
       'r-res': glv ? `${Math.round(LEVELS[level] * 100)}%` : 'no WebGL2',
     });
@@ -1242,16 +1260,16 @@ void main() {
     const q = rate(r);
     setEq({
       rule: [
-        '\\frac{d^2u}{d\\phi^2}+u=\\frac{r_s}{2L^2}+',
+        '\\frac{d^2u}{d\\phi^2}+u=\\tfrac{r_s}{2L^2}+',
         ['\\tfrac32\\,r_s u^2', AMBER],
         '\\qquad',
-        ['\\frac{d\\tau}{dt}=\\frac{\\sqrt{1-r_s/r}}{\\gamma}', CLOCK],
+        ['d\\tau/dt=\\sqrt{1-r_s/r}\\,/\\,\\gamma', CLOCK],
       ],
+      // a phone keeps the line short enough not to wrap
       live: [
-        `r = ${r.toFixed(2)}\\,r_s`,
-        `\\quad \\sqrt{1-r_s/r} = ${grav.toFixed(3)}`,
-        `\\quad \\gamma = ${isFinite(gamma) ? gamma.toFixed(3) : '\\infty'}`,
-        [`\\quad d\\tau/dt = ${q.toFixed(3)}`, CLOCK],
+        `r = ${fixed(r)}\\,r_s`,
+        ...(compact() ? [] : [`\\quad \\sqrt{1-r_s/r} = ${fixed(grav, 3)}`, `\\quad \\gamma = ${isFinite(gamma) ? fixed(gamma, 3) : '\\infty'}`]),
+        [`\\quad d\\tau/dt = ${fixed(q, 3)}`, CLOCK],
       ],
     });
     const kind = orbitKind();
@@ -1259,25 +1277,24 @@ void main() {
     const precTxt = !isFinite(orb.prec)
       ? ''
       : orb.prec < 2 * Math.PI
-        ? `the closest point moves on ${deg(orb.prec)} per orbit`
-        : `it whirls ${(orb.prec / (2 * Math.PI)).toFixed(1)} extra turns at each close pass`;
-    const status = [`r = ${r.toFixed(2)} rₛ`, kind, precTxt].filter(Boolean).join(' · ');
+        ? `closest point moves on ${deg(orb.prec)} per orbit`
+        : `${fixed(orb.prec / (2 * Math.PI), 1)} extra turns per close pass`;
+    const status = [`r = ${fixed(r)} rₛ`, kind, precTxt].filter(Boolean).join(' · ');
     const notes: Record<string, string> = {
-      bound: 'An orbit in GR does not close: the extra pull near the hole swings each closest approach a little further round.',
-      'fly-by': 'Coming from far away, it swings round the hole and leaves again.',
-      escaping: 'It has more than enough energy to leave and heads back out to infinity.',
+      bound: 'Each closest approach swings a little further round, so the orbit never closes.',
+      'fly-by': 'Coming in from far away, it swings round the hole and leaves again.',
       escaped: 'Gone: it had enough energy to climb out of the well.',
-      plunging: 'Nothing holds it up: V(r) has no barrier at this L, or the energy clears its top, so it falls towards the horizon.',
-      plunged: 'Seen from far away the particle never crosses the horizon. Its clock runs slower and slower and its fall freezes.',
+      plunging: 'V(r) has no barrier it cannot clear, so nothing stops it falling in.',
+      plunged: 'Seen from far away it never crosses: its clock slows and its fall freezes.',
     };
-    setResult({ value: q.toFixed(3), colour: CLOCK, status, note: notes[kind] ?? '' });
+    setResult({ value: fixed(q, 3), colour: CLOCK, status, note: notes[kind] ?? '' });
     setRows({
-      'r-r': r.toFixed(3),
-      'r-rate': q.toFixed(4),
-      'r-prec': isFinite(orb.prec) ? deg(orb.prec) : '—',
+      'r-r': fixed(r, 3),
+      'r-rate': fixed(q, 4),
+      'r-prec': isFinite(orb.prec) ? deg(orb.prec) : 'none',
       'r-kind': kind,
-      'r-t': orb.t.toFixed(1),
-      'r-tau': orb.tau.toFixed(1),
+      'r-t': fixed(orb.t, 1),
+      'r-tau': fixed(orb.tau, 1),
     });
   }
 
@@ -1300,7 +1317,7 @@ void main() {
     lastPY = e.clientY;
     if (state.view === 'orbits') {
       const p = local(e);
-      if (p.x > 640) { dragging = false; return; }
+      if (p.x > 640 && !compact()) { dragging = false; return; }
       drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
       preview = [];
     }
@@ -1437,20 +1454,19 @@ void main() {
 
   const presets = segmented('preset', (p) => presetLaunch(p));
 
-  const legend = (id: string, on: boolean) => { el(id).hidden = !on; };
   const views = segmented('view', (v) => setView(v as 'see' | 'orbits'));
   function setView(v: 'see' | 'orbits') {
     state.view = v;
     views.select(v);
-    el('see-ctl').hidden = v !== 'see';
-    el('orb-ctl').hidden = v !== 'orbits';
+    for (const [id, on] of [['see-ctl', v === 'see'], ['orb-ctl', v === 'orbits']] as [string, boolean][]) {
+      const box = el(id);
+      box.classList.toggle('off', !on);
+      box.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button').forEach((c) => (c.disabled = !on));
+    }
     wrap.classList.toggle('orbits', v === 'orbits');
-    for (const id of ['lg-blue', 'lg-red']) legend(id, v === 'see');
-    for (const id of ['lg-orbit', 'lg-newton', 'lg-ps', 'lg-isco']) legend(id, v === 'orbits');
-    el('scene-hint').textContent =
-      v === 'see'
-        ? 'Drag to orbit the camera, scroll to move closer or farther'
-        : 'Drag from any point to launch the particle from there: the arrow sets its speed and direction, and the dashed line shows where it will go';
+    // which legend shows is set in CSS, so the first paint already has the right one
+    el('bh-sim').classList.toggle('orbit-view', v === 'orbits');
+    el('scene-hint').textContent = v === 'see' ? 'Drag to turn the camera · scroll to zoom' : 'Drag to launch the particle';
     moved();
   }
 
@@ -1530,6 +1546,19 @@ void main() {
 </script>
 
 <style>
+  .sim:not(.orbit-view) :global(:is(#lg-orbit, #lg-newton, #lg-ps, #lg-isco)),
+  .sim.orbit-view :global(:is(#lg-blue, #lg-red)) {
+    display: none !important;
+  }
+  .view-ctl {
+    display: grid;
+  }
+  .view-ctl > div {
+    grid-area: 1 / 1;
+  }
+  .view-ctl > .off {
+    visibility: hidden;
+  }
   .gr-wrap {
     position: relative;
     width: 100%;

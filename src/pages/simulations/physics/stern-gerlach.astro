@@ -13,14 +13,14 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Stern-Gerlach Experiment"
-  description="Send silver atoms through a magnet whose field is stronger on one side than the other. Classically the beam should smear into a band. It arrives as two spots. Chain the analysers, turn the next one, and the atoms keep giving the same two answers while forgetting the answer they gave before."
+  description="Silver atoms fly through a lopsided magnetic field. Classically the beam should smear into a band, yet it lands as two spots. Chain analysers and the atoms forget what they said before."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
         <canvas id="sg" class="sg-canvas" width="960" height="600" role="img" aria-label="Silver atoms leaving an oven, passing through one to three Stern-Gerlach analysers at chosen angles, and landing as spots on a detector."></canvas>
       </div>
-      <Caption hint="Each analyser passes one of its two beams on and stops the other; the cards compare what the last one measured with what the angle predicts" />
+      <Caption hint="Each analyser passes one beam on and stops the other" />
       <Result label="Upper spot" />
     </div>
 
@@ -38,24 +38,30 @@ import Try from '../../../components/sim/Try.astro';
           { value: '3', label: 'z, x, z' },
         ]}
       />
+      <!-- an analyser the setup does not use is dimmed, not removed, so the
+           panel keeps its shape when the setup changes -->
       <div id="c-th1">
         <Slider id="th1" label="Analyser 1 axis" min={0} max={180} step={5} value={0} display="0°" />
-      </div>
-      <div id="c-keep1">
-        <Seg id="keep1" label="Beam kept after 1" attr="k" options={[{ value: '1', label: '+ħ/2' }, { value: '-1', label: '−ħ/2' }]} />
       </div>
       <div id="c-th2">
         <Slider id="th2" label="Analyser 2 axis" min={0} max={180} step={5} value={90} display="90°" />
       </div>
-      <div id="c-keep2">
-        <Seg id="keep2" label="Beam kept after 2" attr="k" options={[{ value: '1', label: '+ħ/2' }, { value: '-1', label: '−ħ/2' }]} />
-      </div>
       <div id="c-th3">
         <Slider id="th3" label="Analyser 3 axis" min={0} max={180} step={5} value={0} display="0°" />
       </div>
-      <Slider id="rate" label="Beam intensity" min={2} max={90} value={24} display="24/s" />
-      <Checks items={[{ id: 'classical', label: 'Show what classical physics predicts' }]} />
+      <Checks items={[{ id: 'classical', label: 'Show the classical prediction' }]} />
+      <details class="numeric-details">
+        <summary>More</summary>
+        <div id="c-keep1">
+          <Seg id="keep1" label="Beam kept after 1" attr="k" options={[{ value: '1', label: '+ħ/2' }, { value: '-1', label: '−ħ/2' }]} />
+        </div>
+        <div id="c-keep2">
+          <Seg id="keep2" label="Beam kept after 2" attr="k" options={[{ value: '1', label: '+ħ/2' }, { value: '-1', label: '−ħ/2' }]} />
+        </div>
+        <Slider id="rate" label="Beam intensity" min={2} max={90} value={24} display="24/s" />
+      </details>
       <Readout
+        title="Counts"
         rows={[
           { id: 'tot', label: 'Atoms detected' },
           { id: 'cplus', label: 'Upper spot' },
@@ -91,7 +97,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
   import { arrow, roundRect } from '../../../lib/theorem';
@@ -124,11 +131,20 @@ import Try from '../../../components/sim/Try.astro';
   const MW = 92; // magnet body width
   const MH = 56;
   const SCREEN_X = 858;
-  const BAND_Y = 452; // top of the row of explanation cards
+  // top of the row of explanation cards; on a phone the cards are left out
+  // and the apparatus gets the whole height
+  let BAND_Y = 470;
   const CARD_W = 306;
+  const CARD_H = 112;
   const BLOCK_GAP = 34; // how far in front of the next magnet a beam is stopped
   const Y_TOP = 76; // the strip of stage the apparatus is centred inside
-  const Y_BOT = BAND_Y - 16;
+  let Y_BOT = BAND_Y - 16;
+  let compact = false;
+  function fitLayout() {
+    compact = isCompact(canvas);
+    BAND_Y = compact ? H + 4 : 470;
+    Y_BOT = BAND_Y - 16;
+  }
   const OVEN = { x: 22, w: 76, h: 60 };
 
   // Where the magnets sit, and how far apart the two beams of each one get.
@@ -147,6 +163,8 @@ import Try from '../../../components/sim/Try.astro';
     getComputedStyle(canvas).getPropertyValue(k).trim() || f;
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
   const { label } = makeText(ctx, ink);
+  // the few labels a phone keeps, floored so they still read there
+  const { label: big } = makeText(ctx, ink, 1.42, undefined, 10);
   const PLUS = '#5eead4';
   const MINUS = '#f59e0b';
   const CLASSIC = '#f87171';
@@ -392,8 +410,10 @@ import Try from '../../../components/sim/Try.astro';
       );
     });
 
-    label('OVEN', OVEN.x, oy - 22, 0.45, 'left', 11);
-    label('unpolarised', OVEN.x, oy - 8, 0.3, 'left', 11);
+    if (!compact) {
+      label('OVEN', OVEN.x, oy - 22, 0.45, 'left', 11);
+      label('unpolarised', OVEN.x, oy - 8, 0.3, 'left', 11);
+    }
     ctx.strokeStyle = ink(0.22);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -432,7 +452,7 @@ import Try from '../../../components/sim/Try.astro';
           ctx.lineWidth = 1;
           ctx.stroke();
           // under the block, so the word never runs into the next magnet
-          if (i === 0) label('stopped', xEnd + 3, y + 31, 0.3, 'center', 11);
+          if (i === 0 && !compact) label('stopped', xEnd + 3, y + 31, 0.3, 'center', 11);
         }
       }
       // the collimated beam from the oven into the first magnet
@@ -557,16 +577,18 @@ import Try from '../../../components/sim/Try.astro';
       roundRect(ctx, x, y, MW, MH, 8);
       ctx.fill();
 
-      dial(g.x0 + MW / 2, g.yc - MH / 2 - 22, 15, i, false);
-      label(
-        `SG ${i + 1}  n̂ = ${state.stages[i].th}°`,
-        g.x0 + MW / 2,
-        g.yc - MH / 2 - 46,
-        0.5,
-        'center',
-        11.5
-      );
-      if (i === state.n - 1) {
+      dial(g.x0 + MW / 2, g.yc - MH / 2 - 22, compact ? 20 : 15, i, false);
+      if (compact) big(`${state.stages[i].th}°`, g.x0 + MW / 2, g.yc + MH / 2 + 34, 0.6, 'center', 11);
+      else
+        label(
+          `SG ${i + 1}  n̂ = ${state.stages[i].th}°`,
+          g.x0 + MW / 2,
+          g.yc - MH / 2 - 46,
+          0.5,
+          'center',
+          11.5
+        );
+      if (i === state.n - 1 && !compact) {
         const sp = g.spread;
         label('+ħ/2', g.xT - 46, g.yc - sp - 12, 1, 'right', 11, PLUS);
         label('−ħ/2', g.xT - 46, g.yc + sp + 20, 1, 'right', 11, MINUS);
@@ -582,7 +604,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = ink(0.2);
     ctx.lineWidth = 1;
     ctx.stroke();
-    label('DETECTOR', SCREEN_X + 8, Y_TOP - 20, 0.45, 'center', 11.5);
+    if (!compact) label('DETECTOR', SCREEN_X + 8, Y_TOP - 20, 0.45, 'center', 11.5);
 
     // what a classical magnetic moment would have given: a continuous band
     if (state.classical) {
@@ -594,8 +616,10 @@ import Try from '../../../components/sim/Try.astro';
       grad.addColorStop(1, CLASSIC + '00');
       ctx.fillStyle = grad;
       ctx.fillRect(SCREEN_X + 1, top, 14, bot - top);
-      label('classical:', SCREEN_X - 12, g.yc - 6, 0.75, 'right', 11, CLASSIC);
-      label('one smear', SCREEN_X - 12, g.yc + 8, 0.75, 'right', 11, CLASSIC);
+      if (!compact) {
+        label('classical:', SCREEN_X - 12, g.yc - 6, 0.75, 'right', 11, CLASSIC);
+        label('one smear', SCREEN_X - 12, g.yc + 8, 0.75, 'right', 11, CLASSIC);
+      }
     }
 
     for (const s of spots) {
@@ -612,7 +636,12 @@ import Try from '../../../components/sim/Try.astro';
       [g.yc + g.spread, last.m, MINUS],
     ];
     for (const [y, c, col] of rows) {
-      label(`${((c / tot) * 100).toFixed(1)}%`, SCREEN_X + 24, y - 1, 1, 'left', 11.5, col);
+      if (compact) {
+        // just the share, beside the beam it belongs to
+        big(`${fixed((c / tot) * 100, 0)}%`, SCREEN_X - 16, y + (y < g.yc ? -14 : 30), 1, 'right', 11, col);
+        continue;
+      }
+      label(`${fixed((c / tot) * 100, 1)}%`, SCREEN_X + 24, y - 1, 1, 'left', 11.5, col);
       label(`n = ${fmt(c)}`, SCREEN_X + 24, y + 14, 0.4, 'left', 11);
     }
   }
@@ -642,48 +671,41 @@ import Try from '../../../components/sim/Try.astro';
 
   /** One card per analyser: the angle, the prediction, and what was counted. */
   function drawCards() {
+    if (compact) return;
     const startX = (W - state.n * CARD_W) / 2;
     for (let i = 0; i < state.n; i++) {
       const x = startX + i * CARD_W;
       ctx.fillStyle = ink(0.035);
-      roundRect(ctx, x + 8, BAND_Y, CARD_W - 16, 140, 10);
+      roundRect(ctx, x + 8, BAND_Y, CARD_W - 16, CARD_H, 10);
       ctx.fill();
       ctx.strokeStyle = ink(0.12);
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      dial(x + 72, BAND_Y + 72, 44, i, true);
+      // the dial shows the axis and the incoming spin; the words only the numbers
+      dial(x + 58, BAND_Y + 60, 34, i, true);
 
-      const tx = x + 128;
+      const tx = x + 112;
       const d = delta(i);
       const pe = pPlus(i);
       const c = counts[i];
       const tot = c.p + c.m;
       const meas = tot ? c.p / tot : 0;
 
-      label(`ANALYSER ${i + 1}`, tx, BAND_Y + 26, 0.45, 'left', 11.5);
-      label(`axis n̂ = ${state.stages[i].th}°`, tx, BAND_Y + 46, 0.75, 'left', 11.5);
+      label(`SG ${i + 1}  ${state.stages[i].th}°`, tx, BAND_Y + 26, 0.5, 'left', 11);
       label(
-        d === null ? 'in: unpolarised' : `in: spin at ${inAxisLabel(i)}`,
+        d === null ? 'P = ½, unpolarised' : `cos²(${fixed(d / 2, 0)}°) = ${fixed(pe * 100, 1)}%`,
         tx,
-        BAND_Y + 64,
-        0.45,
-        'left',
-        11
-      );
-      label(
-        d === null ? 'no axis, so P = ½' : `cos²(${(d / 2).toFixed(0)}°) = ${(pe * 100).toFixed(1)}%`,
-        tx,
-        BAND_Y + 86,
+        BAND_Y + 50,
         0.9,
         'left',
-        11.5,
+        10.5,
         PLUS
       );
 
       // measured fraction as a bar, with the prediction marked on it
       const bw = CARD_W - 16 - (tx - x) - 14;
-      const by = BAND_Y + 96;
+      const by = BAND_Y + 62;
       ctx.fillStyle = ink(0.08);
       roundRect(ctx, tx, by, bw, 11, 5);
       ctx.fill();
@@ -699,25 +721,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(tx + bw * pe, by + 14);
       ctx.stroke();
 
-      label(
-        tot ? `measured ${(meas * 100).toFixed(1)}%  n=${fmt(tot)}` : 'nothing counted yet',
-        tx,
-        BAND_Y + 126,
-        0.4,
-        'left',
-        11
-      );
+      label(tot ? `measured ${fixed(meas * 100, 1)}%` : 'no counts yet', tx, BAND_Y + 96, 0.45, 'left', 10.5);
     }
-  }
-
-  function inAxisLabel(i: number) {
-    const m = inAxis(i)!;
-    const norm = ((m % 360) + 360) % 360;
-    return `${norm}°`;
   }
 
   function draw(dt: number) {
     if (state.running || state.flush) advance(dt);
+    fitLayout();
     ctx.clearRect(0, 0, W, H);
     drawBeams();
     drawOven();
@@ -732,19 +742,19 @@ import Try from '../../../components/sim/Try.astro';
   function sentence() {
     const dLast = delta(state.n - 1);
     if (state.n === 1)
-      return 'one magnet, two spots: the component of spin along n̂ is never anything but +ħ/2 or −ħ/2';
+      return 'one magnet, two spots: spin along n̂ is only ever +ħ/2 or −ħ/2';
     if (dLast === 0)
-      return 'the same axis asked twice gives the same answer every time: the first measurement left the atom in the state it reported';
+      return 'the same question twice gets the same answer: a measurement is repeatable';
     if (
       state.n === 3 &&
       delta(2) !== null &&
       state.stages[2].th === state.stages[0].th &&
       delta(1)! > 20
     )
-      return 'the third analyser has forgotten the first: measuring x destroyed everything that was known about z';
+      return 'the third analyser has forgotten the first: measuring x erased z';
     if (dLast === 180)
-      return 'exactly opposite axes: every atom comes out of the other beam, and the first one is empty';
-    return 'the spin has no value along n̂ until n̂ is the thing measured, and then the only values are ±ħ/2';
+      return 'opposite axes: every atom leaves by the other beam';
+    return 'the spin has no value along n̂ until n̂ is what is measured';
   }
 
   function sync() {
@@ -753,18 +763,19 @@ import Try from '../../../components/sim/Try.astro';
     const tot = c.p + c.m;
     const pe = pPlus(i);
     const d = delta(i);
+    const pct = (v: number) => `${fixed(v * 100, 1)}%`;
     setRows({
       tot: fmt(tot),
-      cplus: tot ? `${((c.p / tot) * 100).toFixed(1)}%` : '—',
-      cminus: tot ? `${((c.m / tot) * 100).toFixed(1)}%` : '—',
-      pexp: `${(pe * 100).toFixed(1)}%`,
+      cplus: pct(tot ? c.p / tot : 0),
+      cminus: pct(tot ? c.m / tot : 0),
+      pexp: pct(pe),
     });
 
     const said = sentence();
     setResult({
-      value: tot ? `${((c.p / tot) * 100).toFixed(1)}%` : '—',
+      value: pct(tot ? c.p / tot : 0),
       colour: PLUS,
-      status: `${fmt(tot)} atoms detected · lower spot ${tot ? `${((c.m / tot) * 100).toFixed(1)}%` : '—'} · cos²(Δ/2) predicts ${(pe * 100).toFixed(1)}% up${d === null ? '' : ` for axes ${d}° apart`}`,
+      status: `cos²(Δ/2) predicts ${pct(pe)}`,
       note: said.charAt(0).toUpperCase() + said.slice(1) + '.',
     });
     setEq({
@@ -777,9 +788,8 @@ import Try from '../../../components/sim/Try.astro';
         '\\},\\qquad P(+)=\\cos^2\\!\\dfrac{\\Delta}{2}',
       ],
       live: [
-        d === null ? '\\text{unpolarised beam}' : `\\Delta = ${d.toFixed(0)}^\\circ`,
-        [`\\quad\\cos^2(\\Delta/2) = ${(pe * 100).toFixed(1)}\\%`, PLUS],
-        tot ? `\\quad\\text{measured } ${((c.p / tot) * 100).toFixed(1)}\\%\\ \\text{of } ${tot}` : '',
+        d === null ? '\\text{unpolarised beam}' : `\\Delta = ${fixed(d, 0)}^\\circ`,
+        [`\\quad\\cos^2(\\Delta/2) = ${fixed(pe * 100, 1)}\\%`, PLUS],
       ],
     });
   }
@@ -790,13 +800,19 @@ import Try from '../../../components/sim/Try.astro';
 
   function refreshPanel() {
     for (let i = 1; i <= 3; i++) {
-      el(`c-th${i}`).classList.toggle('hidden', i > state.n);
+      dim(`c-th${i}`, i > state.n);
       thSet[i - 1](state.stages[i - 1].th);
     }
     for (let i = 1; i <= 2; i++) {
-      el(`c-keep${i}`).classList.toggle('hidden', i > state.n - 1);
+      dim(`c-keep${i}`, i > state.n - 1);
       keepSeg[i - 1].select(String(state.stages[i - 1].keep));
     }
+  }
+
+  function dim(id: string, off: boolean) {
+    const box = el(id);
+    box.classList.toggle('dim', off);
+    box.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button').forEach((c) => (c.disabled = off));
   }
 
   function restart() {
@@ -901,7 +917,13 @@ import Try from '../../../components/sim/Try.astro';
   .sg-canvas {
     touch-action: none;
   }
-  .hidden {
-    display: none;
+  .dim {
+    opacity: 0.35;
+  }
+  :global(.sim-panel details > :not(summary) + *) {
+    margin-top: 18px;
+  }
+  :global(.sim-panel details[open] > :last-child:not(summary)) {
+    margin-bottom: 12px;
   }
 </style>

@@ -15,7 +15,7 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
 <SimLayout
   areaSlug="physics"
   title="Atomic Orbitals"
-  description="The exact hydrogen orbitals ψnlm drawn as glowing clouds of probability, with their spherical shells and nodal planes, the phase winding of m and the signed lobes of chemistry. Measure the electron and it turns up at one point; measure hundreds of atoms and the dots draw the orbital. Superpose two states and the cloud starts to slosh: the origin of emitted light."
+  description="The exact hydrogen orbitals as glowing clouds of probability, with their shells, nodal planes and phase. Measure the electron and it turns up at one point; superpose two states and the cloud sloshes."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -24,8 +24,8 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
         <canvas
           id="ao"
           class="ao-canvas"
-          width="820"
-          height="720"
+          width="900"
+          height="600"
           role="img"
           aria-label="A hydrogen orbital drawn in three dimensions as a glowing fog coloured by the phase of the wavefunction, with an optional shaded slice through it. Measurements appear as dots."
         ></canvas>
@@ -53,6 +53,8 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
           { value: 'sup', label: 'Superposition' },
         ]}
       />
+      <!-- both states' controls share one grid cell and swap in place -->
+      <div class="state-params">
       <div id="orb-wrap">
         <Seg
           id="preset"
@@ -69,12 +71,15 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
             { value: '4fxyz', label: '4f<sub>xyz</sub>' },
           ]}
         />
-        <Slider id="n" label="Shell n" min={1} max={5} step={1} value={3} display="3" />
-        <Slider id="l" label="Angular momentum l" min={0} max={2} step={1} value={2} display="2 (d)" />
-        <Slider id="m" label="Magnetic number m" min={-2} max={2} step={1} value={0} display="0" />
-        <Checks items={[{ id: 'real', label: 'Real orbitals (p<sub>x</sub>, d<sub>xy</sub>, …): sign as colour' }]} />
+        <Checks items={[{ id: 'real', label: 'Real orbitals: sign as colour' }]} />
+        <details class="numeric-details">
+          <summary>Quantum numbers</summary>
+          <Slider id="n" label="Shell n" min={1} max={5} step={1} value={3} display="3" />
+          <Slider id="l" label="Angular momentum l" min={0} max={2} step={1} value={2} display="2 (d)" />
+          <Slider id="m" label="Magnetic number m" min={-2} max={2} step={1} value={0} display="0" />
+        </details>
       </div>
-      <div id="sup-wrap" hidden>
+      <div id="sup-wrap" class="off">
         <Seg
           id="sup"
           label="Mix"
@@ -87,38 +92,42 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
           ]}
         />
       </div>
+      </div>
       <Transport running>
         <button type="button" class="btn ghost" id="measure">Measure</button>
         <button type="button" class="btn ghost" id="measure200">Measure 200</button>
       </Transport>
-      <Seg
-        id="show"
-        label="Show"
-        active="cloud"
-        options={[
-          { value: 'both', label: 'Cloud + plane' },
-          { value: 'plane', label: 'Plane' },
-          { value: 'cloud', label: 'Cloud' },
-        ]}
-      />
-      <div id="plane-wrap" hidden>
-        <Seg
-          id="plane"
-          label="Plane"
-          options={[
-            { value: 'xz', label: 'XZ' },
-            { value: 'xy', label: 'XY' },
-            { value: 'yz', label: 'YZ' },
-          ]}
-        />
-        <Slider id="offset" label="Plane offset" min={-0.9} max={0.9} step={0.01} value={0} display="0.0 a₀" />
-      </div>
       <div id="cut-wrap">
         <Checks items={[{ id: 'cut', label: 'Cut away the quarter facing you' }]} />
       </div>
-      <div id="density-wrap">
-        <Slider id="density" label="Cloud opacity" min={0.2} max={4} step={0.05} value={1.2} display="1.20" hint={['thin', 'dense']} />
-      </div>
+      <details class="numeric-details">
+        <summary>View</summary>
+        <Seg
+          id="show"
+          label="Show"
+          active="cloud"
+          options={[
+            { value: 'both', label: 'Cloud + plane' },
+            { value: 'plane', label: 'Plane' },
+            { value: 'cloud', label: 'Cloud' },
+          ]}
+        />
+        <div id="plane-wrap">
+          <Seg
+            id="plane"
+            label="Plane"
+            options={[
+              { value: 'xz', label: 'XZ' },
+              { value: 'xy', label: 'XY' },
+              { value: 'yz', label: 'YZ' },
+            ]}
+          />
+          <Slider id="offset" label="Plane offset" min={-0.9} max={0.9} step={0.01} value={0} display="0.0 a₀" />
+        </div>
+        <div id="density-wrap">
+          <Slider id="density" label="Cloud opacity" min={0.2} max={4} step={0.05} value={1.2} display="1.20" hint={['thin', 'dense']} />
+        </div>
+      </details>
       <Readout
         title="Values"
         rows={[
@@ -165,7 +174,8 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, readout, result, tries } from '../../../lib/panel';
   import {
@@ -728,13 +738,14 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
       line3(ctx, cam, planePoint(wp, off, u, -HW), planePoint(wp, off, u, HW), c, 1);
       line3(ctx, cam, planePoint(wp, off, -HW, u), planePoint(wp, off, HW, u), c, 1);
     }
+    if (isCompact(canvas)) return; // a secondary label: no room on a phone
     const lab = cam.project(planePoint(wp, off, HW, -HW));
     const axis = { xz: 'y', xy: 'z', yz: 'x' }[state.plane];
-    ctx.fillStyle = `rgba(${ink()},0.5)`;
-    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    ctx.fillStyle = `rgba(${ink()},0.55)`;
+    ctx.font = `500 ${textPx(canvas, 12, 12)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${state.plane.toUpperCase()} · ${axis} = ${(state.offset * h).toFixed(1)} a₀`, lab.sx + 8, lab.sy);
+    ctx.fillText(`${state.plane.toUpperCase()} · ${axis} = ${fixed(state.offset * h, 1)} a₀`, lab.sx + 8, lab.sy);
   }
 
   // physics axes through the nucleus, z upright
@@ -753,13 +764,14 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
   }
 
   function drawGizmo() {
-    const ox = 50, oy = H - 50, len = 28;
+    const compact = isCompact(canvas);
+    const ox = compact ? 60 : 50, oy = H - (compact ? 60 : 50), len = compact ? 44 : 28;
     const pr = PAX.map((a) => {
       const c = cam.toCam(a.v);
       return { ex: ox + c.x * len, ey: oy - c.y * len, depth: c.z, c: `rgb(${a.c})`, l: a.l };
     }).sort((a, b) => b.depth - a.depth);
-    ctx.lineWidth = 2;
-    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    ctx.lineWidth = compact ? 3 : 2;
+    ctx.font = `600 ${textPx(canvas, 12, compact ? 10 : 12, 2.6)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     for (const a of pr) {
@@ -799,8 +811,8 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
     if (ang > Math.PI / 2) ang -= Math.PI;
     if (ang < -Math.PI / 2) ang += Math.PI;
     ctx.rotate(ang);
-    ctx.fillStyle = `rgba(${ink()},${light ? 0.6 : 0.5})`;
-    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    ctx.fillStyle = `rgba(${ink()},${light ? 0.65 : 0.6})`;
+    ctx.font = `500 ${textPx(canvas, 12, isCompact(canvas) ? 10 : 12, 2.6)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(`${(2 * h).toFixed(h < 8 ? 1 : 0)} a₀`, 0, 6);
@@ -897,9 +909,12 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
   let wheel: HTMLCanvasElement | null = null;
   function drawLegend() {
     const light = isLight();
-    const x = W - 62, y = H - 54;
-    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    const compact = isCompact(canvas);
+    const x = W - (compact ? 70 : 62), y = H - (compact ? 60 : 54);
+    ctx.font = `500 ${textPx(canvas, 12, compact ? 10 : 12, 2.6)}px 'JetBrains Mono', monospace`;
     ctx.fillStyle = `rgba(${ink()},0.6)`;
+    // the caption legend names the colours too; on a phone the corner key is dropped
+    if (compact) return;
     if (signed()) {
       const sw = (c: number[], yy: number, txt: string) => {
         const d = light ? 0.8 : 1;
@@ -912,8 +927,8 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
         ctx.textBaseline = 'middle';
         ctx.fillText(txt, x - 2, yy);
       };
-      sw(PLUS_RGB, y - 10, 'ψ > 0');
-      sw(MINUS_RGB, y + 10, 'ψ < 0');
+      sw(PLUS_RGB, y - 12, 'ψ > 0');
+      sw(MINUS_RGB, y + 12, 'ψ < 0');
       return;
     }
     const S = 64;
@@ -1145,17 +1160,24 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
 
   function panelFor() {
     const sup = state.mode === 'sup';
-    el('orb-wrap').hidden = sup;
-    el('sup-wrap').hidden = !sup;
-    el('plane-wrap').hidden = state.show === 'cloud' && !!vv;
-    el('density-wrap').hidden = state.show === 'plane' || !vv;
-    el('cut-wrap').hidden = state.show === 'plane' || !vv;
+    // swapped and dimmed in place, never removed, so the panel does not reflow
+    el('orb-wrap').classList.toggle('off', sup);
+    el('sup-wrap').classList.toggle('off', !sup);
+    dim('plane-wrap', state.show === 'cloud' && !!vv);
+    dim('density-wrap', state.show === 'plane' || !vv);
+    dim('cut-wrap', state.show === 'plane' || !vv);
     el('show').closest('.control')!.toggleAttribute('hidden', !vv);
     el('lg-phase').hidden = signed();
     el('lg-plus').hidden = !signed();
     el('lg-minus').hidden = !signed();
     el('result-label').textContent = sup ? 'Emitted light λ' : 'Energy';
     if (!vv) el('scene-hint').textContent = 'Click empty space to measure · drag to orbit · scroll to zoom · WebGL2 is not available here, so only the slice is drawn';
+  }
+
+  function dim(id: string, off: boolean) {
+    const box = el(id);
+    box.classList.toggle('dim', off);
+    box.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button').forEach((c) => (c.disabled = off));
   }
 
   function lLabel(l: number) { return `${l} (${LETTER[l]})`; }
@@ -1213,7 +1235,7 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
   const setReal = check('real', (on) => setOrb({ real: on }));
   const shows = segmented('show', (v) => { state.show = v as Show; panelFor(); draw(); });
   const planes = segmented('plane', (v) => { state.plane = v as PhysPlane; draw(); });
-  const setOffset = slider('offset', (v) => { state.offset = v; draw(); }, (v) => `${(v * h).toFixed(1)} a₀`);
+  const setOffset = slider('offset', (v) => { state.offset = v; draw(); }, (v) => `${fixed(v * h, 1)} a₀`);
   slider('density', (v) => { state.density = v; draw(); }, (v) => v.toFixed(2));
   const setCut = check('cut', (on) => { state.cut = on; draw(); });
 
@@ -1332,6 +1354,32 @@ const CLOUD = '#a78bfa', HIT = '#fbbf24', PLUS = '#f472b6', MINUS = '#22d3ee';
 </script>
 
 <style>
+  .state-params {
+    display: grid;
+  }
+  .state-params > div {
+    grid-area: 1 / 1;
+  }
+  .state-params > .off {
+    visibility: hidden;
+  }
+  .dim {
+    opacity: 0.4;
+  }
+  /* the panel spaces its own children; these groups space theirs the same way */
+  .state-params > div,
+  #plane-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  :global(.sim-panel details > :not(summary) + *) {
+    margin-top: 18px;
+  }
+  :global(.sim-panel details[open] > :last-child:not(summary)) {
+    margin-bottom: 12px;
+  }
+
   .ao-canvas {
     cursor: grab;
     touch-action: none;

@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Quantum Fields"
-  description="A field fills all of space, and splitting it into waves turns it into a grid of independent oscillators, one per momentum. Excite a mode into a coherent state and a classical-looking wave appears whose energy comes in steps of ω: those steps are the particles. One mass slider decides how heavy they are, how far they reach and how fast they move."
+  description="Split a field into waves and it becomes a grid of independent oscillators, one per momentum. Excite one and a wave appears whose energy comes in steps of ω: those steps are the particles."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -20,7 +20,7 @@ import Try from '../../../components/sim/Try.astro';
       <div class="sim-stage">
         <canvas id="qf" width="900" height="660" role="img" aria-label="A scalar field in two dimensions, the grid of momentum modes with their mean occupation numbers, the dispersion relation and the range of the field's correlations."></canvas>
       </div>
-      <Caption hint="Click a cell in momentum space to add one quantum on average to that mode, shift-click to remove one; far cells are fast, short-wavelength particles" />
+      <Caption hint="Click a cell in momentum space to add a quantum, shift-click to remove one" />
       <Result label="Mean number of quanta" />
     </div>
 
@@ -70,7 +70,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -164,9 +165,11 @@ import Try from '../../../components/sim/Try.astro';
   const phi = new Float64Array(GRID * GRID);
   let fieldRms = 0;
 
+  // a phone keeps the panel titles and drops the rest (see `compact` below)
+  let compact = false;
   function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 12) {
     ctx.fillStyle = `rgba(${ink()},${alpha})`;
-    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.font = `${textPx(canvas, size, compact ? 10 : 12, 2.8)}px ui-monospace, monospace`;
     ctx.textAlign = align;
     ctx.fillText(text, x, y);
     ctx.textAlign = 'left';
@@ -233,13 +236,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = `rgba(${ink()},0.22)`;
     ctx.lineWidth = 1;
     ctx.strokeRect(FIELD.x, FIELD.y, FIELD.s, FIELD.s);
-    label(state.zp ? 'THE FIELD  ⟨φ⟩ + vacuum sample' : 'THE MEAN FIELD  ⟨φ(x, y)⟩', FIELD.x, FIELD.y - 12, 0.5);
-    label('one snapshot in space', FIELD.x + FIELD.s, FIELD.y - 12, 0.3, 'right');
+    label(compact ? 'FIELD' : state.zp ? 'THE FIELD + VACUUM' : 'THE MEAN FIELD ⟨φ(x, y)⟩', FIELD.x, FIELD.y - 14, 0.55);
   }
 
   function drawModes() {
-    label('MOMENTUM SPACE  each cell is one oscillator', MODES.x, MODES.y - 12, 0.5);
-    label('click to add ⟨n⟩ += 1', MODES.x + MODES.s, MODES.y - 12, 0.3, 'right');
+    label(compact ? 'MODES' : 'MOMENTUM SPACE', MODES.x, MODES.y - 14, 0.55);
+    const numPx = textPx(canvas, 12, compact ? 9.5 : 12, 2.6);
     for (let d = 0; d < NM; d++) {
       const cx = MODES.x + (kx[d] + K) * CELL;
       const cy = MODES.y + (K - ky[d]) * CELL; // +ky drawn upward
@@ -250,7 +252,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fillRect(cx + 1, cy + 1, CELL - 2, CELL - 2);
       if (n > 0) {
         ctx.fillStyle = 'rgba(10,11,14,0.9)';
-        ctx.font = '600 12px ui-monospace, monospace';
+        ctx.font = `600 ${numPx}px ui-monospace, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(n), cx + CELL / 2, cy + CELL / 2);
@@ -275,16 +277,17 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.strokeStyle = `rgba(${ink()},0.22)`;
     ctx.strokeRect(MODES.x, MODES.y, MODES.s, MODES.s);
-    label('kx →', MODES.x + MODES.s - 4, midY - 6, 0.35, 'right', 11);
-    label('ky ↑', mid + 6, MODES.y + 12, 0.35, 'left', 11);
-    label('k = 0, a particle at rest', mid + 6, midY + 14, 0.3, 'left', 11);
+    if (!compact) {
+      label('kx →', MODES.x + MODES.s - 4, midY - 6, 0.4, 'right', 11);
+      label('ky ↑', mid + 6, MODES.y + 14, 0.4, 'left', 11);
+    }
   }
 
   function drawDispersion() {
     const KMAX = 8.6, WMAX = 10;
     const X = (k: number) => DISP.x + (k / KMAX) * DISP.w;
     const Y = (w: number) => DISP.y + DISP.h - (w / WMAX) * DISP.h;
-    label('DISPERSION  ω(k) = √(k² + m²)', DISP.x, DISP.y - 12, 0.5);
+    label(compact ? 'DISPERSION' : 'DISPERSION ω = √(k² + m²)', DISP.x, DISP.y - 14, 0.55);
 
     ctx.strokeStyle = `rgba(${ink()},0.25)`;
     ctx.lineWidth = 1;
@@ -331,16 +334,18 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(X(0), Y(0));
       ctx.lineTo(X(0), Y(state.m));
       ctx.stroke();
-      label(`gap = m = ${state.m.toFixed(2)}`, X(0) + 8, Y(state.m) - 4, 0.6, 'left', 11);
-    } else {
-      label('no gap: massless', X(0) + 8, Y(0) - 8, 0.6, 'left', 11);
+      if (!compact) label(`gap = m = ${fixed(state.m, 2)}`, X(0) + 8, Y(state.m) - 4, 0.6, 'left', 11);
+    } else if (!compact) {
+      label('no gap: massless', X(0) + 10, DISP.y + 14, 0.6, 'left', 11);
     }
-    label('k', DISP.x + DISP.w, DISP.y + DISP.h + 15, 0.35, 'right', 11);
-    label('ω', DISP.x - 6, DISP.y + 8, 0.35, 'right', 11);
+    if (!compact) {
+      label('k', DISP.x + DISP.w, DISP.y + DISP.h + 17, 0.4, 'right', 11);
+      label('ω', DISP.x - 6, DISP.y + 10, 0.4, 'right', 11);
+    }
   }
 
   function drawCorrelator() {
-    label('REACH  ⟨φ(r) φ(0)⟩ ∝ K₀(m r), log scale', CORR.x, CORR.y - 12, 0.5);
+    label(compact ? 'REACH' : 'REACH ⟨φ(r)φ(0)⟩, log scale', CORR.x, CORR.y - 14, 0.55);
     const RMAX = 6, DECADES = 4;
     const meff = Math.max(0.02, state.m);
     const g0 = K0(meff * 0.15);
@@ -380,17 +385,19 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(X(r), CORR.y + CORR.h);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = WARMs;
-      ctx.font = '11px ui-monospace, monospace';
-      ctx.fillText(`1/m = ${r.toFixed(2)}`, X(r) + 5, CORR.y + 12);
-    } else if (state.m <= 0.05) {
-      label('massless: no range at all, it never stops', CORR.x + 10, CORR.y + 16, 0.5, 'left', 11);
+      if (!compact) {
+        ctx.fillStyle = WARMs;
+        ctx.font = `${textPx(canvas, 11, 12, 2.6)}px ui-monospace, monospace`;
+        ctx.fillText(`1/m = ${fixed(r, 2)}`, X(r) + 5, CORR.y + 14);
+      }
+    } else if (state.m <= 0.05 && !compact) {
+      label('massless: it never dies off', CORR.x + 10, CORR.y + CORR.h - 12, 0.55, 'left', 11);
     }
-    label('distance r', CORR.x + CORR.w, CORR.y + CORR.h + 15, 0.35, 'right', 11);
-    label('correlation', CORR.x + 4, CORR.y + CORR.h + 15, 0.35, 'left', 11);
+    if (!compact) label('distance r', CORR.x + CORR.w, CORR.y + CORR.h + 17, 0.4, 'right', 11);
   }
 
   function draw() {
+    compact = isCompact(canvas);
     ctx.clearRect(0, 0, W, H);
     drawField();
     drawModes();
@@ -415,19 +422,19 @@ import Try from '../../../components/sim/Try.astro';
     const massless = state.m < 0.05;
     setRows({
       nq: String(N),
-      en: E.toFixed(2),
-      mom: P.toFixed(2),
-      gap: massless ? '0 (massless)' : state.m.toFixed(2),
-      range: massless ? 'unlimited' : (1 / state.m).toFixed(2),
-      vg: lastMode < 0 ? '—' : `${(kmag[lastMode] / omega[lastMode]).toFixed(3)} c`,
-      rms: fieldRms.toFixed(2),
+      en: fixed(E, 2),
+      mom: fixed(P, 2),
+      gap: massless ? '0 (massless)' : fixed(state.m, 2),
+      range: massless ? 'unlimited' : fixed(1 / state.m, 2),
+      vg: lastMode < 0 ? '—' : `${fixed(kmag[lastMode] / omega[lastMode], 3)} c`,
+      rms: fixed(fieldRms, 2),
       vac: `${vac.toFixed(0)} (set by the grid)`,
     });
     setResult({
       value: String(N),
       colour: ACCs,
-      status: `energy Σ ⟨n⟩ω = ${E.toFixed(2)} · momentum |P| = ${P.toFixed(2)} · each quantum costs at least ${massless ? '0' : state.m.toFixed(2)}`,
-      note: 'Each excited mode is in a coherent state: its mean field is a definite wave of amplitude ∝ √(⟨n⟩/ω), and the number of quanta is only known on average (Poisson spread √⟨n⟩). A state with exactly n quanta has zero mean field.',
+      status: `energy ${fixed(E, 2)} · momentum ${fixed(P, 2)} · gap ${massless ? '0' : fixed(state.m, 2)}`,
+      note: 'Each mode is a coherent state: a definite mean wave, with the number of quanta known only on average.',
     });
     setEq({
       rule: [
@@ -439,9 +446,9 @@ import Try from '../../../components/sim/Try.astro';
       ],
       live: [
         `\\langle N\\rangle = ${N}`,
-        [`\\quad E = ${E.toFixed(2)}`, ACCs],
-        `\\quad |\\mathbf P| = ${P.toFixed(2)}`,
-        [`\\quad m = ${massless ? '0' : state.m.toFixed(2)}`, WARMs],
+        [`\\quad E = ${fixed(E, 2)}`, ACCs],
+        `\\quad |\\mathbf P| = ${fixed(P, 2)}`,
+        [`\\quad m = ${massless ? '0' : fixed(state.m, 2)}`, WARMs],
       ],
     });
   }

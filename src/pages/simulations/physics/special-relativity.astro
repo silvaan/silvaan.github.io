@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Special Relativity"
-  description="Space and time are one fabric. Boost to a moving frame and its grid skews: clocks tick slow, rulers shrink, and simultaneity comes apart. Yet every arrow in spacetime keeps one length that all observers agree on."
+  description="Space and time are one fabric. Boost to a moving frame and its grid skews: clocks slow, rulers shrink, simultaneity comes apart. Yet every spacetime arrow keeps one length all agree on."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -33,7 +33,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'event / four-vector', color: '#f59e0b' },
           { label: 'invariant hyperbola', color: '#34d399' },
         ]}
-        hint="Drag the event (or the arrowhead in Displacement). Run sweeps the observer's speed back and forth."
+        hint="Drag the event or the arrowhead. Run sweeps the observer's speed."
       />
       <Result label="Lorentz factor γ" />
     </div>
@@ -51,14 +51,17 @@ import Try from '../../../components/sim/Try.astro';
         ]}
       />
       <Slider id="b" label="Observer boost β = v/c" min={-0.88} max={0.88} step={0.01} value={0} display="0.00" />
-      <div data-for="vel">
-        <Slider id="u" label="Particle speed β<sub>u</sub>" min={-0.92} max={0.92} step={0.01} value={0.6} display="0.60" />
-      </div>
-      <div data-for="mom">
-        <Slider id="e" label="Energy E" min={0.6} max={3.8} step={0.01} value={2} display="2.00" />
-        <Slider id="m" label="Rest mass m" min={0} max={3} step={0.01} value={1.2} display="1.20" hint={['massless', 'heavy']} />
-      </div>
       <Transport />
+      <!-- the sliders only some views use, below everything they could move -->
+      <div class="per-view">
+        <div data-for="vel">
+          <Slider id="u" label="Particle speed β<sub>u</sub>" min={-0.92} max={0.92} step={0.01} value={0.6} display="0.60" />
+        </div>
+        <div data-for="mom">
+          <Slider id="e" label="Energy E" min={0.6} max={3.8} step={0.01} value={2} display="2.00" />
+          <Slider id="m" label="Rest mass m" min={0} max={3} step={0.01} value={1.2} display="1.20" hint={['massless', 'heavy']} />
+        </div>
+      </div>
       <Readout
         title="Numbers"
         rows={[
@@ -95,7 +98,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed, handle, grabCursor } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -115,12 +119,14 @@ import Try from '../../../components/sim/Try.astro';
     ect: 1.2,
   };
   const ROD = 2; // proper length of the ruler that rides with the observer
+  // the draggable event (or arrowhead): held, and under the pointer
+  let dragging = false;
+  let hover = false;
 
   const canvas = el('fv') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
-  const inkInv = () => css('--stage-ink-inv') || '13,14,18';
 
   const ACC = '#7c8cff'; // x' axis, space component
   const TEAL = '#5eead4'; // ct' axis, time component
@@ -140,9 +146,12 @@ import Try from '../../../components/sim/Try.astro';
     const n = parseInt(hex.slice(1), 16);
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
+  // on a phone only the essential labels are drawn, at a size that still reads
+  let compact = false;
+  const fontPx = (size: number) => textPx(canvas, size, compact ? 10 : 12, 2.8);
   function text(t: string, x: number, y: number, a = 0.55, al: CanvasTextAlign = 'left', size = 12, weight = '', colour = '') {
     ctx.fillStyle = colour || `rgba(${ink()},${a})`;
-    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.font = `${weight} ${fontPx(size)}px ui-monospace, monospace`.trim();
     ctx.textAlign = al;
     ctx.fillText(t, x, y);
     ctx.textAlign = 'left';
@@ -261,7 +270,7 @@ import Try from '../../../components/sim/Try.astro';
       }
       const tip = toPx(d.x * k * 0.92, d.ct * k * 0.92);
       ctx.fillStyle = tint(color, 1);
-      ctx.font = '600 13px ui-monospace, monospace';
+      ctx.font = `600 ${fontPx(13)}px ui-monospace, monospace`;
       ctx.fillText(label, tip.px + 8, tip.py - 4);
     };
     axis(et, TEAL, 'ct′');
@@ -290,8 +299,10 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function axisLabels() {
-    text('x (space) →', O.x + R * U, O.y + 20, 0.4, 'right', 11);
-    text('↑ ct (time)', O.x + 10, O.y - R * U + 4, 0.4, 'left', 11);
+    if (compact) return;
+    text('x (space) →', O.x + R * U, O.y + 22, 0.45, 'right', 11);
+    // left of the axis: the ct′ label sits on its right and would cover it at β = 0
+    text('ct (time) ↑', O.x - 10, O.y - R * U + 16, 0.45, 'right', 11);
   }
 
   /** One arrow, its shadows on the boosted axes, and the hyperbola it rides. */
@@ -329,11 +340,13 @@ import Try from '../../../components/sim/Try.astro';
     // the four-vector, drawn last so it sits on top
     const org = toPx(0, 0);
     arrow(org.px, org.py, tip.px, tip.py, tint(WARM, 1), 3);
+    // the arrowhead is the thing to drag in Displacement
+    if (state.mode === 'disp') handle(ctx, tip.px, tip.py, WARM, { r: 5, hot: dragging || hover });
     ctx.restore();
 
     ctx.fillStyle = tint(WARM, 1);
-    ctx.font = '600 14px ui-monospace, monospace';
-    ctx.fillText(v.name, tip.px + 11, tip.py - 9);
+    ctx.font = `600 ${fontPx(14)}px ui-monospace, monospace`;
+    ctx.fillText(v.name, tip.px + 14, tip.py - 10);
     axisLabels();
   }
 
@@ -372,7 +385,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath(); ctx.arc(tick.px, tick.py, 5, 0, Math.PI * 2); ctx.fill();
     const onAxis = toPx(0, g);
     ctx.fillRect(onAxis.px - 6, onAxis.py - 1.5, 12, 3);
-    text(`ct = γ = ${g.toFixed(2)}`, onAxis.px + (b >= 0 ? -10 : 10), onAxis.py - 6, 1, b >= 0 ? 'right' : 'left', 11, '600', tint(TEAL, 1));
+    if (!compact)
+      text(`ct = γ = ${fixed(g, 2)}`, onAxis.px + (b >= 0 ? -10 : 10), onAxis.py - 6, 1, b >= 0 ? 'right' : 'left', 11, '600', tint(TEAL, 1));
 
     // length contraction: at lab time ct = 0 the rod spans only ROD/γ
     const r0 = toPx(0, 0), r1 = toPx(ROD / g, 0);
@@ -385,7 +399,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 3;
     line(fromPrimed(0, 0), fromPrimed(ROD, 0));
     ctx.lineCap = 'butt';
-    text(`L = ${ROD}/γ = ${(ROD / g).toFixed(2)}`, (r0.px + r1.px) / 2, r0.py + 20, 1, 'center', 11, '600', tint(WARM, 1));
+    if (!compact)
+      text(`L = ${ROD}/γ = ${fixed(ROD / g, 2)}`, (r0.px + r1.px) / 2, r0.py + 22, 1, 'center', 11, '600', tint(WARM, 1));
 
     // lines of simultaneity through the event: the lab's (flat) and the mover's (tilted)
     const ep = toPx(v.v1, v.v0);
@@ -408,13 +423,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillStyle = tint(ACC, 1);
     ctx.beginPath(); ctx.arc(movNow.px, movNow.py, 3.5, 0, Math.PI * 2); ctx.fill();
 
-    ctx.fillStyle = tint(WARM, 1);
-    ctx.strokeStyle = `rgba(${inkInv()},0.75)`;
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(ep.px, ep.py, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    handle(ctx, ep.px, ep.py, WARM, { r: 6, hot: dragging || hover });
     ctx.restore();
 
-    text('event', ep.px + 11, ep.py - 9, 1, 'left', 13, '600', tint(WARM, 1));
+    text('event', ep.px + 16, ep.py - 10, 1, 'left', 13, '600', tint(WARM, 1));
     axisLabels();
   }
 
@@ -428,8 +440,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = `rgba(${ink()},0.3)`;
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(CB, y - 12); ctx.lineTo(CB, y + 12); ctx.stroke();
-    text(label, COL.x, y - 15, 0.45, 'left', 11);
-    text(value.toFixed(3), COL.x + COL.w, y - 15, 0.8, 'right', 11, '600');
+    text(label, COL.x, y - 16, 0.5, 'left', 11);
+    text(fixed(value, compact ? 2 : 3), COL.x + COL.w, y - 16, 0.8, 'right', 11, '600');
   }
 
   function drawColumn(v: Vec, s2: number) {
@@ -442,50 +454,37 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(COL.x - 22, 60); ctx.lineTo(COL.x - 22, H - 60); ctx.stroke();
 
-    text('LAB FRAME', COL.x, 84, 0.5, 'left', 11, '600');
-    bar(122, v.v0, scale, TEAL, v.t0);
-    bar(168, v.v1, scale, ACC, v.t1);
+    // the same arrow read by two observers; the arithmetic is in the header
+    text(compact ? 'LAB' : 'LAB FRAME', COL.x, 100, 0.55, 'left', 11, '600');
+    bar(146, v.v0, scale, TEAL, v.t0);
+    bar(200, v.v1, scale, ACC, v.t1);
 
-    text(`OBSERVER AT β = ${state.beta.toFixed(2)}`, COL.x, 244, 0.5, 'left', 11, '600');
-    bar(282, p0, scale, TEAL, v.t0 + '′');
-    bar(328, p1, scale, ACC, v.t1 + '′');
+    text(compact ? 'MOVING' : `MOVING AT β = ${fixed(state.beta, 2)}`, COL.x, 280, 0.55, 'left', 11, '600');
+    bar(326, p0, scale, TEAL, v.t0 + '′');
+    bar(380, p1, scale, ACC, v.t1 + '′');
 
-    if (state.mode === 'grid') {
-      const g = gamma();
-      text('MOVING CLOCK', COL.x, 404, 0.5, 'left', 11, '600');
-      text(`1 tick of ct′ = ${g.toFixed(3)} of ct`, COL.x, 426, 0.8, 'left', 11, '600', tint(TEAL, 1));
-      text('time dilation: it runs slow by γ', COL.x, 446, 0.45, 'left', 11);
-      text('MOVING ROD', COL.x, 488, 0.5, 'left', 11, '600');
-      text(`own length L₀ = ${ROD.toFixed(3)}`, COL.x, 510, 0.8, 'left', 11, '600', tint(ACC, 1));
-      text(`lab length L = ${(ROD / g).toFixed(3)}`, COL.x, 530, 0.8, 'left', 11, '600', tint(WARM, 1));
-      text('length contraction: L = L₀/γ', COL.x, 550, 0.45, 'left', 11);
-      return;
-    }
+    if (state.mode === 'grid') return;
 
-    text('INVARIANT LENGTH', COL.x, 424, 0.5, 'left', 11, '600');
+    text(compact ? 'INVARIANT' : 'INVARIANT LENGTH', COL.x, 460, 0.55, 'left', 11, '600');
     ctx.fillStyle = `rgba(${ink()},0.07)`;
-    ctx.fillRect(COL.x, 452, COL.w, 20);
+    ctx.fillRect(COL.x, 494, COL.w, 20);
     ctx.fillStyle = tint(OUT, 0.9);
-    ctx.fillRect(COL.x, 452, Math.min(COL.w, s * scale), 20);
-    text(s2 >= 0 ? s.toFixed(3) : `${s.toFixed(3)} (spacelike)`, COL.x, 446, 0.8, 'left', 11, '600');
-
+    ctx.fillRect(COL.x, 494, Math.min(COL.w, s * scale), 20);
+    text(fixed(s, compact ? 2 : 3), COL.x + COL.w, 484, 0.8, 'right', 11, '600');
+    if (compact) return;
     const kind = state.mode === 'disp'
       ? (s2 > 0.004 ? 'proper time cΔτ' : s2 < -0.004 ? 'proper length' : 'lightlike, zero')
       : state.mode === 'vel'
-        ? 'always c, for everyone'
+        ? 'always c'
         : 'the rest mass mc';
-    text(kind, COL.x, 490, 0.45, 'left', 11);
-    text('s² = (ct)² − x²', COL.x, 516, 0.5, 'left', 12, '600');
-    text(`= ${(v.v0 * v.v0).toFixed(2)} − ${(v.v1 * v.v1).toFixed(2)} = ${s2.toFixed(3)}`, COL.x, 536, 0.45, 'left', 11);
-    text(`= ${(p0 * p0).toFixed(2)} − ${(p1 * p1).toFixed(2)} = ${(p0 * p0 - p1 * p1).toFixed(3)}`, COL.x, 556, 0.45, 'left', 11);
-    text('same number, different reader', COL.x, 580, 0.4, 'left', 11);
+    text(kind, COL.x, 540, 0.5, 'left', 11);
   }
 
   function draw() {
+    compact = isCompact(canvas);
     ctx.clearRect(0, 0, W, H);
     const v = vec();
     const s2 = v.v0 * v.v0 - v.v1 * v.v1;
-    text(state.mode === 'grid' ? 'TWO GRIDS, ONE SPACETIME' : 'ONE ARROW, MANY READINGS', 40, 42, 0.5, 'left', 12, '600');
     if (state.mode === 'grid') drawGridDiagram(v);
     else drawVectorDiagram(v, s2);
     drawColumn(v, s2);
@@ -499,16 +498,16 @@ import Try from '../../../components/sim/Try.astro';
   const extra = el('rows-extra');
   let lastExtra = '';
   const row = (a: string, b: string) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
-  const f2 = (x: number) => x.toFixed(2);
+  const f2 = (x: number) => fixed(x, 2);
 
   function sync(v: Vec, s2: number) {
     const g = gamma(), b = state.beta;
     const { p0, p1 } = primed(v);
     setRows({
-      'r-g': g.toFixed(3),
+      'r-g': fixed(g, 3),
       'r-lab': `(${f2(v.v0)}, ${f2(v.v1)})`,
       'r-mov': `(${f2(p0)}, ${f2(p1)})`,
-      'r-s2': s2.toFixed(3),
+      'r-s2': fixed(s2, 3),
     });
 
     let html = '';
@@ -540,7 +539,7 @@ import Try from '../../../components/sim/Try.astro';
           ',\\quad \\gamma = 1/\\sqrt{1-\\beta^2}',
         ],
         live: [
-          `\\beta = ${b.toFixed(2)},\\ \\gamma = ${g.toFixed(3)}:\\quad`,
+          `\\beta = ${f2(b)},\\ \\gamma = ${fixed(g, 3)}:\\quad`,
           [`(ct, x) = (${f2(v.v0)}, ${f2(v.v1)})`, WARM],
           '\\ \\mapsto\\ ',
           [`(${f2(p0)},`, TEAL],
@@ -548,9 +547,9 @@ import Try from '../../../components/sim/Try.astro';
         ],
       });
       setResult({
-        value: g.toFixed(3),
-        status: `The event is at ct = ${f2(v.v0)}, x = ${f2(v.v1)} in the lab and ct′ = ${f2(p0)}, x′ = ${f2(p1)} for the moving observer`,
-        note: `The moving clock ticks once per ${g.toFixed(2)} lab units and the moving rod measures ${(ROD / g).toFixed(2)} instead of ${ROD}. The two grids disagree on time and distance but agree on (ct)² − x² = ${s2.toFixed(2)}.`,
+        value: fixed(g, 3),
+        status: `lab (ct, x) = (${f2(v.v0)}, ${f2(v.v1)}) · moving (${f2(p0)}, ${f2(p1)})`,
+        note: `The moving clock ticks once per ${f2(g)} lab units; the rod measures ${f2(ROD / g)} instead of ${ROD}.`,
       });
       return;
     }
@@ -565,27 +564,28 @@ import Try from '../../../components/sim/Try.astro';
       live: [
         [`${f2(v.v0)}^2`, TEAL], '-', [`${f2(v.v1)}^2`, ACC], '=',
         [`${f2(p0)}^2`, TEAL], '-', [`${f2(p1)}^2`, ACC], '=',
-        [s2.toFixed(3), OUT],
+        [fixed(s2, 3), OUT],
       ],
     });
     setResult({
-      value: s2.toFixed(3),
+      value: fixed(s2, 3),
       colour: OUT,
-      status: `γ = ${g.toFixed(3)} · lab reads (${f2(v.v0)}, ${f2(v.v1)}) · the boosted observer reads (${f2(p0)}, ${f2(p1)}) · both give ${(p0 * p0 - p1 * p1).toFixed(3)}`,
-      note: 'Every observer sees different components, and every observer computes the same (ct)² − x². That is what makes it a four-vector.',
+      status: `lab (${f2(v.v0)}, ${f2(v.v1)}) · moving (${f2(p0)}, ${f2(p1)}) · γ = ${f2(g)}`,
+      note: 'Different components for every observer, the same (ct)² − x² for all: that makes it a four-vector.',
     });
   }
 
   // --- controls -------------------------------------------------------------
   function syncVisibility() {
     document.querySelectorAll<HTMLElement>('[data-for]').forEach((n) => {
+      // they sit at the foot of the panel, so showing one moves nothing above it
       n.style.display = n.dataset.for === state.mode ? '' : 'none';
     });
   }
 
   const modes = segmented('mode', (m) => { state.mode = m as Mode; syncVisibility(); draw(); });
-  const setB = slider('b', (v) => { state.beta = v; draw(); }, (v) => v.toFixed(2));
-  const setU = slider('u', (v) => { state.ubeta = v; draw(); }, (v) => v.toFixed(2));
+  const setB = slider('b', (v) => { state.beta = v; draw(); }, (v) => fixed(v, 2));
+  const setU = slider('u', (v) => { state.ubeta = v; draw(); }, (v) => fixed(v, 2));
   const setE = slider('e', (v) => { state.E = v; draw(); }, (v) => v.toFixed(2));
   const setM = slider('m', (v) => { state.m = v; draw(); }, (v) => v.toFixed(2));
 
@@ -620,7 +620,15 @@ import Try from '../../../components/sim/Try.astro';
   el('b').addEventListener('input', () => { if (tp.running()) { stop(); tp.setRunning(false); } });
 
   // --- dragging the event / arrowhead ---------------------------------------
-  let dragging = false;
+  /** Is the pointer over the thing that can be dragged in this view? */
+  function overTip(e: PointerEvent) {
+    if (state.mode !== 'grid' && state.mode !== 'disp') return false;
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * W;
+    const my = ((e.clientY - rect.top) / rect.height) * H;
+    const t = state.mode === 'grid' ? toPx(state.ex, state.ect) : toPx(state.dx, state.dct);
+    return Math.hypot(mx - t.px, my - t.py) < 18;
+  }
   function setTip(e: PointerEvent) {
     const rect = canvas.getBoundingClientRect();
     const mx = ((e.clientX - rect.left) / rect.width) * W;
@@ -640,8 +648,13 @@ import Try from '../../../components/sim/Try.astro';
     canvas.setPointerCapture(e.pointerId);
     setTip(e);
   });
-  canvas.addEventListener('pointermove', (e) => dragging && setTip(e));
-  const release = () => (dragging = false);
+  canvas.addEventListener('pointermove', (e) => {
+    if (dragging) setTip(e);
+    const o = overTip(e);
+    if (o !== hover) { hover = o; if (!tp.running()) draw(); }
+    grabCursor(canvas, hover, dragging);
+  });
+  const release = () => { dragging = false; grabCursor(canvas, hover, false); draw(); };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
 
@@ -669,6 +682,14 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  .per-view {
+    display: contents;
+  }
+  .per-view > div {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
   #fv {
     cursor: crosshair;
     touch-action: none;
