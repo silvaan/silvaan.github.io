@@ -113,7 +113,7 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect, fixed, signed } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
@@ -153,7 +153,20 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
   const canvas = el('dl') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  // text is floored to a readable size on screen, recomputed each draw since the
+  // canvas box changes size; on a phone the secondary labels are left out
+  let compact = false;
+  let MIN = 11.5, SCALE = 1.42;
+  let { label, textWidth } = makeText(ctx, ink, SCALE, undefined, MIN);
+  function sizeText() {
+    compact = isCompact(canvas);
+    MIN = compact ? 9.5 : 11.5;
+    // a phone shows the canvas at a third of its size: ask for more so the floor is reachable
+    SCALE = compact ? 2.4 : 1.42;
+    ({ label, textWidth } = makeText(ctx, ink, SCALE, undefined, MIN));
+  }
+  /** Logical px of a label of the given makeText size. */
+  const px = (size: number) => textPx(canvas, Math.round(size * SCALE), MIN);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -222,7 +235,7 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
   }
 
   function drawAxes() {
-    const step = niceStep(V.x1 - V.x0, 8);
+    const step = niceStep(V.x1 - V.x0, compact ? 4 : 8);
     const dec = Math.max(1, -Math.floor(Math.log10(step) + 1e-9));
     ctx.strokeStyle = ink(0.07);
     ctx.lineWidth = 1;
@@ -234,8 +247,9 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
       ctx.lineTo(X, BOX.y + BOX.h);
       ctx.stroke();
       // leave room at the ends for the x₀ labels and the box edge
-      if (X > BOX.x + 18 && X < BOX.x + BOX.w - 18)
-        label(fixed(xv, dec), X, BOX.y + BOX.h + 17, 0.3, 'center', 11.5);
+      // on a phone the row is left to the x₀ labels
+      if (!compact && X > BOX.x + 18 && X < BOX.x + BOX.w - 18)
+        label(fixed(xv, dec), X, BOX.y + BOX.h + px(8) + 4, 0.35, 'center', 8);
     }
     if (V.lo < 0 && V.hi > 0) {
       ctx.strokeStyle = ink(0.16);
@@ -274,12 +288,14 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
   }
 
   function lineTag(txt: string, x: number, y: number, colour: string) {
-    if (y < BOX.y + 16 || y > BOX.y + BOX.h - 10) return;
-    const tw = textWidth(txt, 11);
+    const fs = px(8.5);
+    if (y < BOX.y + fs + 8 || y > BOX.y + BOX.h - 10) return;
+    const tw = textWidth(txt, 8.5);
+    const bx = Math.max(BOX.x, Math.min(BOX.x + BOX.w - tw - 14, x - tw / 2 - 7));
     ctx.fillStyle = inv(0.72);
-    roundRect(ctx, x - tw / 2 - 7, y - 24, tw + 14, 19, 5);
+    roundRect(ctx, bx, y - fs - 12, tw + 14, fs + 8, 5);
     ctx.fill();
-    label(txt, x, y - 11, 1, 'center', 11, colour);
+    label(txt, bx + 7, y - 8, 1, 'left', 8.5, colour);
   }
 
   /** At a corner there is no tangent, only a half-line on each side. */
@@ -345,10 +361,11 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
     // captions on the run and the rise, dropped once the step is too small
     // or has left the view
     const up = y1 >= y0;
-    if (inBoxX(sx(x1)) && sx(x1) - sx(x0) > 46)
-      label(`run h = ${fixed(state.h, 2)}`, sx(x1) - 4, sy(y0) + (up ? 17 : -9), 1, 'right', 11.5, col('sec', on ? 0.95 : 0.4));
-    if (inBoxX(sx(x1) + 60) && Math.abs(sy(y1) - sy(y0)) > 22)
-      label(`rise ${fixed(y1 - y0, 2)}`, sx(x1) + 8, (sy(y0) + sy(y1)) / 2 + 4, 1, 'left', 11.5, col('sec', on ? 0.95 : 0.4));
+    const fs = px(8);
+    if (!compact && inBoxX(sx(x1)) && sx(x1) - sx(x0) > textWidth(`h = ${fixed(state.h, 2)}`, 8) + 8)
+      label(`h = ${fixed(state.h, 2)}`, sx(x1) - 4, sy(y0) + (up ? fs + 4 : -6), 1, 'right', 8, col('sec', on ? 0.95 : 0.4));
+    if (!compact && inBoxX(sx(x1) + 90) && Math.abs(sy(y1) - sy(y0)) > fs + 6)
+      label(`Δf = ${fixed(y1 - y0, 2)}`, sx(x1) + 8, (sy(y0) + sy(y1)) / 2 + fs / 3, 1, 'left', 8, col('sec', on ? 0.95 : 0.4));
     ctx.restore();
   }
 
@@ -399,9 +416,10 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
     dot(x1, y1, col('sec', 1));
     dot(state.x0, y0, ink(0.95), 6);
     ctx.restore();
-    label('x₀', sx(state.x0), BOX.y + BOX.h + 38, 0.75, 'center', 11);
-    if (inBoxX(sx(x1)) && sx(x1) - sx(state.x0) > 34)
-      label('x₀+h', sx(x1), BOX.y + BOX.h + 38, 1, 'center', 11, col('sec', 0.9));
+    const yl = BOX.y + BOX.h + px(8) * (compact ? 1 : 2) + (compact ? 6 : 10);
+    label('x₀', sx(state.x0), yl, 0.75, 'center', 8.5);
+    if (inBoxX(sx(x1)) && sx(x1) - sx(state.x0) > textWidth('x₀+h', 8.5) + 6)
+      label('x₀+h', sx(x1), yl, 1, 'center', 8.5, col('sec', 0.9));
   }
 
   /**
@@ -426,30 +444,38 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
   function drawBadge(dev: number) {
     const { corner, left, right } = slopes();
     const big = zoomText(state.zoom);
-    const small = corner
-      ? `corner: ${fixed(left, 2)} | ${signed(right, 2).replace(' ', '')}`
-      : dev < 1
-        ? 'curve = tangent line, to the pixel'
-        : `curve off the tangent by ${dev < 100 ? dev.toFixed(0) : '100+'} px`;
-    const sw = textWidth(small, 10.5);
-    ctx.font = `600 ${Math.round(20 * 1.42)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    const small = compact
+      ? ''
+      : corner
+        ? `corner: ${fixed(left, 2)} | ${signed(right, 2).replace(' ', '')}`
+        : dev < 1
+          ? 'curve = tangent line'
+          : `off the tangent by ${dev < 100 ? dev.toFixed(0) : '100+'} px`;
+    const fs = px(8);
+    const sw = small ? textWidth(small, 8) : 0;
+    const bigPx = textPx(canvas, 26, compact ? 13 : 18);
+    ctx.font = `600 ${bigPx}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     const bw = ctx.measureText(big).width;
     const x = BOX.x + 10, y = BOX.y + 10;
+    const bh = bigPx + 18 + (small ? fs + 8 : 0);
     ctx.fillStyle = inv(0.78);
-    roundRect(ctx, x, y, Math.max(bw, sw) + 24, 66, 9);
+    roundRect(ctx, x, y, Math.max(bw, sw) + 24, bh, 9);
     ctx.fill();
     ctx.strokeStyle = ink(0.12);
     ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.font = `600 ${Math.round(20 * 1.42)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.font = `600 ${bigPx}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.fillStyle = ink(0.92);
     ctx.textAlign = 'left';
-    ctx.fillText(big, x + 12, y + 35);
-    const tint = corner ? 'rgba(249,115,106,0.95)' : dev < 1 ? col('tan', 1) : ink(0.6);
-    label(small, x + 12, y + 55, 1, 'left', 10.5, tint);
+    ctx.fillText(big, x + 12, y + 8 + bigPx * 0.85);
+    if (small) {
+      const tint = corner ? 'rgba(249,115,106,0.95)' : dev < 1 ? col('tan', 1) : ink(0.6);
+      label(small, x + 12, y + bh - 12, 1, 'left', 8, tint);
+    }
   }
 
   function draw() {
+    sizeText();
     view();
     ctx.clearRect(0, 0, W, H);
     drawAxes();
@@ -478,10 +504,9 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
       rule: [["f'(x_0)", TAN], '=', ['\\lim\\limits_{h\\to 0}\\frac{f(x_0+h)-f(x_0)}{h}', SEC]],
       live: corner
         ? [
-            [`h\\to 0^-:\\ ${fixed(left, 3)}`, TAN],
+            [`\\text{left}\\ {${fixed(left, 3)}}`, TAN],
             '\\ne',
-            [`h\\to 0^+:\\ ${fixed(right, 3)}`, TAN],
-            `\\quad\\Rightarrow\\ f'(${fixed(state.x0, 2)})\\ \\text{does not exist}`,
+            [`\\text{right}\\ {${fixed(right, 3)}}`, TAN],
           ]
         : [
             [`f'(x_0) = ${fixed(tan, 3)}`, TAN],
@@ -491,18 +516,17 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
     });
 
     el('result-label').textContent = w === 'sec' ? 'Slope of the secant' : 'Slope of the tangent';
-    const line = `y = ${fixed(y0, 2)} ${signed(m, 2)}(x ${signed(-state.x0, 2)})`;
     const zoomNote = corner
-      ? `Zoomed ${z}, the corner is still a corner: from the left the slope is ${fixed(left, 2)}, from the right ${fixed(right, 2)}.`
+      ? `Zoomed ${z}, the corner is still a corner.`
       : state.zoom > 1.05
-        ? `Zoomed ${z}, the curve strays ${dev < 0.1 ? 'less than 0.1' : dev.toFixed(1)} px from the tangent.`
+        ? `Zoomed ${z}, the curve strays ${dev < 0.1 ? 'under 0.1' : dev.toFixed(1)} px from the tangent.`
         : '';
     if (w === 'tan' && corner) {
       setResult({
         value: 'none',
         colour: TAN,
-        status: `No single number: the one-sided slopes are ${fixed(left, 3)} and ${fixed(right, 3)}`,
-        note: `${zoomNote} The secant with h > 0 heads for ${fixed(right, 3)}, with h < 0 it would head for ${fixed(left, 3)}.`,
+        status: `One-sided slopes ${fixed(left, 3)} and ${fixed(right, 3)} disagree`,
+        note: `${zoomNote} No single tangent, so f′(${fixed(state.x0, 2)}) does not exist.`,
       });
     } else {
       setResult({
@@ -510,15 +534,15 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
         colour: w === 'sec' ? SEC : TAN,
         status:
           w === 'sec'
-            ? `(f(x₀+h) − f(x₀)) / h = (${fixed(y1, 3)} ${signed(-y0, 3)}) / ${fixed(state.h, 3)}`
-            : `The number the secant is heading for as h → 0`,
+            ? `Δf / h = ${fixed(y1 - y0, 3)} / ${fixed(state.h, 3)}`
+            : `The number the secant heads for as h → 0`,
         note:
-          (zoomNote ? zoomNote + ' ' : '') +
+          zoomNote ||
           (w === 'sec'
             ? corner
-              ? `Line: ${line}`
-              : `Gap to the tangent: ${fixed(gap, 3)}. Line: ${line}`
-            : `At h = ${fixed(state.h, 2)} the secant still misses it by ${fixed(gap, 3)}. Line: ${line}`),
+              ? `At a corner the secant has no single slope to settle on.`
+              : `Gap to the tangent: ${fixed(gap, 3)}.`
+            : `At h = ${fixed(state.h, 2)} the secant still misses it by ${fixed(gap, 3)}.`),
       });
     }
 
@@ -527,7 +551,7 @@ const SEC = '#f59e0b', TAN = '#38bdf8';
       'r-df': cur().dq,
       'r-sec': fixed(sec, 3),
       'r-tan': corner ? `none (${fixed(left, 2)} | ${fixed(right, 2)})` : fixed(tan, 3),
-      'r-gap': corner ? '—' : fixed(gap, 3),
+      'r-gap': corner ? 'none' : fixed(gap, 3),
       'r-dev': corner ? 'a corner, at any zoom' : `${dev < 0.1 ? '< 0.1' : dev.toFixed(1)} px at ${z}`,
     });
   }

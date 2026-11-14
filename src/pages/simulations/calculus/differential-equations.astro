@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Differential Equations"
-  description="An equation that gives you the slope instead of the value. Draw that slope everywhere and the plane fills with little segments; drop a point anywhere and the solution threads itself through them. Then take steps too big and watch Euler's method drift off the truth."
+  description="An equation that gives the slope instead of the value. Draw that slope everywhere, drop a point, and the solution threads itself through the segments. Take big steps and Euler's method drifts off."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -23,7 +23,7 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[{ label: 'the solution through your point', color: '#7c8cff' }, { label: 'particles riding the field', color: '#2dd4bf' }, { label: "Euler's steps", color: '#f9736a' }]}
-        hint="Drag the start point anywhere on the plane"
+        hint="Drag the start point anywhere on the plane."
       />
       <Result label="Slope at the start point" />
     </div>
@@ -62,7 +62,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
+  import { fixed, handle, grabCursor } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -158,7 +159,7 @@ import Try from '../../../components/sim/Try.astro';
   const cssv = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const inkRGB = () => cssv('--stage-ink') || '232,233,236';
   const inkA = (a: number) => `rgba(${inkRGB()},${a})`;
-  const { label } = makeText(ctx, inkA);
+  const { label } = makeText(ctx, inkA, 1.42, undefined, 10);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -356,12 +357,14 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(sx(0), P.y + P.h);
     ctx.stroke();
 
+    // a phone keeps every other tick label, so the big ones do not crowd
+    const every = isCompact(canvas) ? 2 : 1;
     for (let i = Math.ceil(XMIN); i <= XMAX; i++)
-      if (i !== 0) label(String(i), sx(i), sy(0) + 15, 0.35, 'center', 11);
+      if (i !== 0 && i % every === 0) label(fixed(i, 0), sx(i), sy(0) + 18, 0.4, 'center', 10);
     for (let j = Math.ceil(YMIN); j <= YMAX; j++)
-      if (j !== 0) label(String(j), sx(0) - 7, sy(j) + 4, 0.35, 'right', 11);
-    label('x', P.x + P.w - 2, sy(0) - 8, 0.4, 'right', 11);
-    label('y', sx(0) + 9, P.y + 12, 0.4, 'left', 11);
+      if (j !== 0 && j % every === 0) label(fixed(j, 0), sx(0) - 8, sy(j) + 5, 0.4, 'right', 10);
+    label('x', P.x + P.w - 2, sy(0) - 10, 0.5, 'right', 11);
+    label('y', sx(0) + 10, P.y + 14, 0.5, 'left', 11);
   }
 
   function drawField() {
@@ -520,7 +523,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.setLineDash([]);
       if (err > 0.06)
         label(
-          `off by ${err.toFixed(2)}`,
+          `off by ${fixed(err, 2)}`,
           sx(last.x) - 8,
           (sy(last.y) + sy(best.y)) / 2,
           0.9,
@@ -561,36 +564,29 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(cx - tx, cy - ty);
     ctx.lineTo(cx + tx, cy + ty);
     ctx.stroke();
-    ctx.fillStyle = inkA(1);
-    ctx.strokeStyle = `rgba(${cssv('--stage-ink-inv') || '13,14,18'},0.8)`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 6.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    label(
-      `(${state.x0.toFixed(2)}, ${state.y0.toFixed(2)})`,
-      cx + 11,
-      cy - 11,
-      0.75,
-      'left',
-      11
-    );
+    handle(ctx, cx, cy, inkA(1), {
+      r: isCompact(canvas) ? 9 : 6.5,
+      hot: dragging || hover,
+      ring: `rgba(${cssv('--stage-ink-inv') || '13,14,18'},0.8)`,
+    });
+    // the coordinates are in the equation above; a phone has no room to repeat them
+    if (!isCompact(canvas))
+      label(`(${fixed(state.x0)}, ${fixed(state.y0)})`, cx + 14, cy - 14, 0.75, 'left', 11);
 
     const last = truth[truth.length - 1];
     setRows({
       stepOut: state.euler ? String(euler.steps) : '—',
-      errOut: state.euler ? (Number.isFinite(euler.err) ? euler.err.toFixed(3) : 'it left the picture') : '—',
-      liveOut: truth.length < 2 ? 'nowhere, it is vertical here' : last.x >= XMAX - 0.2 ? 'past the right edge' : `x = ${last.x.toFixed(2)}`,
+      errOut: state.euler ? (Number.isFinite(euler.err) ? fixed(euler.err, 3) : 'it left the picture') : '—',
+      liveOut: truth.length < 2 ? 'nowhere, it is vertical here' : last.x >= XMAX - 0.2 ? 'past the edge' : `x = ${fixed(last.x)}`,
     });
     setEq({
       rule: [[state.preset.tex, ACC], '\\quad\\text{with}\\;', `y(${state.x0.toFixed(2)}) = ${state.y0.toFixed(2)}`],
       live: [[`y' = ${Number.isFinite(m) ? m.toFixed(3) : '\\infty'}\\text{ here}`, ACC], state.euler ? [`\\quad y_{n+1} = y_n + ${state.h.toFixed(2)}\\,f(x_n,y_n)`, HOT] : ''],
     });
     setResult({
-      value: Number.isFinite(m) ? m.toFixed(3) : 'vertical',
+      value: Number.isFinite(m) ? fixed(m, 3) : 'vertical',
       colour: ACC,
-      status: `at (${state.x0.toFixed(2)}, ${state.y0.toFixed(2)})${Number.isFinite(m) ? `, the curve climbs at ${((Math.atan(m) * 180) / Math.PI).toFixed(0)}°` : ''}${state.euler ? ` · Euler with h = ${state.h.toFixed(2)} ends ${Number.isFinite(euler.err) ? `${euler.err.toFixed(3)} off` : 'off the picture'}` : ''}`,
+      status: `at (${fixed(state.x0)}, ${fixed(state.y0)})${Number.isFinite(m) ? `, the curve climbs at ${fixed((Math.atan(m) * 180) / Math.PI, 0)}°` : ''}${state.euler ? `; Euler with h = ${fixed(state.h)} ends ${Number.isFinite(euler.err) ? `${fixed(euler.err, 3)} off` : 'off the picture'}` : ''}`,
       note: state.preset.note,
     });
   }
@@ -658,6 +654,7 @@ import Try from '../../../components/sim/Try.astro';
   // --- dragging the initial condition ----------------------------------------
 
   let dragging = false;
+  let hover = false;
   const localPt = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
     return {
@@ -675,13 +672,17 @@ import Try from '../../../components/sim/Try.astro';
   canvas.addEventListener('pointermove', (e) => {
     const l = localPt(e);
     if (!dragging) {
-      const d = Math.hypot(l.x - sx(state.x0), l.y - sy(state.y0));
-      canvas.style.cursor = d < 18 ? 'grab' : 'crosshair';
+      hover = Math.hypot(l.x - sx(state.x0), l.y - sy(state.y0)) < 18;
+      grabCursor(canvas, hover, false);
       return;
     }
+    grabCursor(canvas, true, true);
     setStart(wxOf(l.x), wyOf(l.y));
   });
-  const stopDrag = () => (dragging = false);
+  const stopDrag = () => {
+    dragging = false;
+    grabCursor(canvas, hover, false);
+  };
   canvas.addEventListener('pointerup', stopDrag);
   canvas.addEventListener('pointercancel', stopDrag);
 

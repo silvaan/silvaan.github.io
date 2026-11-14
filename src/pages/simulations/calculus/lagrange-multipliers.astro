@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Lagrange Multipliers"
-  description="Stand the objective up as a hill and the constraint becomes a fence winding across it. Walk the fence to its highest point: there the ground is tangent to a contour line, which is exactly the statement that the two gradients line up."
+  description="Stand the objective up as a hill and the constraint becomes a fence across it. At the top of the fence the ground is tangent to a contour, which says exactly that the two gradients line up."
   shortcuts={['animate', 'fullscreen']}
 >
   <div class="sim">
@@ -25,15 +25,15 @@ import Try from '../../../components/sim/Try.astro';
         </div>
       </div>
       <Caption
-        legend={[{ label: 'the fence, f along the constraint', color: '#f59e0b' }, { label: '∇f', color: '#a78bfa' }, { label: '∇g', color: '#22d3ee' }, { label: 'the ball, a peak on the fence', color: '#34d399' }]}
-        hint="Drag to orbit · scroll to zoom · the dashed line is the contour through the ball · Walk uphill climbs the fence until the slope along it is zero"
+        legend={[{ label: 'the fence', color: '#f59e0b' }, { label: '∇f', color: '#a78bfa' }, { label: '∇g', color: '#22d3ee' }, { label: 'the ball', color: '#34d399' }]}
+        hint="Drag to orbit · scroll to zoom · the dashed line is the contour through the ball"
       />
       <Result label="Slope along the fence" />
     </div>
     <div class="sim-panel">
       <Seg id="obj" label="Objective f(x, y)" attr="o" options={[{ value: 'sum', label: 'x + y' }, { value: 'prod', label: 'x · y' }, { value: 'tilt', label: '2x + y' }]} />
       <Slider id="theta" label="Where on the fence" min={0} max={360} value={40} display="40°" />
-      <Slider id="rad" label="Circle radius r (g = x² + y² = r²)" min={0.4} max={1.4} step={0.01} value={1} display="1.00" />
+      <Slider id="rad" label="Circle radius r" min={0.4} max={1.4} step={0.01} value={1} display="1.00" />
       <Transport animate="Walk uphill" reset={false} />
       <Checks items={[{ id: 'wall', label: 'Show the constraint wall', checked: true }, { id: 'spin', label: 'Spin the scene' }]} />
       <Readout
@@ -75,6 +75,8 @@ import Try from '../../../components/sim/Try.astro';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { Camera3D, orbitControls, V } from '../../../lib/scene3d';
+  import { textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import type { Vec } from '../../../lib/scene3d';
 
   type Obj = {
@@ -148,8 +150,8 @@ import Try from '../../../components/sim/Try.astro';
   };
   readTheme();
   const inkA = (a: number) => `rgba(${ink},${a})`;
-  /** text grows a little when the canvas is shown small, so it stays readable */
-  const fontK = () => Math.max(1, Math.min(1.7, (W / (canvas.clientWidth || W)) * 0.72));
+  /** a logical text size that shows at a readable size however small the canvas is drawn */
+  const fontPx = (size: number) => textPx(canvas, size, isCompact(canvas) ? 10 : 11);
 
   /** math (x, y, height) to world: x right, y away from the viewer, height up */
   const P = (x: number, y: number, h: number): Vec => ({ x, y: h, z: y });
@@ -560,7 +562,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function label(text: string, x: number, y: number, col: string, align: CanvasTextAlign = 'left', size = 15, weight = 600) {
-    ctx.font = `${weight} ${Math.round(size * fontK())}px 'JetBrains Mono', ui-monospace, monospace`;
+    ctx.font = `${weight} ${fontPx(size)}px 'JetBrains Mono', ui-monospace, monospace`;
     ctx.textAlign = align;
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 4;
@@ -711,15 +713,6 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     ctx.stroke();
     ctx.globalAlpha = 1;
-
-    // a quiet key in the corner
-    const fk = fontK();
-    ctx.font = `500 ${Math.round(13 * fk)}px 'JetBrains Mono', ui-monospace, monospace`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = inkA(0.6);
-    ctx.fillText(`f(x, y) = ${OBJ[state.obj].tex} · contours every ${OBJ[state.obj].step}`, 16, 18 + 10 * fk);
-    ctx.fillText(`fence: x² + y² = ${(r * r).toFixed(2)}`, 16, 18 + 30 * fk);
   }
 
   // --- the height-along-the-fence card --------------------------------------
@@ -744,10 +737,9 @@ import Try from '../../../components/sim/Try.astro';
       c.fillStyle = col ?? inkA(a);
       c.fillText(s, x, y);
     };
-    const compact = ch < 300;
     txt('height along the fence', 14, 24, 0.7, 'left', 12);
 
-    const px = 16, py = 40, pw = cw - 30, ph = ch - (compact ? 92 : 150);
+    const px = 16, py = 40, pw = cw - 30, ph = ch - 92;
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i <= 200; i++) {
       const v = fAt((i / 200) * Math.PI * 2);
@@ -828,22 +820,12 @@ import Try from '../../../components/sim/Try.astro';
       c.arc(x, y - 4, 4.5, 0, Math.PI * 2);
       c.fill();
     };
-    if (compact) {
-      const yb = ch - 16;
-      txt('flat spots:', 14, yb, 0.6, 'left', 11);
-      dot(108, yb, BALL);
-      txt('peak', 117, yb, 0.6, 'left', 11);
-      dot(166, yb, GRADF);
-      txt('dip', 175, yb, 0.6, 'left', 11);
-      txt('slope 0 at both', cw - 14, yb, 0.45, 'right', 11);
-    } else {
-      txt('flat spots are the answer:', 14, ch - 76, 0.65, 'left', 11);
-      dot(20, ch - 52, BALL);
-      txt('a peak', 30, ch - 52, 0.6, 'left', 11);
-      dot(20, ch - 32, GRADF);
-      txt('a dip', 30, ch - 32, 0.6, 'left', 11);
-      txt('the slope there is zero', 14, ch - 12, 0.45, 'left', 11);
-    }
+    // the flat spots, where the slope along the fence is zero
+    const yb = ch - 16;
+    dot(20, yb, BALL);
+    txt('peak', 30, yb, 0.6, 'left', 11);
+    dot(84, yb, GRADF);
+    txt('dip', 94, yb, 0.6, 'left', 11);
   }
 
   // --- readouts ---------------------------------------------------------------
@@ -866,24 +848,24 @@ import Try from '../../../components/sim/Try.astro';
     const fStar = best();
     const dfdc = (OBJ[state.obj].deg * fStar) / (2 * r * r);
     setRows({
-      r1: f(x, y).toFixed(3),
-      r3: `${aligned.toFixed(1)}°`,
-      r4: lam.toFixed(3),
-      r5: fStar.toFixed(3),
-      r6: dfdc.toFixed(3),
+      r1: fixed(f(x, y), 3),
+      r3: `${fixed(aligned, 1)}°`,
+      r4: fixed(lam, 3),
+      r5: fixed(fStar, 3),
+      r6: fixed(dfdc, 3),
     });
     setEq({
       rule: [['\\nabla f', GRADF], '=\\lambda', ['\\nabla g', GRADG], `,\\quad g = x^2+y^2 = r^2`],
-      live: [[`\\angle(\\nabla f,\\nabla g)=${aligned.toFixed(1)}^{\\circ}`, aligned < 3 ? BALL : FENCE], `\\quad\\lambda = ${lam.toFixed(3)}`, `\\quad \\tfrac{df^*}{d(r^2)} = ${dfdc.toFixed(3)}`],
+      live: [[`\\angle(\\nabla f,\\nabla g)=${aligned.toFixed(1)}^{\\circ}`, aligned < 3 ? BALL : FENCE], `\\quad\\lambda = ${lam.toFixed(3)}`],
     });
     setResult({
-      value: slope.toFixed(3),
+      value: fixed(slope, 3),
       colour: optimal ? BALL : FENCE,
       status: optimal
-        ? `${dotv > 0 ? 'at a peak' : 'at a dip'} · the two gradients line up, ${aligned.toFixed(1)}° apart · λ = ${lam.toFixed(3)}`
-        : `can still climb · ∇f and ∇g are ${aligned.toFixed(1)}° apart · height ${f(x, y).toFixed(3)}`,
+        ? `${dotv > 0 ? 'At a peak' : 'At a dip'} · the gradients line up · λ = ${fixed(lam, 3)}`
+        : `Can still climb · ∇f and ∇g are ${fixed(aligned, 1)}° apart`,
       note: optimal && dotv > 0
-        ? `λ = ${lam.toFixed(3)} matches df*/d(r²) = ${dfdc.toFixed(3)}: how fast the best height rises as the constraint loosens.`
+        ? `λ = ${fixed(lam, 3)} matches df*/d(r²) = ${fixed(dfdc, 3)}: how fast the best height rises as the constraint loosens.`
         : 'While the two arrows disagree there is uphill left along the fence; when they line up there is none. λ is how much of ∇g it takes to make ∇f.',
     });
   }
@@ -895,7 +877,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.clearRect(0, 0, W, H);
     if (G) renderGl(G);
     else {
-      ctx.font = "12px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.font = `${fontPx(12)}px 'JetBrains Mono', ui-monospace, monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = inkA(0.6);
       ctx.fillText('WebGL2 is not available here, so only the curves on the hill are drawn.', W / 2, H - 16);

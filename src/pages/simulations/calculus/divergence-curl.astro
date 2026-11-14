@@ -76,7 +76,8 @@ const POS = '#5eead4', NEG = '#f59e0b';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -87,6 +88,8 @@ const POS = '#5eead4', NEG = '#f59e0b';
   const setResult = result();
   const setRows = readout();
   const canvas = el('dc') as HTMLCanvasElement;
+  // a phone sees the middle of the field, closer up
+  if (matchMedia('(max-width: 600px)').matches) canvas.width = 600; // same test as the CSS below
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
@@ -400,11 +403,14 @@ const POS = '#5eead4', NEG = '#f59e0b';
         ctx.stroke();
         ctx.setLineDash([]);
         drawWheel(gx, gy, rr, state.refAngle, true);
-        ctx.font = "11px 'JetBrains Mono', monospace";
-        ctx.fillStyle = faint;
-        ctx.textAlign = 'center';
-        ctx.fillText('reference', gx, gy + rr + 16);
-        ctx.textAlign = 'left';
+        if (!isCompact(canvas)) {
+          const fs = textPx(canvas, 11, 11.5);
+          ctx.font = `${fs}px 'JetBrains Mono', monospace`;
+          ctx.fillStyle = faint;
+          ctx.textAlign = 'center';
+          ctx.fillText('reference', gx, gy + rr + 6 + fs);
+          ctx.textAlign = 'left';
+        }
       }
       ctx.fillStyle = 'rgba(94,234,212,0.1)';
       ctx.strokeStyle = teal;
@@ -423,54 +429,53 @@ const POS = '#5eead4', NEG = '#f59e0b';
     const c0 = curl(0, 0);
     const { flux, circ } = rimIntegrals();
     const om = c / 2;
-    const sign = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(2);
+    const sign = (v: number) => (v >= 0 ? '+' : '') + fixed(v, 2);
     const val = patch ? d : c;
     const zero = Math.abs(val) < 0.02;
     const SIGN = zero ? faint : val > 0 ? teal : AMBER;
 
     if (!patch) {
-      ctx.font = "12px 'JetBrains Mono', monospace";
+      ctx.font = `${textPx(canvas, 12, 12.5)}px 'JetBrains Mono', monospace`;
       ctx.fillStyle = SIGN;
       ctx.textAlign = 'center';
-      ctx.fillText(`ω ${Math.abs(om).toFixed(2)}`, cx, cy - r - 10);
+      ctx.fillText(`ω ${fixed(Math.abs(om), 2)}`, cx, cy - r - 10);
       ctx.textAlign = 'left';
     }
 
     setRows({
       'r-div': sign(d),
       'r-flux': sign(flux),
-      'r-area': `${factor.toFixed(2)}×`,
+      'r-area': `${fixed(factor, 2)}×`,
       'r-curl': sign(c),
       'r-circ': sign(circ),
-      'r-om': `${Math.abs(om).toFixed(2)} rad/s`,
-      'r-ratio': Math.abs(c0) > 1e-6 ? `${(c / c0).toFixed(2)}×` : '—',
+      'r-om': `${fixed(Math.abs(om), 2)} rad/s`,
+      'r-ratio': Math.abs(c0) > 1e-6 ? `${fixed(c / c0, 2)}×` : '—',
     });
-    const at = `at (${state.px.toFixed(2)}, ${state.py.toFixed(2)})`;
     if (patch) {
       setEq({
         rule: [['\\nabla\\cdot\\mathbf{F}', SIGN], '=\\frac{\\partial P}{\\partial x}+\\frac{\\partial Q}{\\partial y}=', ['\\lim\\limits_{A\\to 0}\\frac{\\text{flux out}}{A}', SIGN]],
-        live: [[`\\nabla\\cdot\\mathbf{F} = ${sign(d)}`, SIGN], `\\quad\\text{flux}/A = ${sign(flux)}`, `\\quad\\text{area now }${factor.toFixed(2)}\\times`],
+        live: [[`\\nabla\\cdot\\mathbf{F} = ${sign(d)}`, SIGN], `\\quad\\text{flux}/A = ${sign(flux)}`, `\\quad\\text{area now }${fixed(factor, 2)}\\times`],
       });
       setResult({
         value: sign(d),
         colour: zero ? undefined : SIGN,
         status: zero
-          ? `area preserving: the patch keeps its size (${factor.toFixed(2)}×) · ${at}`
-          : `the patch is ${d > 0 ? 'expanding' : 'contracting'}, now ${factor.toFixed(2)}× · ${at}`,
-        note: 'The blob is a small material patch carried along by the flow. Its rate of change of area is the divergence.',
+          ? `Area preserved: still ${fixed(factor, 2)}×`
+          : `The patch is ${d > 0 ? 'expanding' : 'contracting'}: area ${fixed(factor, 2)}×`,
+        note: 'A small patch carried by the flow: its rate of change of area is the divergence.',
       });
     } else {
       setEq({
         rule: [['(\\nabla\\times\\mathbf{F})_z', SIGN], '=\\frac{\\partial Q}{\\partial x}-\\frac{\\partial P}{\\partial y}=', ['\\lim\\limits_{A\\to 0}\\frac{\\text{circulation}}{A}', SIGN]],
-        live: [[`(\\nabla\\times\\mathbf{F})_z = ${sign(c)}`, SIGN], `\\quad\\text{circulation}/A = ${sign(circ)}`, `\\quad\\omega = ${Math.abs(om).toFixed(2)}\\text{ rad/s}`],
+        live: [[`(\\nabla\\times\\mathbf{F})_z = ${sign(c)}`, SIGN], `\\quad\\text{circulation}/A = ${sign(circ)}`, `\\quad\\omega = ${fixed(Math.abs(om), 2)}\\text{ rad/s}`],
       });
       setResult({
         value: sign(c),
         colour: zero ? undefined : SIGN,
         status: zero
-          ? `the wheel does not turn here · ${at}`
-          : `the wheel spins ${c > 0 ? 'anticlockwise' : 'clockwise'} at ${Math.abs(om).toFixed(2)} rad/s · ${at}`,
-        note: 'Curl is local rotation, one number at each point: not whether the arrows travel on curved paths.',
+          ? 'The wheel does not turn here'
+          : `The wheel spins ${c > 0 ? 'anticlockwise' : 'clockwise'}`,
+        note: 'Curl is the local spin at a point, not whether the arrows travel on curved paths.',
       });
     }
   }
@@ -492,8 +497,9 @@ const POS = '#5eead4', NEG = '#f59e0b';
 
   function pointer(e: PointerEvent) {
     const r = canvas.getBoundingClientRect();
-    state.px = Math.max(-1.95, Math.min(1.95, (((e.clientX - r.left) / r.width) * W - W / 2) / UNIT));
-    state.py = Math.max(-1.1, Math.min(1.1, -(((e.clientY - r.top) / r.height) * H - H / 2) / UNIT));
+    const mx = Math.min(1.95, XR - 0.12), my = Math.min(1.1, YR - 0.12);
+    state.px = Math.max(-mx, Math.min(mx, (((e.clientX - r.left) / r.width) * W - W / 2) / UNIT));
+    state.py = Math.max(-my, Math.min(my, -(((e.clientY - r.top) / r.height) * H - H / 2) / UNIT));
     state.time = 0;
   }
   canvas.addEventListener('pointerdown', (e) => { drag = true; canvas.setPointerCapture(e.pointerId); pointer(e); });
@@ -519,9 +525,9 @@ const POS = '#5eead4', NEG = '#f59e0b';
     state.time = 0;
     for (const s of streaks) respawn(s, false);
   });
-  const setStrength = slider('strength', (v) => { state.strength = v / 100; state.time = 0; }, (v) => (v / 100).toFixed(2));
+  const setStrength = slider('strength', (v) => { state.strength = v / 100; state.time = 0; }, (v) => fixed(v / 100, 2));
   slider('speed', (v) => (state.speed = v / 100), (v) => `${(v / 100).toFixed(1)}×`);
-  slider('radius', (v) => { state.radius = v / 100; state.time = 0; }, (v) => (v / 100).toFixed(2));
+  slider('radius', (v) => { state.radius = v / 100; state.time = 0; }, (v) => fixed(v / 100, 2));
   check('streaks', (on) => (state.streaks = on));
   check('ref', (on) => (state.ref = on));
   const tp = transport({
@@ -561,6 +567,13 @@ const POS = '#5eead4', NEG = '#f59e0b';
 </script>
 
 <style>
+  /* a phone gets a narrower canvas (set before it is first drawn); this keeps
+     its box from changing shape as the page loads */
+  @media (max-width: 600px) {
+    #dc {
+      aspect-ratio: 600 / 520;
+    }
+  }
   #dc {
     cursor: crosshair;
     touch-action: none;

@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Stokes' Theorem"
-  description="Stretch any surface across a loop and chop it into patches. Neighbours walk every shared edge both ways, so the sum collapses onto the one curve around the edge. Lay it flat and this is Green's theorem; bend it and the answer refuses to move."
+  description="Stretch a surface across a loop and chop it into patches. Shared edges are walked both ways and cancel, leaving only the curve round the edge. Flat, this is Green's theorem; bent, the total won't move."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -22,14 +22,14 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[{ label: 'spins one way', color: '#34d399' }, { label: 'spins the other', color: '#ff7a5c' }, { label: 'the patch you picked', color: '#f59e0b' }]}
-        hint="Click any patch to open it up · in space, drag to orbit"
+        hint="Click a patch to open it up. In space, drag to orbit."
       />
       <Result label="Patch you picked" />
     </div>
 
     <div class="sim-panel">
       <Seg id="view" label="View" attr="v" options={[{ value: '2d', label: "Flat (Green's theorem)" }, { value: '3d', label: 'In space' }]} />
-      <div id="shapewrap" hidden>
+      <div id="shapewrap" class="off">
         <Seg id="shape" label="Surface across the same loop" attr="s" options={[{ value: 'dome', label: 'Dome' }, { value: 'bowl', label: 'Bowl' }, { value: 'crumple', label: 'Crumpled' }]} />
       </div>
       <Seg id="field" label="Field" attr="f" active="eddy" options={[{ value: 'eddy', label: 'Eddy' }, { value: 'rot', label: 'Rotation' }, { value: 'slant', label: 'Sideways spin' }, { value: 'two', label: 'Two-sided' }, { value: 'source', label: 'Source' }]} />
@@ -65,10 +65,10 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import {
     HUE,
     V2,
@@ -229,11 +229,14 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
   const canvas = el('stokes') as HTMLCanvasElement;
+  // a phone gets only the scene, cropped tighter, so it shows larger
+  if (matchMedia('(max-width: 600px)').matches) canvas.width = 600; // same test as the CSS below
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { css, ink } = stageInk(canvas);
   const { label, textWidth } = makeText(ctx, ink);
   const accent = () => css('--accent', '#7c8cff');
-  const fmt = (v: number) => (Math.abs(v) < 5e-5 ? '0.0000' : v.toFixed(4));
+  const fmt = (v: number) => fixed(v, 4);
+  const plus = (v: number, n = 4) => (v >= 0 ? '+' : '') + fixed(v, n);
 
   const CARD = { x: 612, y: 64, w: 268, h: 300 };
   const flatCam: Cam = {
@@ -487,9 +490,9 @@ import Try from '../../../components/sim/Try.astro';
     // they must, so no name runs into its number
     const y = CARD.y + 214;
     const rows: [string, string, number, number, string | undefined][] = [
-      ['add the four edges', `${sel.circ >= 0 ? '+' : ''}${fmt(sel.circ)}`, 0.95, 13, signColour(sel.curlN, 1)],
-      ['÷ area', sel.area.toFixed(4), 0.7, 12, undefined],
-      ['= curl·n', sel.curlN.toFixed(3), 0.95, 13, HUE.pick],
+      ['add the four edges', plus(sel.circ), 0.95, 13, signColour(sel.curlN, 1)],
+      ['÷ area', fixed(sel.area, 4), 0.7, 12, undefined],
+      ['= curl·n', fixed(sel.curlN, 3), 0.95, 13, HUE.pick],
     ];
     let nameSize = 11.5;
     for (const [name, value, , size] of rows) {
@@ -515,14 +518,19 @@ import Try from '../../../components/sim/Try.astro';
 
 
   function draw() {
+    // on a phone the card would be too small to read: the scene takes the
+    // middle of the canvas and the picked patch is told in the result below
+    const compact = W < 900 || isCompact(canvas);
+    for (const c of [flatCam, spaceCam]) c.cx = compact ? W / 2 : 300;
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 14, 598, 514);
+    if (compact) ctx.rect(0, 0, W, H);
+    else ctx.rect(0, 14, 598, 514);
     ctx.clip();
     drawScene();
     ctx.restore();
-    drawCard();
+    if (!compact) drawCard();
     sync();
   }
 
@@ -530,16 +538,16 @@ import Try from '../../../components/sim/Try.astro';
     const sel = selected();
     setEq({
       rule: [['\\oint_C\\mathbf{F}\\cdot d\\mathbf{r}', accent()], '=', ['\\iint_S(\\nabla\\times\\mathbf{F})\\cdot\\mathbf{n}\\,dA', HUE.with]],
-      live: [[`${fmt(rimCirc)}\\text{ round the edge}`, accent()], '\\approx', [`${fmt(patchSum)}\\text{ over ${patches.length} patches}`, HUE.with], `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`],
+      live: [[`${fmt(rimCirc)}\\text{ round the edge}`, accent()], '\\approx', [`${fmt(patchSum)}\\text{ over ${patches.length} patches}`, HUE.with], `\\quad${fixed(100 * gap(), 2)}\\%\\text{ short}`],
     });
-    setRows({ rim: fmt(rimCirc), sum: fmt(patchSum), gap: `${(100 * gap()).toFixed(2)}%` });
+    setRows({ rim: fmt(rimCirc), sum: fmt(patchSum), gap: `${fixed(100 * gap(), 2)}%` });
     el('meshval').textContent = `${patches.length} patches`;
     setResult({
-      value: sel ? `${sel.circ >= 0 ? '+' : ''}${fmt(sel.circ)}` : '—',
+      value: sel ? plus(sel.circ) : '—',
       colour: sel ? (sel.circ >= 0 ? HUE.with : HUE.against) : undefined,
       status: sel
-        ? `its circulation · curl·n ${sel.curlN.toFixed(3)} · centred at (${sel.c.x.toFixed(2)}, ${sel.c.y.toFixed(2)})${sel.full ? '' : ' · cut by the edge'}`
-        : 'click any patch to open it up',
+        ? `Its circulation; curl·n = ${fixed(sel.curlN, 3)}${sel.full ? '' : ', cut by the edge'}`
+        : 'Click any patch to open it up',
       note:
         state.field === 'rot' && state.view === '2d'
           ? 'This field spins the same everywhere, so every full patch reports the same curl; only the patches cut by the edge differ. Pick Eddy to see it vary.'
@@ -553,7 +561,8 @@ import Try from '../../../components/sim/Try.astro';
               ? 'Flattened out, this is exactly Green’s theorem. Switch to In space and bend the surface: only the edge decides.'
               : 'Bend the surface however you like: the patches change, the walk round the edge does not, and the two still agree.',
     });
-    el('shapewrap').hidden = state.view !== '3d';
+    // the shapes stay in the panel (dimmed when flat) so nothing jumps
+    el('shapewrap').classList.toggle('off', state.view !== '3d');
   }
 
   /** Open on a patch away from the middle, where the edges disagree. */
@@ -610,7 +619,13 @@ import Try from '../../../components/sim/Try.astro';
   });
   const shapes = segmented('shape', (s) => {
     state.shape = s as Shape;
-    build();
+    // picking a shape while flat takes the surface into space
+    if (state.view !== '3d') {
+      state.view = '3d';
+      views.select('3d');
+      build();
+      pickDefault();
+    } else build();
     draw();
   });
   const fields = segmented('field', (f) => {
@@ -661,6 +676,16 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  /* a phone gets a narrower canvas (set before it is first drawn); this keeps
+     its box from changing shape as the page loads */
+  @media (max-width: 600px) {
+    .st-canvas {
+      aspect-ratio: 600 / 546;
+    }
+  }
+  #shapewrap.off {
+    opacity: 0.45;
+  }
   .st-canvas {
     cursor: pointer;
     touch-action: none;

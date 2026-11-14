@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Line Integrals"
-  description="Ride a bead along a curve through a field and keep one running account: at every step, how much of the field points the way you are going. That is the whole of a line integral, and the shaded area under the little graph is the number itself."
+  description="Ride a bead along a curve through a field and keep a running account of how much of the field points the way you are going. That is a line integral: the shaded area under the graph."
 >
   <div class="sim">
     <div class="sim-view">
@@ -21,8 +21,8 @@ import Try from '../../../components/sim/Try.astro';
         <canvas id="li" class="li-canvas" width="900" height="560" role="img" aria-label="A bead riding a path through a vector field, the path painted by what it collects, a running graph of the field's push along the path, and a card showing the field and travel direction at the bead."></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the field pushes you along', color: '#34d399' }, { label: 'it holds you back', color: '#ff7a5c' }, { label: 'the field at the bead', color: '#7c8cff' }]}
-        hint="Drag along the graph to move the bead by hand"
+        legend={[{ label: 'pushes you along', color: '#34d399' }, { label: 'holds you back', color: '#ff7a5c' }, { label: 'the field at the bead', color: '#7c8cff' }]}
+        hint="The graph is how much of the field points your way; its shaded area is the total. Drag along it to move the bead."
       />
       <Result label="Collected so far" />
     </div>
@@ -30,7 +30,7 @@ import Try from '../../../components/sim/Try.astro';
       <Transport />
       <Seg id="field" label="Field" attr="f" options={[{ value: 'uniform', label: 'Uniform' }, { value: 'central', label: 'Central' }, { value: 'swirl', label: 'Swirl' }]} />
       <Seg id="path" label="Path from A to B" attr="p" options={[{ value: 'straight', label: 'Straight' }, { value: 'detour', label: 'Detour' }, { value: 'loop', label: 'Closed loop' }]} />
-      <div id="bulgewrap" hidden>
+      <div id="bulgewrap">
         <Slider id="bulge" label="How far it detours" min={-120} max={120} step={5} value={80} display="0.80" />
       </div>
       <Checks items={[{ id: 'showfield', label: 'Show the field', checked: true }]} />
@@ -40,8 +40,8 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Run the bead. The card shows the field and the way you are travelling, and
-      only <b>the shadow of one on the other</b> is added. The graph plots it: the
+      Run the bead. Only <b>the shadow of the field on your direction</b> is
+      added (the card beside the scene opens it up). The graph plots it: the
       shaded area is the integral. <Try id="ride" label="Run" />
     </li>
     <li>
@@ -63,7 +63,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { makeText, textPx } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
   import { HUE, V2, v2, arrow, tick, roundRect } from '../../../lib/theorem';
@@ -155,25 +156,65 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
   const canvas = el('li') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const ctx = canvas.getContext('2d')!;
+  // wide: the scene, the graph under it and the card beside it; on a phone the
+  // card is dropped and the canvas turns taller so the scene can be bigger
+  let W = 900, H = 560;
+  function size() {
+    const narrow = (canvas.parentElement?.clientWidth ?? 900) < 560 && !document.fullscreenElement;
+    const [w, h] = narrow ? [640, 600] : [900, 560];
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (w === W && h === H && canvas.width === Math.round(w * dpr)) return;
+    W = w;
+    H = h;
+    canvas.dataset.logicalW = String(W);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  let shown = 0;
+  new ResizeObserver(() => {
+    if (canvas.clientWidth === shown) return;
+    shown = canvas.clientWidth;
+    requestAnimationFrame(() => draw());
+  }).observe(canvas.parentElement!);
+  document.addEventListener('fullscreenchange', () => draw());
+  window.addEventListener('themechange', () => draw());
   const css = (n: string, f = '') =>
     getComputedStyle(canvas).getPropertyValue(n).trim() || f;
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
-  const { label, textWidth } = makeText(ctx, ink);
+  const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+  // the floor on label size depends on how big the canvas shows, so it is set each frame
+  let minPx = 11;
+  let text = makeText(ctx, ink, 1.42, MONO, minPx);
+  const label: typeof text.label = (...a) => text.label(...a);
+  const textWidth: typeof text.textWidth = (...a) => text.textWidth(...a);
+  /** On a phone the card is dropped and the scene and graph take the whole width. */
+  let compact = false;
   type Box = { x0: number; y0: number; x1: number; y1: number };
   /** The box a label will cover, measured in the font it is drawn in. */
   function box(text: string, x: number, y: number, align: CanvasTextAlign, size: number): Box {
-    const w = textWidth(text, size), px = Math.round(size * 1.42);
+    const w = textWidth(text, size), px = textPx(canvas, Math.round(size * 1.42), minPx);
     const x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
     return { x0, y0: y - px * 0.8, x1: x0 + w, y1: y + px * 0.25 };
   }
   const hits = (a: Box, b: Box) => a.x0 < b.x1 + 4 && b.x0 < a.x1 + 4 && a.y0 < b.y1 + 2 && b.y0 < a.y1 + 2;
   const accent = () => css('--accent', '#7c8cff');
-  const fmt = (v: number) => (Math.abs(v) < 5e-4 ? '0.000' : v.toFixed(3));
+  const fmt = (v: number) => fixed(v, 3);
+  /** the same number for KaTeX, which wants a plain hyphen for the minus */
+  const tex = (v: number) => fmt(v).replace('−', '-');
 
   const SC = { cx: 302, cy: 222, s: 150 };
   const PLOT = { x: 34, y: 466, w: 548, h: 68 };
   const CARD = { x: 612, y: 64, w: 268, h: 300 };
+  function layout() {
+    size();
+    compact = W < 900;
+    minPx = compact ? 10 : 11;
+    text = makeText(ctx, ink, 1.42, MONO, minPx);
+    Object.assign(SC, compact ? { cx: 320, cy: 222, s: 178 } : { cx: 302, cy: 222, s: 150 });
+    Object.assign(PLOT, compact ? { x: 20, y: 470, w: 600, h: 100 } : { x: 34, y: 466, w: 548, h: 68 });
+  }
   const px = (p: V2) => ({ x: SC.cx + p.x * SC.s, y: SC.cy - p.y * SC.s });
   const bead = () => samples[Math.round(state.t * N)];
   /** The unit direction of travel at the bead. */
@@ -232,7 +273,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.beginPath();
       ctx.arc(q.x, q.y, 4.5, 0, Math.PI * 2);
       ctx.fill();
-      label(name, q.x, q.y - 14, 0.6, 'center', 11);
+      label(name, q.x, q.y - (compact ? 20 : 14), 0.6, 'center', 11);
     }
 
     // the bead, and the two arrows that decide everything
@@ -277,8 +318,7 @@ import Try from '../../../components/sim/Try.astro';
     const sx = (i: number) => PLOT.x + (PLOT.w * i) / N;
     const sy = (v: number) => y0 - (v / maxPush) * (PLOT.h / 2 - 5);
 
-    label('how much of the field points your way', PLOT.x, PLOT.y - 30, 0.42, 'left', 11);
-    label('the shaded area is the total', PLOT.x, PLOT.y - 13, 0.3, 'left', 11);
+    if (!compact) label('F·T̂ along the path', PLOT.x, PLOT.y - 14, 0.45, 'left', 11);
 
     const upto = Math.round(state.t * N);
     for (const sign of [1, -1]) {
@@ -320,6 +360,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(bx, PLOT.y - 4);
     ctx.lineTo(bx, PLOT.y + PLOT.h + 4);
     ctx.stroke();
+    if (compact) return;
     label('0', PLOT.x - 8, y0 + 4, 0.35, 'right', 11.5);
     label('start', PLOT.x, PLOT.y + PLOT.h + 18, 0.3, 'left', 11.5);
     label('end', PLOT.x + PLOT.w, PLOT.y + PLOT.h + 18, 0.3, 'right', 11.5);
@@ -442,15 +483,16 @@ import Try from '../../../components/sim/Try.astro';
 
 
   function draw() {
+    layout();
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 14, 598, 404);
+    ctx.rect(0, compact ? 0 : 14, compact ? W : 598, compact ? 446 : 404);
     ctx.clip();
     drawScene();
     ctx.restore();
     drawPlot();
-    drawCard();
+    if (!compact) drawCard();
     sync();
   }
 
@@ -459,25 +501,28 @@ import Try from '../../../components/sim/Try.astro';
     const push = `${s.push >= 0 ? '+' : ''}${fmt(s.push)}`;
     setEq({
       rule: [['\\int_C \\mathbf{F}\\cdot d\\mathbf{r}', accent()], '=\\int_C\\big(', ['\\mathbf{F}\\cdot\\hat{\\mathbf{T}}', s.push >= 0 ? HUE.with : HUE.against], '\\big)\\,ds'],
-      live: [[`${fmt(s.acc)}\\text{ so far}`, accent()], [`\\quad ${fmt(total)}\\text{ ${state.path === 'loop' ? 'once round' : 'whole path'}}`, HUE.with], `\\quad\\text{adding }${push}`, state.path === 'detour' ? `\\quad ${fmt(refTotal)}\\text{ straight line}` : ''],
+      live: [[`${tex(s.acc)}\\text{ so far}`, accent()], [`\\quad ${tex(total)}\\text{ ${state.path === 'loop' ? 'once round' : 'whole path'}}`, HUE.with], `\\quad\\text{adding }${push.replace('−', '-')}`],
     });
     setRows({ total: fmt(total), ref: fmt(refTotal), rate: push });
     setResult({
       value: fmt(s.acc),
       colour: accent(),
-      status: `${state.path === 'loop' ? 'once round the loop' : 'the whole path'} collects ${fmt(total)}${state.path === 'detour' ? ` · the straight line from A to B collects ${fmt(refTotal)}` : ''} · adding ${push} right now`,
+      status: `${state.path === 'loop' ? 'Once round the loop' : 'The whole path'} collects ${fmt(total)} · adding ${push} right now`,
       note:
         state.path === 'detour'
           ? Math.abs(total - refTotal) < 5e-3
-            ? 'The same as the straight line: only the two ends matter here, which is what conservative means.'
-            : 'Not the same as the straight line: here the road you take changes the answer, so no potential can exist for this field.'
+            ? `The straight line from A to B also collects ${fmt(refTotal)}: only the two ends matter, which is what conservative means.`
+            : `The straight line from A to B collects ${fmt(refTotal)}: here the road changes the answer, so this field has no potential.`
           : state.path === 'loop'
             ? Math.abs(total) < 5e-3
               ? 'Back to zero: you finished where you started, and in a conservative field that is all that counts.'
               : 'Not zero: the loop keeps the spin it went round. That leftover is the circulation.'
             : 'The bead adds up F·T̂ step by step: teal where the field pushes you along, orange where it holds you back.',
     });
-    el('bulgewrap').hidden = state.path !== 'detour';
+    // kept in place (only dimmed) on the other paths, so the panel never changes height
+    const detour = state.path === 'detour';
+    el('bulgewrap').style.opacity = detour ? '1' : '0.4';
+    (el('bulge') as HTMLInputElement).disabled = !detour;
   }
 
   // --- animation ------------------------------------------------------------

@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Second Derivatives & Curvature"
-  description="Take two points either side of where you are and join them with a straight line. The curve does not pass through the middle of that line: it sags below it, or bulges above it, and that gap is the second derivative. Shrink the gap between the two points and the gap to the line falls four times as fast."
+  description="Join two points either side of you with a straight line. The curve sags below its middle or bulges above it, and that gap is the second derivative. Halve the spacing and the gap falls four times."
 >
   <div class="sim">
     <div class="sim-view">
@@ -21,18 +21,18 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="cv"
           width="1000"
-          height="600"
+          height="460"
           role="img"
           aria-label="A curve with a point on it, its two neighbours joined by a chord, the gap between the chord's middle and the curve, and the circle that fits the curve there."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'the chord, and how far the curve misses its middle', color: '#f59e0b' },
+          { label: 'the chord, and the gap to its middle', color: '#f59e0b' },
           { label: 'the circle that fits here', color: '#a78bfa' },
           { label: 'the tangent', color: '#5eead4' },
         ]}
-        hint="Drag along the curve to move the point · run to walk it across"
+        hint="Drag along the curve to move the point. The curve is drawn at the same scale both ways, so the circle stays round."
       />
       <Result label="Second derivative" />
     </div>
@@ -96,9 +96,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect } from '../../../lib/draw';
+  import { stageInk, roundRect, fixed, handle, grabCursor } from '../../../lib/draw';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const SAG = '#f59e0b';
@@ -122,45 +122,64 @@ import Try from '../../../components/sim/Try.astro';
   const state = { fn: 'parabola', x: -0.9, h: 0.7, circ: true, tay: false, running: false, dir: 1 };
 
   const canvas = el('cv') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const ctx = canvas.getContext('2d')!;
   const { ink, inv } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
-
-  /** Break a caption into lines no wider than maxW, measured in the font it is drawn in. */
-  function wrap(text: string, size: number, maxW: number) {
-    const lines: string[] = [];
-    let cur = '';
-    for (const w of text.split(' ')) {
-      const t = cur ? `${cur} ${w}` : w;
-      if (cur && textWidth(t, size) > maxW) { lines.push(cur); cur = w; } else cur = t;
-    }
-    if (cur) lines.push(cur);
-    return lines;
-  }
-  /** Draw wrapped lines from y downwards; returns the y just below the last line. */
-  function para(text: string, x: number, y: number, maxW: number, alpha: number, align: CanvasTextAlign, size: number, colour?: string) {
-    const lh = Math.round(size * 1.42) + 2;
-    for (const line of wrap(text, size, maxW)) { label(line, x, y, alpha, align, size, colour); y += lh; }
-    return y;
-  }
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
   // --- layout ----------------------------------------------------------------
   // The main panel is drawn at equal scale in x and y, so the fitting circle is
-  // a circle and not an ellipse.
-  const CUR = { x: 44, y: 104, w: 596, h: 384 };
-  // The right-hand column: its cards are placed top to bottom in draw(), each
-  // below whatever the captions above it actually needed.
-  const COL = { x: 680, w: 296 };
-  const TRI = { x: COL.x, y: CUR.y, w: COL.w, h: 156 };
-  const STR = { x: COL.x, y: 0, w: COL.w, h: 112 };
+  // a circle and not an ellipse. Wide screens put the two small cards beside
+  // it; a phone stacks them underneath, side by side.
+  type Box = { x: number; y: number; w: number; h: number };
+  type Lay = { narrow: boolean; W: number; H: number; CUR: Box; TRI: Box; STR: Box };
+  const layout = (narrow: boolean): Lay =>
+    narrow
+      ? {
+          narrow, W: 520, H: 548,
+          CUR: { x: 14, y: 34, w: 492, h: 300 },
+          TRI: { x: 14, y: 384, w: 238, h: 116 },
+          STR: { x: 268, y: 384, w: 238, h: 116 },
+        }
+      : {
+          narrow, W: 1000, H: 460,
+          CUR: { x: 36, y: 40, w: 604, h: 400 },
+          TRI: { x: 676, y: 40, w: 300, h: 150 },
+          STR: { x: 676, y: 276, w: 300, h: 164 },
+        };
+  let L = layout(false);
+  let W = L.W, H = L.H, CUR = L.CUR, TRI = L.TRI, STR = L.STR;
   const XR = 2.5;                       // x runs from -XR to XR
-  const PPU = CUR.w / (2 * XR);         // pixels per unit, both axes
+  let PPU = CUR.w / (2 * XR);           // pixels per unit, both axes
   const px = (x: number) => CUR.x + CUR.w / 2 + x * PPU;
   const py = (y: number) => CUR.y + CUR.h / 2 - y * PPU;
   const toX = (sx: number) => (sx - CUR.x - CUR.w / 2) / PPU;
+
+  let lastDpr = 0;
+  function resize(force = false) {
+    const narrow = (canvas.parentElement?.clientWidth ?? 1000) < 620;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (!force && narrow === L.narrow && dpr === lastDpr) return;
+    lastDpr = dpr;
+    L = layout(narrow);
+    ({ W, H, CUR, TRI, STR } = L);
+    PPU = CUR.w / (2 * XR);
+    canvas.dataset.logicalW = String(W);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+  let shown = 0;
+  new ResizeObserver(() => {
+    resize();
+    // text is sized from the screen, so repaint when the box changes size
+    if (canvas.clientWidth !== shown) { shown = canvas.clientWidth; draw(); }
+  }).observe(canvas.parentElement!);
+  document.addEventListener('fullscreenchange', () => resize(true));
+  window.addEventListener('themechange', () => draw());
 
   const F = () => FNS[state.fn];
   const kappa = (x: number) => F().d2(x) / Math.pow(1 + F().d1(x) ** 2, 1.5);
@@ -178,8 +197,7 @@ import Try from '../../../components/sim/Try.astro';
   function curvePanel() {
     const f = F();
     const x0 = state.x, h = state.h;
-    label('the curve, and where you are standing on it', CUR.x, CUR.y - 34, 0.55, 'left', 13);
-    label('everything here is drawn at the same scale both ways', CUR.x, CUR.y - 16, 0.32, 'left', 11);
+    label(L.narrow ? 'the curve' : 'the curve, at equal scale', CUR.x, CUR.y - 12, 0.55, 'left', 12);
     panel(CUR);
     ctx.save();
     roundRect(ctx, CUR.x, CUR.y, CUR.w, CUR.h, 10);
@@ -273,13 +291,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(px(x), py(y), r, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = ink(0.95);
-    ctx.strokeStyle = inv(0.8);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(px(x0), py(f.f(x0)), 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    handle(ctx, px(x0), py(f.f(x0)), ink(0.95), { r: L.narrow ? 7 : 6, hot: drag, ring: inv(0.8) });
     ctx.restore();
   }
 
@@ -288,13 +300,13 @@ import Try from '../../../components/sim/Try.astro';
     const f = F(), x0 = state.x, h = state.h;
     const yl = f.f(x0 - h), y0 = f.f(x0), yr = f.f(x0 + h);
     const mid = (yl + yr) / 2;
-    label('the three heights', TRI.x, TRI.y - 34, 0.55, 'left', 13);
-    label('the middle one misses the line', TRI.x, TRI.y - 16, 0.32, 'left', 11);
+    label('the three heights', TRI.x, TRI.y - 12, 0.55, 'left', 12);
     panel(TRI);
     const lo = Math.min(yl, y0, yr), hi = Math.max(yl, y0, yr);
     const pad = Math.max(1e-6, (hi - lo) * 0.35);
-    const gy = (v: number) => TRI.y + TRI.h - 22 - ((v - lo + pad) / (hi - lo + 2 * pad)) * (TRI.h - 44);
-    const gx = [TRI.x + 40, TRI.x + TRI.w / 2, TRI.x + TRI.w - 40];
+    const foot = L.narrow ? 0 : 26; // room for the x labels under the dots
+    const gy = (v: number) => TRI.y + TRI.h - 14 - foot - ((v - lo + pad) / (hi - lo + 2 * pad)) * (TRI.h - 28 - foot);
+    const gx = [TRI.x + 34, TRI.x + TRI.w / 2, TRI.x + TRI.w - 34];
     ctx.strokeStyle = SAG;
     ctx.lineWidth = 1.8;
     ctx.beginPath();
@@ -319,26 +331,30 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(gx[1], gy(y0), 5.5, 0, Math.PI * 2);
     ctx.fill();
-    label('x − h', gx[0], TRI.y + TRI.h - 8, 0.32, 'center', 11);
-    label('x', gx[1], TRI.y + TRI.h - 8, 0.32, 'center', 11);
-    label('x + h', gx[2], TRI.y + TRI.h - 8, 0.32, 'center', 11);
+    if (!L.narrow) {
+      label('x − h', gx[0], TRI.y + TRI.h - 10, 0.45, 'center', 10);
+      label('x', gx[1], TRI.y + TRI.h - 10, 0.45, 'center', 10);
+      label('x + h', gx[2], TRI.y + TRI.h - 10, 0.45, 'center', 10);
+    }
     const gap = mid - y0;
-    return para(
-      `the curve is ${gap >= 0 ? 'below' : 'above'} the line by ${Math.abs(gap).toFixed(4)}`,
-      TRI.x + TRI.w / 2, TRI.y + TRI.h + 22, TRI.w, 0.7, 'center', 12, SAG
+    const where = gap >= 0 ? 'below' : 'above';
+    label(
+      L.narrow ? `${where} by ${fixed(Math.abs(gap), 4)}` : `curve ${where} the line by ${fixed(Math.abs(gap), 4)}`,
+      TRI.x + TRI.w / 2, TRI.y + TRI.h + 26, 0.8, 'center', 11, SAG
     );
   }
 
   /** Where the two quantities agree, and where they part company. */
-  function strip(top: number) {
+  function strip() {
     const f = F();
     // the title doubles as the legend: f'' and κ in the colours of their lines
     let tx = STR.x;
-    for (const [t, c] of [["f′′", SAG], [' and ', undefined], ['κ', KAP], [' along the curve', undefined]] as [string, string | undefined][]) {
-      label(t, tx, top + 18, c ? 0.9 : 0.55, 'left', 13, c);
-      tx += textWidth(t, 13);
+    const parts: [string, string | undefined][] = [["f′′", SAG], [' and ', undefined], ['κ', KAP]];
+    if (!L.narrow) parts.push([' along the curve', undefined]);
+    for (const [t, c] of parts) {
+      label(t, tx, STR.y - 12, c ? 0.9 : 0.55, 'left', 12, c);
+      tx += textWidth(t, 12);
     }
-    STR.y = para('the same where it is level, not where it is steep', STR.x, top + 36, STR.w, 0.32, 'left', 11) - 2;
     panel(STR);
     let mx = 1e-6;
     for (let i = 0; i <= 200; i++) {
@@ -377,7 +393,8 @@ import Try from '../../../components/sim/Try.astro';
   function draw() {
     ctx.clearRect(0, 0, W, H);
     curvePanel();
-    strip(three() + 10);
+    three();
+    strip();
 
     const f = F(), x0 = state.x, h = state.h;
     const exact = f.d2(x0);
@@ -386,7 +403,7 @@ import Try from '../../../components/sim/Try.astro';
     const gap = (f.f(x0 - h) + f.f(x0 + h)) / 2 - f.f(x0);
     const k = kappa(x0);
     const r = Math.abs(k) > 1e-4 ? 1 / Math.abs(k) : Infinity;
-    const n2 = (v: number) => (Math.abs(v) < 5e-5 ? 0 : v).toFixed(4);
+    const n2 = (v: number) => fixed(v, 4);
     setEq({
       rule: [
         ["f'' \\approx \\dfrac{f(x-h) - 2f(x) + f(x+h)}{h^2}", SAG],
@@ -405,20 +422,20 @@ import Try from '../../../components/sim/Try.astro';
       'r-fd': n2(fd),
       'r-sag': n2(gap),
       'r-k': n2(k),
-      'r-r': Number.isFinite(r) ? r.toFixed(3) : '∞',
+      'r-r': Number.isFinite(r) ? fixed(r, 3) : '∞',
     });
     setResult({
       value: n2(exact),
       colour: Math.abs(exact) < 1e-3 ? undefined : exact > 0 ? SAG : KAP,
-      status: `the chord's middle clears the curve by ${n2(gap)}, which is f''h²/2 = ${n2((exact * h * h) / 2)} · the circle that fits has radius ${Number.isFinite(r) ? r.toFixed(2) : 'infinity'}`,
+      status: `the chord clears the curve by ${n2(gap)}, close to f''h²/2 = ${n2((exact * h * h) / 2)}`,
       note:
         Math.abs(exact) < 1e-3
-          ? 'The bending has stopped. The chord passes straight through the curve, the three heights lie on one line, and the circle that fits has become a straight line of infinite radius.'
+          ? 'The bending has stopped: the chord runs straight through the curve and the fitting circle becomes a straight line.'
           : Math.abs(f.d1(x0)) > 1.2
-            ? "The curve is steep here, so κ sits well below f′′. The second derivative measures sag against a horizontal ruler, while curvature measures how sharply the curve actually turns, and a steep piece covers more length for the same run of x."
+            ? 'The curve is steep here, so κ sits well below f′′: f′′ measures sag against a level ruler, κ how sharply the curve turns.'
             : exact > 0
-              ? 'The curve holds water here. It sits below the chord, the middle height is under the average of its neighbours, and the fitting circle is above the curve.'
-              : 'The curve sheds water here. It bulges above the chord, the middle height is over the average of its neighbours, and the fitting circle is below the curve.',
+              ? 'The curve holds water here: it sits below the chord, and the fitting circle is above it.'
+              : 'The curve sheds water here: it bulges above the chord, and the fitting circle is below it.',
     });
   }
 
@@ -443,10 +460,10 @@ import Try from '../../../components/sim/Try.astro';
   canvas.addEventListener('pointermove', (e) => {
     const p = local(e);
     const over = p.x >= CUR.x && p.x <= CUR.x + CUR.w && p.y >= CUR.y && p.y <= CUR.y + CUR.h;
-    canvas.style.cursor = drag || over ? 'ew-resize' : 'default';
+    grabCursor(canvas, over, drag);
     if (drag) setX(toX(p.x));
   });
-  const drop = () => { drag = false; };
+  const drop = () => { drag = false; grabCursor(canvas, true, false); draw(); };
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
@@ -502,7 +519,7 @@ import Try from '../../../components/sim/Try.astro';
     taylor: () => show('wave', 0.6, 0.7, { tay: true }),
   });
 
-  draw();
+  resize(true);
   requestAnimationFrame(loop);
 </script>
 

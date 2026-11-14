@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="The Hessian"
-  description="A surface does not have one second derivative. It bends by a different amount in every direction you could walk, and the four numbers of the Hessian hold all of them at once. Its eigenvectors are the two directions that bend the most and the least, and their signs decide whether you are standing in a bowl, on a dome or on a saddle."
+  description="A surface bends by a different amount in every direction, and the four numbers of the Hessian hold them all. Its eigenvectors bend the most and the least; their signs say bowl, dome or saddle."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -28,10 +28,10 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[
-          { label: 'a direction that bends up', color: '#2dd4bf' },
-          { label: 'a direction that bends down', color: '#f87171' },
-          { label: 'the gradient, which knows nothing about bending', color: '#f59e0b' },
-          { label: 'the quadratic approximation', color: '#a78bfa' },
+          { label: 'bends up', color: '#2dd4bf' },
+          { label: 'bends down', color: '#f87171' },
+          { label: 'the gradient', color: '#f59e0b' },
+          { label: 'quadratic approximation', color: '#a78bfa' },
         ]}
         hint="Drag the white point along the surface, or click the surface to put it there. Drag anywhere else to turn the view, scroll to zoom."
       />
@@ -54,8 +54,8 @@ import Try from '../../../components/sim/Try.astro';
       />
       <Checks
         items={[
-          { id: 'eig', label: 'The eigen-directions of the Hessian', checked: true },
-          { id: 'quad', label: 'What the quadratic approximation says', checked: true },
+          { id: 'eig', label: 'Eigen-directions', checked: true },
+          { id: 'quad', label: 'Quadratic approximation', checked: true },
           { id: 'grad', label: 'The gradient', checked: true },
         ]}
       />
@@ -102,7 +102,7 @@ import Try from '../../../components/sim/Try.astro';
   import { Camera3D, drawBackdrop, V } from '../../../lib/scene3d';
   import type { Vec } from '../../../lib/scene3d';
   import { roundRect, fixed } from '../../../lib/draw';
-  import { makeText } from '../../../lib/sim';
+  import { makeText, isCompact } from '../../../lib/sim';
   import { el, segmented, check, result, readout, tries } from '../../../lib/panel';
 
   // equation colours (fixed); the canvas uses a deeper shade of each on the light stage
@@ -231,7 +231,11 @@ import Try from '../../../components/sim/Try.astro';
   readTheme();
   const ink = (a: number) => `rgba(${inkRGB},${a})`;
   const inv = (a: number) => `rgba(${invRGB},${a})`;
-  const { label } = makeText(ctx, ink);
+  const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+  // rebuilt each frame: the floor on label size depends on how big the canvas shows
+  let text = makeText(ctx, ink, 1.42, MONO, 11);
+  const label: typeof text.label = (...a) => text.label(...a);
+  let compact = false;
   const pal = () => (light ? PAL.light : PAL.dark);
 
   // --- WebGL2 surface and quadratic patch ----------------------------------------
@@ -607,8 +611,8 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.stroke();
     const ax = cam.project({ x: 1.14, y: FLOOR, z: 0 }), ay = cam.project({ x: 0, y: FLOOR, z: 1.14 });
-    label('x', ax.sx, ax.sy + 4, 0.45, 'center', 9);
-    label('y', ay.sx, ay.sy + 4, 0.45, 'center', 9);
+    label('x', ax.sx, ax.sy + 4, 0.45, 'center', 9.5);
+    label('y', ay.sx, ay.sy + 4, 0.45, 'center', 9.5);
     // the point's footprint, so its place on the map reads at any angle
     const f = cam.project({ x: state.p[0] / R, y: FLOOR, z: state.p[1] / R });
     ctx.fillStyle = ink(0.3);
@@ -643,13 +647,12 @@ import Try from '../../../components/sim/Try.astro';
     return pr;
   }
 
-  function tag(text: string, x: number, y: number, colour: string) {
-    ctx.font = `${Math.round(10 * 1.42)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-    const w = ctx.measureText(text).width + 12;
+  function tag(t: string, x: number, y: number, colour: string) {
+    const w = text.textWidth(t, 10) + 12, h = text.textWidth('M', 10) * 1.7 + 6;
     ctx.fillStyle = inv(light ? 0.85 : 0.75);
-    roundRect(ctx, x - w / 2, y - 11, w, 20, 6);
+    roundRect(ctx, x - w / 2, y - h / 2 - 1, w, h, 6);
     ctx.fill();
-    label(text, x, y + 4, 1, 'center', 10, colour);
+    label(t, x, y + h * 0.2, 1, 'center', 10, colour);
   }
 
   const CURVE_T = 1.25;
@@ -735,12 +738,12 @@ import Try from '../../../components/sim/Try.astro';
 
     // labels never sit on one another: a later one steps aside
     const placed: { x: number; y: number; w: number }[] = [];
-    ctx.font = `${Math.round(10 * 1.42)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    const gapY = text.textWidth('M', 10) * 1.7 + 10;
     for (const t of tags) {
-      const w = ctx.measureText(t.text).width + 12;
+      const w = text.textWidth(t.text, 10) + 12;
       let y = t.y;
-      for (let k = 0; k < 6 && placed.some((q) => Math.abs(q.x - t.x) < (q.w + w) / 2 + 4 && Math.abs(q.y - y) < 24); k++)
-        y += t.y >= pp.sy ? 24 : -24;
+      for (let k = 0; k < 6 && placed.some((q) => Math.abs(q.x - t.x) < (q.w + w) / 2 + 4 && Math.abs(q.y - y) < gapY); k++)
+        y += t.y >= pp.sy ? gapY : -gapY;
       placed.push({ x: t.x, y, w });
       tag(t.text, t.x, y, t.colour);
     }
@@ -776,7 +779,7 @@ import Try from '../../../components/sim/Try.astro';
   function matrixCard(D: D, Eg: E, kind: string) {
     const b = L.mat, c = pal();
     card(b);
-    label('the Hessian here', b.x + 14, b.y + 24, 0.5, 'left', 9);
+    if (!compact) label('the Hessian here', b.x + 14, b.y + 24, 0.5, 'left', 9);
     const mx = L.narrow ? b.x + 124 : b.x + b.w / 2 + 12;
     const my = L.narrow ? b.y + 78 : b.y + 74;
     label('H =', mx - 82, my + 6, 0.65, 'right', 10.5);
@@ -797,15 +800,15 @@ import Try from '../../../components/sim/Try.astro';
       roundRect(ctx, lx, ly + k * 26 - 10, 14, 4, 2);
       ctx.fill();
       label(`λ${sub} = ${n2(l)}`, lx + 22, ly + k * 26, 0.95, 'left', 10.5, col);
-      label(l >= 0 ? 'up' : 'down', L.narrow ? lx + 168 : b.x + b.w - 14, ly + k * 26, 0.45, 'right', 9);
+      if (!compact) label(l >= 0 ? 'up' : 'down', L.narrow ? lx + 168 : b.x + b.w - 14, ly + k * 26, 0.45, 'right', 9);
     };
     row(0, Eg.l1, '₁');
     row(1, Eg.l2, '₂');
     const vy = L.narrow ? b.y + 128 : b.y + b.h - 18;
     const vx = L.narrow ? lx : b.x + 16;
-    label(Eg.l1 * Eg.l2 < 0 ? 'opposite signs:' : 'same signs:', vx, vy, 0.5, 'left', 9);
-    const off = ctx.measureText(Eg.l1 * Eg.l2 < 0 ? 'opposite signs: ' : 'same signs: ').width;
-    label(kind, vx + off, vy, 1, 'left', 10, kindColour(kind));
+    const signs = Eg.l1 * Eg.l2 < 0 ? 'opposite signs: ' : 'same signs: ';
+    label(signs, vx, vy, 0.5, 'left', 9);
+    label(kind, vx + text.textWidth(signs, 9), vy, 1, 'left', 9, kindColour(kind));
   }
 
   /** The surface cut along one eigenvector, with the parabola the quadratic model predicts. */
@@ -825,8 +828,11 @@ import Try from '../../../components/sim/Try.astro';
     const e = k ? Eg.e2 : Eg.e1, l = k ? Eg.l2 : Eg.l1, sub = k ? '₂' : '₁';
     const col = l >= 0 ? c.up : c.down;
     card(b);
-    label(`along e${sub}`, b.x + 14, b.y + 24, 0.55, 'left', 9);
-    label(`bends ${l >= 0 ? 'up' : 'down'} by λ${sub}`, b.x + b.w - 14, b.y + 24, 1, 'right', 9, col);
+    if (compact) label(`λ${sub} bends ${l >= 0 ? 'up' : 'down'}`, b.x + 14, b.y + 24, 1, 'left', 9, col);
+    else {
+      label(`along e${sub}`, b.x + 14, b.y + 24, 0.55, 'left', 9);
+      label(`bends ${l >= 0 ? 'up' : 'down'} by λ${sub}`, b.x + b.w - 14, b.y + 24, 1, 'right', 9, col);
+    }
     const P = { x: b.x + 12, y: b.y + 36, w: b.w - 24, h: b.h - 48 };
     const T = CURVE_T;
     const ge = D.fx * e[0] + D.fy * e[1];
@@ -888,6 +894,8 @@ import Try from '../../../components/sim/Try.astro';
     const key = `${state.fn}|${x}|${y}`;
     if (key !== patchKey) { buildPatch(D, Eg); patchKey = key; }
 
+    compact = isCompact(canvas);
+    text = makeText(ctx, ink, 1.42, MONO, compact ? 10 : 11);
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
@@ -911,7 +919,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function words(D: D, Eg: E, kind: string) {
-    const n3 = (v: number) => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3);
+    const n3 = (v: number) => fixed(v, 3);
     const big = Math.max(Math.abs(Eg.l1), Math.abs(Eg.l2));
     const small = Math.min(Math.abs(Eg.l1), Math.abs(Eg.l2));
     const cond = small > 1e-6 ? big / small : Infinity;
@@ -940,7 +948,7 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: kind,
       colour: kind === 'a bowl' ? UP_EQ : kind === 'a dome' ? DOWN_EQ : kind === 'a saddle' ? GRAD_EQ : undefined,
-      status: `λ₁ = ${n3(Eg.l1)}, λ₂ = ${n3(Eg.l2)} · the strongest bending is ${Number.isFinite(cond) ? `${cond.toFixed(1)} times` : 'infinitely many times'} the weakest · the gradient here is ${Math.hypot(D.fx, D.fy).toFixed(3)} long`,
+      status: `λ₁ = ${n3(Eg.l1)}, λ₂ = ${n3(Eg.l2)} · strongest bend ${Number.isFinite(cond) ? `${cond.toFixed(1)}×` : '∞ ×'} the weakest · |∇f| = ${n3(Math.hypot(D.fx, D.fy))}`,
       note:
         kind === 'a saddle'
           ? 'One direction bends up and the other bends down, so along one curve this point is a low and along the other a high. The gradient cannot tell you this; only the second derivatives can.'

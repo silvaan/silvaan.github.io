@@ -11,17 +11,17 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Integration by Parts"
-  description="The product rule run backwards, as a picture. Plot one factor against the other and the curve cuts a rectangle into two pieces: one is the integral you were asked for, the other is the one you are left with, and they must add up to the corners. Choosing u is choosing which you would rather do."
+  description="The product rule run backwards, as a picture. Plot one factor against the other and the curve cuts a rectangle in two: the integral you wanted, and the one you are left with."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="ibp" width="900" height="558" role="img" aria-label="One factor plotted against the other, with the area under the curve and the area beside it shaded in two colours, and the two pieces compared on the right."></canvas>
+        <canvas id="ibp" width="900" height="500" role="img" aria-label="One factor plotted against the other, with the area under the curve and the area beside it shaded in two colours, and the two pieces compared on the right."></canvas>
       </div>
       <Caption
         legend={[{ label: '∫ u dv, the one you wanted', color: '#f59e0b' }, { label: '∫ v du, the one you are left with', color: '#34d399' }, { label: '[uv], the corners', color: '#7c8cff' }]}
-        hint="Every number is integrated numerically from the two functions, so the identity is checked on screen"
+        hint="Every number is integrated numerically from the two functions, so the identity is checked on screen."
       />
       <Result label="The integral you wanted" />
     </div>
@@ -71,7 +71,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { textPx } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
@@ -188,16 +189,50 @@ import Try from '../../../components/sim/Try.astro';
   const setEq = equation();
   const setResult = result();
   const canvas = el('ibp') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  const ctx = canvas.getContext('2d')!;
   const css = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
   const ACC = '#7c8cff'; // the curve and the corners it cuts
   const UDV = '#f59e0b'; // the integral you were asked for
   const VDU = '#34d399'; // the one you are handed back
 
-  const AREA = { x: 64, y: 58, w: 416, h: 428 };
-  const OX = AREA.x, OY = AREA.y + AREA.h;
-  const SIDE = { x: 534, y: 58, w: 326 };
+  // Wide screens put the bar beside the picture; a phone stacks it underneath.
+  type Lay = { narrow: boolean; W: number; H: number; AREA: { x: number; y: number; w: number; h: number }; SIDE: { x: number; y: number; w: number } };
+  const layout = (narrow: boolean): Lay =>
+    narrow
+      ? { narrow, W: 520, H: 596, AREA: { x: 40, y: 30, w: 456, h: 310 }, SIDE: { x: 16, y: 404, w: 488 } }
+      : { narrow, W: 900, H: 500, AREA: { x: 56, y: 36, w: 440, h: 424 }, SIDE: { x: 548, y: 76, w: 316 } };
+  let L = layout(false);
+  let W = L.W, H = L.H, AREA = L.AREA, SIDE = L.SIDE;
+  let OX = AREA.x, OY = AREA.y + AREA.h;
+  let lastDpr = 0;
+  function resize(force = false) {
+    const narrow = (canvas.parentElement?.clientWidth ?? 900) < 620;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (!force && narrow === L.narrow && dpr === lastDpr) return false;
+    lastDpr = dpr;
+    L = layout(narrow);
+    ({ W, H, AREA, SIDE } = L);
+    OX = AREA.x;
+    OY = AREA.y + AREA.h;
+    canvas.dataset.logicalW = String(W);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    computeScale();
+    draw();
+    return true;
+  }
+  let shown = 0;
+  new ResizeObserver(() => {
+    // text is sized from the screen, so repaint when the box changes size
+    if (!resize() && canvas.clientWidth !== shown) draw();
+    shown = canvas.clientWidth;
+  }).observe(canvas.parentElement!);
+  document.addEventListener('fullscreenchange', () => resize(true));
+  window.addEventListener('themechange', () => draw());
+  /** A logical font size that shows at no less than 11 screen pixels. */
+  const fs = (size: number) => textPx(canvas, size, 11);
 
   function tint(hex: string, a: number) {
     const n = parseInt(hex.slice(1), 16);
@@ -208,7 +243,7 @@ import Try from '../../../components/sim/Try.astro';
     al: CanvasTextAlign = 'left', size = 12, weight = '', colour?: string
   ) {
     ctx.fillStyle = colour ?? `rgba(${ink()},${a})`;
-    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    ctx.font = `${weight} ${fs(size)}px ui-monospace, monospace`.trim();
     ctx.textAlign = al;
     ctx.fillText(t, x, y);
     ctx.textAlign = 'left';
@@ -216,23 +251,11 @@ import Try from '../../../components/sim/Try.astro';
 
   /** The box text() would cover with the same arguments. */
   function boxOf(t: string, x: number, y: number, al: CanvasTextAlign, size = 12, weight = '') {
-    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
+    const px = fs(size);
+    ctx.font = `${weight} ${px}px ui-monospace, monospace`.trim();
     const w = ctx.measureText(t).width;
     const x0 = al === 'right' ? x - w : al === 'center' ? x - w / 2 : x;
-    return { x0, x1: x0 + w, y0: y - size * 0.8, y1: y + size * 0.25 };
-  }
-
-  /** Break a sentence into lines no wider than maxW, in the font text() would use. */
-  function wrap(t: string, maxW: number, size = 12, weight = '') {
-    ctx.font = `${weight} ${size}px ui-monospace, monospace`.trim();
-    const lines: string[] = [];
-    let cur = '';
-    for (const w of t.split(' ')) {
-      const next = cur ? `${cur} ${w}` : w;
-      if (cur && ctx.measureText(next).width > maxW) { lines.push(cur); cur = w; } else cur = next;
-    }
-    if (cur) lines.push(cur);
-    return lines;
+    return { x0, x1: x0 + w, y0: y - px * 0.8, y1: y + px * 0.25 };
   }
 
   // world -> screen, with each axis scaled to fill the frame. The two axes carry
@@ -277,8 +300,6 @@ import Try from '../../../components/sim/Try.astro';
     const c = C(), p = P(), b = bOf(), a = p.a;
     const ua = c.u(a), va = c.v(a), ub = c.u(b), vb = c.v(b);
 
-    text('one curve, cutting a corner in two', AREA.x, AREA.y - 26, 0.5, 'left', 11.5);
-    text(`the point (u, v) = (${c.ul}, ${c.vl}) as x goes ${a} → ${b.toFixed(2)}`, AREA.x, AREA.y - 10, 0.35);
 
     // axes
     ctx.strokeStyle = `rgba(${ink()},0.28)`;
@@ -300,7 +321,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineWidth = 1.2;
       ctx.strokeRect(OX + 0.5, Y(va) + 0.5, X(ua) - OX - 1, OY - Y(va) - 1);
       ctx.setLineDash([]);
-      if (X(ua) - OX > 52 && OY - Y(va) > 26)
+      if (!L.narrow && X(ua) - OX > 80 && OY - Y(va) > 30)
         text('u(a)·v(a)', (OX + X(ua)) / 2, (OY + Y(va)) / 2 + 4, 0.6, 'center', 11);
     }
 
@@ -308,7 +329,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = tint(ACC, 0.85);
     ctx.lineWidth = 1.6;
     ctx.strokeRect(OX + 0.5, Y(vb) + 0.5, X(ub) - OX - 1, OY - Y(vb) - 1);
-    text('u(b)·v(b)', X(ub) - 6, Y(vb) - 8, 1, 'right', 12, '600', tint(ACC, 1));
+    text(L.narrow ? 'u(b)v(b)' : 'u(b)·v(b)', X(ub) - 6, Y(vb) - 8, 1, 'right', 12, '600', tint(ACC, 1));
 
     // the curve itself
     ctx.strokeStyle = tint(ACC, 1);
@@ -329,7 +350,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fill();
     }
     // x = b sits beside its corner label; x = a takes the first spot around its
-    // point that keeps clear of both, which matters when b closes in on a
+    // point that keeps clear of both, which matters when b closes in on a.
+    // A phone has no room for either.
+    if (!L.narrow) {
     text('x = b', X(ub) + 8, Y(vb) - 8, 0.7, 'left', 11);
     const taken = [
       boxOf('x = b', X(ub) + 8, Y(vb) - 8, 'left', 11),
@@ -345,16 +368,18 @@ import Try from '../../../components/sim/Try.astro';
       return bx.x0 >= 2 && !taken.some((t) => bx.x0 < t.x1 + 4 && t.x0 < bx.x1 + 4 && bx.y0 < t.y1 + 2 && t.y0 < bx.y1 + 2);
     }) ?? spots[0];
     text('x = a', spotA[0], spotA[1], 0.7, spotA[2], 11);
+    }
 
     // which region is which, placed inside each one
     const midU = (X(ua) + X(ub)) / 2;
-    if (X(ub) - X(ua) > 70)
+    if (X(ub) - X(ua) > 90)
       text('∫ v du', midU, OY - 14, 1, 'center', 14, '600', tint(VDU, 1));
-    if (Y(va) - Y(vb) > 34)
+    if (Y(va) - Y(vb) > 40)
       text('∫ u dv', OX + 14, (Y(va) + Y(vb)) / 2 + 5, 1, 'left', 14, '600', tint(UDV, 1));
 
-    text('u', OX + AREA.w, OY + 18, 0.4, 'right', 11);
-    text('v', OX - 10, AREA.y + 6, 0.4, 'right', 11);
+    // the axes say which factor runs along them
+    text(`u = ${c.ul}`, OX + AREA.w, OY + fs(11) + 6, 0.5, 'right', 11);
+    text(`v = ${c.vl}`, OX + 8, AREA.y + 4, 0.5, 'left', 11);
   }
 
   /** The identity as one bar, split where the curve splits the region. */
@@ -364,10 +389,8 @@ import Try from '../../../components/sim/Try.astro';
     const left = simpson((x) => c.v(x) * c.du(x), a, b);
     const rect = c.u(b) * c.v(b) - c.u(a) * c.v(a);
 
-    text('the two pieces, and what they fill', SIDE.x, SIDE.y - 26, 0.5, 'left', 11.5);
-    text('one bar, cut where the curve cuts', SIDE.x, SIDE.y - 10, 0.35);
-
-    const bw = SIDE.w, bx = SIDE.x, by = SIDE.y + 16, bh = 40;
+    const bw = SIDE.w, bx = SIDE.x, by = SIDE.y, bh = L.narrow ? 44 : 48;
+    text('the two pieces fill [uv]', bx, by - 12, 0.55, 'left', 12);
     const tot = Math.max(1e-9, Math.abs(want) + Math.abs(left));
     const wA = (Math.abs(want) / tot) * bw;
     ctx.fillStyle = tint(UDV, 0.5);
@@ -377,32 +400,28 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = tint(ACC, 0.9);
     ctx.lineWidth = 1.6;
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
-    if (wA > 56) text('∫ u dv', bx + wA / 2, by + 25, 1, 'center', 13, '600', tint(UDV, 1));
-    if (bw - wA > 56) text('∫ v du', bx + wA + (bw - wA) / 2, by + 25, 1, 'center', 13, '600', tint(VDU, 1));
-    text(`the whole bar is [uv] = ${rect.toFixed(4)}`, bx, by + bh + 18, 0.55, 'left', 11, '', tint(ACC, 1));
+    const pieceW = boxOf('∫ u dv', 0, 0, 'left', 13, '600').x1 + 16;
+    if (wA > pieceW) text('∫ u dv', bx + wA / 2, by + bh / 2 + 5, 1, 'center', 13, '600', tint(UDV, 1));
+    if (bw - wA > pieceW) text('∫ v du', bx + wA + (bw - wA) / 2, by + bh / 2 + 5, 1, 'center', 13, '600', tint(VDU, 1));
 
-    // the numbers, and the check that they close
-    let y = by + bh + 52;
-    const row = (lab: string, val: string, colour?: string) => {
-      text(lab, bx, y, 0.45, 'left', 11.5);
+    // the numbers: two pieces and the corners they add up to
+    let y = by + bh + 30;
+    const row = (lab: string, val: string, colour: string) => {
+      text(lab, bx, y, 0.55, 'left', 12);
       text(val, bx + bw, y, 0.95, 'right', 13, '600', colour);
-      y += 26;
+      y += fs(13) + 12;
     };
-    row(`∫ u dv   the one you were asked for`, want.toFixed(4), tint(UDV, 1));
-    row(`∫ v du   the one you get back`, left.toFixed(4), tint(VDU, 1));
-    row(`[uv] from a to b`, rect.toFixed(4), tint(ACC, 1));
-    ctx.strokeStyle = `rgba(${ink()},0.14)`;
-    ctx.beginPath();
-    ctx.moveTo(bx, y - 16);
-    ctx.lineTo(bx + bw, y - 16);
-    ctx.stroke();
-    const resid = want + left - rect;
-    row('the two pieces minus the corners', resid.toExponential(1));
+    if (!L.narrow) {
+      row('∫ u dv, wanted', fixed(want, 4), tint(UDV, 1));
+      row('∫ v du, left over', fixed(left, 4), tint(VDU, 1));
+      row('[uv] from a to b', fixed(rect, 4), tint(ACC, 1));
+    } else {
+      row('[uv] from a to b', fixed(rect, 4), tint(ACC, 1));
+    }
 
     // what the choice actually bought you
-    const cy = y + 14;
-    const why = wrap(c.why, bw - 24, 11);
-    const ch = 58 + 15 * why.length;
+    const cy = y + 4;
+    const ch = fs(11) + fs(13) + 34;
     ctx.fillStyle = c.easier ? tint(VDU, 0.1) : tint(UDV, 0.12);
     ctx.strokeStyle = c.easier ? tint(VDU, 0.55) : tint(UDV, 0.6);
     ctx.lineWidth = 1;
@@ -410,11 +429,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeRect(bx + 0.5, cy + 0.5, bw - 1, ch - 1);
     text(
       c.easier ? 'the leftover is simpler' : 'the leftover is worse',
-      bx + 12, cy + 20, 1, 'left', 11, '600',
+      bx + 12, cy + 12 + fs(11), 1, 'left', 11, '600',
       c.easier ? tint(VDU, 1) : tint(UDV, 1)
     );
-    text(c.left, bx + 12, cy + 40, 0.9, 'left', 13, '600');
-    why.forEach((line, i) => text(line, bx + 12, cy + 58 + 15 * i, 0.4, 'left', 11));
+    text(c.left, bx + 12, cy + 22 + fs(11) + fs(13), 0.9, 'left', 13, '600');
 
     return { want, left, rect };
   }
@@ -423,15 +441,13 @@ import Try from '../../../components/sim/Try.astro';
     const c = C();
     setEq({
       rule: [['\\int_a^b u\\,dv', UDV], '=', ['\\Big[uv\\Big]_a^b', ACC], '-', ['\\int_a^b v\\,du', VDU]],
-      live: [[want.toFixed(4), UDV], '=', [rect.toFixed(4), ACC], '-', [left.toFixed(4), VDU], `\\quad u = ${texify(c.ul)},\\; dv = ${texify(c.dvl)}`],
+      live: [[fixed(want, 4), UDV], '=', [fixed(rect, 4), ACC], '-', [fixed(left, 4), VDU], `\\quad u = ${texify(c.ul)},\\; dv = ${texify(c.dvl)}`],
     });
     setResult({
-      value: want.toFixed(4),
+      value: fixed(want, 4),
       colour: UDV,
-      status: `u = ${c.ul}, dv = ${c.dvl} · the corners give ${rect.toFixed(4)}, the leftover ∫ v du is ${left.toFixed(4)}`,
-      note: c.easier
-        ? 'The two shaded regions tile the big rectangle minus the small one, so naming one of them names the other. This choice of u leaves the simpler piece.'
-        : 'The two shaded regions tile the big rectangle minus the small one. This choice of u leaves the worse piece: the leftover is harder than what you started with.',
+      status: `u = ${c.ul}, dv = ${c.dvl}: the corners give ${fixed(rect, 4)}, the leftover ∫ v du is ${fixed(left, 4)}`,
+      note: `The two shaded regions tile the big rectangle minus the small one, so naming one names the other. With this u, ${c.why}.`,
     });
     el('bval').textContent = bOf().toFixed(2);
   }
@@ -467,13 +483,13 @@ import Try from '../../../components/sim/Try.astro';
       sB += c.u(xm) * (c.v(x1) - c.v(x0));
     }
     setRows({
-      'r-ub': c.u(b).toFixed(4),
-      'r-vb': c.v(b).toFixed(4),
-      'r-udv': want.toFixed(4),
-      'r-vdu': left.toFixed(4),
-      'r-uv': rect.toFixed(4),
+      'r-ub': fixed(c.u(b), 4),
+      'r-vb': fixed(c.v(b), 4),
+      'r-udv': fixed(want, 4),
+      'r-vdu': fixed(left, 4),
+      'r-uv': fixed(rect, 4),
       'r-res': (want + left - rect).toExponential(1),
-      'r-strips': `${(sA + sB).toFixed(4)} (${state.n} each way)`,
+      'r-strips': `${fixed(sA + sB, 4)} (${state.n} each way)`,
       'r-sres': (sA + sB - rect).toExponential(1),
     });
   }
@@ -488,7 +504,7 @@ import Try from '../../../components/sim/Try.astro';
           `<button type="button" data-c="${i}"${i === state.ci ? ' class="active"' : ''} aria-pressed="${i === state.ci}">u = ${c.ul}</button>`
       )
       .join('');
-    el('ctl-choice').hidden = p.choices.length <= 1;
+    // a problem with one sensible u still shows it, so the panel never jumps
   }
 
   const probs = segmented('prob', (v) => pick(+v, 0));
@@ -522,7 +538,7 @@ import Try from '../../../components/sim/Try.astro';
 
   renderChoices();
   computeScale();
-  draw();
+  resize(true);
 </script>
 
 <style>

@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Partial Derivatives"
-  description="A surface has a slope for every direction you could walk. Freeze y and slide a plane through it to get ∂f/∂x, freeze x for ∂f/∂y, then turn the plane to any direction u and watch D_u f = ∇f·u peak along the gradient."
+  description="A surface has a slope in every direction. Freeze y and a plane cuts out ∂f/∂x, freeze x for ∂f/∂y, then turn the plane to any direction u and watch D_u f = ∇f·u peak along the gradient."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -37,7 +37,7 @@ import Try from '../../../components/sim/Try.astro';
       <Slider id="a" label="Point x" min={-1.5} max={1.5} step={0.05} value={0.8} display="0.80" />
       <Slider id="b" label="Point y" min={-1.5} max={1.5} step={0.05} value={-0.6} display="−0.60" />
       <Slider id="theta" label="Direction θ of u" min={0} max={360} step={1} value={30} display="30°" />
-      <Checks items={[{ id: 'tplane', label: 'Show the plane the two tangent lines span' }]} />
+      <Checks items={[{ id: 'tplane', label: 'Show the tangent plane' }]} />
       <Readout
         title="Values"
         rows={[
@@ -72,7 +72,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, textPx, isCompact } from '../../../lib/sim';
+  import { handle, grabCursor } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { inside, roundRect } from '../../../lib/theorem';
@@ -234,7 +235,17 @@ import Try from '../../../components/sim/Try.astro';
   const ink = (a: number) => `rgba(${css('--stage-ink', '232,233,236')},${a})`;
   const inv = (a: number) =>
     `rgba(${css('--stage-ink-inv', '13,14,18')},${a})`;
-  const { label, textWidth } = makeText(ctx, ink);
+  // labels are floored to a readable size on screen (checked on every draw, as
+  // the canvas box changes size); a phone keeps only the essential ones
+  let compact = false, MIN = 11.5;
+  let { label, textWidth } = makeText(ctx, ink, 1.42, undefined, MIN);
+  function sizeText() {
+    compact = isCompact(canvas);
+    MIN = compact ? 9.5 : 11.5;
+    ({ label, textWidth } = makeText(ctx, ink, 1.42, undefined, MIN));
+  }
+  /** Logical px of a label of this size, as drawn right now. */
+  const fpx = (size: number) => textPx(canvas, Math.round(size * 1.42), MIN);
   const fmt = (v: number) =>
     (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3).replace('-', '−');
   const signed = (v: number) => (v >= 0 ? '+' : '') + fmt(v);
@@ -655,7 +666,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineWidth = 0.6;
       ctx.stroke();
     }
-    label('No WebGL2 here: the surface is drawn flat-shaded.', VW / 2, 22, 0.55, 'center', 11);
+    if (!compact) label('No WebGL2 here: flat shading', VW / 2, fpx(11) + 8, 0.55, 'center', 11);
   }
 
   // --- what the surface hides -------------------------------------------------
@@ -820,11 +831,11 @@ import Try from '../../../components/sim/Try.astro';
     const top = P(c[2]);
     if (front(top)) {
       const txt = w === 'x' ? `y = ${fmt(state.b)}` : w === 'y' ? `x = ${fmt(state.a)}` : `θ = ${Math.round(state.theta)}°`;
-      const tw = textWidth(txt, 11);
+      const tw = textWidth(txt, 11), fs = fpx(11);
       const x = Math.max(tw / 2 + 10, Math.min(VW - tw / 2 - 10, top.sx));
-      const y = Math.max(26, top.sy);
+      const y = Math.max(fs + 14, top.sy);
       ctx.fillStyle = inv(0.78);
-      roundRect(ctx, x - tw / 2 - 7, y - 21, tw + 14, 19, 5);
+      roundRect(ctx, x - tw / 2 - 7, y - fs - 10, tw + 14, fs + 8, 5);
       ctx.fill();
       label(txt, x, y - 8, 1, 'center', 11, col(w, on ? 1 : 0.6));
     }
@@ -862,12 +873,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.closePath();
     ctx.fill();
     if (name) {
-      const tw = textWidth(name, 12);
-      const lx = p.sx + 13 * Math.cos(ang), ly = p.sy + 13 * Math.sin(ang);
+      const tw = textWidth(name, 12), fs = fpx(12);
+      const lx = p.sx + (fs * 0.6 + 6) * Math.cos(ang), ly = p.sy + (fs * 0.6 + 6) * Math.sin(ang);
       ctx.fillStyle = inv(0.7);
-      roundRect(ctx, lx - tw / 2 - 5, ly - 10, tw + 10, 18, 5);
+      roundRect(ctx, lx - tw / 2 - 5, ly - fs * 0.6 - 3, tw + 10, fs + 4, 5);
       ctx.fill();
-      label(name, lx, ly + 4, 1, 'center', 12, colour(1));
+      label(name, lx, ly + fs * 0.32, 1, 'center', 12, colour(1));
     }
   }
 
@@ -889,7 +900,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   let pointScreen = { x: -99, y: -99 };
-  let dragging = false;
+  let dragging = false, hovering = false;
   function drawPoint() {
     const { a, b } = state;
     const p = onSurf(a, b);
@@ -907,19 +918,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fill();
     }
     const hid = hidden(p);
-    // a soft ring says "grab me"
-    ctx.strokeStyle = ink(dragging ? 0.55 : 0.28);
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(q.sx, q.sy, 12, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = ink(hid ? 0.45 : 1);
-    ctx.strokeStyle = inv(0.8);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(q.sx, q.sy, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    handle(ctx, q.sx, q.sy, ink(hid ? 0.45 : 1), { r: compact ? 9 : 6, hot: dragging || hovering, ring: inv(0.8) });
   }
 
   function axisLabels() {
@@ -975,9 +974,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.clip();
 
     label(
-      w === 'u' ? 'inside the plane along u' : `inside the ${w} plane`,
+      compact ? (w === 'u' ? 'Dᵤf' : `∂f/∂${w}`) : w === 'u' ? 'inside the plane along u' : `inside the ${w} plane`,
       CARD.x + 16,
-      CARD.y + 24,
+      CARD.y + fpx(11) + 8,
       1,
       'left',
       11,
@@ -1043,7 +1042,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.setLineDash([]);
     // keep "run" clear of the vertical rise, whichever way that one drops
     const down = line(r1) < v0;
-    label(
+    if (!compact) label(
       'run',
       (gx(p0) + gx(r1)) / 2,
       gy(v0) + (down ? -7 : 15),
@@ -1051,7 +1050,7 @@ import Try from '../../../components/sim/Try.astro';
       'center',
       11
     );
-    label(
+    if (!compact) label(
       'rise',
       gx(r1) + (run > 0 ? 6 : -6),
       (gy(v0) + gy(line(r1))) / 2 + 3,
@@ -1070,30 +1069,19 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     ctx.stroke();
 
-    label(w === 'u' ? 't along u' : w, GR.x + GR.w, GR.y + GR.h + 15, 0.4, 'right', 11);
-    label('f', GR.x - 4, GR.y + 10, 0.4, 'right', 11);
+    label(w === 'u' ? (compact ? 't' : 't along u') : w, GR.x + GR.w, GR.y + GR.h + fpx(11) + 2, 0.45, 'right', 11);
+    if (!compact) label('f', GR.x - 4, GR.y + 10, 0.4, 'right', 11);
 
-    label(
-      w === 'u'
-        ? 'x and y move together, so'
-        : `${other(w)} is frozen at ${fmt(w === 'x' ? b : a)}, so`,
-      CARD.x + 16,
-      GR.y + GR.h + 38,
-      0.5,
-      'left',
-      11
-    );
-    label(
-      'one curve, one slope',
-      CARD.x + 16,
-      GR.y + GR.h + 56,
-      0.5,
-      'left',
-      11
-    );
+    if (compact) {
+      // a phone keeps the graph and the number it is about
+      label(signed(s), CARD.x + 16, CARD.y + 330, 1, 'left', 26, col(w, 1));
+      label(Math.abs(s) < 5e-4 ? 'flat' : s > 0 ? 'uphill' : 'downhill', CARD.x + 16, CARD.y + 330 + fpx(11) + 18, 0.6, 'left', 11);
+      ctx.restore();
+      return;
+    }
 
     // the equations, the chosen one lit
-    let y = CARD.y + 290;
+    let y = CARD.y + 262;
     ctx.strokeStyle = ink(0.1);
     ctx.beginPath();
     ctx.moveTo(CARD.x + 16, y - 26);
@@ -1151,6 +1139,7 @@ import Try from '../../../components/sim/Try.astro';
   let slowAvg = 16;
   function draw() {
     const t0 = performance.now();
+    sizeText();
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
@@ -1187,10 +1176,16 @@ import Try from '../../../components/sim/Try.astro';
     const w = state.which;
     const du = slope('u');
     const th = Math.round(state.theta);
-    if (w === 'u')
+    // the u equations get the height of the ∇f ones, so switching never moves the header
+    const TALL = '\\vphantom{\\Big(\\frac{\\partial f}{\\partial x}\\Big)}';
+    if (compact)
+      setEq(w === 'u'
+        ? { rule: [['D_{\\mathbf u}f', CUC], '=', ['\\nabla f', CG], '\\cdot\\mathbf u' + TALL], live: [[`D_{\\mathbf u}f = ${signed(du)}`, CUC], '\\quad', [`|\\nabla f| = ${fmt(g)}`, CG], '\\vphantom{\\Big(}'] }
+        : { rule: [['\\nabla f', CG], '=\\Big(', ['\\frac{\\partial f}{\\partial x}', CXC], ',', ['\\frac{\\partial f}{\\partial y}', CYC], '\\Big)'], live: [['\\nabla f', CG], '=\\Big(', [signed(fx), CXC], ',', [signed(fy), CYC], '\\Big)'] });
+    else if (w === 'u')
       setEq({
-        rule: [['D_{\\mathbf u}f', CUC], '=', ['\\nabla f', CG], '\\cdot\\mathbf u=', ['\\tfrac{\\partial f}{\\partial x}', CXC], '\\cos\\theta+', ['\\tfrac{\\partial f}{\\partial y}', CYC], '\\sin\\theta'],
-        live: [[`D_{\\mathbf u}f = ${signed(du)}`, CUC], `=`, [signed(fx), CXC], `\\cos ${th}^\\circ`, [signed(fy), CYC], `\\sin ${th}^\\circ`, '\\quad', [`|\\nabla f| = ${fmt(g)}`, CG]],
+        rule: [['D_{\\mathbf u}f', CUC], '=', ['\\nabla f', CG], '\\cdot\\mathbf u=', ['\\tfrac{\\partial f}{\\partial x}', CXC], '\\cos\\theta+', ['\\tfrac{\\partial f}{\\partial y}', CYC], '\\sin\\theta' + TALL],
+        live: [[`D_{\\mathbf u}f = ${signed(du)}`, CUC], `=`, [signed(fx), CXC], `\\cos ${th}^\\circ`, [signed(fy), CYC], `\\sin ${th}^\\circ`, '\\quad', [`|\\nabla f| = ${fmt(g)}`, CG], '\\vphantom{\\Big(}'],
       });
     else
       setEq({
@@ -1207,17 +1202,17 @@ import Try from '../../../components/sim/Try.astro';
         value: signed(du),
         colour: CUC,
         status: ang === null
-          ? `${way} along u at θ = ${th}° · ∇f = 0 here, so every direction is flat`
-          : `${way} along u at θ = ${th}° · ${ang}° from ∇f, whose length is ${fmt(g)}`,
-        note: 'Dᵤf = |∇f| cos(angle): largest straight up the gradient, zero across it along the level curve, most negative straight down.',
+          ? `∇f = 0 here, so every direction is flat`
+          : `${way} along u, ${ang}° from ∇f`,
+        note: 'Dᵤf = |∇f| cos(angle): largest up the gradient, zero along the level curve.',
       });
     } else {
       el('result-label').textContent = `∂f/∂${w} at your point`;
       setResult({
         value: signed(s),
         colour: col(w, 1),
-        status: `${way} along ${w} at (${fmt(a)}, ${fmt(b)}), with ${other(w)} frozen at ${fmt(w === 'x' ? b : a)} · ${cur().eq}`,
-        note: 'Each partial is the slope of the curve its own plane cuts, with the other variable frozen. Together they make ∇f, which gives the slope in every other direction too.',
+        status: `${way} along ${w}, with ${other(w)} frozen at ${fmt(w === 'x' ? b : a)}`,
+        note: 'Each partial is the slope of the curve its own plane cuts. Together they make ∇f.',
       });
     }
   }
@@ -1286,7 +1281,7 @@ import Try from '../../../components/sim/Try.astro';
     el('bval').textContent = two(state.b);
     redraw();
   }
-  const nearPoint = (x: number, y: number) => Math.hypot(x - pointScreen.x, y - pointScreen.y) < 18;
+  const nearPoint = (x: number, y: number) => Math.hypot(x - pointScreen.x, y - pointScreen.y) < (compact ? 30 : 18);
 
   orbitControls(canvas, cam, W, H, {
     changed: redraw,
@@ -1294,19 +1289,22 @@ import Try from '../../../components/sim/Try.astro';
       if (x > VW) return true; // the card is not the scene: swallow the press
       if (!nearPoint(x, y)) return false;
       dragging = true;
-      canvas.style.cursor = 'grabbing';
+      grabCursor(canvas, true, true);
       redraw();
       return true;
     },
     drag: (x, y) => { if (dragging) movePoint(x, y); },
-    release: () => { dragging = false; canvas.style.cursor = ''; redraw(); },
+    release: () => { dragging = false; grabCursor(canvas, false, false); redraw(); },
     click: tap,
   });
   canvas.addEventListener('pointermove', (e) => {
     if (e.buttons) return;
     const r = canvas.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
-    canvas.style.cursor = nearPoint(x, y) ? 'grab' : x > VW ? 'default' : '';
+    const over = x <= VW && nearPoint(x, y);
+    if (over !== hovering) { hovering = over; redraw(); }
+    if (x > VW) canvas.style.cursor = 'default';
+    else grabCursor(canvas, over, dragging);
   });
 
   function show(surf: string, a: number, b: number, w: Which, theta = state.theta) {

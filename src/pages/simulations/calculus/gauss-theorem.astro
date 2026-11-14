@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Gauss's Divergence Theorem"
-  description="Fill a lumpy region with little boxes and ask each one how much more flow leaves it than enters it. Every inner wall is shared by two boxes, so whatever leaves one enters the other and the pair cancels. Add every box and only the outer skin is left."
+  description="Fill a lumpy region with little boxes and ask how much more flow leaves each than enters. Inner walls are shared, so their flows cancel in pairs and only the outer skin is left."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -22,7 +22,7 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[{ label: 'flow leaving', color: '#ff7a5c' }, { label: 'flow entering', color: '#60a5fa' }, { label: 'the box you picked', color: '#f59e0b' }]}
-        hint="Click any box to open it up · in the solid view, drag to orbit"
+        hint="Click a box to open it up. In the solid view, drag to orbit."
       />
       <Result label="Box you picked" />
     </div>
@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
       <Seg id="field" label="Field" attr="f" active="blob" options={[{ value: 'blob', label: 'Hot spot' }, { value: 'source', label: 'Source' }, { value: 'uniform', label: 'Uniform' }, { value: 'swirl', label: 'Swirl' }]} />
       <Slider id="mesh" label="Boxes" min={6} max={24} step={2} value={14} hint={['a few big ones', 'hundreds of tiny ones']} />
       <Checks items={[{ id: 'cancel', label: 'Cancel the shared walls' }, { id: 'showfield', label: 'Show the field', checked: true }]} />
-      <div id="cutwrap" hidden>
+      <div id="cutwrap" class="off">
         <Checks items={[{ id: 'cut', label: 'Cut it open', checked: true }]} />
       </div>
       <Readout rows={[{ id: 'skin', label: 'flow out through the skin' }, { id: 'sum', label: 'leak added over the boxes' }, { id: 'gap', label: 'gap between the two' }]} />
@@ -64,10 +64,10 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import {
     HUE,
     V2,
@@ -332,11 +332,13 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
   const canvas = el('gauss') as HTMLCanvasElement;
+  // a phone gets only the scene, cropped tighter, so it shows larger
+  if (matchMedia('(max-width: 600px)').matches) canvas.width = 600; // same test as the CSS below
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { css, ink } = stageInk(canvas);
   const { label } = makeText(ctx, ink);
   const accent = () => css('--accent', '#7c8cff');
-  const fmt = (v: number) => (Math.abs(v) < 5e-5 ? '0.0000' : v.toFixed(4));
+  const fmt = (v: number) => fixed(v, 4);
 
   const SC = { cx: 300, cy: 286, s: 186 };
   const CARD = { x: 612, y: 64, w: 268, h: 300 };
@@ -660,7 +662,7 @@ import Try from '../../../components/sim/Try.astro';
     const y = CARD.y + 214;
     label('out minus in', CARD.x + 16, y, 0.4, 'left', 11.5);
     label(
-      `${flux >= 0 ? '+' : ''}${fmt(flux)}`,
+      (flux >= 0 ? '+' : '') + fmt(flux),
       CARD.x + CARD.w - 16,
       y,
       0.95,
@@ -676,9 +678,9 @@ import Try from '../../../components/sim/Try.astro';
       'left',
       11.5
     );
-    label(size.toFixed(4), CARD.x + CARD.w - 16, y + 26, 0.7, 'right', 12);
+    label(fixed(size, 4), CARD.x + CARD.w - 16, y + 26, 0.7, 'right', 12);
     label('= divergence', CARD.x + 16, y + 52, 0.4, 'left', 11.5);
-    label(div.toFixed(3), CARD.x + CARD.w - 16, y + 52, 0.95, 'right', 13, HUE.pick);
+    label(fixed(div, 3), CARD.x + CARD.w - 16, y + 52, 0.95, 'right', 13, HUE.pick);
     ctx.restore();
 
     const c = tile ? px(tile.c) : P(box!.c);
@@ -694,44 +696,51 @@ import Try from '../../../components/sim/Try.astro';
 
 
   function draw() {
+    // on a phone the card would be too small to read: the scene takes the
+    // middle of the canvas and the picked box is told in the result below
+    const compact = W < 900 || isCompact(canvas);
+    SC.cx = cam.cx = compact ? W / 2 : 300;
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 14, 598, 514);
+    if (compact) ctx.rect(0, 0, W, H);
+    else ctx.rect(0, 14, 598, 514);
     ctx.clip();
     if (state.view === '2d') drawFlat();
     else drawSolid();
     ctx.restore();
-    drawCard();
+    if (!compact) drawCard();
     sync();
   }
 
   function sync() {
     setEq({
       rule: [['\\oiint_S\\mathbf{F}\\cdot\\mathbf{n}\\,dA', accent()], '=', ['\\iiint_V(\\nabla\\cdot\\mathbf{F})\\,dV', HUE.out]],
-      live: [[`${fmt(skinFlux)}\\text{ through the skin}`, accent()], '\\approx', [`${fmt(cellSum)}\\text{ over ${count} boxes}`, HUE.out], `\\quad${(100 * gap()).toFixed(2)}\\%\\text{ short}`],
+      live: [[`${fmt(skinFlux)}\\text{ through the skin}`, accent()], '\\approx', [`${fmt(cellSum)}\\text{ over ${count} boxes}`, HUE.out], `\\quad${fixed(100 * gap(), 2)}\\%\\text{ short}`],
     });
     const t = selTile(),
       b = selBox();
-    setRows({ skin: fmt(skinFlux), sum: fmt(cellSum), gap: `${(100 * gap()).toFixed(2)}%` });
+    setRows({ skin: fmt(skinFlux), sum: fmt(cellSum), gap: `${fixed(100 * gap(), 2)}%` });
     el('meshval').textContent = `${count} boxes`;
     const f = t ? t.flux : b ? b.flux : null;
     const d = t ? t.div : b ? b.div : null;
     const c = t ? t.c : b ? b.c : null;
     const uniform = state.field === 'source' || state.field === 'uniform' || state.field === 'swirl';
     setResult({
-      value: f === null ? '—' : `${f >= 0 ? '+' : ''}${fmt(f)}`,
+      value: f === null ? '—' : (f >= 0 ? '+' : '') + fmt(f),
       colour: f === null ? undefined : f >= 0 ? HUE.out : HUE.in,
       status: f === null || d === null || !c
-        ? 'click any box to open it up'
-        : `net flow out · divergence ${d.toFixed(3)} · centred at (${c.x.toFixed(2)}, ${c.y.toFixed(2)}${'z' in c ? `, ${(c as { z: number }).z.toFixed(2)}` : ''})`,
+        ? 'Click any box to open it up'
+        : `Net flow out; divergence = ${fixed(d, 3)}`,
       note: uniform
         ? state.field === 'source'
-          ? 'A source spreads the same everywhere, so every full box reports the same divergence; only the boxes cut by the skin differ. Pick Hot spot to see it vary.'
-          : 'Nothing accumulates anywhere in this field: every box is balanced, and the skin reports zero. Spinning is not spreading.'
-        : 'Only the boxes covering the lump light up, but the skin far away still reports every drop of it, because there is nowhere else for the flow to go.',
+          ? 'A source spreads the same everywhere, so every full box reports the same divergence. Pick Hot spot to see it vary.'
+          : 'Nothing accumulates anywhere in this field: every box is balanced and the skin reports zero. Spinning is not spreading.'
+        : 'Only the boxes over the lump light up, yet the skin far away reports all of it: the flow has nowhere else to go.',
     });
-    el('cutwrap').hidden = state.view !== '3d';
+    // the cut stays in the panel (dimmed and off when flat) so nothing jumps
+    el('cutwrap').classList.toggle('off', state.view !== '3d');
+    (el('cut') as HTMLInputElement).disabled = state.view !== '3d';
   }
 
   // --- cancelling animation -------------------------------------------------
@@ -844,6 +853,16 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  /* a phone gets a narrower canvas (set before it is first drawn); this keeps
+     its box from changing shape as the page loads */
+  @media (max-width: 600px) {
+    .gs-canvas {
+      aspect-ratio: 600 / 546;
+    }
+  }
+  #cutwrap.off {
+    opacity: 0.45;
+  }
   .gs-canvas {
     cursor: pointer;
     touch-action: none;

@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="calculus"
   title="Laplace Transform"
-  description="The Laplace transform sends a signal f(t) to a function F(s) of a complex variable. Plot |F(s)| as a landscape over the complex plane and the algebra turns geometric: poles are spikes, the region of convergence is a half-plane, and the Fourier transform is the slice above the imaginary axis."
+  description="The Laplace transform turns a signal f(t) into F(s) on the complex plane. As a landscape, poles are spikes, convergence is a half-plane, and the Fourier transform is the slice over the imaginary axis."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -21,8 +21,8 @@ import Try from '../../../components/sim/Try.astro';
         <canvas id="lp" class="lp-canvas" width="760" height="580" role="img" aria-label="The magnitude of F(s) drawn as a lit solid landscape over the complex plane, with the poles marked on the flat-topped peaks they raise, the region of convergence tinted, and the slice above the imaginary axis drawn as an amber curve on the surface."></canvas>
       </div>
       <Caption
-        legend={[{ label: 'the poles', color: '#ef4444' }, { label: 'the slice at σ = 0, the Fourier transform', color: '#f59e0b' }, { label: 'region of convergence', color: '#38bdf8' }]}
-        hint="Drag to orbit · scroll to zoom · height is |F(s)|, rounded off smoothly near the poles so they do not run off to infinity"
+        legend={[{ label: 'the poles', color: '#ef4444' }, { label: 'Fourier slice |F(jω)|', color: '#f59e0b' }, { label: 'region of convergence', color: '#38bdf8' }]}
+        hint="Drag to orbit · scroll to zoom · height is |F(s)| over σ ∈ [−3, 3], ω ∈ [−5.5, 5.5], rounded off near the poles"
       />
       <Result label="Poles" />
     </div>
@@ -37,7 +37,7 @@ import Try from '../../../components/sim/Try.astro';
         <Slider id="w" label="Frequency ω" min={0.2} max={5} step={0.1} value={2.5} display="2.50" />
       </div>
       <Checks items={[{ id: 'roc', label: 'Shade the region of convergence', checked: true }, { id: 'slice', label: 'Slice above the imaginary axis', checked: true }]} />
-      <Readout rows={[{ id: 'fs', label: 'F(s)' }, { id: 'rocv', label: 'region of convergence' }, { id: 'fourier', label: 'Fourier transform' }]} />
+      <Readout rows={[{ id: 'rocv', label: 'region of convergence' }, { id: 'fourier', label: 'Fourier transform' }]} />
     </div>
   </div>
 
@@ -66,7 +66,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { Camera3D, orbitControls, V } from '../../../lib/scene3d';
@@ -105,13 +106,6 @@ import Try from '../../../components/sim/Try.astro';
   }
   /** "s + 0.60" or "s − 0.50", never "s + −0.50". */
   const sPlus = (sp = ' ', minus = '−') => `s${sp}${state.a < 0 ? minus : '+'}${sp}${Math.abs(state.a).toFixed(2)}`;
-  const formula = () => {
-    const sa = sPlus(), w = state.w.toFixed(1);
-    if (state.sig === 'exp') return `1 / (${sa})`;
-    if (state.sig === 'ramp') return `1 / (${sa})²`;
-    const d = `(${sa})² + ${w}²`;
-    return state.sig === 'sin' ? `${w} / [${d}]` : `(${sa}) / [${d}]`;
-  };
   // Pole locations, and whether they are repeated.
   const poles = (): { re: number; im: number }[] => {
     const p = -state.a;
@@ -525,24 +519,13 @@ import Try from '../../../components/sim/Try.astro';
       label(rep ? 'double pole' : 'pole', top, POLE, 'center', 13, -20);
     }
 
-    // a quiet key in the corner
-    const fk = fontK();
-    ctx.font = `500 ${Math.round(13 * fk)}px 'JetBrains Mono', ui-monospace, monospace`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = inkA(0.6);
-    ctx.fillText(`height |F(s)| over σ ∈ [−${SIG}, ${SIG}], ω ∈ [−${OM}, ${OM}]`, 16, 18 + 10 * fk);
-    if (state.roc) {
-      ctx.fillStyle = light ? '#0284c7' : ROC;
-      ctx.fillText(`region of convergence: Re s > ${(-state.a).toFixed(2)} (dashed edge)`, 16, 18 + 30 * fk);
-    }
   }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
     if (G) renderGl(G);
     else {
-      ctx.font = "12px 'JetBrains Mono', ui-monospace, monospace";
+      ctx.font = `${textPx(canvas, 12)}px 'JetBrains Mono', ui-monospace, monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = inkA(0.6);
       ctx.fillText('WebGL2 is not available here, so only the curves on the landscape are drawn.', W / 2, H - 16);
@@ -593,17 +576,19 @@ import Try from '../../../components/sim/Try.astro';
     c.stroke();
 
     c.fillStyle = `rgba(${ink},0.5)`;
-    c.font = '11px ui-monospace, monospace';
-    c.fillText('f(t)', pad + 2, pad + 8);
+    const fz = textPx(ftCanvas, 11);
+    c.font = `${fz}px ui-monospace, monospace`;
+    c.textAlign = 'right';
+    c.fillText('f(t)', w - pad - 2, h - pad);
+    c.textAlign = 'left';
   }
 
   function updateReadout() {
     const p = poles();
     const rep = state.sig === 'ramp';
     setRows({
-      fs: formula(),
-      rocv: `Re(s) > ${(-state.a).toFixed(2)}`,
-      fourier: -state.a < 0 ? 'exists (axis inside ROC)' : 'does not converge',
+      rocv: `Re(s) > ${fixed(-state.a)}`,
+      fourier: -state.a < 0 ? 'exists' : 'diverges',
     });
     const TIME: Record<string, string> = {
       exp: 'e^{-at}',
@@ -619,7 +604,7 @@ import Try from '../../../components/sim/Try.astro';
       const d = `(${a})^2+${w}^2`;
       return state.sig === 'sin' ? `\\frac{${w}}{${d}}` : `\\frac{${a}}{${d}}`;
     };
-    const polesText = p.length === 1 ? `s = ${p[0].re.toFixed(2)}${rep ? ' (double)' : ''}` : `s = ${p[0].re.toFixed(2)} ± ${state.w.toFixed(1)}j`;
+    const polesText = p.length === 1 ? `s = ${fixed(p[0].re)}${rep ? ' (double)' : ''}` : `s = ${fixed(p[0].re)} ± ${fixed(state.w, 1)}j`;
     const fourierOk = -state.a < 0;
     setEq({
       rule: [['F(s)', '#f59e0b'], '=\\int_0^{\\infty} f(t)\\,e^{-st}\\,dt', ',\\quad s=\\sigma+j\\omega'],
@@ -628,12 +613,12 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: polesText,
       colour: '#ef4444',
-      status: `converges for Re(s) > ${(-state.a).toFixed(2)} · the Fourier transform ${fourierOk ? 'exists: the imaginary axis is inside that half-plane' : 'does not converge: the axis lies outside it'}`,
+      status: `Converges for Re(s) > ${fixed(-state.a)}`,
       note: fourierOk
-        ? 'The red marks are the poles, where |F(s)| blows up. The amber slice down σ = 0 is the Fourier transform, and it only exists because the poles sit to the left of the axis.'
+        ? 'Red marks the poles. The amber slice over σ = 0 is the Fourier transform: it exists because the poles sit left of the axis.'
         : Math.abs(state.a) < 1e-9
-          ? 'With a = 0 the signal never dies out: the poles sit right on the axis and the Fourier integral does not converge. The Laplace transform still does, for Re(s) > 0.'
-          : 'With a < 0 the signal grows, the poles sit to the right of the axis, and the Fourier transform does not exist. The Laplace transform still does, further right.',
+          ? 'With a = 0 the signal never dies out: the poles sit on the axis, so the Fourier integral diverges. Laplace still converges.'
+          : 'With a < 0 the signal grows: the poles sit right of the axis, so there is no Fourier transform. Laplace still converges.',
     });
   }
 
