@@ -81,6 +81,18 @@ const sims = (await (await fetch(`${BASE}/search.json`)).json())
 const [vw, vh] = LIMITS.viewport;
 const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, isMobile: MOBILE, hasTouch: MOBILE });
 await ctx.addInitScript(instrument);
+// Against `astro dev`, an edit anywhere reloads every open page mid-audit.
+// Keep the dev server's hot-reload socket from connecting.
+await ctx.addInitScript(() => {
+  const Real = window.WebSocket;
+  window.WebSocket = function (url, protocols) {
+    if (String(protocols).includes('vite'))
+      return { addEventListener() {}, removeEventListener() {}, send() {}, close() {}, readyState: 0 };
+    return new Real(url, protocols);
+  };
+  window.WebSocket.prototype = Real.prototype;
+  Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+});
 
 const results = [];
 const queue = [...sims];

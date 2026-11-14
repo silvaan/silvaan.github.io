@@ -83,7 +83,9 @@ export function textPx(canvas: HTMLCanvasElement, size: number, min = 11, grow =
 }
 
 /** True when the canvas is shown so small (a phone) that secondary labels
- *  should be dropped rather than shrunk. */
+ *  should be dropped rather than shrunk. It looks only at this canvas's width,
+ *  so a small inset canvas on a desktop page counts as compact too: ask the
+ *  page's main canvas when the question is "am I on a phone?". */
 export function isCompact(canvas: HTMLCanvasElement) {
   return canvas.clientWidth > 0 && canvas.clientWidth < 560;
 }
