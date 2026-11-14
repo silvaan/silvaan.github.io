@@ -651,102 +651,6 @@ export const AREAS: Area[] = [
     ],
   },
   {
-    slug: 'biology',
-    title: 'Biology',
-    description: 'Living things as processes: populations, molecules and cells, each following a few simple rules.',
-    icon: 'M7 3c0 5 10 5 10 9s-10 4-10 9 M17 3c0 5-10 5-10 9s10 4 10 9 M8.5 6.5h7 M8.5 17.5h7',
-    simulators: [
-      {
-        slug: 'genetic-drift',
-        title: 'Genetic Drift',
-        description:
-          'In a small population a gene can win or vanish by luck alone. Follow many populations at once, shrink them and watch chance decide, then add a little selection and see when it starts to beat the dice.',
-        href: '/simulations/biology/genetic-drift',
-        status: 'live',
-      },
-      {
-        slug: 'predator-prey',
-        title: 'Predators and Prey',
-        description:
-          'Rabbits feed foxes and foxes eat rabbits, so neither settles: both populations rise and crash in turn, the foxes always a step behind, and in the plane of the two counts every cycle is a closed loop.',
-        href: '/simulations/biology/predator-prey',
-        status: 'live',
-      },
-      {
-        slug: 'epidemics',
-        title: 'Epidemics',
-        description:
-          'Each sick person passes the disease on before recovering. Whether that makes an epidemic depends on one number, how many others each case infects, and vaccinating enough people pushes it below 1.',
-        href: '/simulations/biology/epidemics',
-        status: 'live',
-      },
-      {
-        slug: 'enzyme-kinetics',
-        title: 'Enzyme Kinetics',
-        description:
-          'An enzyme is a machine that grabs a molecule, changes it and lets go. Add more substrate and the reaction speeds up, until every machine is busy and the rate levels off at its maximum.',
-        href: '/simulations/biology/enzyme-kinetics',
-        status: 'live',
-      },
-      {
-        slug: 'diffusion-osmosis',
-        title: 'Diffusion and Osmosis',
-        description:
-          'Molecules wander at random and the crowd spreads out with no force pushing it. Put a membrane in the way that lets water through but not sugar, and the water moves towards the sugar.',
-        href: '/simulations/biology/diffusion-osmosis',
-        status: 'live',
-      },
-      {
-        slug: 'action-potential',
-        title: 'Action Potential',
-        description:
-          'A neuron fires by opening sodium gates, then potassium gates, in that order. Below a threshold nothing happens; above it the spike is always the same, and it runs down the axon by setting off the next patch.',
-        href: '/simulations/biology/action-potential',
-        status: 'live',
-      },
-      {
-        slug: 'gene-expression',
-        title: 'From DNA to Protein',
-        description:
-          'A gene is read in two steps: copied into RNA, then translated three letters at a time into a chain of amino acids. Change a single letter and see whether the protein changes too.',
-        href: '/simulations/biology/gene-expression',
-        status: 'live',
-      },
-      {
-        slug: 'turing-patterns',
-        title: 'Turing Patterns',
-        description:
-          'Two chemicals spread and react, one switching the other on and both spreading at different speeds. From a nearly even start they settle into spots, stripes and mazes, like the coat of a leopard or a zebra.',
-        href: '/simulations/biology/turing-patterns',
-        status: 'live',
-      },
-      {
-        slug: 'morphogen-gradients',
-        title: 'Morphogen Gradients',
-        description:
-          'A signal leaks from one end of an embryo and fades as it spreads. Each cell reads how much reaches it and picks what to become, so a smooth slope is cut into sharp bands of tissue.',
-        href: '/simulations/biology/morphogen-gradients',
-        status: 'live',
-      },
-      {
-        slug: 'natural-selection',
-        title: 'Natural Selection',
-        description:
-          'Creatures that match their background are harder to spot, so they live to have young that look like them. Change the background and, a few generations later, the population has changed colour.',
-        href: '/simulations/biology/natural-selection',
-        status: 'live',
-      },
-      {
-        slug: 'population-growth',
-        title: 'Population Growth',
-        description:
-          'Cells that divide double and double again, until food and room run short. Exponential growth bends into the logistic S curve that levels off at what the dish can hold.',
-        href: '/simulations/biology/population-growth',
-        status: 'live',
-      },
-    ],
-  },
-  {
     slug: 'physics',
     title: 'Physics',
     description: 'Fields and the equations that move energy through space.',
@@ -929,6 +833,102 @@ export const AREAS: Area[] = [
         description:
           'See a black hole the way its light does: every pixel is a photon traced through curved spacetime, so the disk wraps over the top and the sky folds round a shadow 2.6 times the horizon. Then put a particle in orbit and watch it trace rosettes, plunge inside 3 rₛ, and its clock run slow.',
         href: '/simulations/physics/black-hole',
+        status: 'live',
+      },
+    ],
+  },
+  {
+    slug: 'biology',
+    title: 'Biology',
+    description: 'Living things as processes: populations, molecules and cells, each following a few simple rules.',
+    icon: 'M7 3c0 5 10 5 10 9s-10 4-10 9 M17 3c0 5-10 5-10 9s10 4 10 9 M8.5 6.5h7 M8.5 17.5h7',
+    simulators: [
+      {
+        slug: 'genetic-drift',
+        title: 'Genetic Drift',
+        description:
+          'In a small population a gene can win or vanish by luck alone. Follow many populations at once, shrink them and watch chance decide, then add a little selection and see when it starts to beat the dice.',
+        href: '/simulations/biology/genetic-drift',
+        status: 'live',
+      },
+      {
+        slug: 'predator-prey',
+        title: 'Predators and Prey',
+        description:
+          'Rabbits feed foxes and foxes eat rabbits, so neither settles: both populations rise and crash in turn, the foxes always a step behind, and in the plane of the two counts every cycle is a closed loop.',
+        href: '/simulations/biology/predator-prey',
+        status: 'live',
+      },
+      {
+        slug: 'epidemics',
+        title: 'Epidemics',
+        description:
+          'Each sick person passes the disease on before recovering. Whether that makes an epidemic depends on one number, how many others each case infects, and vaccinating enough people pushes it below 1.',
+        href: '/simulations/biology/epidemics',
+        status: 'live',
+      },
+      {
+        slug: 'enzyme-kinetics',
+        title: 'Enzyme Kinetics',
+        description:
+          'An enzyme is a machine that grabs a molecule, changes it and lets go. Add more substrate and the reaction speeds up, until every machine is busy and the rate levels off at its maximum.',
+        href: '/simulations/biology/enzyme-kinetics',
+        status: 'live',
+      },
+      {
+        slug: 'diffusion-osmosis',
+        title: 'Diffusion and Osmosis',
+        description:
+          'Molecules wander at random and the crowd spreads out with no force pushing it. Put a membrane in the way that lets water through but not sugar, and the water moves towards the sugar.',
+        href: '/simulations/biology/diffusion-osmosis',
+        status: 'live',
+      },
+      {
+        slug: 'action-potential',
+        title: 'Action Potential',
+        description:
+          'A neuron fires by opening sodium gates, then potassium gates, in that order. Below a threshold nothing happens; above it the spike is always the same, and it runs down the axon by setting off the next patch.',
+        href: '/simulations/biology/action-potential',
+        status: 'live',
+      },
+      {
+        slug: 'gene-expression',
+        title: 'From DNA to Protein',
+        description:
+          'A gene is read in two steps: copied into RNA, then translated three letters at a time into a chain of amino acids. Change a single letter and see whether the protein changes too.',
+        href: '/simulations/biology/gene-expression',
+        status: 'live',
+      },
+      {
+        slug: 'turing-patterns',
+        title: 'Turing Patterns',
+        description:
+          'Two chemicals spread and react, one switching the other on and both spreading at different speeds. From a nearly even start they settle into spots, stripes and mazes, like the coat of a leopard or a zebra.',
+        href: '/simulations/biology/turing-patterns',
+        status: 'live',
+      },
+      {
+        slug: 'morphogen-gradients',
+        title: 'Morphogen Gradients',
+        description:
+          'A signal leaks from one end of an embryo and fades as it spreads. Each cell reads how much reaches it and picks what to become, so a smooth slope is cut into sharp bands of tissue.',
+        href: '/simulations/biology/morphogen-gradients',
+        status: 'live',
+      },
+      {
+        slug: 'natural-selection',
+        title: 'Natural Selection',
+        description:
+          'Creatures that match their background are harder to spot, so they live to have young that look like them. Change the background and, a few generations later, the population has changed colour.',
+        href: '/simulations/biology/natural-selection',
+        status: 'live',
+      },
+      {
+        slug: 'population-growth',
+        title: 'Population Growth',
+        description:
+          'Cells that divide double and double again, until food and room run short. Exponential growth bends into the logistic S curve that levels off at what the dish can hold.',
+        href: '/simulations/biology/population-growth',
         status: 'live',
       },
     ],
