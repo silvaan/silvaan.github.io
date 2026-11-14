@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="generative-ai"
   title="The Data Manifold"
-  description="A 28 × 28 image is one point in a space of 784 dimensions, yet every image of one kind sits on a thin curved sheet inside it. Walk the sheet, average two images, add noise and pull it back: generative models live on that sheet."
+  description="A 28 × 28 image is one point in 784 dimensions, yet every image of one kind sits on a thin curved sheet inside it. Generative models live on that sheet."
   shortcuts={['reset', 'fullscreen']}
 >
   <div class="sim">
@@ -35,7 +35,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'A → B along the sheet', color: '#c084fc' },
           { label: 'noise', color: '#f472b6' },
         ]}
-        hint="Drag on the sheet to move x · drag A or B · drag empty space to orbit · scroll to zoom · click a frame in a strip"
+        hint="Drag on the sheet to move x · drag A or B · drag elsewhere to orbit · numbers under the frames: distance to the sheet"
       />
       <Result label="Distance to the sheet" />
     </div>
@@ -74,15 +74,18 @@ import Try from '../../../components/sim/Try.astro';
         <button type="button" class="btn ghost" id="random">Random pixels</button>
         <button type="button" class="btn ghost" id="reset">Reset</button>
       </Actions>
-      <Checks
-        label="Show"
-        items={[
-          { id: 'show-fog', label: 'Density fog', checked: true },
-          { id: 'show-mesh', label: 'Knob grid', checked: true },
-          { id: 'show-thumbs', label: 'Thumbnails', checked: true },
-          { id: 'show-field', label: 'Denoising field' },
-        ]}
-      />
+      <details class="numeric-details">
+        <summary>More</summary>
+        <Checks
+          label="Show"
+          items={[
+            { id: 'show-fog', label: 'Density fog', checked: true },
+            { id: 'show-mesh', label: 'Knob grid', checked: true },
+            { id: 'show-thumbs', label: 'Thumbnails', checked: true },
+            { id: 'show-field', label: 'Denoising field' },
+          ]}
+        />
+      </details>
       <Readout
         title="Values"
         rows={[
@@ -104,8 +107,7 @@ import Try from '../../../components/sim/Try.astro';
   <Fragment slot="observe">
     <li>
       Drag <b>along the sheet</b>. The digit turns and thickens smoothly and its
-      distance to the sheet stays 0: 784 pixel values, all fixed by just
-      <b>two knobs</b>. <Try id="walk" label="Walk" />
+      distance to the sheet stays 0: 784 pixel values, all fixed by just <b>two knobs</b>. <Try id="walk" label="Walk" />
     </li>
     <li>
       Go from A to B by <b>averaging pixels</b> and the path is a straight chord
@@ -128,7 +130,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
@@ -136,9 +138,21 @@ import Try from '../../../components/sim/Try.astro';
   import { VolumeView } from '../../../lib/volume3d';
 
   const canvas = el('manifold') as HTMLCanvasElement;
+  // A phone gets a narrower, taller canvas: the 3D view on top and the image
+  // column under it, so its labels can be big enough to read.
+  // (the same width as the CSS below, which gives the canvas this shape before the script runs)
+  const PHONE = matchMedia('(max-width: 600px)').matches;
+  if (PHONE) {
+    canvas.width = 600;
+    canvas.height = 950;
+  }
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv, css } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  /** Smallest label on screen, in px. */
+  const MIN_PX = PHONE ? 9.5 : 11.5;
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, MIN_PX);
+  /** The logical size `label` really draws a given size at. */
+  const labelPx = (size: number) => textPx(canvas, Math.round(size * 1.42), MIN_PX);
   const isLight = () => css('--stage-light') === '1';
   const setEq = equation();
   const setResult = result();
@@ -708,9 +722,12 @@ import Try from '../../../components/sim/Try.astro';
   const preview = document.createElement('canvas');
 
   // ---------------------------------------------------------------- the view
-  const PX = 668; // the right-hand column starts here
-  const CAM0 = { yaw: 0.3, pitch: -0.36, zoom: 1.5 };
-  const cam = new Camera3D(PX, H + 20, { dist: 12, ...CAM0 });
+  /** The 3D view: the left 668 px, or on a phone the top of the canvas. */
+  const PX = PHONE ? W : 668;
+  const VH = PHONE ? 450 : H;
+  const inView = (x: number, y: number) => x < PX - 4 && y < VH - 4;
+  const CAM0 = { yaw: 0.3, pitch: -0.36, zoom: PHONE ? 1.25 : 1.5 };
+  const cam = new Camera3D(PX, VH + 20, { dist: 12, ...CAM0 });
   const fog = VolumeView.create(canvas, W, H, 'scalar');
   let fogTheme: boolean | null = null, fogFam = '';
   /** Fog gain and opacity, dark and light stage: thin enough that the knob grid shows through. */
@@ -748,7 +765,7 @@ import Try from '../../../components/sim/Try.astro';
   let taken: { x: number; y: number; w: number; h: number }[] = [];
   /** Text on a soft halo, so it reads over the fog. */
   function tag(text: string, x: number, y: number, col: string, align: CanvasTextAlign = 'left', size = 8.5) {
-    const w = textWidth(text, size), px = Math.round(size * 1.42);
+    const w = textWidth(text, size), px = labelPx(size);
     const left = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
     ctx.fillStyle = inv(0.62);
     ctx.beginPath();
@@ -852,7 +869,7 @@ import Try from '../../../components/sim/Try.astro';
 
   /** Which way PC1, PC2, PC3 point, in the corner of the view. */
   function drawAxes(light: boolean) {
-    const ox = 46, oy = H - 44, len = 26;
+    const ox = PHONE ? 40 : 46, oy = VH - (PHONE ? 40 : 44), len = 26;
     const axes = [
       { v: { x: 1, y: 0, z: 0 }, l: 'PC1' },
       { v: { x: 0, y: 0, z: -1 }, l: 'PC2' },
@@ -870,7 +887,7 @@ import Try from '../../../components/sim/Try.astro';
 
   /** A screen point on the sheet → its knobs, or null if the pointer is not on it. */
   function pick(x: number, y: number, maxD = 14) {
-    if (x > PX - 4) return null;
+    if (!inView(x, y)) return null;
     let best = maxD * maxD, hit: Dense | null = null;
     for (const p of F.dense) {
       const q = cam.project(p.w);
@@ -882,20 +899,27 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // ---------------------------------------------------------------- the right-hand column
-  const STRIP = { x: PX + 14, y0: 262, y1: 352, size: 37, gap: 7 };
+  /**
+   * The image column: beside the view on a desktop, under it on a phone. All
+   * positions are offsets from its top-left corner (CX, CY).
+   */
+  const CX = PHONE ? 0 : PX, CY = PHONE ? VH : 0;
+  const COL = PHONE
+    ? { x0: 22, cw: W - 44, ps: 150, info: 40, knob: 26, off: 132, strip0: 254, stripGap: 134, size: 66, gap: 13, gauge: 0 }
+    : { x0: 14, cw: W - PX - 28, ps: 150, info: 50, knob: 22, off: 142, strip0: 262, stripGap: 104, size: 36, gap: 7, gauge: 516 };
+  const STRIP = { x: CX + COL.x0, y0: CY + COL.strip0, y1: CY + COL.strip0 + COL.stripGap, size: COL.size, gap: COL.gap };
   function drawColumn(pr: Probe, light: boolean) {
     const c = pal();
-    const x0 = PX + 14, cw = W - PX - 26;
+    const x0 = CX + COL.x0, cw = COL.cw;
     ctx.fillStyle = light ? 'rgba(248,250,252,0.86)' : 'rgba(9,11,16,0.66)';
     ctx.strokeStyle = ink(0.08);
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.roundRect(PX, 10, W - PX - 10, H - 20, 10); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(CX + (PHONE ? 10 : 0), CY + 10, W - CX - (PHONE ? 20 : 10), H - CY - 20, 10); ctx.fill(); ctx.stroke();
 
     // the image itself, as its 784 pixels
     const kcol = pr.kind === 'clean' ? c.cur : pr.kind === 'noise' ? c.noise : pr.kind === 'random' ? c.rand : pr.kind === 'pixels' ? c.avg : c.walk;
-    label('x, the image itself', x0, 34, 0.55, 'left', 8.5);
     paintTile(pr.x, preview, light);
-    const ps = 150, py = 44;
+    const ps = COL.ps, py = CY + 30;
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(preview, x0, py, ps, ps);
@@ -903,22 +927,18 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = kcol;
     ctx.lineWidth = 2;
     ctx.strokeRect(x0 - 1, py - 1, ps + 2, ps + 2);
-    label('28 × 28 = 784 numbers', x0, py + ps + 18, 0.45, 'left', 7.5);
+    label('28 × 28 = 784 numbers', x0, py + ps + labelPx(7.5) + 6, 0.5, 'left', 7.5);
 
     const tx = x0 + ps + 16;
     const spec = F.spec;
     const what = pr.kind === 'clean' ? 'a real image' : pr.kind === 'noise' ? 'a noisy image' : pr.kind === 'random' ? 'random pixels' : pr.kind === 'pixels' ? 'a pixel average' : 'a sheet image';
-    label(what, tx, 58, 1, 'left', 9, kcol);
-    if (pr.kind === 'clean' || pr.kind === 'manifold') {
-      label(`${spec.short[0]} ${spec.fmt[0](pr.nu)}`, tx, 84, 0.75, 'left', 8);
-      label(`${spec.short[1]} ${spec.fmt[1](pr.nv)}`, tx, 104, 0.75, 'left', 8);
-    } else {
-      label('nearest real image:', tx, 84, 0.5, 'left', 7.5);
-      label(`${spec.short[0]} ${spec.fmt[0](pr.nu)}`, tx, 102, 0.75, 'left', 8);
-      label(`${spec.short[1]} ${spec.fmt[1](pr.nv)}`, tx, 120, 0.75, 'left', 8);
-    }
-    label('distance to sheet', tx, 152, 0.5, 'left', 7.5);
-    label(pr.d < 0.005 ? '0' : pr.d.toFixed(2), tx, 182, 1, 'left', 16, pr.d < 0.05 ? c.teal : kcol);
+    let ty = CY + COL.info;
+    label(what, tx, ty, 1, 'left', 9, kcol);
+    if (pr.kind !== 'clean' && pr.kind !== 'manifold') label('nearest:', tx, (ty += COL.knob), 0.5, 'left', 8);
+    label(`${spec.short[0]} ${spec.fmt[0](pr.nu)}`, tx, (ty += COL.knob), 0.75, 'left', 8);
+    label(`${spec.short[1]} ${spec.fmt[1](pr.nv)}`, tx, (ty += COL.knob), 0.75, 'left', 8);
+    label('off the sheet', tx, CY + COL.off, 0.5, 'left', 8);
+    label(pr.d < 0.005 ? '0' : pr.d.toFixed(2), tx, CY + COL.off + labelPx(16) + 4, 1, 'left', 16, pr.d < 0.05 ? c.teal : kcol);
 
     // the two strips
     const st = getStrips();
@@ -929,7 +949,7 @@ import Try from '../../../components/sim/Try.astro';
     const cur = state.interp ? Math.round(state.t * (NF - 1)) : -1;
     const strip = (m: Mode, y: number, title: string, col: string) => {
       const on = state.interp && state.mode === m;
-      label(title, x0, y - 8, on ? 1 : 0.85, 'left', 8, col);
+      label(title, x0, y - 10, on ? 1 : 0.85, 'left', 8, col);
       st[m].forEach((f, k) => {
         const fx = x0 + k * (STRIP.size + STRIP.gap);
         ctx.save();
@@ -941,16 +961,16 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineWidth = hl ? 2.2 : 1;
         ctx.strokeRect(fx - 0.5, y - 0.5, STRIP.size + 1, STRIP.size + 1);
         const tl = k === 0 ? 'A' : k === NF - 1 ? 'B' : f.d < 0.05 ? '0' : f.d.toFixed(1);
-        label(tl, fx + STRIP.size / 2, y + STRIP.size + 13, k === 0 || k === NF - 1 ? 0.7 : 1, 'center', 7, k === 0 || k === NF - 1 ? undefined : f.d < 0.05 ? c.teal : col);
+        label(tl, fx + STRIP.size / 2, y + STRIP.size + labelPx(7) + 4, k === 0 || k === NF - 1 ? 0.7 : 1, 'center', 7, k === 0 || k === NF - 1 ? undefined : f.d < 0.05 ? c.teal : col);
       });
     };
     strip('pixels', STRIP.y0, 'A → B averaging pixels', c.avg);
     strip('manifold', STRIP.y1, 'A → B walking the sheet', c.walk);
-    label('numbers: distance to the sheet', x0, STRIP.y1 + STRIP.size + 32, 0.4, 'left', 7);
+    if (!COL.gauge) return;
 
     // a gauge of distances in pixel space
-    const gy = 476, gx0 = x0 + 4, gx1 = x0 + cw - 8;
-    label('distances in pixel space', x0, gy - 34, 0.55, 'left', 8);
+    const gy = CY + COL.gauge, gx0 = x0 + 4, gx1 = x0 + cw - 8;
+    label('distances in pixel space', x0, gy - 44, 0.55, 'left', 8);
     const M = Math.max(F.diam, F.randD, pr.d) * 1.08;
     const X = (d: number) => gx0 + (d / M) * (gx1 - gx0);
     ctx.strokeStyle = ink(0.25);
@@ -959,12 +979,13 @@ import Try from '../../../components/sim/Try.astro';
     // the sheet's own width as a teal bar
     ctx.fillStyle = hex(c.teal, light ? 0.3 : 0.28);
     ctx.fillRect(gx0, gy - 3, X(F.diam) - gx0, 6);
+    const rowH = labelPx(7.5) + 4;
     const tick = (d: number, text: string, col: string, row: number) => {
       const x = X(d);
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(x, gy - 7); ctx.lineTo(x, gy + 7 + row * 14); ctx.stroke();
-      label(text, x - 4, gy + 18 + row * 14, 1, 'right', 7, col);
+      ctx.beginPath(); ctx.moveTo(x, gy - 7); ctx.lineTo(x, gy + 7 + row * rowH); ctx.stroke();
+      label(text, x - 4, gy + 6 + (row + 1) * rowH, 1, 'right', 7.5, col);
     };
     tick(F.diam, `sheet width ${F.diam.toFixed(1)}`, c.teal, 0);
     tick(F.randD, `random pixels ${F.randD.toFixed(1)}`, c.rand, 1);
@@ -972,24 +993,7 @@ import Try from '../../../components/sim/Try.astro';
     const xd = X(pr.d);
     ctx.fillStyle = kcol;
     ctx.beginPath(); ctx.moveTo(xd, gy - 4); ctx.lineTo(xd - 6, gy - 14); ctx.lineTo(xd + 6, gy - 14); ctx.closePath(); ctx.fill();
-    label(`x ${pr.d.toFixed(1)}`, xd, gy - 18, 1, xd < gx0 + 20 ? 'left' : xd > gx1 - 30 ? 'right' : 'center', 7.5, kcol);
-
-    // dimensions
-    const dy = 532;
-    label('pixel space', x0, dy, 0.6, 'left', 8);
-    label('784 dims', x0 + cw - 4, dy, 1, 'right', 9);
-    label('this data', x0, dy + 22, 0.6, 'left', 8);
-    label(`2 knobs (${spec.short[0]}, ${spec.short[1]})`, x0 + cw - 4, dy + 22, 1, 'right', 9, c.teal);
-    const vy = dy + 44;
-    const bw = (cw - 20) / 3;
-    F.varFrac.forEach((f, a) => {
-      const bx = x0 + a * (bw + 10);
-      ctx.fillStyle = ink(0.08);
-      ctx.fillRect(bx, vy, bw, 7);
-      ctx.fillStyle = hex(c.teal, 0.75);
-      ctx.fillRect(bx, vy, bw * Math.min(1, f / 0.5), 7);
-      label(`PC${a + 1} ${(f * 100).toFixed(0)}%`, bx, vy + 22, 0.7, 'left', 7);
-    });
+    label(`x ${pr.d.toFixed(1)}`, xd, gy - 18, 1, xd < gx0 + 30 ? 'left' : xd > gx1 - 40 ? 'right' : 'center', 7.5, kcol);
   }
 
   // ---------------------------------------------------------------- frame
@@ -999,7 +1003,7 @@ import Try from '../../../components/sim/Try.astro';
     const c = pal();
     taken = [];
     ctx.clearRect(0, 0, W, H);
-    if (!fog) drawBackdrop(ctx, PX, H, light);
+    if (!fog) drawBackdrop(ctx, PX, VH, light);
     else if (bgLight !== light) {
       bgLight = light;
       fog.canvas.style.background = `radial-gradient(circle at 34% 48%, ${light ? 'rgba(20,184,166,0.07)' : 'rgba(20,184,166,0.10)'}, rgba(20,184,166,0) 55%), var(--stage-bg)`;
@@ -1058,9 +1062,10 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fillStyle = light ? '#fff' : '#0b0d12';
         ctx.strokeStyle = ink(0.9);
         ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(p.sx, p.sy, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        const fpx = textPx(canvas, 12, MIN_PX);
+        ctx.beginPath(); ctx.arc(p.sx, p.sy, Math.max(9, fpx * 0.75), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.fillStyle = ink(0.95);
-        ctx.font = "700 11px 'JetBrains Mono', ui-monospace, monospace";
+        ctx.font = `700 ${fpx}px 'JetBrains Mono', ui-monospace, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(t, p.sx, p.sy + 0.5);
@@ -1095,15 +1100,15 @@ import Try from '../../../components/sim/Try.astro';
       ctx.beginPath(); ctx.arc(tip.sx, tip.sy, 5, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = hex(c.teal, 0.95);
       ctx.beginPath(); ctx.arc(pn.sx, pn.sy, 4, 0, Math.PI * 2); ctx.fill();
-      const right = tip.sx < PX - 190;
+      const right = tip.sx < PX - 210;
       tag(`${pr.d.toFixed(1)} off the sheet`, tip.sx + (right ? 10 : -10), tip.sy - 6, kcol, right ? 'left' : 'right', 8.5);
-      tag('true distance, to scale', tip.sx + (right ? 10 : -10), tip.sy + 12, ink(0.6), right ? 'left' : 'right', 6.5);
+      if (!PHONE) tag('true distance, to scale', tip.sx + (right ? 10 : -10), tip.sy + 14, ink(0.6), right ? 'left' : 'right', 7);
     }
     glowDot(px.sx, px.sy, 6.5, kcol, light);
     tag('x', px.sx + 11, px.sy - 9, kcol, 'left', 8);
-    if (pr.kind === 'random') {
+    if (pr.kind === 'random' && !PHONE) {
       const t = 'its PCA shadow looks ordinary', w = textWidth(t, 7) + 8;
-      for (const dy of [26, -26, 44]) {
+      for (const dy of [28, -28, 48]) {
         const y = px.sy + dy;
         if (taken.some((r) => px.sx - w / 2 < r.x + r.w && px.sx + w / 2 > r.x && y - 11 < r.y + r.h && y + 4 > r.y)) continue;
         tag(t, px.sx, y, ink(0.75), 'center', 7);
@@ -1119,7 +1124,7 @@ import Try from '../../../components/sim/Try.astro';
     const hits = (lx: number, ly: number) =>
       taken.some((r) => lx - hw / 2 < r.x + r.w && lx + hw / 2 > r.x && ly - 14 < r.y + r.h && ly + 5 > r.y);
     for (const [c0, dy] of [[topC, -34], [botC, 40]] as [typeof topC, number][]) {
-      const lx = Math.max(hw / 2 + 12, Math.min(PX - hw / 2 - 12, c0.sx)), ly = Math.max(70, Math.min(H - 20, c0.sy + dy));
+      const lx = Math.max(hw / 2 + 12, Math.min(PX - hw / 2 - 12, c0.sx)), ly = Math.max(PHONE ? 60 : 80, Math.min(VH - 20, c0.sy + dy));
       if (hits(lx, ly)) continue;
       ctx.strokeStyle = hex(c.teal, 0.6);
       ctx.lineWidth = 1;
@@ -1131,8 +1136,11 @@ import Try from '../../../components/sim/Try.astro';
       break;
     }
     const vs = (F.varFrac[0] + F.varFrac[1] + F.varFrac[2]) * 100;
-    label('pixel space has 784 axes; this is the shadow on three of them', 16, 30, 0.75, 'left', 8.5);
-    label(`PC1, PC2, PC3: the directions in which these images vary most (${vs.toFixed(0)}% of the variance)`, 16, 50, 0.5, 'left', 7);
+    if (PHONE) label('784-D pixel space, seen along 3 axes', 16, 30, 0.75, 'left', 8.5);
+    else {
+      label('pixel space has 784 axes; this is its shadow on three', 16, 30, 0.75, 'left', 8.5);
+      label(`PC1 to PC3 hold ${vs.toFixed(0)}% of the variance`, 16, 54, 0.5, 'left', 7.5);
+    }
 
     drawColumn(pr, light);
     panelText(pr);
@@ -1350,7 +1358,7 @@ import Try from '../../../components/sim/Try.astro';
   orbitControls(canvas, cam, W, H, {
     changed: () => requestDraw(),
     grab: (x, y) => {
-      if (x > PX) return false;
+      if (!inView(x, y)) return false;
       const h = handleAt(x, y);
       if (h) { stop(); dragging = h; return true; }
       const hit = pick(x, y);
@@ -1380,7 +1388,7 @@ import Try from '../../../components/sim/Try.astro';
     if (e.buttons) return;
     const r = canvas.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width) * W, y = ((e.clientY - r.top) / r.height) * H;
-    canvas.style.cursor = handleAt(x, y) || pick(x, y) ? 'pointer' : x > PX && stripHit(x, y) ? 'pointer' : 'grab';
+    canvas.style.cursor = handleAt(x, y) || pick(x, y) ? 'pointer' : !inView(x, y) && stripHit(x, y) ? 'pointer' : 'grab';
   });
 
   sync();
@@ -1391,5 +1399,11 @@ import Try from '../../../components/sim/Try.astro';
   #manifold {
     cursor: grab;
     touch-action: none;
+  }
+  /* a phone's canvas is 600 × 950, set by the script; reserve that shape from the start */
+  @media (max-width: 600px) {
+    #manifold {
+      aspect-ratio: 600 / 950;
+    }
   }
 </style>

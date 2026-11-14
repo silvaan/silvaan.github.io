@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Information and Entropy"
-  description="A bit is the answer to one yes/no question. Finding one card in 16 takes four of them; news that was unlikely takes more questions to pin down than news you expected. Entropy is the average number of questions: how much a source really tells you, and how far its messages can be compressed."
+  description="A bit is the answer to one yes/no question. Unlikely news takes more questions to pin down than news you expected, and entropy is the average number of questions a source needs."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -108,11 +108,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
   import { segmented, result, readout, tries } from '../../../lib/panel';
-  import { story, headline, say, withAlpha, beat, easeOut, lerp, clamp01, ease } from '../../../lib/story';
+  import { story, headline, say as sayAt, withAlpha, beat, easeOut, lerp, clamp01, ease } from '../../../lib/story';
 
   // Information as yes/no questions. A column per outcome: its width is the
   // chance of that outcome and its height the questions it takes to pin it
@@ -128,6 +128,11 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
 
+  /** On a phone the canvas shows at about a third of its size: secondary labels are dropped. */
+  const compact = () => isCompact(canvas);
+  /** On a phone every label is drawn at 14 or more, the least that still reads there. */
+  const say = (...[c, text, x, y, o = {}]: Parameters<typeof sayAt>) =>
+    sayAt(c, text, x, y, compact() ? { ...o, size: Math.max(14, o.size ?? 14) } : o);
   const lg = (x: number) => Math.log2(x);
   const ent = (ps: number[]) => ps.reduce((s, p) => (p > 0 ? s - p * lg(p) : s), 0);
 
@@ -246,19 +251,20 @@ import Try from '../../../components/sim/Try.astro';
   // ---------- the skyline ----------
   function grid(a = 1, top = SKY.cap) {
     ctx.save();
-    ctx.font = '11px ui-monospace, monospace';
+    ctx.font = `${compact() ? textPx(canvas, 12, 9.5, 3) : textPx(canvas, 12, 11.5)}px ui-monospace, monospace`;
     ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
     for (let b = 1; b <= top; b++) {
       const y = SKY.base - b * SKY.bit;
       ctx.fillStyle = ink(0.06 * a);
       ctx.fillRect(SKY.x, y, SKY.w, 1);
-      ctx.fillStyle = ink(0.4 * a);
-      ctx.fillText(String(b), SKY.x - 8, y + 4);
+      ctx.fillStyle = ink(0.45 * a);
+      ctx.fillText(String(b), SKY.x - 8, y);
     }
     ctx.fillStyle = ink(0.3 * a);
     ctx.fillRect(SKY.x - 2, SKY.base, SKY.w + 4, 1);
     ctx.restore();
-    say(ctx, 'questions (bits)', SKY.x - 8, SKY.base - top * SKY.bit - 20, { colour: ink(0.45 * a), size: 12, align: 'left' });
+    say(ctx, 'questions (bits)', SKY.x - 8, SKY.base - top * SKY.bit - 20, { colour: ink(0.45 * a), size: 13, align: 'left' });
   }
 
   /** One column: x and width in pixels, height in bits. */
@@ -297,9 +303,9 @@ import Try from '../../../components/sim/Try.astro';
     if (w < 0.4) return;
     ctx.fillStyle = withAlpha(colour, 0.9 * a);
     ctx.fillRect(x + 0.5, SKY.base + 2, w - 1, 6);
-    if (w < 26) return;
+    if (w < (compact() ? 50 : 26)) return;
     say(ctx, name, x + w / 2, SKY.base + 22, { colour: withAlpha(colour, a), size: w < 44 ? 11 : 14, weight: 650, align: 'center' });
-    say(ctx, chance, x + w / 2, SKY.base + 40, { colour: ink(0.55 * a), size: w < 44 ? 10 : 12, align: 'center' });
+    say(ctx, chance, x + w / 2, SKY.base + 42, { colour: ink(0.55 * a), size: w < 44 ? 11 : 13, align: 'center' });
   }
 
   /** The level line at H, with its label. */
@@ -326,7 +332,7 @@ import Try from '../../../components/sim/Try.astro';
       const hh = lerp(s, h, o.flat ?? 0);
       column(x, w, hh, cols[i], a);
       strip(x, w, cols[i], names[i], pct(p), a);
-      if (o.tops !== false && w > 30 && (o.flat ?? 0) < 0.2)
+      if (o.tops !== false && w > (compact() ? 90 : 30) && (o.flat ?? 0) < 0.2)
         say(ctx, s > SKY.cap ? `${s.toFixed(1)} ↑` : fmtBits(s), x + w / 2, SKY.base - Math.min(s, SKY.cap) * SKY.bit - 12, {
           colour: withAlpha(cols[i], a), size: 13, weight: 650, align: 'center', halo: inv(0.8),
         });
@@ -400,22 +406,22 @@ import Try from '../../../components/sim/Try.astro';
     // the question being asked
     if (t >= qT(0) && t < 10) {
       const k = Math.min(3, Math.floor((t - 2) / 2)), q = QS[k];
-      say(ctx, `Question ${k + 1}: is it one of the outlined cards?`, SKY.x, 240, { colour: ink(0.9), size: 18, weight: 600 });
+      say(ctx, compact() ? `Q${k + 1}: in the outlined half?` : `Question ${k + 1}: is it one of the outlined cards?`, SKY.x, 240, { colour: ink(0.9), size: 18, weight: 600 });
       const ans = beat(t, qT(k) + 0.9, qT(k) + 1.1);
       say(ctx, q.yes ? 'yes' : 'no', SKY.x + 420, 240, { colour: q.yes ? '#5eead4' : '#f472b6', size: 18, weight: 700, alpha: ans });
       const left = (q.hi - q.lo) / 2;
       say(ctx, `${q.hi - q.lo} cards left → ${left}`, SKY.x + 480, 240, { colour: ink(0.55), size: 14, alpha: ans });
     } else if (t >= 10 && morph < 0.5) {
-      say(ctx, 'Found it in 4 questions. 16 = 2 × 2 × 2 × 2, so one card in 16 is 4 bits.', SKY.x, 240, { colour: GOLD, size: 18, weight: 650, alpha: beat(t, 10, 10.6) });
+      say(ctx, compact() ? 'Found it in 4 questions: 16 = 2⁴.' : 'Found it in 4 questions. 16 = 2 × 2 × 2 × 2, so one card in 16 is 4 bits.', SKY.x, 240, { colour: GOLD, size: 18, weight: 650, alpha: beat(t, 10, 10.6) });
     } else if (morph >= 0.5) {
-      say(ctx, 'Each card: width 1/16, its chance. Height 4, the questions to find it.', SKY.x, 240, { colour: ink(0.85), size: 17, weight: 600, alpha: beat(t, 14, 14.8) });
+      say(ctx, compact() ? 'Width: its chance. Height: 4 questions.' : 'Each card: width 1/16, its chance. Height 4, the questions to find it.', SKY.x, 240, { colour: ink(0.85), size: 17, weight: 600, alpha: beat(t, 14, 14.8) });
     }
     if (morph > 0) for (let i = 0; i < 16; i++) strip(SKY.x + (i * SKY.w) / 16, SKY.w / 16, ACC, '', '', morph);
     // the table on the right
     const rows: [string, string][] = [['2', '1'], ['4', '2'], ['8', '3'], ['16', '4'], ['1 024', '10'], ['1 000 000', '20']];
     const a0 = beat(t, 10.4, 11);
     if (a0 > 0) {
-      say(ctx, 'equally likely options', RX, 318, { colour: ink(0.5), size: 13, alpha: a0 });
+      say(ctx, compact() ? 'options' : 'equally likely options', RX, 318, { colour: ink(0.5), size: 13, alpha: a0 });
       say(ctx, 'questions', RX + RW, 318, { colour: ink(0.5), size: 13, align: 'right', alpha: a0 });
       rows.forEach(([n, q], k) => {
         const a = beat(t, 10.6 + 0.35 * k, 11.1 + 0.35 * k), y = 350 + k * 36, hot = n === '16';
@@ -450,16 +456,18 @@ import Try from '../../../components/sim/Try.astro';
       const k = Math.min(2, Math.floor((t - 2) / 2.5));
       const yes = k === 2 ? 'yes → rain, no → snow' : `yes → ${WX[k].n}, no → keep asking`;
       say(ctx, `Question ${k + 1}: ${WX[k].ask}`, SKY.x, 240, { colour: ink(0.9), size: 18, weight: 600 });
-      say(ctx, yes, SKY.x + 260, 240, { colour: ink(0.55), size: 15, alpha: beat(t, wT(k) + 0.6, wT(k) + 1) });
+      if (!compact()) say(ctx, yes, SKY.x + 260, 240, { colour: ink(0.55), size: 15, alpha: beat(t, wT(k) + 0.6, wT(k) + 1) });
     } else if (t >= 9.6) {
       say(ctx, 'Half the chance, one more question:  questions = log₂ 1/p', SKY.x, 240, { colour: GOLD, size: 18, weight: 650, alpha: beat(t, 9.6, 10.2) });
     }
     // the table: what each answer looks like as bits
     const a0 = beat(t, 3, 3.6);
     if (a0 > 0) {
-      say(ctx, 'weather', RX, 318, { colour: ink(0.5), size: 13, alpha: a0 });
-      say(ctx, 'chance', RX + 100, 318, { colour: ink(0.5), size: 13, alpha: a0 });
-      say(ctx, 'answers (yes = 1)', RX + RW, 318, { colour: ink(0.5), size: 13, align: 'right', alpha: a0 });
+      if (!compact()) {
+        say(ctx, 'weather', RX, 318, { colour: ink(0.5), size: 13, alpha: a0 });
+        say(ctx, 'chance', RX + 100, 318, { colour: ink(0.5), size: 13, alpha: a0 });
+      }
+      say(ctx, compact() ? 'answers' : 'answers (yes = 1)', RX + RW, 318, { colour: ink(0.5), size: 13, align: 'right', alpha: a0 });
       WX.forEach((w, j) => {
         if (!solved(j)) return;
         const a = beat(t, wT(WD[j] - 1) + 0.9, wT(WD[j] - 1) + 1.4), y = 352 + j * 40;
@@ -469,9 +477,9 @@ import Try from '../../../components/sim/Try.astro';
       });
       const b = beat(t, 10.4, 11);
       say(ctx, 'Likely news is short.', RX, 530, { colour: ink(0.8), size: 15, weight: 600, alpha: b });
-      say(ctx, 'Rare news is long: it says more.', RX, 552, { colour: ink(0.8), size: 15, weight: 600, alpha: b });
+      if (!compact()) say(ctx, 'Rare news is long: it says more.', RX, 552, { colour: ink(0.8), size: 15, weight: 600, alpha: b });
     }
-    setResult({ value: 'sun 1 · cloud 2 · rain 3 · snow 3', status: 'questions for each answer', note: 'Chance ½ takes 1 question, ¼ takes 2, ⅛ takes 3: log₂ 1/p, the surprise of that outcome in bits.', colour: ACC });
+    setResult({ value: '1 · 2 · 3 · 3', status: 'questions for sun, cloud, rain, snow', note: 'Chance ½ takes 1 question, ¼ takes 2, ⅛ takes 3: log₂ 1/p, the surprise of that outcome in bits.', colour: ACC });
   }
 
   // ---------- chapter 3: the average ----------
@@ -548,14 +556,14 @@ import Try from '../../../components/sim/Try.astro';
     if (n > 0) {
       const avg = bits / n;
       say(ctx, `${avg.toFixed(2)} bits a day`, RX, 518, { colour: flat > 0.5 ? GOLD : ACC, size: 26, weight: 700 });
-      say(ctx, `${n} days, ${bits} bits`, RX, 546, { colour: ink(0.6), size: 13 });
-      say(ctx, `two bits for every day (00 01 10 11) would cost ${2 * n}`, RX, 566, { colour: ink(0.6), size: 13 });
+      say(ctx, `${n} days, ${bits} bits`, RX, 550, { colour: ink(0.6), size: 13 });
+      if (!compact()) say(ctx, `two bits for every day (00 01 10 11) would cost ${2 * n}`, RX, 566, { colour: ink(0.6), size: 13 });
     }
     if (t < 15.4) say(ctx, 'Every day, the weather is sent as its yes/no answers.', SKY.x, 240, { colour: ink(0.85), size: 17, weight: 600 });
     else say(ctx, 'Pour the steps flat: the level is the average, the entropy.', SKY.x, 240, { colour: GOLD, size: 18, weight: 650, alpha: flat });
     setResult({
       value: n ? `${(bits / n).toFixed(2)} bits a day` : '—',
-      status: `${n} days sent`,
+      status: `${n} day${n === 1 ? '' : 's'} sent`,
       note: `Settles on H = ½·1 + ¼·2 + ⅛·3 + ⅛·3 = ${WH} bits: no code for this weather can do better on average.`,
       colour: GOLD,
     });
@@ -617,11 +625,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(dx, dy, 6, 0, Math.PI * 2);
     ctx.fill();
-    say(ctx, 'H, bits per flip', P.x, P.y - 16, { colour: ink(0.5), size: 12 });
-    say(ctx, '1', P.x - 6, P.y, { colour: ink(0.5), size: 11, align: 'right' });
-    say(ctx, '0', P.x - 6, P.y + P.h, { colour: ink(0.5), size: 11, align: 'right' });
-    say(ctx, 'chance of heads', P.x + P.w, P.y + P.h + 14, { colour: ink(0.5), size: 12, align: 'right' });
-    say(ctx, `${p.toFixed(2)}`, dx, dy - 16, { colour: GOLD, size: 12, weight: 650, align: 'center' });
+    say(ctx, 'H, bits per flip', P.x, P.y - 18, { colour: ink(0.5), size: 13 });
+    say(ctx, '1', P.x - 8, P.y, { colour: ink(0.5), size: 13, align: 'right' });
+    say(ctx, '0', P.x - 8, P.y + P.h, { colour: ink(0.5), size: 13, align: 'right' });
+    say(ctx, 'chance of heads', P.x + P.w, P.y + P.h + 18, { colour: ink(0.5), size: 13, align: 'right' });
+    // under the dot near the top of the curve, so it never meets the axis title
+    say(ctx, p.toFixed(2), dx, dy < P.y + 30 ? dy + 20 : dy - 18, { colour: GOLD, size: 13, weight: 650, align: 'center', halo: inv(0.85) });
 
     // the latest flips
     say(ctx, 'the last flips', RX, 500, { colour: ink(0.5), size: 13 });
@@ -631,7 +640,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(RX + 6 + k * 11.4, 524, 4.5, 0, Math.PI * 2);
       ctx.fill();
     });
-    const msg = h > 0.95 ? 'No way to guess the next one.' : h < 0.2 ? 'You could guess the next one: little news.' : 'Partly guessable.';
+    const msg = compact()
+      ? h > 0.95 ? 'Unguessable.' : h < 0.2 ? 'Easy to guess.' : 'Partly guessable.'
+      : h > 0.95 ? 'No way to guess the next one.' : h < 0.2 ? 'You could guess the next one: little news.' : 'Partly guessable.';
     say(ctx, msg, RX, 552, { colour: ink(0.8), size: 14, weight: 600 });
     setResult({ value: `${h.toFixed(2)} bits a flip`, status: `heads ${(p * 100).toFixed(0)}%`, note: 'The rare side costs many bits when it comes, but it comes so seldom that the average falls towards 0.', colour: GOLD });
   }
@@ -673,7 +684,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(SKY.x + SKY.w, yc);
     ctx.stroke();
     ctx.restore();
-    say(ctx, 'max', SKY.x + SKY.w + 8, yc, { colour: ink(0.55), size: 12 });
+    say(ctx, 'max', SKY.x + SKY.w + 8, yc, { colour: ink(0.55), size: 13 });
     skyline(ps, PAL, NAMES);
     level(h);
     const shown = t < ST[1] + 1 ? 0 : t < ST[2] + 1 ? 1 : t < ST[3] + 1 ? 2 : 3;
@@ -682,7 +693,7 @@ import Try from '../../../components/sim/Try.astro';
     bars(ps, PAL, NAMES, false);
     const b = beat(t, 14.5, 15.2);
     say(ctx, 'Equal chances: H = log₂ N.', RX, 558, { colour: ink(0.8), size: 14, weight: 600, alpha: b });
-    say(ctx, "Boltzmann's S = k ln Ω counts the same way.", RX, 578, { colour: ink(0.6), size: 13, alpha: b });
+    if (!compact()) say(ctx, "Boltzmann's S = k ln Ω counts the same way.", RX, 580, { colour: ink(0.6), size: 13, alpha: b });
     setResult({ value: `${h.toFixed(2)} bits`, status: 'of at most 3', note: 'The flatter the odds, the less you can guess in advance, and the more an answer is worth.', colour: GOLD });
   }
 
@@ -692,7 +703,7 @@ import Try from '../../../components/sim/Try.astro';
     const n = ps.length, bw = BAR.w / n;
     // the tour may zoom in; dragging needs the plain scale
     const sc = live ? BAR.h : BAR.h / Math.max(0.25, ...ps);
-    say(ctx, live ? 'chances  (drag the bars)' : 'chances', BAR.x, BAR.y - 36, { colour: ink(0.5), size: 13 });
+    say(ctx, live && !compact() ? 'chances  (drag the bars)' : 'chances', BAR.x, BAR.y - (compact() ? 52 : 36), { colour: ink(0.5), size: 13 });
     ctx.fillStyle = ink(0.25);
     ctx.fillRect(BAR.x, BAR.y + BAR.h, BAR.w, 1);
     ps.forEach((p, i) => {
@@ -703,9 +714,11 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fillStyle = cols[i];
         ctx.fillRect(x + 4, BAR.y + BAR.h - hh - 2, bw - 8, 3);
       }
-      say(ctx, names[i], x + bw / 2, BAR.y + BAR.h + 14, { colour: cols[i], size: 12, weight: 650, align: 'center' });
-      if (n <= 6 || p >= 0.1) say(ctx, `${Math.round(p * 100)}%`, x + bw / 2, BAR.y + BAR.h - hh - 12, { colour: ink(0.75), size: 11, align: 'center' });
-      if (labels) say(ctx, labels[i], x + bw / 2, BAR.y + BAR.h + 32, { colour: ink(0.7), size: n > 6 ? 10 : 12, align: 'center' });
+      say(ctx, names[i], x + bw / 2, BAR.y + BAR.h + 16, { colour: cols[i], size: 13, weight: 650, align: 'center' });
+      // a phone has room for the percentages and codes of a few wide bars only
+      const roomy = compact() ? n <= 4 : n <= 6 || p >= 0.1;
+      if (roomy) say(ctx, `${Math.round(p * 100)}%`, x + bw / 2, BAR.y + BAR.h - hh - 14, { colour: ink(0.75), size: 12, align: 'center' });
+      if (labels && (!compact() || n <= 4)) say(ctx, labels[i], x + bw / 2, BAR.y + BAR.h + 40, { colour: ink(0.7), size: n > 6 ? 11 : 13, align: 'center' });
     });
   }
 
@@ -732,9 +745,9 @@ import Try from '../../../components/sim/Try.astro';
       x += w;
     });
     level(h);
-    say(ctx, `A yes/no strategy needs ${L.toFixed(2)} questions on average.  Entropy: ${h.toFixed(2)}.`, SKY.x, 240, { colour: ink(0.85), size: 16, weight: 600 });
+    say(ctx, compact() ? `Yes/no strategy: ${L.toFixed(2)} questions on average` : `A yes/no strategy needs ${L.toFixed(2)} questions on average.  Entropy: ${h.toFixed(2)}.`, SKY.x, 240, { colour: ink(0.85), size: 16, weight: 600 });
     bars(ps, cols, names, true, cw.map((c) => c || '–'));
-    say(ctx, 'answers', BAR.x - 4, BAR.y + BAR.h + 32, { colour: ink(0.45), size: 11, align: 'right' });
+    if (!compact()) say(ctx, 'answers', BAR.x - 4, BAR.y + BAR.h + 40, { colour: ink(0.45), size: 13, align: 'right' });
     setResult({ value: `H = ${h.toFixed(2)} bits`, status: `Huffman ${L.toFixed(2)} · max ${lg(E.k).toFixed(2)}`, note: 'A real strategy asks whole questions, so it can only match H when every chance is a power of ½.', colour: GOLD });
     setRows({ 'r-h': `${h.toFixed(3)} bits`, 'r-l': `${L.toFixed(3)} bits`, 'r-m': `${lg(E.k).toFixed(3)} bits` });
   }
@@ -792,7 +805,9 @@ import Try from '../../../components/sim/Try.astro';
   function eqTick(ch: number) {
     if (ch === eqFor) return;
     eqFor = ch;
-    setEq({ rule: EQ[ch] });
+    // the weather sum is too long for a phone: keep the definition and the answer
+    const short: Part[] = [['H', GOLD], '= \\displaystyle\\sum_x p(x)\\,\\log_2\\frac{1}{p(x)} = 1.75'];
+    setEq({ rule: ch === 2 && compact() ? short : EQ[ch] });
     if (ch < 5) setRows({ 'r-h': '—', 'r-l': '—', 'r-m': '—' });
   }
 

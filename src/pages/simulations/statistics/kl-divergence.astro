@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="KL Divergence"
-  description="Every outcome surprises you by −log p(x): little when it was likely, a lot when it was rare. Believe the wrong distribution Q while the world draws from P and you are surprised a bit more on average. That average extra surprise is KL(P‖Q): never negative, zero only when Q is right, and not the same the other way round."
+  description="Every outcome surprises you by −log p(x). Believe the wrong distribution Q while the world draws from P and you are surprised more on average: that extra is KL(P‖Q), and it is not symmetric."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -93,11 +93,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, grabCursor } from '../../../lib/draw';
   import { slider, result, readout, tries } from '../../../lib/panel';
-  import { story, headline, say, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
+  import { story, headline, say as sayAt, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
 
   // KL as surprise. Samples fall from P; each one's surprise −log₂ p(x) is
   // plotted below, and their average is the entropy. Believe Q instead and
@@ -106,6 +106,11 @@ import Try from '../../../components/sim/Try.astro';
   // a bell fitted both ways.
   const PC = '#5eead4', QC = '#fbbf24', RED = '#f9736a', BLUE = '#7c8cff', RC = '#f472b6';
   const LN2 = Math.LN2;
+  /** A phone shows the canvas at about a third of its size: secondary labels go. */
+  const compact = () => isCompact(canvas);
+  /** On a phone every label is drawn at 14 or more, the least that still reads there. */
+  const say = (...[c, text, x, y, o = {}]: Parameters<typeof sayAt>) =>
+    sayAt(c, text, x, y, compact() ? { ...o, size: Math.max(14, o.size ?? 14) } : o);
 
   const canvas = document.getElementById('kl') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas);
@@ -319,16 +324,18 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(PX0 - 10, LOW.base + 0.5);
     ctx.lineTo(PX1 + 10, LOW.base + 0.5);
     ctx.stroke();
-    ctx.font = '11px ui-monospace, monospace';
+    ctx.font = `${compact() ? textPx(canvas, 12, 9.5, 3) : textPx(canvas, 12, 11.5)}px ui-monospace, monospace`;
     ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
     for (let b = 2; b <= LOW.max; b += 2) {
       ctx.fillStyle = ink(0.05);
       ctx.fillRect(PX0, yb(b), PX1 - PX0, 1);
-      ctx.fillStyle = ink(0.38);
-      ctx.fillText(`${b} bits`, PX0 - 6, yb(b) + 4);
+      ctx.fillStyle = ink(0.45);
+      ctx.fillText(compact() ? `${b}` : `${b} bits`, PX0 - 6, yb(b));
     }
     ctx.restore();
-    say(ctx, 'surprise', PX0 - 6, yb(LOW.max) - 14, { colour: ink(0.5), size: 12, align: 'right' });
+    if (compact()) say(ctx, 'surprise, bits', 4, yb(LOW.max) - 16, { colour: ink(0.5), size: 13 });
+    else say(ctx, 'surprise', PX0 - 6, yb(LOW.max) - 14, { colour: ink(0.5), size: 13, align: 'right' });
 
     // the surprise curves −log p and −log q
     const sCurve = (ln: (x: number) => number, col: string, a: number) => {
@@ -388,7 +395,7 @@ import Try from '../../../components/sim/Try.astro';
         }
         dot(x, y, PC, 0.5 + 0.5 * fresh, 3 + 2 * fresh);
         if (rise >= 1) { n++; sumP += bp; }
-        if (fresh > 0.3 && n <= 4) say(ctx, `${bp.toFixed(1)} bits`, x + 8, y - 10, { colour: PC, size: 13, weight: 600, alpha: fresh, halo: inv(0.8) });
+        if (fresh > 0.3 && n <= 4 && !compact()) say(ctx, `${bp.toFixed(1)} bits`, x + 8, y - 10, { colour: PC, size: 13, weight: 600, alpha: fresh, halo: inv(0.8) });
       } else if (ch === 1) {
         // from −log p up (or down) to −log q: the extra
         const yP = yb(bp), yQ = lerp(yP, yb(bq), rise);
@@ -401,9 +408,9 @@ import Try from '../../../components/sim/Try.astro';
         ctx.stroke();
         dot(x, yP, PC, 0.4 + 0.5 * fresh, 2.5 + 1.5 * fresh);
         dot(x, yQ, QC, 0.4 + 0.5 * fresh, 2.5 + 1.5 * fresh);
-        if (bq > LOW.max && fresh > 0.6) say(ctx, 'off the chart', x, yb(LOW.max) - 10, { colour: RED, size: 12, weight: 600, align: 'center', alpha: fresh, halo: inv(0.8) });
+        if (bq > LOW.max && fresh > 0.6) say(ctx, 'off the chart', x, yb(LOW.max) - 10, { colour: RED, size: 13, weight: 600, align: 'center', alpha: fresh, halo: inv(0.8) });
         if (rise >= 1) { n++; sumP += bp; sumQ += bq; }
-        if (fresh > 0.3 && n <= 4) say(ctx, `${extra >= 0 ? '+' : '−'}${Math.abs(extra).toFixed(1)} bits`, x + 8, (yP + yQ) / 2, { colour: extra > 0 ? RED : BLUE, size: 13, weight: 600, alpha: fresh, halo: inv(0.8) });
+        if (fresh > 0.3 && n <= 4 && !compact()) say(ctx, `${extra >= 0 ? '+' : '−'}${Math.abs(extra).toFixed(1)} bits`, x + 8, (yP + yQ) / 2, { colour: extra > 0 ? RED : BLUE, size: 13, weight: 600, alpha: fresh, halo: inv(0.8) });
       } else {
         // both ways: a draw from P judged by Q, or a draw from Q judged by P
         const extra = d.from === 'P' ? bq - bp : bp - bq;
@@ -424,7 +431,7 @@ import Try from '../../../components/sim/Try.astro';
       }
     }
     if (lastShock)
-      say(ctx, `+${lastShock.extra.toFixed(0)} bits: Q thought this nearly impossible`, Math.min(PX1 - 160, lastShock.x), yb(LOW.max) - 18, {
+      say(ctx, compact() ? `+${lastShock.extra.toFixed(0)} bits` : `+${lastShock.extra.toFixed(0)} bits: Q thought this nearly impossible`, Math.min(PX1 - (compact() ? 60 : 160), lastShock.x), yb(LOW.max) - 18, {
         colour: RED, size: 14, weight: 700, align: 'center', alpha: lastShock.fresh, halo: inv(0.85),
       });
     running = { n, sumP, sumQ, nP, nQ, sumFwd, sumRev };
@@ -432,7 +439,7 @@ import Try from '../../../components/sim/Try.astro';
     // the running averages, as lines across the plot and as big numbers
     if (ch === 0 && n > 0) {
       const avg = sumP / n;
-      hline(yb(avg), PC, `average surprise ${avg.toFixed(2)} bits  →  entropy H(P) = ${exact.h.toFixed(2)}`);
+      hline(yb(avg), PC, compact() ? `average ${avg.toFixed(2)} → H(P) = ${exact.h.toFixed(2)}` : `average surprise ${avg.toFixed(2)} bits  →  entropy H(P) = ${exact.h.toFixed(2)}`);
     }
     if (ch === 1 && n > 0) {
       const ex = (sumQ - sumP) / n;
@@ -477,6 +484,11 @@ import Try from '../../../components/sim/Try.astro';
     // top right, clear of both humps and the headline
     const x = PX1, y = 40;
     say(ctx, `KL(P‖Q) ≈ ${f.toFixed(1)} bits`, x, y, { colour: RED, size: 22, weight: 700, align: 'right', halo: inv(0.85) });
+    if (compact()) {
+      // no room for the sample counts: the two estimates only
+      say(ctx, `KL(Q‖P) ≈ ${r.toFixed(2)} bits`, x, y + 34, { colour: QC, size: 18, weight: 700, align: 'right', halo: inv(0.85) });
+      return;
+    }
     say(ctx, `${nP} draws from P, judged by Q  (exact ${exact.f.toFixed(1)})`, x, y + 22, { colour: ink(0.7), size: 13, align: 'right', halo: inv(0.85) });
     say(ctx, `KL(Q‖P) ≈ ${r.toFixed(2)} bits`, x, y + 52, { colour: QC, size: 18, weight: 700, align: 'right', halo: inv(0.85) });
     say(ctx, `${nQ} draws from Q, judged by P  (exact ${exact.r.toFixed(2)})`, x, y + 72, { colour: ink(0.7), size: 13, align: 'right', halo: inv(0.85) });
@@ -520,10 +532,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
     say(ctx, 'p(x) · log₂ p(x)/q(x)', PX0, 372, { colour: ink(0.55), size: 13 });
     // the tally
-    const x = PX1;
+    const x = PX1, gap = compact() ? 30 : 24;
     say(ctx, `red ${pos.toFixed(3)}  −  blue ${neg.toFixed(3)}`, x, 380, { colour: ink(0.8), size: 15, weight: 500, align: 'right' });
-    say(ctx, `= KL(P‖Q) = ${exact.f.toFixed(3)} bits`, x, 404, { colour: exact.f < 0.005 ? PC : RED, size: 20, weight: 700, align: 'right' });
-    if (exact.f < 0.005) say(ctx, 'Q is P: nothing extra', x, 428, { colour: PC, size: 14, align: 'right' });
+    say(ctx, `= KL(P‖Q) = ${exact.f.toFixed(3)} bits`, x, 380 + gap, { colour: exact.f < 0.005 ? PC : RED, size: 20, weight: 700, align: 'right' });
+    if (exact.f < 0.005) say(ctx, 'Q is P: nothing extra', x, 380 + 2 * gap, { colour: PC, size: 14, align: 'right' });
   }
 
   // ---------- chapter 5: fitting ----------
@@ -584,6 +596,14 @@ import Try from '../../../components/sim/Try.astro';
     }
     // under the plot: why, in one picture each
     const y = 420;
+    if (compact()) {
+      // stacked, without the explanations (the result note carries them)
+      say(ctx, 'KL(P‖Q): average over P', PX0, y, { colour: QC, size: 15, weight: 650 });
+      say(ctx, `now ${f.f.toFixed(2)} bits`, PX0, y + 32, { colour: ink(0.6), size: 13 });
+      say(ctx, 'KL(Q‖P): average over Q', PX0, y + 84, { colour: RC, size: 15, weight: 650 });
+      say(ctx, `now ${r.r.toFixed(2)} bits`, PX0, y + 116, { colour: ink(0.6), size: 13 });
+      return;
+    }
     say(ctx, 'KL(P‖Q) = average over P of log p/q', PX0, y, { colour: QC, size: 15, weight: 650 });
     say(ctx, 'Wherever P lands, Q must not be near zero, or the cost is huge.', PX0, y + 22, { colour: ink(0.7), size: 14 });
     say(ctx, `now ${f.f.toFixed(2)} bits`, PX0, y + 44, { colour: ink(0.55), size: 13 });
@@ -604,9 +624,9 @@ import Try from '../../../components/sim/Try.astro';
     });
     const R = running;
     if (ch === 0)
-      setResult({ value: R.n ? `${(R.sumP / R.n).toFixed(2)} bits` : '—', status: `average of ${R.n} draws`, note: `Settles on the entropy H(P) = ${exact.h.toFixed(2)} bits: how surprised you are on average when you know P.`, colour: PC });
+      setResult({ value: R.n ? `${(R.sumP / R.n).toFixed(2)} bits` : '—', status: `average of ${R.n} draw${R.n === 1 ? '' : 's'}`, note: `Settles on the entropy H(P) = ${exact.h.toFixed(2)} bits: how surprised you are on average when you know P.`, colour: PC });
     else if (ch === 1)
-      setResult({ value: R.n ? `+${((R.sumQ - R.sumP) / R.n).toFixed(2)} bits` : '—', status: `extra per draw, ${R.n} draws`, note: `Settles on KL(P‖Q) = ${exact.f.toFixed(2)} bits: the price of believing Q while the world is P.`, colour: RED });
+      setResult({ value: R.n ? `+${((R.sumQ - R.sumP) / R.n).toFixed(2)} bits` : '—', status: `extra per draw, ${R.n} draw${R.n === 1 ? '' : 's'}`, note: `Settles on KL(P‖Q) = ${exact.f.toFixed(2)} bits: the price of believing Q while the world is P.`, colour: RED });
     else if (ch === 2)
       setResult({ value: `${exact.f.toFixed(3)} bits`, status: exact.f < 0.005 ? 'Q matches P' : 'KL(P‖Q)', note: 'Red area minus blue area. It can only be zero when Q is P everywhere.', colour: exact.f < 0.005 ? PC : RED });
     else if (ch === 3)
@@ -626,11 +646,17 @@ import Try from '../../../components/sim/Try.astro';
     ['\\mathrm{KL}(P\\,\\|\\,Q) = \\mathbb{E}_{', ['P', PC], '}\\Big[\\log\\frac{p}{q}\\Big] \\;\\neq\\; \\mathbb{E}_{', ['Q', QC], '}\\Big[\\log\\frac{q}{p}\\Big] = \\mathrm{KL}(Q\\,\\|\\,P)'],
     [['\\min_Q \\mathrm{KL}(P\\,\\|\\,Q)', QC], '\\text{ covers}', '\\qquad', ['\\min_Q \\mathrm{KL}(Q\\,\\|\\,P)', RC], '\\text{ picks}'],
   ];
+  /** Phone versions of the two rules too wide to fit on one line there. */
+  const SHORT: (Part[] | null)[] = [
+    ['H(P) = \\mathbb{E}_{x\\sim P}\\big[-\\log_2', ['p(x)', PC], '\\big]'],
+    ['\\mathrm{KL}(P\\,\\|\\,Q) = \\mathbb{E}_{x\\sim P}\\Big[\\log_2\\dfrac{', ['p(x)', PC], '}{', ['q(x)', QC], '}\\Big]'],
+    null, null, null,
+  ];
   let eqFor = -1;
   function eqTick(ch: number) {
     if (ch === eqFor) return;
     eqFor = ch;
-    setEq({ rule: EQ[ch] });
+    setEq({ rule: compact() && SHORT[ch] ? SHORT[ch]! : EQ[ch] });
   }
 
   // ---------- Q by hand ----------
@@ -661,6 +687,7 @@ import Try from '../../../components/sim/Try.astro';
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
+    grabCursor(canvas, st.chapter() === 2, !!drag);
     if (!drag) return;
     const p = toLocal(e);
     setQ(drag.mu + xOf(p.x) - xOf(drag.x), drag.sg * Math.exp((p.y - drag.y) * 0.006));

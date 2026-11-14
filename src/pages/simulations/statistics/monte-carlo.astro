@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Monte Carlo"
-  description="Throw random darts at a box and count the ones that land in a shape: the fraction times the box is its area. Estimate π, the area under a curve or the volume of a ball in ten dimensions, and watch the error fall like 1/√n."
+  description="Throw random darts at a box and count the ones that land in a shape: the fraction times the box is its area. Estimate π, an area or a 10-dimensional ball, and watch the error fall like 1/√n."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -49,8 +49,8 @@ import Try from '../../../components/sim/Try.astro';
           { value: 'ball', label: 'Ball volume' },
         ]}
       />
-      <div id="dwrap" hidden>
-        <Slider id="d" label="Dimensions d" min={2} max={12} value={5} />
+      <div id="dwrap" class="idle">
+        <Slider id="d" label="Ball dimensions d" min={2} max={12} value={5} />
       </div>
       <Slider id="rate" label="Darts per frame" min={1} max={5000} value={100} />
       <Readout
@@ -68,8 +68,8 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Run the <b>π</b> estimate. The error jitters but hugs the dashed
-      <b>1/√n</b> line: a hundred times more darts buys only one more digit.
+      Run the <b>π</b> estimate. The error jitters but hugs the dashed <b>1/√n</b>
+      line: a hundred times more darts buys only one more digit.
       <Try id="pi" />
     </li>
     <li>
@@ -87,7 +87,7 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   const IN = '#2dd4bf', ERR = '#7c8cff', REF = '#f59e0b';
@@ -114,15 +114,23 @@ import Try from '../../../components/sim/Try.astro';
   let nextMark = 10;
 
   const canvas = el('mc') as HTMLCanvasElement;
+  // On a phone the error plot goes under the board instead of beside it, on a
+  // narrower canvas, so its labels stay legible.
+  // the same breakpoint as the page style that gives the canvas this shape before it is drawn
+  const tall = matchMedia('(max-width: 599px)').matches;
+  if (tall) {
+    canvas.width = 600;
+    canvas.height = 960;
+  }
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, tall ? 9.5 : 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  const BOARD = { x: 30, y: 40, s: 520 };
-  const PLOT = { x: 660, y: 40, w: 300, h: 500 };
+  const BOARD = tall ? { x: 40, y: 44, s: 520 } : { x: 30, y: 40, s: 520 };
+  const PLOT = tall ? { x: 110, y: 640, w: 450, h: 260 } : { x: 660, y: 40, w: 300, h: 500 };
 
   function reset() {
     total = inside = 0;
@@ -167,7 +175,7 @@ import Try from '../../../components/sim/Try.astro';
     const by = (y: number) => BOARD.y + (curve ? 1 - y : (1 - y) / 2) * BOARD.s;
     label(
       state.task === 'ball' ? `the first two of ${state.d} coordinates of each dart` : curve ? 'the box [0, π] × [0, 1]' : 'the square [−1, 1]²',
-      BOARD.x, BOARD.y - 12, 0.45, 'left', 11.5
+      BOARD.x, BOARD.y - 14, 0.45, 'left', 11.5
     );
     ctx.strokeStyle = ink(0.25);
     ctx.lineWidth = 1.5;
@@ -203,7 +211,7 @@ import Try from '../../../components/sim/Try.astro';
       return PLOT.y + ((yHi - l) / (yHi - yLo)) * PLOT.h;
     };
 
-    label('error against darts, log-log', PLOT.x, PLOT.y - 12, 0.45, 'left', 11.5);
+    label('error against darts, log-log', PLOT.x, PLOT.y - 14, 0.45, 'left', 11.5);
     ctx.lineWidth = 1;
     for (let k = xLo; k <= xHi; k++) {
       ctx.strokeStyle = ink(0.07);
@@ -211,7 +219,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(gx(10 ** k), PLOT.y);
       ctx.lineTo(gx(10 ** k), PLOT.y + PLOT.h);
       ctx.stroke();
-      label(`10${'⁰¹²³⁴⁵⁶'[k]}`, gx(10 ** k), PLOT.y + PLOT.h + 16, 0.35, 'center', 11);
+      label(`10${'⁰¹²³⁴⁵⁶'[k]}`, gx(10 ** k), PLOT.y + PLOT.h + 20, 0.45, 'center', 11);
     }
     for (let k = yLo; k <= yHi; k++) {
       ctx.strokeStyle = ink(0.07);
@@ -219,9 +227,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(PLOT.x, gy(10 ** k));
       ctx.lineTo(PLOT.x + PLOT.w, gy(10 ** k));
       ctx.stroke();
-      label(k === 0 ? '1' : `1e${k}`, PLOT.x - 6, gy(10 ** k) + 4, 0.35, 'right', 11);
+      label(k === 0 ? '1' : `1e${k}`.replace('-', '−'), PLOT.x - 8, gy(10 ** k) + 5, 0.45, 'right', 11);
     }
-    label('n', PLOT.x + PLOT.w, PLOT.y + PLOT.h + 32, 0.35, 'right', 11);
+    label('n', PLOT.x + PLOT.w + 6, PLOT.y + PLOT.h + 5, 0.45, 'left', 11);
 
     // the reference line: slope −½ on these axes
     ctx.strokeStyle = REF;
@@ -232,7 +240,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(gx(NMAX), gy(c / Math.sqrt(NMAX)));
     ctx.stroke();
     ctx.setLineDash([]);
-    label('slope −½', gx(3e4) + 8, gy(c / Math.sqrt(3e4)) + 22, 1, 'left', 11, REF);
+    label('slope −½', gx(3e4) + 8, gy(c / Math.sqrt(3e4)) + 24, 1, 'left', 11, REF);
 
     if (history.length > 1) {
       ctx.strokeStyle = ERR;
@@ -256,24 +264,27 @@ import Try from '../../../components/sim/Try.astro';
     const lhs = state.task === 'pi' ? '\\pi' : state.task === 'curve' ? '\\int_0^\\pi \\sin x\\,dx' : `V_{${state.d}}`;
 
     setEq({
-      rule: [lhs, '\\approx', Atex, '\\times', ['\\dfrac{\\text{hits}}{n}', IN], '\\qquad', ['|\\text{error}| \\propto \\dfrac{1}{\\sqrt n}', REF]],
-      live: [[`${lhs} \\approx ${Atex}\\times\\dfrac{${inside}}{${total}} = ${total ? est.toFixed(5) : '\\text{--}'}`, IN], `\\quad\\text{true } ${truth.toFixed(5)}`],
+      // the integral's height is reserved for every task, so switching never moves the canvas;
+      // the 1/√n law is in the legend, which keeps the line short enough for a phone
+      rule: ['\\vphantom{\\int_0^\\pi}' + lhs, '\\approx', Atex, '\\times', ['\\dfrac{\\text{hits}}{n}', IN]],
+      // the counts are set right-aligned in room for a million, so the line keeps its width
+      live: [[`\\vphantom{\\int_0^\\pi}${lhs} \\approx ${Atex}\\times\\dfrac{${room(inside)}}{${room(total)}} = ${total ? fixed(est, 5) : '\\mathrlap{\\text{–}}\\hphantom{0.00000}'}`, IN]],
     });
     el('result-label').textContent = `Estimate of ${name}`;
     setResult({
-      value: total ? est.toFixed(5) : '—',
+      value: total ? fixed(est, 5) : '–',
       colour: IN,
-      status: total ? `off by ${err.toFixed(5)} after ${total.toLocaleString('en')} darts` : 'no darts yet',
+      status: total ? `off by ${fixed(err, 5)} · ${total.toLocaleString('en')} darts` : 'no darts yet',
       note: total >= NMAX
         ? 'A million darts: the plot ends here. Reset to throw again.'
-        : 'The hit fraction estimates the share of the box the shape fills. Its error falls like 1/√n, whatever the shape.',
+        : 'The hit fraction is the share of the box the shape fills; its error falls like 1/√n.',
     });
     setRows({
       'r-total': total.toLocaleString('en'),
       'r-inside': inside.toLocaleString('en'),
-      'r-true': truth.toFixed(5),
-      'r-err': total ? err.toFixed(5) : '—',
-      'r-exp': total ? expected.toFixed(5) : '—',
+      'r-true': fixed(truth, 5),
+      'r-err': total ? fixed(err, 5) : '–',
+      'r-exp': total ? fixed(expected, 5) : '–',
     });
   }
 
@@ -286,12 +297,19 @@ import Try from '../../../components/sim/Try.astro';
     requestAnimationFrame(loop);
   }
 
+  const room = (n: number) => `\\hphantom{0000000}\\mathllap{\\mathclap{${n}}\\kern1.75em}`;
+  // the dimension slider stays in place, dimmed unless the ball is chosen
+  const dimD = () => el('dwrap').classList.toggle('idle', state.task !== 'ball');
   const tasks = segmented('task', (t) => {
     state.task = t as Task;
-    el('dwrap').hidden = state.task !== 'ball';
+    dimD();
     reset();
   });
-  const setD = slider('d', (v) => { state.d = v; reset(); });
+  const setD = slider('d', (v) => {
+    state.d = v;
+    if (state.task !== 'ball') { state.task = 'ball'; tasks.select('ball'); dimD(); }
+    reset();
+  });
   const setRate = slider('rate', (v) => (state.rate = v));
   const tr = transport({ onRun: (running) => { if (running && total >= NMAX) reset(); state.playing = running; }, onReset: reset });
 
@@ -300,7 +318,7 @@ import Try from '../../../components/sim/Try.astro';
     state.d = d;
     tasks.select(task);
     setD(d);
-    el('dwrap').hidden = task !== 'ball';
+    dimD();
     state.rate = 2000;
     setRate(2000);
     reset();
@@ -316,3 +334,14 @@ import Try from '../../../components/sim/Try.astro';
   reset();
   requestAnimationFrame(loop);
 </script>
+
+<style>
+  @media (max-width: 599px) {
+    #mc {
+      aspect-ratio: 600 / 960;
+    }
+  }
+  #dwrap.idle {
+    opacity: 0.45;
+  }
+</style>

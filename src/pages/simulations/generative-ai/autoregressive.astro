@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'the random number', color: '#fbbf24' },
           { label: 'the tail that was cut', color: '#f9736a' },
         ]}
-        hint="Every word gets a probability at every step, never zero"
+        hint="Highlighted words are the context · pale bars: the model's own probability, solid: after temperature and the cut"
       />
       <Result label="Kept by the cut" />
     </div>
@@ -87,7 +87,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -307,6 +307,11 @@ import Try from '../../../components/sim/Try.astro';
     `${weight} ${size}px 'Inter', system-ui, sans-serif`;
   const MONO = (size: number) => `${size}px 'JetBrains Mono', ui-monospace, monospace`;
 
+  /** Phone-sized canvas: fewer rows, fewer labels, bigger text. Set each draw. */
+  let compact = false;
+  /** A logical font size that stays readable on screen (≥ 11px, ≥ 9.5px on a phone). */
+  const fs = (size: number) => textPx(canvas, size, compact ? 9.5 : 11.5, 3);
+
   function text(
     s: string,
     x: number,
@@ -317,14 +322,19 @@ import Try from '../../../components/sim/Try.astro';
     mono = false,
     weight = 400
   ) {
-    ctx.font = mono ? MONO(size) : UI(size, weight);
+    const px = fs(size);
+    ctx.font = mono ? MONO(px) : UI(px, weight);
     ctx.fillStyle = col;
     ctx.textAlign = align;
     ctx.fillText(s, x, y);
     ctx.textAlign = 'left';
   }
+  function measure(s: string, size: number, mono = false) {
+    const px = fs(size);
+    ctx.font = mono ? MONO(px) : UI(px);
+    return ctx.measureText(s).width;
+  }
 
-  type Box = { x: number; y: number; w: number; h: number };
   function rr(x: number, y: number, w: number, h: number, r: number) {
     const rad = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
     ctx.beginPath();
@@ -339,14 +349,22 @@ import Try from '../../../components/sim/Try.astro';
     ctx.quadraticCurveTo(x, y, x + rad, y);
     ctx.closePath();
   }
-  function panel(b: Box, title: string) {
-    text(title, b.x + 2, b.y - 9, 11, inkA(0.45), 'left', true);
+  /** A section title, with an optional note on the right. */
+  function title(y: number, left: string, right = '', rightCol = inkA(0.45)) {
+    text(left, X0, y, 15, inkA(0.55), 'left', true);
+    if (right && !compact) text(right, X1, y, 15, rightCol, 'right', true);
   }
 
-  const TEXTP: Box = { x: 20, y: 28, w: 960, h: 118 };
-  const DIST: Box = { x: 20, y: 178, w: 960, h: 290 };
-  const DARTP: Box = { x: 20, y: 500, w: 960, h: 90 };
-  const VOC: Box = { x: 20, y: 622, w: 960, h: 150 };
+  const X0 = 24, X1 = W - 24;
+  /**
+   * Where each section sits. A phone gets fewer rows of bigger text, so the
+   * same four sections still fit the same canvas.
+   */
+  function layout() {
+    return compact
+      ? { text: 34, textRow: 42, textRows: 2, dist: 188, distRow: 40, rows: 6, dart: 538, voc: 676, vocCols: 10, vocGap: 3 }
+      : { text: 26, textRow: 30, textRows: 3, dist: 180, distRow: 26, rows: 9, dart: 494, voc: 604, vocCols: 7, vocGap: 4 };
+  }
 
   // --- 1. the text so far ------------------------------------------------------
 
@@ -357,7 +375,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function layoutText(from: number, x0: number, maxW: number) {
-    ctx.font = UI(16);
+    ctx.font = UI(fs(17));
     const spaceW = ctx.measureText(' ').width;
     const out: { s: string; i: number; x: number; row: number; w: number }[] = [];
     let x = x0, row = 0;
@@ -372,255 +390,222 @@ import Try from '../../../components/sim/Try.astro';
     return { out, rows: row + 1, endX: x, spaceW };
   }
 
-  function drawText() {
-    panel(TEXTP, 'the text so far; highlighted = the words being conditioned on');
-    const x0 = TEXTP.x + 18, rowH = 25, maxW = TEXTP.w - 36;
-    const maxRows = Math.floor((TEXTP.h - 50) / rowH);
+  function drawText(L: ReturnType<typeof layout>) {
+    title(L.text, 'the text so far');
+    const x0 = X0 + 4, rowH = L.textRow, maxW = X1 - X0 - 40;
     let from = 0;
     let lay = layoutText(from, x0, maxW);
-    while (lay.rows > maxRows && from < tokens.length - 1) {
-      from += 4;
+    while (lay.rows > L.textRows && from < tokens.length - 1) {
+      from += compact ? 2 : 4;
       lay = layoutText(from, x0, maxW);
     }
-    const y0 = TEXTP.y + 30;
+    const y0 = L.text + 14;
     const ctxLen = Math.max(1, usedContext().length || state.n);
     const ctxStart = Math.max(0, tokens.length - ctxLen);
+    const px = fs(17);
 
     for (const t of lay.out) {
       const y = y0 + t.row * rowH;
       const inCtx = t.i >= ctxStart;
       if (inCtx) {
         ctx.fillStyle = hexA(KEEP, 0.18);
-        rr(t.x - 3, y - 3, t.w + 6, rowH - 5, 4);
+        rr(t.x - 4, y, t.w + 8, rowH - 4, 5);
         ctx.fill();
       }
       if (t.i === tokens.length - 1 && flash > 0) {
         ctx.fillStyle = hexA(CHOSEN, 0.3 * flash);
-        rr(t.x - 3, y - 3, t.w + 6, rowH - 5, 4);
+        rr(t.x - 4, y, t.w + 8, rowH - 4, 5);
         ctx.fill();
       }
-      text(t.s, t.x, y + 14, 16, inCtx ? inkA(1) : inkA(0.62));
+      text(t.s, t.x, y + (rowH - 4) / 2 + px * 0.36, 17, inCtx ? inkA(1) : inkA(0.62));
     }
     const lastRow = lay.out.length ? lay.out[lay.out.length - 1].row : 0;
     ctx.fillStyle = CHOSEN;
-    ctx.fillRect(lay.endX + lay.spaceW, y0 + lastRow * rowH + 2, 2, rowH - 8);
-
+    ctx.fillRect(lay.endX + lay.spaceW, y0 + lastRow * rowH + 4, 2, rowH - 12);
   }
 
   // --- 2. the distribution ------------------------------------------------------
 
   function cutReason(keptN: number) {
-    if (state.greedy) return 'greedy keeps only the top word';
-    const kCut = state.k <= keptN;
-    if (kCut && state.p < 1) return `top-k = ${state.k} stops here, top-p ${state.p.toFixed(2)} would too`;
-    if (kCut) return `top-k = ${state.k} stops here`;
-    return `top-p = ${state.p.toFixed(2)}: these ${keptN} words already carry it`;
+    if (state.greedy) return 'greedy: only the top word';
+    if (state.k <= keptN) return `cut by top-k = ${state.k}`;
+    return `cut by top-p = ${state.p.toFixed(2)}`;
   }
 
-  function drawDist(cands: Cand[]) {
-    panel(DIST, 'a probability for every word, best first · pale bar = the model’s own probability, solid = after temperature and the cut');
-    text(
-      `P(next word | "${contextString()}")`,
-      DIST.x + 16,
-      DIST.y + 26,
-      12,
-      inkA(0.6),
-      'left',
-      true
-    );
-
-    const ROWS = 9;
-    const shownRows = cands.slice(0, ROWS);
-    const rest = cands.slice(ROWS);
+  function drawDist(cands: Cand[], L: ReturnType<typeof layout>) {
     const keptN = cands.filter((c) => c.kept).length;
+    title(L.dist, `P(next word | "${contextString()}")`, keptN < cands.length ? cutReason(keptN) : '', hexA(CUTC, 0.9));
 
-    const lx = DIST.x + 16, labelW = 110;
-    const bx = lx + labelW + 12;
-    const numW = 150, cumW = 70;
-    const barMax = DIST.w - 32 - labelW - 12 - numW - cumW;
+    const shownRows = cands.slice(0, L.rows);
+    const rest = cands.slice(L.rows);
+
+    const labelW = compact ? 130 : 110;
+    const lx = X0, bx = lx + labelW + 14;
+    const numW = compact ? 120 : 150, cumW = compact ? 0 : 76;
+    const barMax = X1 - bx - numW - cumW;
     let maxP = 0.02;
     for (const c of shownRows) maxP = Math.max(maxP, c.base, c.final);
 
-    const rowH = 24, y0 = DIST.y + 46;
+    const rowH = L.distRow, y0 = L.dist + 14, barH = rowH - 8;
     shownRows.forEach((c, i) => {
       const y = y0 + i * rowH;
-      text(c.w, lx + labelW, y + 13, 14, c.kept ? inkA(0.95) : inkA(0.38), 'right');
+      const mid = y + rowH / 2;
+      text(c.w, lx + labelW, mid + fs(15) * 0.36, 15, c.kept ? inkA(0.95) : inkA(0.38), 'right');
       ctx.fillStyle = inkA(0.14);
-      ctx.fillRect(bx, y + 1, Math.max(1, (c.base / maxP) * barMax), 17);
+      ctx.fillRect(bx, mid - barH / 2, Math.max(1, (c.base / maxP) * barMax), barH);
       if (c.kept) {
         ctx.fillStyle = i === 0 ? KEEP : hexA(KEEP, 0.62);
-        ctx.fillRect(bx, y + 4, Math.max(1, (c.final / maxP) * barMax), 11);
+        ctx.fillRect(bx, mid - barH / 3, Math.max(1, (c.final / maxP) * barMax), (barH * 2) / 3);
       }
-      text(
-        `${(c.base * 100).toFixed(1)}% → ${c.kept ? (c.final * 100).toFixed(1) + '%' : 'cut'}`,
-        bx + barMax + numW - 8,
-        y + 13,
-        11,
-        c.kept ? inkA(0.75) : inkA(0.3),
-        'right',
-        true
-      );
-      if (c.kept)
-        text(`Σ ${(c.cum * 100).toFixed(0)}%`, DIST.x + DIST.w - 16, y + 13, 11, inkA(0.42), 'right', true);
+      const num = compact
+        ? c.kept ? `${(c.final * 100).toFixed(1)}%` : 'cut'
+        : `${(c.base * 100).toFixed(1)}% → ${c.kept ? (c.final * 100).toFixed(1) + '%' : 'cut'}`;
+      text(num, bx + barMax + numW - 4, mid + fs(14) * 0.36, 14, c.kept ? inkA(0.75) : inkA(0.35), 'right', true);
+      if (c.kept && cumW)
+        text(`Σ ${(c.cum * 100).toFixed(0)}%`, X1, mid + fs(14) * 0.36, 14, inkA(0.42), 'right', true);
     });
 
     if (keptN < cands.length && keptN <= shownRows.length) {
-      const y = y0 + keptN * rowH - 3;
+      const y = y0 + keptN * rowH;
       ctx.strokeStyle = hexA(CUTC, 0.7);
       ctx.lineWidth = 1.2;
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
       ctx.moveTo(lx, y);
-      ctx.lineTo(DIST.x + DIST.w - 16, y);
+      ctx.lineTo(X1, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      text(cutReason(keptN), lx + 4, y - 5, 10, hexA(CUTC, 0.85), 'left', true);
     }
 
     if (rest.length) {
       const restKept = rest.filter((c) => c.kept).length;
       const restMass = rest.reduce((s, c) => s + c.final, 0);
       text(
-        restKept
-          ? `+ ${rest.length} more words, ${restKept} still in play, worth ${(restMass * 100).toFixed(1)}%`
-          : `+ ${rest.length} more words, all cut`,
-        lx,
-        y0 + shownRows.length * rowH + 16,
-        11,
+        compact
+          ? `+ ${rest.length} more`
+          : restKept
+            ? `+ ${rest.length} more words, ${restKept} still in play, worth ${(restMass * 100).toFixed(1)}%`
+            : `+ ${rest.length} more words, all cut`,
+        lx + labelW,
+        y0 + shownRows.length * rowH + fs(14) + 6,
+        14,
         inkA(0.42),
-        'left',
+        compact ? 'right' : 'left',
         true
       );
     }
-
   }
 
-  // --- 4. the dart ----------------------------------------------------------------
+  // --- 3. the dart ----------------------------------------------------------------
 
-  function drawDart() {
-    panel(DARTP, 'the dart that picked the last word');
+  function drawDart(L: ReturnType<typeof layout>) {
     if (!shot) {
+      title(L.dart, 'the dart');
       text(
-        'press Next word (or the s key) and watch where the dart lands',
-        DARTP.x + DARTP.w / 2,
-        DARTP.y + 54,
-        13,
+        compact ? 'press Step' : 'press Step (or the s key) and watch where the dart lands',
+        W / 2,
+        L.dart + 50,
+        15,
         inkA(0.4),
         'center'
       );
       return;
     }
-    text(`"${shot.ctxStr}"  →  "${shot.word}"`, DARTP.x + 18, DARTP.y + 26, 12, inkA(0.6), 'left', true);
-    if (shot.cutCount)
-      text(
-        `${shot.kept.length} words on the strip, ${shot.cutCount} cut before the throw`,
-        DARTP.x + DARTP.w - 18,
-        DARTP.y + 26,
-        11,
-        inkA(0.42),
-        'right',
-        true
-      );
+    title(L.dart, `"${shot.ctxStr}"  →  "${shot.word}"`, shot.cutCount ? `${shot.kept.length} on the strip, ${shot.cutCount} cut` : '');
 
-    const sx = DARTP.x + 30, sw = DARTP.w - 60, sy = DARTP.y + 44, sh = 26;
+    const sx = X0 + 22, sw = X1 - X0 - 44, sy = L.dart + (compact ? 22 : 20), sh = compact ? 36 : 28;
     let acc = 0;
     shot.kept.forEach((seg, i) => {
       const w = seg.p * sw;
       const win = seg.w === shot!.word;
       ctx.fillStyle = win ? CHOSEN : hexA(KEEP, i % 2 ? 0.4 : 0.62);
       ctx.fillRect(sx + acc, sy, Math.max(0.6, w), sh);
-      if (w > 44) text(seg.w, sx + acc + w / 2, sy + 17, 11, win ? '#0d0e12' : inkA(0.95), 'center');
+      if (!compact && w > measure(seg.w, 13) + 10)
+        text(seg.w, sx + acc + w / 2, sy + sh / 2 + fs(13) * 0.36, 13, win ? '#0d0e12' : inkA(0.95), 'center');
       acc += w;
     });
     ctx.strokeStyle = inkA(0.18);
     ctx.lineWidth = 1;
     ctx.strokeRect(sx, sy, sw, sh);
-    text('0', sx - 6, sy + 17, 10, inkA(0.4), 'right', true);
-    text('1', sx + sw + 6, sy + 17, 10, inkA(0.4), 'left', true);
+    if (!compact) {
+      text('0', sx - 6, sy + sh / 2 + 5, 13, inkA(0.4), 'right', true);
+      text('1', sx + sw + 6, sy + sh / 2 + 5, 13, inkA(0.4), 'left', true);
+    }
 
+    const below = sy + sh + fs(14) + 4;
     if (shot.r >= 0) {
       const dx = sx + shot.r * sw;
       ctx.strokeStyle = DART;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(dx, sy - 9);
-      ctx.lineTo(dx, sy + sh + 6);
+      ctx.moveTo(dx, sy - 6);
+      ctx.lineTo(dx, sy + sh + 4);
       ctx.stroke();
       ctx.fillStyle = DART;
       ctx.beginPath();
-      ctx.moveTo(dx, sy - 2);
-      ctx.lineTo(dx - 5, sy - 11);
-      ctx.lineTo(dx + 5, sy - 11);
+      ctx.moveTo(dx, sy);
+      ctx.lineTo(dx - 5, sy - 9);
+      ctx.lineTo(dx + 5, sy - 9);
       ctx.closePath();
       ctx.fill();
       text(
-        `random number ${shot.r.toFixed(3)}`,
+        compact ? `${shot.r.toFixed(3)}` : `random number ${shot.r.toFixed(3)}`,
         dx,
-        sy + sh + 18,
-        11,
+        below,
+        14,
         DART,
         dx > sx + sw / 2 ? 'right' : 'left',
         true
       );
     } else {
-      text('greedy throws no dart', sx + sw / 2, sy + sh + 18, 11, inkA(0.45), 'center', true);
+      text('greedy throws no dart', sx + sw / 2, below, 14, inkA(0.45), 'center', true);
     }
   }
 
-  // --- 5. the whole vocabulary -----------------------------------------------------
+  // --- 4. the whole vocabulary -----------------------------------------------------
 
-  function drawVocab(cands: Cand[]) {
-    panel(VOC, `the whole vocabulary: all ${V} words, every one with a probability · filled part = its probability`);
+  function drawVocab(cands: Cand[], L: ReturnType<typeof layout>) {
+    title(L.voc, `all ${V} words`, 'filled part = its probability');
     const byWord = new Map(cands.map((c) => [c.w, c]));
     let maxBase = 0;
     for (const c of cands) maxBase = Math.max(maxBase, c.base);
 
-    const x0 = VOC.x + 16, areaW = VOC.w - 32, areaH = VOC.h - 48;
-    const cols = Math.max(1, Math.floor(areaW / 118));
-    const rows = Math.ceil(V / cols);
-    const gap = 3;
+    const cols = L.vocCols, rows = Math.ceil(V / cols), gap = L.vocGap;
+    const y0 = L.voc + 12;
+    const areaW = X1 - X0, areaH = H - 6 - y0;
     const cw = areaW / cols;
-    const chh = Math.min(26, Math.floor((areaH - (rows - 1) * gap) / rows));
-    const y0 = VOC.y + 28;
+    const chh = Math.floor((areaH - (rows - 1) * gap) / rows);
 
     VOCAB.forEach((w, i) => {
       const c = byWord.get(w)!;
-      const cx = x0 + (i % cols) * cw;
+      const cx = X0 + (i % cols) * cw;
       const cy = y0 + Math.floor(i / cols) * (chh + gap);
-      const cellW = cw - 8;
+      const cellW = cw - (compact ? 4 : 8);
       const frac = c.base / Math.max(1e-9, maxBase);
       // the cell is the bar: it fills from the left in proportion to the word's
       // own probability, so the whole vocabulary reads as one chart
-      const ty = cy + chh / 2 + 4;
+      const ty = cy + chh / 2 + fs(14) * 0.36;
       ctx.fillStyle = inkA(0.07);
-      rr(cx, cy, cellW, chh, 5);
+      rr(cx, cy, cellW, chh, 4);
       ctx.fill();
       ctx.fillStyle = hexA(c.kept ? KEEP : CUTC, c.kept ? 0.5 : 0.3);
-      rr(cx, cy, Math.max(3, cellW * frac), chh, 5);
+      rr(cx, cy, Math.max(3, cellW * frac), chh, 4);
       ctx.fill();
       if (c.kept) {
         ctx.strokeStyle = hexA(KEEP, 0.75);
         ctx.lineWidth = 1;
-        rr(cx, cy, cellW, chh, 5);
+        rr(cx, cy, cellW, chh, 4);
         ctx.stroke();
       }
       if (flash > 0 && shot && shot.word === w) {
         ctx.fillStyle = hexA(CHOSEN, 0.45 * flash);
-        rr(cx, cy, cellW, chh, 5);
+        rr(cx, cy, cellW, chh, 4);
         ctx.fill();
       }
-      text(w, cx + 8, ty, 12, inkA(c.kept ? 0.98 : 0.6));
-      text(
-        `${(c.base * 100).toFixed(c.base < 0.01 ? 2 : 0)}%`,
-        cx + cellW - 8,
-        ty,
-        10,
-        inkA(0.45),
-        'right',
-        true
-      );
+      if (compact) return;
+      text(w, cx + 8, ty, 14, inkA(c.kept ? 0.98 : 0.6));
+      text(`${(c.base * 100).toFixed(c.base < 0.01 ? 2 : 0)}%`, cx + cellW - 8, ty, 13, inkA(0.45), 'right', true);
     });
-
   }
 
   // --- readouts ---------------------------------------------------------------------
@@ -644,17 +629,15 @@ import Try from '../../../components/sim/Try.astro';
     });
     setEq({
       rule: ['x_{t+1}\\sim P(\\,\\cdot\\mid x_1\\dots x_t)', '\\qquad', [`P_T(w) \\propto P(w)^{1/T}`, DART]],
-      live: [[`T = ${state.temp.toFixed(2)}`, DART], [`\\quad k = ${state.greedy ? 1 : state.k}`, KEEP], [`\\quad p = ${state.p.toFixed(2)}`, KEEP], [`\\quad |S| = ${keptN}\\ \\text{of}\\ ${V}`, KEEP]],
+      live: [[`T = ${state.temp.toFixed(2)}`, DART], [`\\quad k = ${state.greedy ? 1 : state.k}`, KEEP], [`\\quad p = ${state.p.toFixed(2)}`, KEEP]],
     });
     setResult({
       value: `${keptN} of ${V}`,
       colour: state.greedy ? CHOSEN : KEEP,
       status: state.greedy
-        ? 'Greedy: the top word, always, so the same context always gives the same word'
-        : `${(keptMass * 100).toFixed(1)}% of the probability kept · ${seen} words were ever seen after this context${shot ? ` · last pick: ${shot.word} (${(shot.prob * 100).toFixed(1)}%, ${bits} bits)` : ''}`,
-      note: keptN === cands.length
-        ? 'Nothing is cut: the whole vocabulary can win, tail included, so sooner or later a sliver word derails the sentence.'
-        : 'The dart only sees what survived the cut, renormalised. Top-k keeps a fixed count; top-p keeps the fewest words whose probabilities add up to p.',
+        ? 'greedy: always the top word'
+        : `${(keptMass * 100).toFixed(1)}% of the probability kept · last pick: ${shot ? `${shot.word} (${(shot.prob * 100).toFixed(1)}%)` : 'none yet'}`,
+      note: 'The dart only sees what survives the cut, renormalised. With nothing cut, sooner or later a tail word derails the sentence.',
     });
   }
 
@@ -663,11 +646,13 @@ import Try from '../../../components/sim/Try.astro';
   function draw() {
     ctx.clearRect(0, 0, W, H);
     ctx.textBaseline = 'alphabetic';
+    compact = isCompact(canvas);
     const cands = candidates();
-    drawText();
-    drawDist(cands);
-    drawDart();
-    drawVocab(cands);
+    const L = layout();
+    drawText(L);
+    drawDist(cands, L);
+    drawDart(L);
+    drawVocab(cands, L);
     updateHud(cands);
   }
 

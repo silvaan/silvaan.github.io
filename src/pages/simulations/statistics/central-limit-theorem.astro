@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Central Limit Theorem"
-  description="Draw a few numbers from any lopsided distribution and average them. Do it again and again: the averages pile into a bell, whatever the source looked like. The middle wins because there are many more ways to land there, and every four times the draws halves the spread."
+  description="Average a few draws from any lopsided distribution, again and again: the averages pile into a bell. The middle wins because more ways lead there, and four times the draws halves the spread."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -114,9 +114,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
   import { story, headline, say, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
 
@@ -172,7 +172,10 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('clt') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas);
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11 px on a desktop, 9.5 px on a phone
+  const wideText = makeText(ctx, ink, 1.42, undefined, 11);
+  const smallText = makeText(ctx, ink, 1.42, undefined, 9.5);
+  const label = (...a: Parameters<typeof wideText.label>) => (isCompact(canvas) ? smallText : wideText).label(...a);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -296,7 +299,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillStyle = ink(0.2);
     ctx.fillRect(PAD.l, STRIP.base, plotW, 1);
     ctx.globalAlpha = 1;
-    say(ctx, 'the source: where one draw lands', PAD.l, STRIP.base - STRIP.h - 14, { colour: ink(0.5), size: 13, alpha: a });
+    say(ctx, 'the source: where one draw lands', PAD.l, STRIP.base - STRIP.h - 16, { colour: ink(0.5), size: 14, alpha: a });
   }
 
   function pile(showBell: number, light: boolean) {
@@ -335,7 +338,7 @@ import Try from '../../../components/sim/Try.astro';
     const step = mag * (raw / mag < 1.5 ? 1 : raw / mag < 3.5 ? 2 : 5);
     const dec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
     for (let val = Math.ceil(axis[0] / step) * step; val <= axis[1] + 1e-9; val += step)
-      label((Math.abs(val) < step / 2 ? 0 : val).toFixed(dec).replace('-', '−'), xOf(val), yBase + 18, 0.3, 'center', 11.5);
+      label(fixed(val, dec), xOf(val), yBase + 20, 0.4, 'center', 11.5);
   }
 
   /** Draw and land every trial in flight. */
@@ -395,6 +398,7 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- chapter 3: dice combinations ----------
   function diceScene(t: number, light: boolean) {
+    const compact = isCompact(canvas);
     const tc = light ? '#5462e6' : MEANS;
     // two dice: a 6 × 6 table of pairs flies into columns by sum
     const two = 1 - beat(t, 6, 6.8);
@@ -415,11 +419,12 @@ import Try from '../../../components/sim/Try.astro';
         ctx.roundRect(x, y, 42, 20, 4);
         ctx.fill();
         ctx.stroke();
-        say(ctx, `${a}+${b}`, x + 21, y + 10, { colour: ink(0.9), size: 12, weight: 600, align: 'center', alpha: two });
+        // the pair's name fits its tile only on a wide canvas
+        if (!compact) say(ctx, `${a}+${b}`, x + 21, y + 10, { colour: ink(0.9), size: 12, weight: 600, align: 'center', alpha: two });
       }
       ctx.globalAlpha = 1;
-      for (let s = 2; s <= 12; s++) say(ctx, String(s), colX(s), PILE.base + 16, { colour: ink(0.55), size: 13, align: 'center', alpha: two });
-      say(ctx, 'two dice: the 36 pairs', 90, 244, { colour: ink(0.55), size: 13, alpha: two * beat(t, 0.3, 0.8) });
+      for (let s = 2; s <= 12; s++) say(ctx, String(s), colX(s), PILE.base + 18, { colour: ink(0.55), size: 14, align: 'center', alpha: two });
+      say(ctx, 'two dice: the 36 pairs', 90, 240, { colour: ink(0.55), size: 14, alpha: two * beat(t, 0.3, 0.8) });
       const a = beat(t, 4.2, 4.8) * two;
       say(ctx, '6 ways to make 7', colX(7), PILE.base - 170, { colour: tc, size: 16, weight: 700, align: 'center', alpha: a, halo: inv(0.8) });
       say(ctx, '1 way to make 2', colX(2), PILE.base - 80, { colour: ink(0.75), size: 14, align: 'center', alpha: a, halo: inv(0.8) });
@@ -439,9 +444,9 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fillStyle = withAlpha(tc, 0.25 + 0.45 * u);
         ctx.fillRect(x, y, 30, 7);
       }
-      for (let s = 3; s <= 18; s++) say(ctx, String(s), colX(s), PILE.base + 16, { colour: ink(0.55), size: 12, align: 'center', alpha: three });
+      for (let s = 3; s <= 18; s++) if (!compact || s % 3 === 1) say(ctx, String(s), colX(s), PILE.base + 18, { colour: ink(0.55), size: 14, align: 'center', alpha: three });
       const a = beat(t, 10.6, 11.2);
-      say(ctx, 'three dice: 216 triples', colX(3) - 15, 244, { colour: ink(0.55), size: 13, alpha: three });
+      say(ctx, 'three dice: 216 triples', colX(3) - 15, 240, { colour: ink(0.55), size: 14, alpha: three });
       say(ctx, '27 ways to make 10', colX(10), PILE.base - 248, { colour: tc, size: 16, weight: 700, align: 'center', alpha: a, halo: inv(0.8) });
       say(ctx, '1 way to make 3', colX(3), PILE.base - 60, { colour: ink(0.75), size: 13, align: 'center', alpha: a, halo: inv(0.8) });
     }
@@ -533,7 +538,11 @@ import Try from '../../../components/sim/Try.astro';
       bars(sb, srcHist, (d) => base - (d / mx) * 60, base, 1);
       label('one draw from the source', PAD.l, base - 74, 0.45, 'left', 11.5);
     }
-    label(isSum ? `where the walk ends: Sₙ − nμ after ${state.n} draws` : state.n === 1 ? 'the mean of a single draw' : `the mean of ${state.n} draws`, PAD.l, top - 4, 0.45, 'left', 11.5);
+    const compact = isCompact(canvas);
+    label(
+      isSum ? (compact ? `Sₙ − nμ, n = ${state.n}` : `where the walk ends: Sₙ − nμ after ${state.n} draws`) : state.n === 1 ? 'the mean of a single draw' : `the mean of ${state.n} draws`,
+      PAD.l, top - 8, 0.45, 'left', 11.5
+    );
 
     const sd = spread(), mu = centre();
     const gPeak = 1 / (sd * Math.sqrt(2 * Math.PI));
@@ -559,17 +568,20 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(xOf(mu), yBase);
     ctx.stroke();
     ctx.setLineDash([]);
-    if (!isSum) label(`μ = ${s.mean}`, xOf(mu) + 6, top + 12, 0.5, 'left', 11.5);
+    if (!isSum) label(`μ = ${s.mean}`, xOf(mu) + 6, top + 16, 0.5, 'left', 11.5);
     void light;
   }
 
   function drawWalks() {
     const n = state.n, s = SOURCES[state.src];
     const yOfK = (k: number) => WALKBOX.y0 + (k / n) * (WALKBOX.y1 - WALKBOX.y0);
-    label(
-      state.src === 'coin' ? 'each trial is a walk: step k runs downward' : 'each trial as a walk of its running sum Sₖ − kμ',
-      PAD.l, WALKBOX.y0 - 14, 0.45, 'left', 11.5
-    );
+    const compact = isCompact(canvas);
+    // the chapter's caption already says what the walks are on a phone
+    if (!compact)
+      label(
+        state.src === 'coin' ? 'each trial is a walk: step k runs downward' : 'each trial as a walk of its running sum Sₖ − kμ',
+        PAD.l, WALKBOX.y0 - 14, 0.45, 'left', 11.5
+      );
     ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -613,16 +625,16 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.restore();
     const edge = xOf(sg * Math.sqrt(n));
-    if (edge < W - PAD.r - 30) label('+σ√k', edge + 4, WALKBOX.y1 - 4, 0.5, 'left', 11.5);
-    label('k = 0', xOf(0) + 6, WALKBOX.y0 + 12, 0.5, 'left', 11.5);
+    if (edge < W - PAD.r - 30 && !compact) label('+σ√k', edge + 4, WALKBOX.y1 - 4, 0.5, 'left', 11.5);
+    label('k = 0', xOf(0) + 6, WALKBOX.y0 + 16, 0.5, 'left', 11.5);
     label(`k = n = ${n}`, xOf(0) + 6, WALKBOX.y1 + 14, 0.5, 'left', 11.5);
   }
 
   // ---------- chapters ----------
   const chapters = [
     { dur: 10, title: 'One draw at a time', body: 'Draw a number from a lopsided source and drop it on a pile. Do it again and again. With one draw per trial, the pile just copies the source.' },
-    { dur: 12, title: 'Average two', body: 'Now draw two and drop their average. Extremes need both draws to be extreme at once, which is rare, so the pile pulls in toward the middle.' },
-    { dur: 13, title: 'Count the ways', body: 'Why the middle? Two dice make 7 in six ways but 2 in only one. With three dice the counts already trace a bell: each extra draw multiplies the ways to land near the middle.' },
+    { dur: 12, title: 'Average two', body: 'Now drop the average of two draws. Extremes need both draws extreme at once, which is rare, so the pile pulls in.' },
+    { dur: 13, title: 'Count the ways', body: 'Why the middle? Two dice make 7 in six ways but 2 in only one. With three dice the counts already trace a bell.' },
     { dur: 14, title: 'Average more', body: 'Average 2, 4, 10, then 30 draws. Whatever the source looked like, the pile turns into the same bell, centred on the source\u2019s mean.' },
     { dur: 11, title: 'Narrower by √n', body: 'The more draws in each average, the narrower the bell: four times the draws, half the spread. That is σ/√n.' },
     { dur: Infinity, title: 'Explore', body: 'Any source, any n. Run collects averages; switch to the Sum view to see each trial as a random walk.' },
@@ -705,33 +717,36 @@ import Try from '../../../components/sim/Try.astro';
     const s = SOURCES[state.src];
     const isSum = state.stat === 'sum';
     const sd = spread(), sigma = Math.sqrt(s.var), meas = measured();
-    const measTxt = isNaN(meas) ? '—' : meas.toFixed(isSum ? 2 : 4);
+    const measTxt = isNaN(meas) ? '–' : fixed(meas, isSum ? 2 : 4);
     if (isSum) {
       setEq({
-        rule: [['S_n - n\\mu = \\sum_i (X_i - \\mu)', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\big(0,\\;n\\sigma^2\\big)', BELL]],
-        live: [`n = ${state.n}`, `\\quad\\sigma = ${sigma.toFixed(3)}`, [`\\quad\\sigma\\sqrt n = ${sd.toFixed(3)}`, BELL]],
+        rule: [['S_n - n\\mu', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\big(0,\\;n\\sigma^2\\big)', BELL]],
+        live: [`n = ${state.n}`, `\\quad\\sigma = ${fixed(sigma, 3)}`, [`\\quad\\sigma\\sqrt n = ${fixed(sd, 3)}`, BELL]],
       });
     } else {
       setEq({
         rule: [['\\bar X = \\frac{1}{n}\\sum_i X_i', MEANS], '\\longrightarrow', ['\\mathcal N\\!\\Big(\\mu,\\;\\frac{\\sigma^2}{n}\\Big)', BELL]],
-        live: [`n = ${ch === 2 ? '2, 3' : ch === 4 ? '1, 4, 16, 64' : state.n}`, `\\quad\\sigma = ${sigma.toFixed(3)}`, [`\\quad\\sigma/\\sqrt n = ${ch === 4 ? '\\sigma, \\sigma/2, \\sigma/4, \\sigma/8' : sd.toFixed(4)}`, BELL]],
+        // kept about as long as the usual line, so it does not wrap on a phone
+        live: ch === 4
+          ? ['n = 1, 4, 16, 64', ['\\quad\\sigma/\\sqrt n = \\sigma \\ldots \\sigma/8', BELL]]
+          : [`n = ${ch === 2 ? '2, 3' : state.n}`, `\\quad\\sigma = ${fixed(sigma, 3)}`, [`\\quad\\sigma/\\sqrt n = ${fixed(sd, 4)}`, BELL]],
       });
     }
     el('result-label').textContent = isSum ? 'Spread of the sum σ√n' : 'Spread of the mean σ/√n';
     if (ch === 2)
-      setResult({ value: '6 of 36', colour: MEANS, status: 'ways for two dice to make 7', note: 'The middle sums can be built in many more ways than the extreme ones, and every extra die makes that gap bigger.' });
+      setResult({ value: '6 of 36', colour: MEANS, status: 'ways for two dice to make 7', note: 'The middle sums can be built in many more ways, and every extra die widens that gap.' });
     else if (ch === 4)
-      setResult({ value: '× 4 → ½', colour: BELL, status: 'draws in each average, and the spread', note: 'The spread of an average of n draws is σ/√n. To halve the error, take four times the data.' });
+      setResult({ value: '× 4 → ½', colour: BELL, status: 'draws in each average, and the spread', note: 'An average of n draws spreads like σ/√n: to halve the error, take four times the data.' });
     else
       setResult({
-        value: sd.toFixed(isSum ? 3 : 4),
+        value: fixed(sd, isSum ? 3 : 4),
         colour: BELL,
-        status: `${count} trials of n = ${state.n} draws · measured spread ${measTxt}`,
+        status: `${count} trials · measured ${measTxt}`,
         note: isSum
-          ? 'The sum spreads like σ√n while the mean, the same sum divided by n, narrows like σ/√n.'
-          : 'Whatever the source looks like, the averages pile into the bell the theorem predicts, and it narrows like 1/√n.',
+          ? 'The sum spreads like σ√n, while the mean, the sum over n, narrows like σ/√n.'
+          : 'Whatever the source, the averages pile into the predicted bell, narrowing like 1/√n.',
       });
-    setRows({ 'r-count': String(count), 'r-sigma': sigma.toFixed(3), 'r-pred': sd.toFixed(isSum ? 3 : 4), 'r-meas': measTxt });
+    setRows({ 'r-count': String(count), 'r-sigma': fixed(sigma, 3), 'r-pred': fixed(sd, isSum ? 3 : 4), 'r-meas': measTxt });
   }
 
   function legend() {

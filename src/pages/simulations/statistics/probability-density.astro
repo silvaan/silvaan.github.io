@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Probability Density"
-  description="Drop grains of sand where a random quantity lands. They pile up into a shape; divide each pile by its width and the shape becomes the density curve. Then the curve is a sandpile: the share of grains over a stretch is the area there, the total is always one, and a single exact point holds none."
+  description="Drop grains of sand where a random quantity lands and divide each pile by its width: the shape becomes the density curve. The share of grains over a stretch is the area there, and one point holds none."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -102,9 +102,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed, handle as knob, grabCursor } from '../../../lib/draw';
   import { segmented, slider, result, readout, tries } from '../../../lib/panel';
   import { story, headline, say, withAlpha, isLight, ease, easeOut, beat, lerp, clamp01 } from '../../../lib/story';
 
@@ -226,7 +226,7 @@ import Try from '../../../components/sim/Try.astro';
     {
       dur: 13,
       title: 'Count per width, not per bin',
-      body: 'Make each column height the share of grains it caught divided by its width. Then narrower and narrower bins do not shrink: they settle onto one smooth curve, the density f(x).',
+      body: 'Make each bar the share of grains it caught divided by its width. Then narrower bins do not shrink: they settle onto one smooth curve, f(x).',
     },
     {
       dur: Infinity,
@@ -236,7 +236,7 @@ import Try from '../../../components/sim/Try.astro';
     {
       dur: Infinity,
       title: 'Squeeze the pile',
-      body: 'Squeeze the spread and the same grains stack higher. The curve can climb above 1, because height is grains per unit of width. The area stays 1: no grain is lost.',
+      body: 'Squeeze the spread and the same grains stack higher. Height is grains per unit of width, so it can pass 1. The area stays 1.',
     },
     {
       dur: Infinity,
@@ -291,12 +291,14 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(PX0 - 10, BASE + 0.5);
     ctx.lineTo(PX1 + 10, BASE + 0.5);
     ctx.stroke();
-    ctx.fillStyle = ink(0.4);
-    ctx.font = '12px ui-monospace, monospace';
+    ctx.fillStyle = ink(0.45);
+    // sized from the screen at draw time: at least 11 px on a desktop, 9.5 on a phone
+    const fs = textPx(canvas, 13, isCompact(canvas) ? 9.5 : 11, 2.4);
+    ctx.font = `${fs}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
     for (let x = X0; x <= X1; x++) {
       ctx.fillRect(px(x) - 0.5, BASE, 1, 5);
-      ctx.fillText(String(x).replace('-', '−'), px(x), BASE + 18);
+      ctx.fillText(fixed(x, 0), px(x), BASE + 8 + fs);
     }
     // the density scale, once heights mean something
     const ya = ch === 0 ? 0 : ch === 1 ? beat(t, 1.6, 2.6) : 1;
@@ -309,7 +311,7 @@ import Try from '../../../components/sim/Try.astro';
         ctx.fillStyle = ink(0.06);
         ctx.fillRect(PX0, y, PX1 - PX0, 1);
         ctx.fillStyle = ink(0.4);
-        ctx.fillText(v.toFixed(2), PX0 - 8, y + 4);
+        ctx.fillText(fixed(v), PX0 - 8, y + fs * 0.35);
       }
       if (ch === 3) {
         const y = BASE - Ys;
@@ -320,7 +322,7 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineTo(PX1, y);
         ctx.stroke();
         ctx.setLineDash([]);
-        say(ctx, 'height 1', PX1, y - 12, { colour: ink(0.6), size: 13, align: 'right' });
+        say(ctx, 'height 1', PX1, y - 14, { colour: ink(0.6), size: 14, align: 'right' });
       }
     }
     ctx.restore();
@@ -418,13 +420,13 @@ import Try from '../../../components/sim/Try.astro';
       for (let k = 0; k < BINS0; k++) if (hRain[k] > hRain[kk]) kk = k;
       const share = hRain[kk] * ((X1 - X0) / BINS0);
       const x = PX0 + (kk + 0.5) * colW, y = BASE - hRain[kk] * Ys;
-      say(ctx, `${Math.round(share * RAIN)} of ${RAIN} grains = ${(share * 100).toFixed(1)}%`, x + colW, y - 30, { colour: SAND, size: 14, weight: 600, alpha: a, halo: inv(0.85) });
-      say(ctx, `÷ width ${((X1 - X0) / BINS0).toFixed(2)} = height ${hRain[kk].toFixed(2)}`, x + colW, y - 10, { colour: ink(0.8), size: 14, alpha: a, halo: inv(0.85) });
+      say(ctx, `${Math.round(share * RAIN)} of ${RAIN} grains = ${fixed(share * 100, 1)}%`, x + colW, y - 34, { colour: SAND, size: 14, weight: 600, alpha: a, halo: inv(0.85) });
+      say(ctx, `÷ width ${fixed((X1 - X0) / BINS0)} = height ${fixed(hRain[kk])}`, x + colW, y - 10, { colour: ink(0.8), size: 14, alpha: a, halo: inv(0.85) });
     }
     if (t > 4) {
       const b = beat(t, 4, 4.6) * (1 - curveA);
-      say(ctx, `${n} bins, each ${((X1 - X0) / n).toFixed(3)} wide`, PX1, 200, { colour: SAND, size: 20, weight: 650, align: 'right', alpha: b });
-      say(ctx, `${BIG.toLocaleString('en')} grains`, PX1, 224, { colour: ink(0.55), size: 14, align: 'right', alpha: b });
+      say(ctx, `${n} bins, each ${fixed((X1 - X0) / n, 3)} wide`, PX1, 200, { colour: SAND, size: 20, weight: 650, align: 'right', alpha: b });
+      say(ctx, `${BIG.toLocaleString('en')} grains`, PX1, 230, { colour: ink(0.55), size: 14, align: 'right', alpha: b });
     }
     if (curveA > 0) drawCurve(curveA, light, beat(t, 9.6, 11.6));
   }
@@ -514,7 +516,8 @@ import Try from '../../../components/sim/Try.astro';
   }
   let sandStats = { inside: 0, area: 0 };
 
-  function handle(x: number, light: boolean) {
+  /** An edge of the stretch: a line up to the curve, with its grip on the axis when it can be dragged. */
+  function handle(x: number, light: boolean, grip = false) {
     const p = px(x);
     ctx.strokeStyle = light ? '#0d9488' : WIN;
     ctx.lineWidth = 2;
@@ -522,31 +525,28 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(p, BASE + 6);
     ctx.lineTo(p, Math.min(BASE - f(x) * Ys, BASE - 20) - 14);
     ctx.stroke();
-    ctx.fillStyle = light ? '#0d9488' : WIN;
-    ctx.beginPath();
-    ctx.arc(p, BASE + 10, 5, 0, Math.PI * 2);
-    ctx.fill();
+    if (grip) knob(ctx, p, BASE, light ? '#0d9488' : WIN, { r: 5, hot: dragging !== null });
   }
 
   function windowLabels(a: number, b: number, inside: number, area: number, light: boolean) {
-    handle(a, light);
-    handle(b, light);
-    say(ctx, 'a', px(a), BASE + 26, { colour: WIN, size: 14, weight: 600, align: 'center' });
-    say(ctx, 'b', px(b), BASE + 26, { colour: WIN, size: 14, weight: 600, align: 'center' });
+    handle(a, light, true);
+    handle(b, light, true);
+    say(ctx, 'a', px(a), BASE + 34, { colour: WIN, size: 14, weight: 600, align: 'center' });
+    say(ctx, 'b', px(b), BASE + 34, { colour: WIN, size: 14, weight: 600, align: 'center' });
     const mid = Math.min(PX1 - 140, Math.max(PX0 + 140, (px(a) + px(b)) / 2));
     let top = BASE;
     for (let p = px(a); p <= px(b); p += 2) top = Math.min(top, BASE - f(xOf(p)) * Ys);
-    const y = Math.max(200, top - 46);
-    say(ctx, `${inside} of ${SANDN} grains = ${((100 * inside) / SANDN).toFixed(1)}%`, mid, y, { colour: light ? '#0d9488' : WIN, size: 17, weight: 650, align: 'center', halo: inv(0.85) });
-    say(ctx, `area under the curve = ${area.toFixed(3)}`, mid, y + 22, { colour: ink(0.85), size: 15, align: 'center', halo: inv(0.85) });
+    const y = Math.max(200, top - 52);
+    say(ctx, `${inside} of ${SANDN} grains = ${fixed((100 * inside) / SANDN, 1)}%`, mid, y, { colour: light ? '#0d9488' : WIN, size: 17, weight: 650, align: 'center', halo: inv(0.85) });
+    say(ctx, `area under the curve = ${fixed(area, 3)}`, mid, y + 26, { colour: ink(0.85), size: 15, align: 'center', halo: inv(0.85) });
   }
 
   function squeezeLabels(light: boolean) {
     const pk = peak();
     const x = px(pk.at), y = BASE - pk.m * Ys;
     const col = light ? '#b45309' : SAND;
-    say(ctx, `peak ${pk.m.toFixed(2)}${pk.m > 1 ? '  (more than 1)' : ''}`, x + 18, y - 4, { colour: col, size: 16, weight: 650, halo: inv(0.85) });
-    say(ctx, `area still ${areaOf(X0, X1).toFixed(2)}: all ${SANDN} grains`, x + 18, y + 18, { colour: ink(0.8), size: 14, halo: inv(0.85) });
+    say(ctx, `peak ${fixed(pk.m)}${pk.m > 1 ? '  (more than 1)' : ''}`, x + 18, y - 6, { colour: col, size: 16, weight: 650, halo: inv(0.85) });
+    say(ctx, `area still ${fixed(areaOf(X0, X1))}: all ${SANDN} grains`, x + 18, y + 20, { colour: ink(0.8), size: 14, halo: inv(0.85) });
   }
 
   /** Chapter 5: a lens on the shrinking stretch, where the curve is flat and the slab a rectangle. */
@@ -601,14 +601,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(L.x + L.w - 10, lb + 0.5);
     ctx.stroke();
     ctx.restore();
-    say(ctx, 'zoomed in on the stretch', L.x + 14, L.y + 16, { colour: ink(0.5), size: 12 });
-    say(ctx, `height f(x) = ${h.toFixed(3)}`, L.x + 14, L.y + 38, { colour: ink(0.85), size: 13 });
-    say(ctx, `width ${w < 0.01 ? w.toExponential(1) : w.toFixed(3)}`, (lx(a) + lx(b)) / 2, lb + 16, { colour: col, size: 13, weight: 600, align: 'center' });
+    const compact = isCompact(canvas);
+    if (!compact) say(ctx, 'zoomed in on the stretch', L.x + 14, L.y + 18, { colour: ink(0.5), size: 13 });
+    say(ctx, `height f(x) = ${fixed(h, 3)}`, L.x + 14, compact ? L.y + 24 : L.y + 42, { colour: ink(0.85), size: 14 });
+    say(ctx, `width ${w < 0.01 ? w.toExponential(1) : fixed(w, 3)}`, (lx(a) + lx(b)) / 2, lb + 16, { colour: col, size: 14, weight: 600, align: 'center' });
 
-    const y = 470;
-    say(ctx, `grains inside: ${inside}`, 640, 432, { colour: col, size: 16, weight: 650 });
-    say(ctx, `probability = area = ${area < 0.001 ? area.toExponential(1) : area.toFixed(3)}  →  0`, 640, y - 14, { colour: ink(0.85), size: 14 });
-    say(ctx, `probability ÷ width = ${(area / w).toFixed(3)}  →  f(x)`, 640, y + 8, { colour: ink(0.85), size: 14 });
+    // under the lens; on a phone the bigger text is kept inside the canvas by right-aligning it
+    const tx = compact ? L.x + L.w : L.x, al: CanvasTextAlign = compact ? 'right' : 'left';
+    say(ctx, `grains inside: ${inside}`, tx, 432, { colour: col, size: 16, weight: 650, align: al, halo: inv(0.85) });
+    say(ctx, `probability = area = ${area < 0.001 ? area.toExponential(1) : fixed(area, 3)}  →  0`, tx, 460, { colour: ink(0.85), size: 14, align: al, halo: inv(0.85) });
+    say(ctx, `probability ÷ width = ${fixed(area / w, 3)}  →  f(x)`, tx, 486, { colour: ink(0.85), size: 14, align: al, halo: inv(0.85) });
   }
 
   // ---------- panel ----------
@@ -619,29 +621,29 @@ import Try from '../../../components/sim/Try.astro';
     if (ch === 0) {
       let landed = 0;
       for (let i = 0; i < RAIN; i++) if (t - release(i) >= FALL) landed++;
-      setRows({ 'r-n': `${landed}`, 'r-in': '—', 'r-area': '—', 'r-peak': '—' });
+      setRows({ 'r-n': `${landed}`, 'r-in': '–', 'r-area': '–', 'r-peak': '–' });
       setResult({ value: `${landed} grains`, status: landed < 50 ? 'no shape yet' : landed < 500 ? 'a shape forming' : 'a clear shape', note: 'Every grain is one outcome. Their pile is the shape of the randomness.' });
       return;
     }
     if (ch === 1) {
-      setRows({ 'r-n': t < 3 ? `${RAIN}` : BIG.toLocaleString('en'), 'r-in': '—', 'r-area': '—', 'r-peak': pk.m.toFixed(3) });
-      setResult({ value: 'share ÷ width', status: 'the height of a bar', note: 'Grains per unit of x. Narrower bins catch fewer grains but are narrower too, so the height stays put.' });
+      setRows({ 'r-n': t < 3 ? `${RAIN}` : BIG.toLocaleString('en'), 'r-in': '–', 'r-area': '–', 'r-peak': fixed(pk.m, 3) });
+      setResult({ value: 'share ÷ width', status: 'the height of a bar', note: 'Narrower bins catch fewer grains but are narrower too, so the height stays put.' });
       return;
     }
     const { inside, area } = sandStats;
     setRows({
       'r-n': `${SANDN}`,
-      'r-in': ch === 3 ? '—' : `${inside} (${((100 * inside) / SANDN).toFixed(1)}%)`,
-      'r-area': ch === 3 ? `${area.toFixed(3)} (all of it)` : area.toFixed(4),
-      'r-peak': pk.m.toFixed(3),
+      'r-in': ch === 3 ? '–' : `${inside} (${fixed((100 * inside) / SANDN, 1)}%)`,
+      'r-area': ch === 3 ? `${fixed(area, 3)} (all of it)` : fixed(area, 4),
+      'r-peak': fixed(pk.m, 3),
     });
     if (ch === 2)
-      setResult({ value: `P(a ≤ X ≤ b) = ${area.toFixed(3)}`, status: `${((100 * inside) / SANDN).toFixed(1)}% of grains`, note: 'The share of grains over the stretch and the area under the curve there agree.', colour: WIN });
+      setResult({ value: `P(a ≤ X ≤ b) = ${fixed(area, 3)}`, status: `${fixed((100 * inside) / SANDN, 1)}% of grains`, note: 'The share of grains over the stretch and the area under the curve there agree.', colour: WIN });
     else if (ch === 3)
-      setResult({ value: `peak ${pk.m.toFixed(2)}`, status: pk.m > 1 ? 'taller than 1, and fine' : 'area 1', note: 'Total area under a density is always 1. Its height is grains per unit width, and that has no ceiling.', colour: SAND });
+      setResult({ value: `peak ${fixed(pk.m)}`, status: pk.m > 1 ? 'taller than 1, and fine' : 'area 1', note: 'The total area is always 1, but height is grains per unit width: no ceiling.', colour: SAND });
     else {
       const w = winState.b - winState.a;
-      setResult({ value: `P = ${area < 0.001 ? area.toExponential(1) : area.toFixed(3)}`, status: `width ${w < 0.01 ? w.toExponential(1) : w.toFixed(3)}`, note: 'As the stretch closes on one point its probability goes to 0; probability ÷ width goes to f(x).', colour: WIN });
+      setResult({ value: `P = ${area < 0.001 ? area.toExponential(1) : fixed(area, 3)}`, status: `width ${w < 0.01 ? w.toExponential(1) : fixed(w, 3)}`, note: 'As the stretch closes on one point, P goes to 0 and P ÷ width goes to f(x).', colour: WIN });
     }
   }
 
@@ -650,14 +652,15 @@ import Try from '../../../components/sim/Try.astro';
     [['X', SAND], '\\;\\text{lands somewhere new each time}'],
     [['f(x)', CURVE_DARK], '\\approx \\dfrac{\\text{share of grains in the bin}}{\\text{bin width}}'],
     ['P(a \\le X \\le b) =', '\\displaystyle\\int_a^b', ['f(x)', CURVE_DARK], '\\,dx'],
-    ['\\displaystyle\\int_{-\\infty}^{\\infty}', ['f(x)', CURVE_DARK], '\\,dx = 1', '\\qquad', ['f(x)', CURVE_DARK], '\\text{ may be } > 1'],
+    ['\\displaystyle\\int_{-\\infty}^{\\infty}', ['f(x)', CURVE_DARK], '\\,dx = 1'],
     ['P(X = x) = \\lim_{w\\to 0}\\,', ['f(x)', CURVE_DARK], '\\cdot', ['w', WIN], '= 0'],
   ];
   let eqFor = -1;
   function eqTick(ch: number) {
     if (ch === eqFor) return;
     eqFor = ch;
-    setEq({ rule: EQ[ch] });
+    // every chapter's formula is set as tall as the tallest, so the canvas never moves
+    setEq({ rule: ['\\vphantom{\\dfrac{X}{X}\\displaystyle\\int_a^b}', ...EQ[ch]] });
   }
 
   // ---------- input: drag the edges of the stretch ----------
@@ -673,10 +676,18 @@ import Try from '../../../components/sim/Try.astro';
     dragging = da < db ? 'a' : 'b';
     S.manualWin = true;
     canvas.setPointerCapture(e.pointerId);
+    grabCursor(canvas, true, true);
     move(p);
   });
-  canvas.addEventListener('pointermove', (e) => { if (dragging) move(toX(e)); });
-  canvas.addEventListener('pointerup', () => (dragging = null));
+  canvas.addEventListener('pointermove', (e) => {
+    if (dragging) return move(toX(e));
+    const p = toX(e);
+    grabCursor(canvas, st.chapter() === 2 && Math.min(Math.abs(p - px(S.a)), Math.abs(p - px(S.b))) < 24, false);
+  });
+  canvas.addEventListener('pointerup', () => {
+    dragging = null;
+    grabCursor(canvas, st.chapter() === 2, false);
+  });
   function move(p: number) {
     const x = Math.max(X0, Math.min(X1, xOf(p)));
     if (dragging === 'a') S.a = Math.min(x, S.b - 0.02);
@@ -688,7 +699,7 @@ import Try from '../../../components/sim/Try.astro';
     S.squeeze = 2 ** (v / 100);
     S.manualSqueeze = true;
     if (st.chapter() !== 3) st.go(3);
-  }, (v) => `× ${(2 ** (v / 100)).toFixed(2)}`);
+  }, (v) => `× ${fixed(2 ** (v / 100))}`);
 
   tries({
     rain: () => { st.go(0); st.play(true); },

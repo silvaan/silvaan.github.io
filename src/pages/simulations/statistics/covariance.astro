@@ -14,7 +14,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Covariance Matrix"
-  description="Every point and the mean are two corners of a rectangle. Up-right and down-left of the mean it counts as positive, the other two corners as negative, and the covariance is the average of all those signed areas. Put it beside the two variances and you have the matrix."
+  description="Each point and the mean are corners of a rectangle: positive up-right or down-left of the mean, negative otherwise. Covariance is their average area; beside the two variances it makes the matrix."
   shortcuts={['reset', 'fullscreen']}
 >
   <div class="sim">
@@ -30,8 +30,8 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[
-          { label: 'positive rectangle: both above or both below the mean', color: '#5eead4' },
-          { label: 'negative rectangle: one above, one below', color: '#f9736a' },
+          { label: 'positive: both above or both below', color: '#5eead4' },
+          { label: 'negative: one above, one below', color: '#f9736a' },
         ]}
         hint="Hover a point to see its rectangle · drag a point to move it"
       />
@@ -80,8 +80,8 @@ import Try from '../../../components/sim/Try.astro';
   <Fragment slot="observe">
     <li>
       Hover a point. Its rectangle runs from the point to the mean, and its area
-      (x − x̄)(y − ȳ) is <b>positive</b> up-right or down-left of the mean and
-      <b>negative</b> otherwise. cov(x, y) is the average of all of them.
+      (x − x̄)(y − ȳ) is <b>positive</b> up-right or down-left of the mean and <b>negative</b>
+      otherwise. cov(x, y) is the average of all of them.
       <Try id="rise" />
     </li>
     <li>
@@ -111,7 +111,7 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, fixed } from '../../../lib/draw';
+  import { stageInk, fixed, handle, grabCursor } from '../../../lib/draw';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
 
   // cov(x, y) is the average signed area of the rectangles between each point
@@ -126,15 +126,24 @@ import Try from '../../../components/sim/Try.astro';
   let hover = -1, drag = -1;
 
   const canvas = el('cov') as HTMLCanvasElement;
+  // On a phone the matrix and its parts go under the scatter instead of
+  // beside it, on a narrower canvas, so the labels stay legible.
+  // the same breakpoint as the page style that gives the canvas this shape before it is drawn
+  const tall = matchMedia('(max-width: 599px)').matches;
+  if (tall) {
+    canvas.width = 600;
+    canvas.height = 980;
+  }
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, tall ? 9.5 : 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
-  const PLOT = { x: 16, y: 16, w: 612, h: H - 32 };
-  const COL = { x: 668, w: 302 };
+  const PLOT = tall ? { x: 16, y: 16, w: W - 32, h: 470 } : { x: 16, y: 16, w: 612, h: H - 32 };
+  // the right-hand column; on a phone it sits under the scatter, `y` lower
+  const COL = tall ? { x: 40, w: 520, y: 470 } : { x: 668, w: 302, y: 0 };
   let O = { x: PLOT.x + PLOT.w / 2, y: PLOT.y + PLOT.h / 2 };
   let UNIT = 80;
   const toPx = (x: number, y: number) => ({ px: O.x + x * UNIT, py: O.y - y * UNIT });
@@ -206,8 +215,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.strokeStyle = ink(0.18);
     ctx.beginPath(); ctx.moveTo(PLOT.x, O.y); ctx.lineTo(PLOT.x + PLOT.w, O.y); ctx.moveTo(O.x, PLOT.y); ctx.lineTo(O.x, PLOT.y + PLOT.h); ctx.stroke();
-    for (let i = ix0; i <= ix1; i += step) if (i) { const p = toPx(i, 0); label(String(i).replace('-', '−'), p.px, Math.min(PLOT.y + PLOT.h - 4, Math.max(PLOT.y + 12, O.y + 14)), 0.3, 'center', 10); }
-    for (let i = iy0; i <= iy1; i += step) if (i) { const p = toPx(0, i); label(String(i).replace('-', '−'), Math.min(PLOT.x + PLOT.w - 4, Math.max(PLOT.x + 22, O.x - 6)), p.py + 4, 0.3, 'right', 10); }
+    for (let i = ix0; i <= ix1; i += step) if (i) { const p = toPx(i, 0); label(fixed(i, 0), p.px, Math.min(PLOT.y + PLOT.h - 4, Math.max(PLOT.y + 14, O.y + 16)), 0.35, 'center', 10); }
+    for (let i = iy0; i <= iy1; i += step) if (i) { const p = toPx(0, i); label(fixed(i, 0), Math.min(PLOT.x + PLOT.w - 4, Math.max(PLOT.x + 22, O.x - 6)), p.py + 5, 0.35, 'right', 10); }
 
     // the mean splits the plane into four corners: two that count as plus, two as minus
     const m = toPx(s.mx, s.my);
@@ -249,11 +258,12 @@ import Try from '../../../components/sim/Try.astro';
 
     const focus = drag >= 0 ? drag : hover;
     pts.forEach(([x, y], i) => {
+      if (i === focus) return;
       const p = toPx(x, y);
       ctx.fillStyle = DATA;
       ctx.strokeStyle = 'rgba(13,14,18,0.6)';
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(p.px, p.py, i === focus ? 5.5 : 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.px, p.py, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     });
     ctx.fillStyle = ink(0.95);
     ctx.beginPath(); ctx.arc(m.px, m.py, 4.5, 0, Math.PI * 2); ctx.fill();
@@ -266,14 +276,15 @@ import Try from '../../../components/sim/Try.astro';
       ctx.strokeStyle = col;
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.rect(Math.min(p.px, m.px), Math.min(p.py, m.py), Math.abs(p.px - m.px), Math.abs(p.py - m.py)); ctx.fill(); ctx.stroke();
-      const text = `${fixed(x - s.mx)} × ${fixed(y - s.my)} = ${a >= 0 ? '+' : '−'}${Math.abs(a).toFixed(2)}`;
-      const w = textWidth(text, 12) + 14;
+      handle(ctx, p.px, p.py, DATA, { r: 5, hot: drag === focus });
+      const text = `${fixed(x - s.mx)} × ${fixed(y - s.my)} = ${a >= 0 ? '+' : '−'}${fixed(Math.abs(a))}`;
+      const w = textWidth(text, 12) + 14, th = textWidth('0', 12) * 2.2;
       // beside the point, on the side away from the mean
       let tx = p.px + (p.px >= m.px ? 12 : -12 - w), ty = p.py + (p.py <= m.py ? -14 : 22);
       tx = Math.max(PLOT.x + 4, Math.min(PLOT.x + PLOT.w - w - 4, tx));
       ty = Math.max(PLOT.y + 16, Math.min(PLOT.y + PLOT.h - 6, ty));
       ctx.fillStyle = 'rgba(13,14,18,0.85)';
-      ctx.fillRect(tx, ty - 14, w, 20);
+      ctx.fillRect(tx, ty - th * 0.62, w, th);
       label(text, tx + 7, ty + 0.5, 1, 'left', 12, col);
     }
     ctx.restore();
@@ -282,9 +293,9 @@ import Try from '../../../components/sim/Try.astro';
 
   /** The matrix itself, entry by entry in the colours of what they measure. */
   function drawMatrix(s: ReturnType<typeof stats>) {
-    const top = 34;
+    const top = COL.y + 34;
     label('the covariance matrix C', COL.x, top, 0.6, 'left', 12);
-    const bx = COL.x + 20, by = top + 18, bw = 262, bh = 104;
+    const bw = 262, bh = 104, bx = tall ? COL.x + (COL.w - bw) / 2 : COL.x + 20, by = top + 18;
     ctx.strokeStyle = ink(0.6);
     ctx.lineWidth = 1.6;
     for (const [x, d] of [[bx, 1], [bx + bw, -1]] as const) {
@@ -292,27 +303,27 @@ import Try from '../../../components/sim/Try.astro';
     }
     const cc = s.cov >= 0 ? POS : NEG;
     const cells: [string, string, string, number, number][] = [
-      ['var x', s.vx.toFixed(2), VX, 0, 0],
-      ['cov', s.cov.toFixed(2).replace('-', '−'), cc, 1, 0],
-      ['cov', s.cov.toFixed(2).replace('-', '−'), cc, 0, 1],
-      ['var y', s.vy.toFixed(2), VY, 1, 1],
+      ['var x', fixed(s.vx), VX, 0, 0],
+      ['cov', fixed(s.cov), cc, 1, 0],
+      ['cov', fixed(s.cov), cc, 0, 1],
+      ['var y', fixed(s.vy), VY, 1, 1],
     ];
     for (const [name, v, col, c, r] of cells) {
       const cx = bx + bw * (c ? 0.73 : 0.27), cy = by + bh * (r ? 0.74 : 0.3);
-      label(v, cx, cy + 6, 1, 'center', 19, col);
-      label(name, cx, cy + 22, 0.4, 'center', 10.5);
+      label(v, cx, cy + 4, 1, 'center', 19, col);
+      label(name, cx, cy + 24, 0.45, 'center', 10.5);
     }
   }
 
   /** cov as the teal areas minus the red ones, each divided by n. */
   function drawBalance(s: ReturnType<typeof stats>) {
-    const top = 196;
+    const top = COL.y + 196;
     label('cov = average signed area', COL.x, top, 0.6, 'left', 12);
-    label('teal minus red, over n', COL.x, top + 16, 0.34, 'left', 11);
+    label('teal minus red, over n', COL.x, top + 21, 0.4, 'left', 11);
     const mid = COL.x + COL.w / 2, half = COL.w / 2 - 6;
     const big = Math.max(s.pos, s.neg, 1e-6);
     const k = half / big;
-    const y = top + 34, h = 18;
+    const y = top + 38, h = 18;
     ctx.fillStyle = rgba(POS, 0.65);
     ctx.fillRect(mid, y, s.pos * k, h);
     ctx.fillStyle = rgba(NEG, 0.65);
@@ -320,24 +331,24 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = ink(0.5);
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(mid, y - 4); ctx.lineTo(mid, y + h + 4); ctx.stroke();
-    label(`−${s.neg.toFixed(2)}`, mid - 6, y + h + 16, 0.9, 'right', 11, NEG);
-    label(`+${s.pos.toFixed(2)}`, mid + 6, y + h + 16, 0.9, 'left', 11, POS);
+    label(`−${fixed(s.neg)}`, mid - 6, y + h + 18, 0.9, 'right', 11, NEG);
+    label(`+${fixed(s.pos)}`, mid + 6, y + h + 18, 0.9, 'left', 11, POS);
     // the net: what is left when the two sides cancel
-    const ny = y + h + 32;
+    const ny = y + h + 34;
     const net = s.cov * k;
     const col = s.cov >= 0 ? POS : NEG;
     ctx.fillStyle = col;
     ctx.fillRect(Math.min(mid, mid + net), ny, Math.abs(net), 8);
     ctx.beginPath(); ctx.arc(mid + net, ny + 4, 5, 0, Math.PI * 2); ctx.fill();
-    label(`net ${s.cov >= 0 ? '+' : '−'}${Math.abs(s.cov).toFixed(2)} = cov`, mid, ny + 28, 1, 'center', 11.5, col);
+    label(`net ${s.cov >= 0 ? '+' : '−'}${fixed(Math.abs(s.cov))} = cov`, mid, ny + 30, 1, 'center', 11.5, col);
   }
 
   /** ρ = cov / (σx σy): the same sign, with the units divided out. */
   function drawRho(s: ReturnType<typeof stats>) {
-    const top = 352;
+    const top = COL.y + 360;
     label('correlation ρ = cov/(σx σy)', COL.x, top, 0.6, 'left', 12);
-    label('cov with the units taken out', COL.x, top + 16, 0.34, 'left', 11);
-    const x0 = COL.x + 8, x1 = COL.x + COL.w - 8, y = top + 44;
+    label('cov with the units taken out', COL.x, top + 21, 0.4, 'left', 11);
+    const x0 = COL.x + 8, x1 = COL.x + COL.w - 8, y = top + 62;
     const at = (r: number) => x0 + ((r + 1) / 2) * (x1 - x0);
     const grad = ctx.createLinearGradient(x0, 0, x1, 0);
     grad.addColorStop(0, rgba(NEG, 0.6)); grad.addColorStop(0.5, ink(0.15)); grad.addColorStop(1, rgba(POS, 0.6));
@@ -346,19 +357,19 @@ import Try from '../../../components/sim/Try.astro';
     for (const r of [-1, 0, 1]) {
       ctx.strokeStyle = ink(0.4);
       ctx.beginPath(); ctx.moveTo(at(r), y - 8); ctx.lineTo(at(r), y + 8); ctx.stroke();
-      label(r === -1 ? '−1' : String(r), at(r), y + 22, 0.4, 'center', 10.5);
+      label(fixed(r, 0), at(r), y + 24, 0.45, 'center', 10.5);
     }
     const col = s.rho >= 0 ? POS : NEG;
     ctx.fillStyle = col;
     ctx.strokeStyle = ink(0.9);
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(at(s.rho), y, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    label(s.rho.toFixed(2).replace('-', '−'), at(s.rho), y - 14, 1, 'center', 12, col);
+    label(fixed(s.rho), at(s.rho), y - 15, 1, 'center', 12, col);
 
     // the two spreads it divides by
-    const sy = y + 54;
-    label(`σx = ${Math.sqrt(s.vx).toFixed(2)}`, COL.x, sy, 0.95, 'left', 11.5, VX);
-    label(`σy = ${Math.sqrt(s.vy).toFixed(2)}`, COL.x + COL.w / 2, sy, 0.95, 'left', 11.5, VY);
+    const sy = y + 56;
+    label(`σx = ${fixed(Math.sqrt(s.vx))}`, COL.x, sy, 0.95, 'left', 11.5, VX);
+    label(`σy = ${fixed(Math.sqrt(s.vy))}`, COL.x + COL.w / 2, sy, 0.95, 'left', 11.5, VY);
   }
 
   function draw() {
@@ -380,31 +391,32 @@ import Try from '../../../components/sim/Try.astro';
         ['\\operatorname{cov}(x,y) = \\tfrac1n \\sum_i (x_i-\\bar x)(y_i-\\bar y)', POS],
       ],
       live: [
-        [`\\operatorname{cov} = ${s.pos.toFixed(2)} - ${s.neg.toFixed(2)} = ${s.cov.toFixed(3)}`, cc],
-        [`\\quad \\rho = \\frac{${s.cov.toFixed(2)}}{${Math.sqrt(s.vx).toFixed(2)}\\cdot ${Math.sqrt(s.vy).toFixed(2)}} = ${s.rho.toFixed(2)}`, cc],
+        [`\\operatorname{cov} = ${fixed(s.pos)} - ${fixed(s.neg)} = ${fixed(s.cov, 3)}`, cc],
+        [`\\quad \\rho = \\frac{${fixed(s.cov)}}{${fixed(Math.sqrt(s.vx))}\\cdot ${fixed(Math.sqrt(s.vy))}} = ${fixed(s.rho)}`, cc],
       ],
     });
-    const strength = Math.abs(s.rho) > 0.7 ? 'strongly' : Math.abs(s.rho) > 0.3 ? 'loosely' : '';
+    const strength = Math.abs(s.rho) > 0.7 ? ', strongly' : Math.abs(s.rho) > 0.3 ? ', loosely' : ', weakly';
+    // every note is about two lines on a phone, so the strip keeps its height
     setResult({
-      value: s.cov.toFixed(3),
+      value: fixed(s.cov, 3),
       colour: Math.abs(s.rho) < 0.1 ? undefined : cc,
       status:
         Math.abs(s.rho) < 0.1
-          ? `ρ = ${s.rho.toFixed(2)}: the teal and red rectangles nearly cancel`
-          : `ρ = ${s.rho.toFixed(2)}: x and y ${s.cov > 0 ? 'rise' : 'move opposite'} ${strength} together`,
+          ? `ρ = ${fixed(s.rho)}: the rectangles cancel`
+          : `ρ = ${fixed(s.rho)}: ${s.cov > 0 ? 'rising together' : 'moving opposite'}${strength}`,
       note:
         view.mode === 'curve'
-          ? 'y is fixed by x almost exactly, yet cov is near zero: the left half of the curve cancels the right. Covariance only sees straight-line trends.'
+          ? 'y follows x exactly, yet cov ≈ 0: the left half of the curve cancels the right.'
           : view.sx !== 1
-            ? `x is stretched ×${view.sx.toFixed(2)}: var x grows by the square, cov by the stretch, and ρ stays where it was.`
-            : 'Each point adds the area of its rectangle to the mean; cov is the average, signs included.',
+            ? `x stretched ×${fixed(view.sx)}: var x grows by the square, cov by the stretch, ρ stays.`
+            : 'Each point adds the area of its rectangle; cov is the average, signs included.',
     });
     setRows({
-      'r-mean': `${s.mx.toFixed(2)}, ${s.my.toFixed(2)}`,
-      'r-sd': `${Math.sqrt(s.vx).toFixed(2)}, ${Math.sqrt(s.vy).toFixed(2)}`,
-      'r-pos': s.pos.toFixed(3),
-      'r-neg': s.neg.toFixed(3),
-      'r-rho': s.rho.toFixed(3),
+      'r-mean': `${fixed(s.mx)}, ${fixed(s.my)}`,
+      'r-sd': `${fixed(Math.sqrt(s.vx))}, ${fixed(Math.sqrt(s.vy))}`,
+      'r-pos': fixed(s.pos, 3),
+      'r-neg': fixed(s.neg, 3),
+      'r-rho': fixed(s.rho, 3),
     });
   }
 
@@ -414,8 +426,8 @@ import Try from '../../../components/sim/Try.astro';
     view.rho = v / 100;
     if (view.mode === 'curve') { view.mode = 'custom'; datas.clear(); }
     build(); draw();
-  }, (v) => (v / 100).toFixed(2).replace('-', '−'));
-  const setSx = slider('sx', (v) => { view.sx = v / 100; build(); fit(false); draw(); }, (v) => `×${(v / 100).toFixed(2)}`);
+  }, (v) => fixed(v / 100));
+  const setSx = slider('sx', (v) => { view.sx = v / 100; build(); fit(false); draw(); }, (v) => `×${fixed(v / 100)}`);
   const setN = slider('n', (v) => { view.n = v; hover = -1; build(); draw(); });
   check('rects', (on) => { view.rects = on; draw(); });
   check('ellipse', (on) => { view.ellipse = on; draw(); });
@@ -484,6 +496,7 @@ import Try from '../../../components/sim/Try.astro';
     const i = nearest(local(e));
     if (i < 0) return;
     drag = i;
+    grabCursor(canvas, true, true);
     view.mode = 'custom';
     datas.clear();
     canvas.setPointerCapture(e.pointerId);
@@ -497,10 +510,10 @@ import Try from '../../../components/sim/Try.astro';
       return;
     }
     const i = nearest(p);
-    canvas.style.cursor = i >= 0 ? 'grab' : 'default';
+    grabCursor(canvas, i >= 0, false);
     if (i !== hover) { hover = i; draw(); }
   });
-  const stop = () => { if (drag >= 0) { hover = drag; drag = -1; draw(); } };
+  const stop = () => { if (drag >= 0) { hover = drag; drag = -1; grabCursor(canvas, true, false); draw(); } };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
   canvas.addEventListener('pointerleave', () => { if (drag < 0 && hover >= 0) { hover = -1; draw(); } });
@@ -512,6 +525,11 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  @media (max-width: 599px) {
+    #cov {
+      aspect-ratio: 600 / 980;
+    }
+  }
   #cov {
     touch-action: none;
   }

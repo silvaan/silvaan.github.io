@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Maximum Likelihood"
-  description="Which bell curve most likely produced this data? Let every point vote with the height of the bell above it, multiply the votes, and slide the bell until the product is as large as it can be. It lands on the sample mean and on the spread that divides by n."
+  description="Which bell curve most likely produced this data? Each point votes with the height of the bell above it; slide the bell to make the product of votes largest. It lands on the sample mean."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -30,8 +30,7 @@ import Try from '../../../components/sim/Try.astro';
       <Caption
         legend={[
           { label: 'data', color: '#f59e0b' },
-          { label: 'candidate bell', color: '#5eead4' },
-          { label: 'each point’s vote', color: '#5eead4' },
+          { label: 'candidate bell and its votes', color: '#5eead4' },
           { label: 'log-likelihood', color: '#7c8cff' },
         ]}
         hint="Drag the bell (sideways moves it, up and down widens it) or drag a data point"
@@ -98,11 +97,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, fixed } from '../../../lib/draw';
+  import { stageInk, fixed, handle, grabCursor } from '../../../lib/draw';
   import { el, slider, result, readout, tries } from '../../../lib/panel';
-  import { story, headline, say, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
+  import { story, headline, say as sayAt, withAlpha, isLight, beat, easeOut, lerp, clamp01 } from '../../../lib/story';
 
   // Likelihood as a vote. Each data point votes with the height of the bell
   // above it; the likelihood is the product of the votes, and its log the sum
@@ -115,6 +114,9 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('mle') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas);
   const { ink, inv, bg } = stageInk(canvas);
+  /** On a phone every label is drawn at 14 or more, the least that still reads there. */
+  const say = (...[c, text, x, y, o = {}]: Parameters<typeof sayAt>) =>
+    sayAt(c, text, x, y, isCompact(canvas) ? { ...o, size: Math.max(14, o.size ?? 14) } : o);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -224,11 +226,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(PX0 - 10, TOP.base + 0.5);
     ctx.lineTo(PX1 + 10, TOP.base + 0.5);
     ctx.stroke();
-    ctx.fillStyle = ink(0.35);
-    ctx.font = '11px ui-monospace, monospace';
+    ctx.fillStyle = ink(0.45);
+    ctx.font = `${tickPx()}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    for (let x = XR[0]; x <= XR[1]; x++) ctx.fillText(String(x).replace('-', '−'), sx(x), TOP.base + 30);
+    ctx.textBaseline = 'middle';
+    const every = isCompact(canvas) ? 2 : 1;
+    for (let x = XR[0] + 1; x < XR[1]; x += every) ctx.fillText(fixed(x, 0), sx(x), TOP.base + 24);
   }
+
+  /** Tick labels: about 12 px on screen on a desktop, 9 on a phone. */
+  const tickPx = () => (isCompact(canvas) ? textPx(canvas, 12, 9.5, 3) : textPx(canvas, 12, 11.5));
 
   function bell(a: number, light: boolean) {
     ctx.save();
@@ -280,13 +287,7 @@ import Try from '../../../components/sim/Try.astro';
       const u = ch === 0 ? easeOut((t - 0.4 - i * 0.22) / 0.5) : 1;
       if (u <= 0) continue;
       const y = lerp(TOP.top - 40, TOP.base, u);
-      ctx.fillStyle = AMBER;
-      ctx.strokeStyle = bg();
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(sx(data[i]), y, i === dragPt ? 8 : 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      handle(ctx, sx(data[i]), y, AMBER, { r: 6, hot: i === dragPt || i === hoverPt, ring: bg() });
     }
   }
 
@@ -302,7 +303,7 @@ import Try from '../../../components/sim/Try.astro';
   function productPanel(t: number, light: boolean) {
     const a = beat(t, 2.6, 3.4);
     if (a <= 0) return;
-    const n = data.length, w = (PX1 - PX0 - 260) / n;
+    const n = data.length, w = (PX1 - PX0 - 260) / n, compact = isCompact(canvas);
     const vmax = 1 / (S.sg * Math.sqrt(2 * Math.PI));
     say(ctx, 'the votes', PX0, LOW.y - 4, { colour: ink(0.55), size: 13, alpha: a });
     let L = 1;
@@ -313,13 +314,13 @@ import Try from '../../../components/sim/Try.astro';
       const x = PX0 + i * w;
       ctx.fillStyle = withAlpha(weak(v) ? RED : TEAL, 0.7 * a);
       ctx.fillRect(x + 3, LOW.y + LOW.h - 20 - h, w - 6, h);
-      if (i < n - 1) say(ctx, '×', x + w, LOW.y + LOW.h - 30, { colour: ink(0.35), size: 12, align: 'center', alpha: a });
+      if (i < n - 1 && !compact) say(ctx, '×', x + w, LOW.y + LOW.h - 30, { colour: ink(0.35), size: 12, align: 'center', alpha: a });
     }
     const x = PX1 - 230;
     say(ctx, 'likelihood L =', x, LOW.y + 40, { colour: ink(0.6), size: 14, alpha: a });
     say(ctx, sci(L), x, LOW.y + 70, { colour: light ? '#0d9488' : TEAL, size: 26, weight: 700, alpha: a });
     const worst = Math.min(...data.map((d) => pdf(d, S.mu, S.sg)));
-    if (weak(worst)) say(ctx, 'one weak vote drags it all down', x, LOW.y + 100, { colour: RED, size: 13, weight: 600, alpha: a });
+    if (weak(worst) && !compact) say(ctx, 'one weak vote drags it all down', x, LOW.y + 100, { colour: RED, size: 13, weight: 600, alpha: a });
   }
 
   /** Chapter 3: each vote as a cost −log v, laid end to end. */
@@ -329,7 +330,8 @@ import Try from '../../../components/sim/Try.astro';
     const total = costs.reduce((p, c) => p + c, 0);
     const scale = Math.min(26, (PX1 - PX0 - 30) / Math.max(total, 30));
     const y = LOW.y + 50;
-    say(ctx, 'each vote as a cost, −log(vote), laid end to end', PX0, LOW.y + 14, { colour: ink(0.55), size: 13 });
+    const compact = isCompact(canvas);
+    say(ctx, compact ? 'each vote as a cost, −log(vote)' : 'each vote as a cost, −log(vote), laid end to end', PX0, LOW.y + 14, { colour: ink(0.55), size: 13 });
     let x = PX0;
     for (let i = 0; i < n; i++) {
       const g = beat(t, 0.8 + i * 0.18, 1.2 + i * 0.18);
@@ -345,7 +347,7 @@ import Try from '../../../components/sim/Try.astro';
     say(ctx, `total cost −log L = ${total.toFixed(1)}`, room ? x + 12 : PX1, room ? y + 13 : y - 14, {
       colour: ink(0.9), size: 16, weight: 700, align: room ? 'left' : 'right', alpha: a, halo: inv(0.8),
     });
-    say(ctx, 'smaller is better: the same as a larger product', PX0, y + 58, { colour: ink(0.6), size: 13, alpha: a });
+    if (!compact) say(ctx, 'smaller is better: the same as a larger product', PX0, y + 58, { colour: ink(0.6), size: 13, alpha: a });
     if (t > 7) {
       const worst = costs.indexOf(Math.max(...costs));
       say(ctx, `this point: vote ${sci(Math.exp(-costs[worst]))}, cost ${costs[worst].toFixed(1)}`, sx(data[worst]), TOP.base - 20, {
@@ -383,7 +385,9 @@ import Try from '../../../components/sim/Try.astro';
     for (let i = 0; i <= 120; i++) vals.push(f(lo + ((hi - lo) * i) / 120));
     const top = Math.max(...vals), bottom = Math.max(Math.min(...vals), top - 60);
     const gx = (v: number) => box.x + ((v - lo) / (hi - lo)) * box.w;
-    const gy = (v: number) => box.y + 18 + (1 - (Math.max(v, bottom) - bottom) / (top - bottom || 1)) * (box.h - 18);
+    // room under the title, which is taller on a phone
+    const head = isCompact(canvas) ? 34 : 18;
+    const gy = (v: number) => box.y + head + (1 - (Math.max(v, bottom) - bottom) / (top - bottom || 1)) * (box.h - head);
     say(ctx, title, box.x, box.y + 4, { colour: ink(0.55), size: 13 });
     ctx.strokeStyle = ink(0.15);
     ctx.lineWidth = 1;
@@ -408,17 +412,20 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(gx(at), y, 5.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = ink(0.4);
-    ctx.font = '11px ui-monospace, monospace';
+    ctx.fillStyle = ink(0.45);
+    ctx.font = `${tickPx()}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    const step = hi - lo > 4 ? 1 : 0.5;
-    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ctx.fillText(String(v).replace('-', '−'), gx(v), box.y + box.h + 14);
+    ctx.textBaseline = 'middle';
+    const step = (hi - lo > 4 ? 1 : 0.5) * (isCompact(canvas) && box.w < 600 ? 2 : 1);
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step)
+      ctx.fillText(step < 1 ? fixed(v, 1) : fixed(v, 0), gx(v), box.y + box.h + 16);
   }
 
   function explorePanel(light: boolean) {
     const w = (PX1 - PX0 - 40) / 2;
-    curvePanel({ x: PX0, y: LOW.y, w, h: LOW.h - 20 }, -3, 3, (v) => logLik(v, S.sg), S.mu, 'μ', null, light, 'log L as μ changes, at this σ');
-    curvePanel({ x: PX0 + w + 40, y: LOW.y, w, h: LOW.h - 20 }, 0.3, 3, (v) => logLik(S.mu, v), S.sg, 'σ', null, light, 'log L as σ changes, at this μ');
+    const short = isCompact(canvas);
+    curvePanel({ x: PX0, y: LOW.y, w, h: LOW.h - 20 }, -3, 3, (v) => logLik(v, S.sg), S.mu, 'μ', null, light, short ? 'log L against μ' : 'log L as μ changes, at this σ');
+    curvePanel({ x: PX0 + w + 40, y: LOW.y, w, h: LOW.h - 20 }, 0.3, 3, (v) => logLik(S.mu, v), S.sg, 'σ', null, light, short ? 'log L against σ' : 'log L as σ changes, at this μ');
   }
 
   // ---------- panel ----------
@@ -469,13 +476,18 @@ import Try from '../../../components/sim/Try.astro';
     const b = canvas.getBoundingClientRect();
     return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
   };
-  let dragPt = -1;
+  let dragPt = -1, hoverPt = -1;
+  const nearPoint = (p: { x: number; y: number }) => {
+    let best = -1, bd = isCompact(canvas) ? 30 : 16;
+    data.forEach((d, i) => { const dd = Math.hypot(sx(d) - p.x, TOP.base - p.y); if (dd < bd) { bd = dd; best = i; } });
+    return best;
+  };
+  const inBell = (p: { x: number; y: number }) => p.y <= TOP.base + 40 && p.y >= TOP.top - 60;
   let dragBell: { x: number; y: number; mu: number; sg: number } | null = null;
   canvas.addEventListener('pointerdown', (e) => {
     const p = toLocal(e);
-    if (p.y > TOP.base + 40 || p.y < TOP.top - 60) return;
-    let best = -1, bd = 14;
-    data.forEach((d, i) => { const dd = Math.hypot(sx(d) - p.x, TOP.base - p.y); if (dd < bd) { bd = dd; best = i; } });
+    if (!inBell(p)) return;
+    const best = nearPoint(p);
     st.touch();
     if (best >= 0) dragPt = best;
     else dragBell = { ...p, mu: S.mu, sg: S.sg };
@@ -485,12 +497,15 @@ import Try from '../../../components/sim/Try.astro';
     const p = toLocal(e);
     if (dragPt >= 0) data[dragPt] = Math.max(-4.9, Math.min(4.9, xs(p.x)));
     else if (dragBell) set(dragBell.mu + xs(p.x) - xs(dragBell.x), dragBell.sg * Math.exp((p.y - dragBell.y) * -0.006));
+    else hoverPt = nearPoint(p);
+    grabCursor(canvas, inBell(p), dragPt >= 0 || !!dragBell);
   });
   canvas.addEventListener('pointerup', () => {
     if (dragPt >= 0) { data.sort((a, b) => a - b); }
     dragPt = -1;
     dragBell = null;
   });
+  canvas.addEventListener('pointerleave', () => { hoverPt = -1; });
 
   tries({
     off: () => { st.go(5); set(-2.4, 1); },

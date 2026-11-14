@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="statistics"
   title="Joint, Marginals & Conditionals"
-  description="Every pair of values gets its own square of probability. Drag a box over the pairs you care about: the squares inside are the joint, each edge stacks up a marginal, and a marginal divided by its total is a conditional."
+  description="Every pair of values gets its own square of probability. Drag a box over some pairs: the squares inside are the joint, each edge stacks up a marginal, and a marginal over its total is a conditional."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -90,7 +90,7 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas, makeText } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect } from '../../../lib/draw';
+  import { stageInk, roundRect, fixed } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
 
   const N = 5;
@@ -98,16 +98,24 @@ import Try from '../../../components/sim/Try.astro';
   const state = { rho: 0, i0: 2, i1: 3, j0: 1, j1: 2, given: 'x' as 'x' | 'y' };
 
   const canvas = el('jp') as HTMLCanvasElement;
+  // On a phone the conditional goes under the table instead of beside it, so
+  // the whole picture is drawn on a narrower canvas and its labels stay legible.
+  // the same breakpoint as the page style that gives the canvas this shape before it is drawn
+  const tall = matchMedia('(max-width: 599px)').matches;
+  if (tall) {
+    canvas.width = 600;
+    canvas.height = 960;
+  }
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, tall ? 9.5 : 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
   const XC = '#7c8cff'; // anything about x
   const YC = '#5eead4'; // anything about y
   const EV = '#f59e0b'; // the event you dragged out
-  const fmt = (v: number, n = 3) => v.toFixed(n);
+  const fmt = (v: number, n = 3) => fixed(v, n);
 
   // A joint that starts independent and can be tilted onto either diagonal.
   // p(i,j) ∝ a_i b_j e^{ρ z_i z_j}, so ρ = 0 is exactly independent.
@@ -167,10 +175,10 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // --- layout: the table with its marginals on the left, the conditional on the right
-  const G = { x: 80, y: 40, cell: 82 };
-  const MX = { y: G.y + N * G.cell + 12, h: 60 }; // the x marginal, underneath
+  const G = { x: tall ? 70 : 80, y: 40, cell: 82 };
+  const MX = { y: G.y + N * G.cell + 22, h: 56 }; // the x marginal, underneath
   const MY = { x: G.x + N * G.cell + 12, w: 60 }; // the y marginal, on the right
-  const COND = { x: 660, y: 120, w: 300, h: 300 };
+  const COND = tall ? { x: 90, y: 660, w: 420, h: 210 } : { x: 660, y: 120, w: 300, h: 300 };
   const cx = (i: number) => G.x + i * G.cell;
   const cy = (j: number) => G.y + (N - 1 - j) * G.cell; // y grows upward
 
@@ -267,8 +275,8 @@ import Try from '../../../components/sim/Try.astro';
   function drawConditional() {
     const C = conditional();
     const gc = C.given === 'x' ? XC : YC;
-    label(`the kept ${C.given === 'x' ? 'columns' : 'rows'} ÷ P(${C.given} in ${C.given === 'x' ? 'A' : 'B'}) = ${fmt(C.denom)}`, COND.x, COND.y - 30, 1, 'left', 11.5, gc);
-    label(`P(${C.over} | ${C.given}): a distribution again`, COND.x, COND.y - 12, 0.5, 'left', 11.5);
+    label(`the kept ${C.given === 'x' ? 'columns' : 'rows'} ÷ P(${C.given} in ${C.given === 'x' ? 'A' : 'B'}) = ${fmt(C.denom)}`, COND.x, COND.y - 40, 1, 'left', 11.5, gc);
+    label(`P(${C.over} | ${C.given}): a distribution again`, COND.x, COND.y - 16, 0.5, 'left', 11.5);
 
     const cmx = Math.max(...C.bars, 1e-6) * 1.2;
     const cw = COND.w / N;
@@ -290,8 +298,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(COND.x + COND.w, COND.y + COND.h + 1);
     ctx.stroke();
     label(C.over, COND.x + COND.w + 12, COND.y + COND.h + 18, 0.3, 'left', 11.5);
-    label('all five add to 1', COND.x, COND.y + COND.h + 44, 0.4, 'left', 11.5);
-    label(`the amber ones add to ${C.name} = ${fmt(kept)}`, COND.x, COND.y + COND.h + 62, 1, 'left', 11.5, EV);
+    label('all five add to 1', COND.x, COND.y + COND.h + 46, 0.4, 'left', 11.5);
+    label(`the amber ones add to ${C.name} = ${fmt(kept)}`, COND.x, COND.y + COND.h + 68, 1, 'left', 11.5, EV);
   }
 
   function draw() {
@@ -332,7 +340,7 @@ import Try from '../../../components/sim/Try.astro';
       colour: EV,
       status: indep
         ? `P(A) × P(B) = ${fmt(prod)}, the same: A and B are independent here`
-        : `P(A) × P(B) = ${fmt(prod)}: ${rel.toFixed(2)}× ${rel > 1 ? 'more' : 'less'} than the product`,
+        : `P(A) × P(B) = ${fmt(prod)}: ${fixed(rel, 2)}× ${rel > 1 ? 'more' : 'less'} than the product`,
       note: indep
         ? 'The product agrees with the joint, which is exactly what independence means. The conditional does not move as you slide the box across.'
         : 'The product disagrees with the joint, so knowing one of the two numbers tells you something about the other.',
@@ -383,7 +391,7 @@ import Try from '../../../components/sim/Try.astro';
   canvas.addEventListener('pointercancel', drop);
 
   const presets = segmented('preset', (p) => setRho([-1, 0, 1][+p]));
-  const setRhoSlider = slider('rho', (v) => { state.rho = v / 100; presets.clear(); draw(); }, (v) => (v / 100).toFixed(2));
+  const setRhoSlider = slider('rho', (v) => { state.rho = v / 100; presets.clear(); draw(); }, (v) => fixed(v / 100, 2));
   function setRho(v: number) {
     state.rho = v;
     setRhoSlider(Math.round(v * 100));
@@ -409,6 +417,11 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  @media (max-width: 599px) {
+    #jp {
+      aspect-ratio: 600 / 960;
+    }
+  }
   #jp {
     cursor: crosshair;
     touch-action: none;
