@@ -49,7 +49,7 @@ export function eng(v: number, unit: string, digits = 2): string {
   ];
   let pick = steps[0];
   for (const s of steps) if (a >= s[0]) pick = s;
-  return `${(v / pick[0]).toFixed(digits)} ${pick[1]}${unit}`;
+  return `${(v / pick[0]).toFixed(digits).replace('-', '−')} ${pick[1]}${unit}`;
 }
 
 /**
