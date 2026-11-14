@@ -31,7 +31,6 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'test points', color: 'rgba(154,160,172,0.7)' },
           { label: 'the fit', color: '#f59e0b' },
           { label: 'true function', color: 'rgba(232,233,236,0.45)' },
-          { label: 'train error', color: '#5eead4' },
         ]}
       />
       <Result label="Test error" />
@@ -67,11 +66,13 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
   import { el, slider, result, readout, tries } from '../../../lib/panel';
 
+  // the test-error curve is drawn in the grey of the test points, so it never
+  // reads as the fitted curve
   const TRAIN = '#7c8cff', FIT = '#f59e0b', TRAINERR = '#5eead4';
   const N_TRAIN = 12, MAX_D = N_TRAIN - 1; // degree n − 1 can pass through every point
   const state = { degree: 3, lambda: 0 };
@@ -81,7 +82,7 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('of') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -171,6 +172,8 @@ import Try from '../../../components/sim/Try.astro';
   const sx = (x: number) => TOP.l + ((x - XR[0]) / (XR[1] - XR[0])) * (W - TOP.l - TOP.r);
   const sy = (y: number) => TOP.bottom - TOP.b - ((y - YR[0]) / (YR[1] - YR[0])) * (TOP.bottom - TOP.t - TOP.b);
 
+  /** Marks grow when the canvas is shown small, so points stay visible on a phone. */
+  let g = 1;
   function drawFit(w: number[]) {
     ctx.strokeStyle = ink(0.07);
     ctx.lineWidth = 1;
@@ -180,7 +183,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(sx(x), TOP.t);
       ctx.lineTo(sx(x), TOP.bottom - TOP.b);
       ctx.stroke();
-      label(x.toFixed(2), sx(x), TOP.bottom - TOP.b + 18, 0.3, 'center', 11.5);
+      if (i % 2 === 0) label(fixed(x, 1), sx(x), TOP.bottom - TOP.b + 22, 0.45, 'center', 10);
     }
     ctx.strokeStyle = ink(0.25);
     ctx.beginPath();
@@ -214,7 +217,7 @@ import Try from '../../../components/sim/Try.astro';
     for (const p of test) {
       ctx.fillStyle = ink(0.35);
       ctx.beginPath();
-      ctx.arc(sx(p.x), sy(p.y), 2.2, 0, Math.PI * 2);
+      ctx.arc(sx(p.x), sy(p.y), 2.2 * g, 0, Math.PI * 2);
       ctx.fill();
     }
     for (const p of train) {
@@ -222,7 +225,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.strokeStyle = inv(0.9);
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(sx(p.x), sy(p.y), 5.5, 0, Math.PI * 2);
+      ctx.arc(sx(p.x), sy(p.y), 5.5 * g, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -240,7 +243,8 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function drawStrip() {
-    label('error against degree, at this λ', STRIP.x, STRIP.y - 10, 0.45, 'left', 11.5);
+    const small = isCompact(canvas);
+    if (!small) label('error against degree, at this λ', STRIP.x, STRIP.y - 12, 0.55, 'left', 10);
     const maxD = MAX_D;
     const { tr, te } = curves();
     const hi = Math.max(0.3, ...te, ...tr) * 1.1;
@@ -252,8 +256,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(STRIP.x, STRIP.y + STRIP.h);
     ctx.lineTo(STRIP.x + STRIP.w, STRIP.y + STRIP.h);
     ctx.stroke();
-    for (let d = 0; d <= maxD; d++) label(String(d), gx(d), STRIP.y + STRIP.h + 16, 0.3, 'center', 11);
-    label('degree', STRIP.x + STRIP.w, STRIP.y + STRIP.h + 32, 0.3, 'right', 11);
+    for (let d = 0; d <= maxD; d++) if (!small || d % 2 === 1) label(String(d), gx(d), STRIP.y + STRIP.h + 20, 0.45, 'center', 10);
     const plot = (arr: number[], color: string) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
@@ -262,9 +265,17 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     };
     plot(tr, TRAINERR);
-    plot(te, FIT);
-    label('test', gx(maxD) + 8, gy(te[maxD]) + 4, 1, 'left', 11.5, FIT);
-    label('train', gx(maxD) + 8, gy(tr[maxD]) + 4, 1, 'left', 11.5, TRAINERR);
+    plot(te, ink(0.7));
+    // the two end labels are pushed apart when the curves end close together
+    let yTe = gy(te[maxD]) + 5, yTr = gy(tr[maxD]) + 5;
+    const gap = textPx(canvas, 14, 11) + 4;
+    if (Math.abs(yTe - yTr) < gap) {
+      const mid = (yTe + yTr) / 2;
+      yTe = mid - gap / 2;
+      yTr = mid + gap / 2;
+    }
+    label('test', gx(maxD) + 10, yTe, 0.8, 'left', 10);
+    label('train', gx(maxD) + 10, yTr, 1, 'left', 10, TRAINERR);
     ctx.strokeStyle = ink(0.4);
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
@@ -276,6 +287,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    g = Math.max(1, 0.6 / screenScale(canvas));
     const w = fit(state.degree, state.lambda);
     drawFit(w);
     drawStrip();
@@ -287,11 +299,10 @@ import Try from '../../../components/sim/Try.astro';
       : ['fitting well', 'Train and test errors are close: the curve follows the trend without memorising the noise.'];
     setEq({
       rule: [['\\hat y = \\sum_{k=0}^{d} w_k P_k(x)', FIT], '\\quad\\text{minimising}\\quad', ['\\sum_i (y_i - \\hat y_i)^2', TRAINERR], `+ \\lambda\\sum_{k\\ge 1} w_k^2`],
-      live: [`d = ${state.degree}`, `\\quad\\lambda = ${state.lambda.toFixed(3)}`, [`\\quad\\text{train} = ${fixed(trainErr, 4)}`, TRAINERR], [`\\quad\\text{test} = ${fixed(testErr, 4)}`, FIT]],
+      live: [`d = ${state.degree}`, `\\quad\\lambda = ${fixed(state.lambda, 3)}`, [`\\quad\\text{train} = ${fixed(trainErr, 4)}`, TRAINERR], `\\quad\\text{test} = ${fixed(testErr, 4)}`],
     });
     setResult({
       value: fixed(testErr, 4),
-      colour: FIT,
       status: `train error ${fixed(trainErr, 4)} · ${verdict[0]}`,
       note: verdict[1],
     });
@@ -300,7 +311,7 @@ import Try from '../../../components/sim/Try.astro';
 
   const lam = (v: number) => (v / 100) ** 2 * 2;
   const setD = slider('d', (v) => { state.degree = v; draw(); });
-  const setL = slider('l', (v) => { state.lambda = lam(v); draw(); }, (v) => lam(v).toFixed(3));
+  const setL = slider('l', (v) => { state.lambda = lam(v); draw(); }, (v) => fixed(lam(v), 3));
   el('regen').addEventListener('click', () => { gen(); draw(); });
 
   function show(degree: number, l: number) {

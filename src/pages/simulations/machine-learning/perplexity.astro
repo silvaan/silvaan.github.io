@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="machine-learning"
   title="Perplexity of a Neighbourhood"
-  description="Give a point a Gaussian and its neighbours become probabilities. Perplexity, two to the entropy, counts how many neighbours that really is, and t-SNE picks a width for every point so the count comes out the same: narrow in a crowd, wide out on its own."
+  description="Give a point a Gaussian and its neighbours become probabilities. Perplexity counts how many neighbours that really is; t-SNE picks each point's width so the count is the same everywhere."
   shortcuts={['animate', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -100,9 +100,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
   import { sqDistances, searchSigma, rowAt, type Search } from '../../../lib/tsne';
 
@@ -124,13 +124,23 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('pp') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
   void W; void H;
 
+  // the point cloud on the left, the sorted probabilities and the search on
+  // the right; on a phone only the cloud is drawn, filling the canvas
   const PLOT = { x: 16, y: 16, w: 600, h: 568 };
+  let small = false, g = 1;
+  function layout() {
+    const was = small;
+    small = isCompact(canvas);
+    g = Math.max(1, 0.6 / screenScale(canvas));
+    Object.assign(PLOT, small ? { x: 0, y: 0, w: 1000, h: 600 } : { x: 16, y: 16, w: 600, h: 568 });
+    if (was !== small && pts.length) frame();
+  }
   const BARS = { x: 652, y: 46, w: 330, h: 210 };
   const SRCH = { x: 652, y: 330, w: 330, h: 222 };
 
@@ -213,8 +223,9 @@ import Try from '../../../components/sim/Try.astro';
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
   const UI = (size: number, weight = 400) => `${weight} ${size}px 'Inter', system-ui, sans-serif`;
+  /** Sans text, sized so it shows at no less than 11 screen pixels. */
   function text(s: string, x: number, y: number, size: number, col: string, align: CanvasTextAlign = 'left') {
-    ctx.font = UI(size);
+    ctx.font = UI(textPx(canvas, size, 11, 3));
     ctx.fillStyle = col;
     ctx.textAlign = align;
     ctx.fillText(s, x, y);
@@ -278,25 +289,27 @@ import Try from '../../../components/sim/Try.astro';
       const f = cur.p[j] / pmax;
       ctx.fillStyle = hexA(NB, 0.28 + 0.72 * Math.sqrt(f));
       ctx.beginPath();
-      ctx.arc(sx(pts[j][0]), sy(pts[j][1]), 2.6 + 9 * Math.sqrt(f), 0, 2 * Math.PI);
+      ctx.arc(sx(pts[j][0]), sy(pts[j][1]), (2.6 + 9 * Math.sqrt(f)) * g, 0, 2 * Math.PI);
       ctx.fill();
     }
     ctx.fillStyle = SEL;
     ctx.strokeStyle = inv(0.9);
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(px, py, 6.5, 0, 2 * Math.PI);
+    ctx.arc(px, py, 6.5 * g, 0, 2 * Math.PI);
     ctx.fill();
     ctx.stroke();
     // σ label on the ring
     const lx = px + sp * Math.cos(-0.6), ly = py + sp * Math.sin(-0.6);
-    if (sp > 14 && lx < PLOT.x + PLOT.w - 40 && ly > PLOT.y + 14) {
+    const st = `σ_i = ${fixed(cur.sigma, 2)}`;
+    const tw = textWidth(st, 8.5), th = textPx(canvas, 12, 11, 3);
+    if (!small && sp > 14 && lx + tw + 10 < PLOT.x + PLOT.w && ly > PLOT.y + th) {
       ctx.fillStyle = inv(0.75);
-      ctx.fillRect(lx + 3, ly - 13, 86, 18);
-      label(`σ_i = ${cur.sigma.toFixed(2)}`, lx + 7, ly, 1, 'left', 8.5, SEL);
+      ctx.fillRect(lx + 3, ly - th, tw + 8, th + 5);
+      label(st, lx + 7, ly, 1, 'left', 8.5, SEL);
     }
     ctx.restore();
-    text('i', px + 9, py - 8, 13, SEL);
+    text('i', px + 9 * g, py - 8 * g, 13, SEL);
   }
 
   function drawBars(cur: ReturnType<typeof current>) {
@@ -326,15 +339,15 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillRect(B.x, B.y + B.h - fh, fw, fh);
     ctx.strokeRect(B.x, B.y + B.h - fh, fw, fh);
     ctx.setLineDash([]);
-    const tx = Math.min(B.x + fw + 6, B.x + B.w - 150);
-    text(`flat over ${cur.perp.toFixed(1)} points`, tx, Math.max(B.y + 12, B.y + B.h - fh - 6), 11.5, FLAT);
-    text('same entropy, same perplexity', tx, Math.max(B.y + 27, B.y + B.h - fh + 9), 11, ink(0.45));
-    text('neighbours, nearest in probability first →', B.x, B.y + B.h + 16, 11, ink(0.4));
+    const ft = `flat over ${fixed(cur.perp, 1)}`;
+    ctx.font = UI(textPx(canvas, 12, 11, 3));
+    const tx = Math.min(B.x + fw + 6, B.x + B.w - ctx.measureText(ft).width);
+    text(ft, tx, Math.max(B.y + 16, B.y + B.h - fh - 8), 12, FLAT);
   }
 
   function drawSearch(cur: ReturnType<typeof current>) {
     const N = pts.length, B = SRCH;
-    text('finding σᵢ: perplexity rises with σ, so halve the gap', B.x, B.y - 18, 12, ink(0.55));
+    text('the search for σᵢ', B.x, B.y - 18, 12, ink(0.6));
     // the σ range: from a fraction of the nearest distance to well past the farthest
     let dmin = Infinity, dmax = 0;
     for (let j = 0; j < N; j++) if (j !== state.sel) { const d = Math.sqrt(D[state.sel * N + j]); dmin = Math.min(dmin, d); dmax = Math.max(dmax, d); }
@@ -350,9 +363,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(B.x, Y(v));
       ctx.lineTo(B.x + B.w, Y(v));
       ctx.stroke();
-      text(String(v), B.x - 4, Y(v) + 4, 10, ink(0.4), 'right');
+      text(String(v), B.x - 5, Y(v) + 4, 10, ink(0.5), 'right');
     }
-    text(`${N - 1}`, B.x - 4, B.y + 10, 10, ink(0.4), 'right');
+    text(`${N - 1}`, B.x - 5, B.y + 10, 10, ink(0.5), 'right');
     // the curve
     ctx.strokeStyle = ink(0.75);
     ctx.lineWidth = 1.6;
@@ -372,7 +385,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(B.x + B.w, Y(state.perp));
     ctx.stroke();
     ctx.setLineDash([]);
-    text(`asked for ${state.perp.toFixed(state.perp < 10 ? 1 : 0)}`, B.x + B.w - 4, Y(state.perp) - 5, 11, SEL, 'right');
+    text(`asked for ${fixed(state.perp, state.perp < 10 ? 1 : 0)}`, B.x + B.w - 4, Y(state.perp) - 6, 11, SEL, 'right');
     // the guesses
     const steps = sr.steps.slice(0, Math.min(shown, sr.steps.length));
     ctx.strokeStyle = hexA(SEARCH, 0.5);
@@ -386,7 +399,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.beginPath();
       ctx.arc(X(st.sigma), Y(st.perp), last ? 5 : 3.2, 0, 2 * Math.PI);
       ctx.fill();
-      if (k < 5) text(String(k + 1), X(st.sigma) + 6, Y(st.perp) + (k % 2 ? 14 : -6), 10, hexA(SEARCH, 0.9));
+      if (k < 4) text(String(k + 1), X(st.sigma) + 7, Y(st.perp) + (k % 2 ? 16 : -7), 10, hexA(SEARCH, 0.9));
     });
     // σ found
     ctx.strokeStyle = hexA(SEL, 0.5);
@@ -394,10 +407,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(X(cur.sigma), B.y);
     ctx.lineTo(X(cur.sigma), B.y + B.h);
     ctx.stroke();
-    text('σ, log scale →', B.x + B.w, B.y + B.h + 15, 11, ink(0.4), 'right');
-    // the empty corners: the curve runs from bottom left to top right
-    text('above the line: too many, narrow σ', B.x + 6, B.y + 14, 10.5, ink(0.38));
-    text('below: too few, widen σ', B.x + B.w - 6, B.y + B.h - 8, 10.5, ink(0.38), 'right');
+    text('σ, log scale →', B.x + B.w, B.y + B.h + 18, 11, ink(0.5), 'right');
   }
 
   function update(cur: ReturnType<typeof current>) {
@@ -409,44 +419,47 @@ import Try from '../../../components/sim/Try.astro';
     while (acc < 0.9 && k90 < sorted.length) acc += sorted[k90++];
     const steps = Math.min(shown, sr.steps.length);
     setRows({
-      'r-sigma': cur.sigma.toFixed(3),
-      'r-near': near.toFixed(3),
-      'r-h': `${cur.H.toFixed(2)} bits`,
-      'r-perp': cur.perp.toFixed(2),
+      'r-sigma': fixed(cur.sigma, 3),
+      'r-near': fixed(near, 3),
+      'r-h': `${fixed(cur.H, 2)} bits`,
+      'r-perp': fixed(cur.perp, 2),
       'r-90': `${k90} of ${N - 1}`,
       'r-steps': shown >= sr.steps.length ? String(sr.steps.length) : `${steps} of ${sr.steps.length}`,
     });
     setEq({
       rule: [[`p_{j|i}\\propto e^{-\\|x_i-x_j\\|^2/2\\sigma_i^2}`, NB], '\\qquad', [`\\mathrm{Perp}(P_i)=2^{H(P_i)}`, FLAT], '\\quad', `H(P_i)=-\\textstyle\\sum_j p_{j|i}\\log_2 p_{j|i}`],
-      live: [[`\\sigma_i = ${cur.sigma.toFixed(3)}`, SEL], [`\\quad H = ${cur.H.toFixed(2)}\\text{ bits}`, ink(0.9)], [`\\quad 2^H = ${cur.perp.toFixed(2)}`, FLAT]],
+      live: [[`\\sigma_i = ${fixed(cur.sigma, 3)}`, SEL], [`\\quad H = ${fixed(cur.H, 2)}\\text{ bits}`, ink(0.9)], [`\\quad 2^H = ${fixed(cur.perp, 2)}`, FLAT]],
     });
     const ratio = cur.sigma / near;
     setResult({
-      value: `σᵢ = ${cur.sigma.toFixed(2)}`,
+      value: `σᵢ = ${fixed(cur.sigma, 2)}`,
       colour: SEL,
-      status: `${cur.perp.toFixed(1)} effective neighbours · ${k90} points hold 90% of the probability`,
+      status: `${fixed(cur.perp, 1)} effective neighbours · ${k90} points hold 90% of the probability`,
       note:
         shown < sr.steps.length
-          ? `Guess ${steps}: perplexity ${cur.perp.toFixed(1)} against ${state.perp.toFixed(1)} asked for, so the next guess goes ${cur.perp < state.perp ? 'wider' : 'narrower'}.`
+          ? `Guess ${steps}: perplexity ${fixed(cur.perp, 1)} against ${fixed(state.perp, 1)} asked for, so the next guess goes ${cur.perp < state.perp ? 'wider' : 'narrower'}. Once guesses sit on both sides, each new one splits the gap.`
           : ratio > 4
-            ? `σᵢ is ${ratio.toFixed(0)} times the distance to the nearest point: this point is alone, and has to reach far to find its neighbours.`
-            : `σᵢ is ${ratio.toFixed(1)} times the distance to the nearest point. Pick a point somewhere else and the width changes, but the count of neighbours does not.`,
+            ? `σᵢ is ${fixed(ratio, 0)} times the distance to the nearest point: this point sits alone, so its Gaussian has to reach far out before it finds enough neighbours.`
+            : `σᵢ is ${fixed(ratio, 1)} times the distance to the nearest point. Pick a point somewhere else and the width changes, but the count of neighbours does not.`,
     });
   }
 
   function draw() {
     ctx.clearRect(0, 0, 1000, 600);
+    layout();
     const cur = current();
     drawPlot(cur);
-    drawBars(cur);
-    drawSearch(cur);
+    if (!small) {
+      drawBars(cur);
+      drawSearch(cur);
+    }
     update(cur);
   }
 
   // --- controls -----------------------------------------------------------------
   const perpOf = (v: number) => Math.exp(Math.log(1.5) + (v / 100) * (Math.log(maxPerp()) - Math.log(1.5)));
   const vOf = (p: number) => Math.round((100 * (Math.log(p) - Math.log(1.5))) / (Math.log(maxPerp()) - Math.log(1.5)));
-  const fmtPerp = (p: number) => (p < 10 ? p.toFixed(1) : p.toFixed(0));
+  const fmtPerp = (p: number) => (p < 10 ? fixed(p, 1) : fixed(p, 0));
   const setPerp = slider('perp', (v) => { state.perp = perpOf(v); shown = Infinity; recompute(); draw(); }, (v) => fmtPerp(perpOf(v)));
   const dataSeg = segmented('data', (v) => { load(v); setPerp(vOf(state.perp)); draw(); });
   check('lines', (on) => { state.lines = on; draw(); });
@@ -487,7 +500,8 @@ import Try from '../../../components/sim/Try.astro';
     return { x: ((e.clientX - b.left) / b.width) * 1000, y: ((e.clientY - b.top) / b.height) * 600 };
   };
   const nearest = (x: number, y: number) => {
-    let best = -1, bd = 14 * 14;
+    const reach = Math.max(14, 12 / screenScale(canvas));
+    let best = -1, bd = reach * reach;
     pts.forEach(([px, py], j) => {
       const d = (sx(px) - x) ** 2 + (sy(py) - y) ** 2;
       if (d < bd) { bd = d; best = j; }

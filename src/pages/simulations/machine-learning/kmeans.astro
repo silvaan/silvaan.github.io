@@ -78,9 +78,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
 
   type P = { x: number; y: number };
@@ -100,6 +100,13 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
   const PAD = 40;
+  // nearest-center regions, one bitmap pixel per cell
+  const TX = 60;
+  const TY = Math.ceil(H / (W / TX));
+  const tint = document.createElement('canvas');
+  tint.width = TX;
+  tint.height = TY;
+  const tctx = tint.getContext('2d')!;
   const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
   function genData() {
@@ -205,26 +212,36 @@ import Try from '../../../components/sim/Try.astro';
   function draw() {
     ctx.clearRect(0, 0, W, H);
     if (centers.length) {
-      const cell = W / 60;
-      for (let i = 0; i < 60; i++)
-        for (let j = 0; j < Math.ceil(H / cell); j++) {
+      // the regions are painted cell by cell into a small bitmap and stretched,
+      // so neighbouring cells never leave hairline seams between them
+      const cell = W / TX;
+      for (let i = 0; i < TX; i++)
+        for (let j = 0; j < TY; j++) {
           const c = nearest({ x: (i + 0.5) * cell, y: (j + 0.5) * cell });
-          ctx.fillStyle = PALETTE[c % PALETTE.length] + '18';
-          ctx.fillRect(i * cell, j * cell, cell + 1, cell + 1);
+          tctx.fillStyle = PALETTE[c % PALETTE.length];
+          tctx.fillRect(i, j, 1, 1);
         }
+      ctx.save();
+      ctx.globalAlpha = 0.1;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tint, 0, 0, TX, TY, 0, 0, TX * cell, TY * cell);
+      ctx.restore();
     }
+    // dots keep a readable size when the canvas is shown small
+    const s = screenScale(canvas);
+    const dot = Math.max(3.6, 2.2 / s);
     for (let i = 0; i < pts.length; i++) {
       ctx.fillStyle = assign[i] >= 0 ? PALETTE[assign[i] % PALETTE.length] : ink(0.55);
       ctx.beginPath();
-      ctx.arc(pts[i].x, pts[i].y, 3.6, 0, Math.PI * 2);
+      ctx.arc(pts[i].x, pts[i].y, dot, 0, Math.PI * 2);
       ctx.fill();
     }
     for (let c = 0; c < centers.length; c++) {
       ctx.fillStyle = PALETTE[c % PALETTE.length];
       ctx.strokeStyle = ink(1);
-      ctx.lineWidth = 3;
+      ctx.lineWidth = Math.max(3, 1.5 / s);
       ctx.beginPath();
-      ctx.arc(centers[c].x, centers[c].y, 9, 0, Math.PI * 2);
+      ctx.arc(centers[c].x, centers[c].y, Math.max(9, 5.5 / s), 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -238,10 +255,10 @@ import Try from '../../../components/sim/Try.astro';
     const empty = pts.length === 0;
     setEq({
       rule: ['J = \\frac{1}{n}\\sum_{i=1}^{n} \\lVert x_i - \\mu_{c(i)} \\rVert^2'],
-      live: [`J = ${empty ? '—' : J.toFixed(0)}\\;\\text{px}^2`, `\\quad n = ${pts.length}`, `\\quad k = ${state.k}`],
+      live: [`J = ${empty ? '—' : fixed(J, 0)}\\;\\text{px}^2`, `\\quad n = ${pts.length}`, `\\quad k = ${state.k}`],
     });
     setResult({
-      value: empty ? '—' : J.toFixed(0),
+      value: empty ? '—' : fixed(J, 0),
       status: empty ? 'No points yet' : done ? `Iteration ${state.iter} · converged` : `Iteration ${state.iter} · next: ${next}`,
       note: empty
         ? 'Click the canvas to add points, or generate random data.'

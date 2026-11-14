@@ -14,7 +14,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="machine-learning"
   title="Principal Component Analysis"
-  description="Keep one number per point instead of two: its shadow on a line u. Turn u and watch how much of the spread the shadows keep. The best line keeps the most and throws away the least, and it is the top eigenvector of the covariance matrix."
+  description="Keep one number per point instead of two: its shadow on a line u. Turn u to see how much spread survives. The best line is the top eigenvector of the covariance matrix."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -134,9 +134,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, arrow } from '../../../lib/draw';
+  import { stageInk, arrow, fixed } from '../../../lib/draw';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { story, headline, say, withAlpha, isLight, beat, lerp } from '../../../lib/story';
 
@@ -154,7 +154,7 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('pca') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas);
   const { ink, inv } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -261,7 +261,7 @@ import Try from '../../../components/sim/Try.astro';
    * no other label, and stays inside the plot.
    */
   function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, gap = 7) {
-    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const w = textWidth(text, size) + 6, h = textPx(canvas, Math.round(size * 1.42), 11) + 4;
     const cands: [number, number][] = [];
     for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
       for (let k = 0; k < 12; k++) {
@@ -283,7 +283,7 @@ import Try from '../../../components/sim/Try.astro';
     });
     const [cx, cy] = best;
     taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
-    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    label(text, cx, cy + (h - 4) * 0.34, 1, 'center', size, colour);
   }
 
   // --- the scatter --------------------------------------------------------------
@@ -414,20 +414,20 @@ import Try from '../../../components/sim/Try.astro';
         ['C\\mathbf v_1 = \\lambda_1\\mathbf v_1', PC1],
       ],
       live: [
-        [`\\text{kept } ${kept.toFixed(2)}`, U],
+        [`\\text{kept } ${fixed(kept, 2)}`, U],
         '+',
-        [`\\text{lost } ${(c.total - kept).toFixed(2)}`, LOST],
-        `= \\operatorname{tr} C = ${c.total.toFixed(2)}`,
+        [`\\text{lost } ${fixed(c.total - kept, 2)}`, LOST],
+        `= \\operatorname{tr} C = ${fixed(c.total, 2)}`,
       ],
     });
     setResult({
-      value: `${pct.toFixed(0)}%`,
+      value: `${fixed(pct, 0)}%`,
       colour: onPC1 ? PC1 : onPC2 ? PC2 : U,
       status: onPC1
-        ? `u is PC1: no other line keeps more than these ${pct.toFixed(0)}%`
+        ? `u is PC1: no other line keeps more than these ${fixed(pct, 0)}%`
         : onPC2
-          ? `u is PC2: the worst line there is, keeping only ${pct.toFixed(0)}%`
-          : `u is ${off.toFixed(0)}° off PC1 and keeps ${pct.toFixed(0)}% of the spread; PC1 would keep ${ev.toFixed(0)}%`,
+          ? `u is PC2: the worst line there is, keeping only ${fixed(pct, 0)}%`
+          : `u is ${fixed(off, 0)}° off PC1 and keeps ${fixed(pct, 0)}% of the spread; PC1 would keep ${fixed(ev, 0)}%`,
       note:
         ev < 62
           ? 'The two components are nearly equal: no single direction stands out, so one number per point loses a lot.'
@@ -436,11 +436,11 @@ import Try from '../../../components/sim/Try.astro';
             : 'Kept plus lost never changes. Turning u only moves spread from one to the other.',
     });
     setRows({
-      'r-cov': `[${c.sxx.toFixed(2)} ${c.sxy.toFixed(2)}; ${c.sxy.toFixed(2)} ${c.syy.toFixed(2)}]`,
-      'r-lam': `${c.l1.toFixed(3)}, ${c.l2.toFixed(3)}`,
-      'r-pc1': `${deg(c.th1).toFixed(1)}°`,
-      'r-ev': `${ev.toFixed(1)}%`,
-      'r-u': `${kept.toFixed(3)} / ${(c.total - kept).toFixed(3)}`,
+      'r-cov': `[${fixed(c.sxx, 2)} ${fixed(c.sxy, 2)}; ${fixed(c.sxy, 2)} ${fixed(c.syy, 2)}]`,
+      'r-lam': `${fixed(c.l1, 3)}, ${fixed(c.l2, 3)}`,
+      'r-pc1': `${fixed(deg(c.th1), 1)}°`,
+      'r-ev': `${fixed(ev, 1)}%`,
+      'r-u': `${fixed(kept, 3)} / ${fixed(c.total - kept, 3)}`,
     });
   }
 
@@ -664,7 +664,7 @@ import Try from '../../../components/sim/Try.astro';
     headline(ctx, ink, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 600, accent: PC1, manual });
     if (ch === 4) {
       const c = pca(seen());
-      const tag = view.std ? 'standardised: PC1 follows the real trend' : `raw: PC1 points along x (${deg(c.th1).toFixed(0)}°)`;
+      const tag = view.std ? 'standardised: PC1 follows the real trend' : `raw: PC1 points along x (${fixed(deg(c.th1), 0)}°)`;
       say(ctx, tag, PLOT.x + 16, PLOT.y + 20, { colour: view.std ? PC1 : LOST, size: 15, weight: 650, halo: inv(0.8) });
     }
   }
@@ -675,18 +675,20 @@ import Try from '../../../components/sim/Try.astro';
     const x0 = 670, w = 300;
     const kept = varAlong(c, view.theta), total = c.total || 1;
     const a = view.u;
+    // on a phone the sentences go; the bar, the numbers and the curve stay
+    const small = isCompact(canvas);
     if (a > 0.01) {
       ctx.globalAlpha = a;
-      say(ctx, 'spread of the shadows on u', x0, 172, { colour: ink(0.55), size: 13 });
+      if (!small) say(ctx, 'spread of the shadows on u', x0, 172, { colour: ink(0.55), size: 13 });
       const kw = (kept / total) * w;
       ctx.fillStyle = withAlpha(U, 0.85);
       ctx.fillRect(x0, 188, kw, 24);
       ctx.fillStyle = withAlpha(LOST, 0.7);
       ctx.fillRect(x0 + kw, 188, w - kw, 24);
       ctx.globalAlpha = 1;
-      say(ctx, `kept ${kept.toFixed(2)}`, x0, 228, { colour: light ? '#b45309' : U, size: 14, weight: 650, alpha: a });
-      say(ctx, `lost ${(total - kept).toFixed(2)}`, x0 + w, 228, { colour: LOST, size: 14, weight: 650, align: 'right', alpha: a });
-      say(ctx, `kept + lost = ${total.toFixed(2)}, for every u`, x0, 250, { colour: ink(0.6), size: 13, alpha: a * (ch >= 2 ? 1 : beat(t, 5, 6)) });
+      say(ctx, `kept ${fixed(kept, 2)}`, x0, 228, { colour: light ? '#b45309' : U, size: 14, weight: 650, alpha: a });
+      say(ctx, `lost ${fixed(total - kept, 2)}`, x0 + w, 228, { colour: LOST, size: 14, weight: 650, align: 'right', alpha: a });
+      if (!small) say(ctx, `kept + lost = ${fixed(total, 2)}, for every u`, x0, 252, { colour: ink(0.6), size: 13, alpha: a * (ch >= 2 ? 1 : beat(t, 5, 6)) });
     }
     // the curve
     const b = ch >= 2 ? 1 : 0;
@@ -694,7 +696,7 @@ import Try from '../../../components/sim/Try.astro';
     const y0 = 300, h = 170;
     const gx = (th: number) => x0 + (th / Math.PI) * w;
     const gy = (v: number) => y0 + h - (v / total) * h;
-    say(ctx, 'spread kept, for every direction of u', x0, y0 - 16, { colour: ink(0.55), size: 13 });
+    if (!small) say(ctx, 'spread kept, for every direction of u', x0, y0 - 16, { colour: ink(0.55), size: 13 });
     ctx.strokeStyle = ink(0.15);
     ctx.lineWidth = 1;
     ctx.strokeRect(x0, y0, w, h);
@@ -704,10 +706,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(x0 + w, gy(total));
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = ink(0.4);
-    ctx.font = '11px ui-monospace, monospace';
-    ctx.textAlign = 'center';
-    for (const d of [0, 45, 90, 135, 180]) ctx.fillText(`${d}°`, gx((d * Math.PI) / 180), y0 + h + 14);
+    for (const d of small ? [0, 90, 180] : [0, 45, 90, 135, 180])
+      label(`${d}°`, gx((d * Math.PI) / 180), y0 + h + 22, 0.5, d === 0 ? 'left' : d === 180 ? 'right' : 'center', small ? 11 : 9);
     const line = (from: (th: number) => boolean, col: string, lw: number) => {
       ctx.strokeStyle = col;
       ctx.lineWidth = lw;
@@ -733,7 +733,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     if (view.pc > 0.05) {
       const t2 = (c.th1 + Math.PI / 2) % Math.PI;
-      for (const [ang, val, col, name] of [[c.th1, c.l1, PC1, `PC1: λ₁ = ${c.l1.toFixed(2)}`], [t2, c.l2, PC2, `PC2: λ₂ = ${c.l2.toFixed(2)}`]] as const) {
+      for (const [ang, val, col, name] of [[c.th1, c.l1, PC1, small ? 'PC1' : `PC1: λ₁ = ${fixed(c.l1, 2)}`], [t2, c.l2, PC2, small ? 'PC2' : `PC2: λ₂ = ${fixed(c.l2, 2)}`]] as const) {
         ctx.globalAlpha = view.pc;
         ctx.strokeStyle = col;
         ctx.setLineDash([3, 3]);
@@ -744,9 +744,9 @@ import Try from '../../../components/sim/Try.astro';
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
         const right = gx(ang) < x0 + w / 2;
-        say(ctx, name, gx(ang) + (right ? 6 : -6), gy(val) + (val > total / 2 ? -10 : 12), { colour: col, size: 13, weight: 650, align: right ? 'left' : 'right', alpha: view.pc, halo: inv(0.85) });
+        say(ctx, name, gx(ang) + (right ? 6 : -6), gy(val) + (val > total / 2 ? 14 : -14), { colour: col, size: 13, weight: 650, align: right ? 'left' : 'right', alpha: view.pc, halo: inv(0.85) });
       }
-      say(ctx, `PC1 keeps ${((100 * c.l1) / total).toFixed(0)}% of the spread`, x0, y0 + h + 44, { colour: PC1, size: 16, weight: 700, alpha: view.pc });
+      say(ctx, `PC1 keeps ${fixed((100 * c.l1) / total, 0)}%${small ? '' : ' of the spread'}`, x0, y0 + h + 52, { colour: PC1, size: 16, weight: 700, alpha: view.pc });
     }
   }
 

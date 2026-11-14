@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="machine-learning"
   title="t-SNE"
-  description="How do you flatten a cloud of points without losing who sits next to whom? Tie every point to its neighbours with threads, throw them all on a page at random, and let the threads pull while every point pushes the others away. What settles is the t-SNE map."
+  description="Flatten a cloud of points without losing who sits next to whom: tie each point to its neighbours with threads, throw them on a page, and let threads pull while points push apart."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'pull of the threads', color: '#5eead4' },
           { label: 'push from every other point', color: '#f9736a' },
         ]}
-        hint="Scroll to zoom · drag to move · on the 3D cloud a drag turns it, shift-drag moves · double-click to reset · hover a point to see its neighbours"
+        hint="Hover a point to see its neighbours · drag to move, scroll to zoom, double-click to reset · on the 3D cloud a drag turns it"
       />
       <Result label="Neighbours kept on the map" />
     </div>
@@ -102,7 +102,7 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { segmented, slider, result, readout, tries } from '../../../lib/panel';
   import { sqDistances, jointP, Embedding, EXAGGERATION } from '../../../lib/tsne';
   import { stageCamera } from '../../../lib/stage-camera';
@@ -716,8 +716,8 @@ import Try from '../../../components/sim/Try.astro';
     const sg = Array.from(sigma).sort((a, b) => a - b);
     setRows({
       'r-it': ch >= 2 ? `${emb.iter}` : '—',
-      'r-kl': ch >= 2 ? klNow.toFixed(3) : '—',
-      'r-sg': `${sg[Math.floor(N * 0.05)].toFixed(2)} to ${sg[Math.floor(N * 0.95)].toFixed(2)}`,
+      'r-kl': ch >= 2 ? fixed(klNow, 3) : '—',
+      'r-sg': `${fixed(sg[Math.floor(N * 0.05)], 2)} to ${fixed(sg[Math.floor(N * 0.95)], 2)}`,
     });
     if (ch < 2) {
       setResult({ value: '100%', status: 'in 3D, by definition', note: NOTE });
@@ -745,6 +745,27 @@ import Try from '../../../components/sim/Try.astro';
     if (ch === eqFor) return;
     eqFor = ch;
     setEq({ rule: EQ[ch] });
+  }
+  // Every chapter has its own equation, some taller than others. Reserve the
+  // tallest once (again when the width changes) so the stage never jumps.
+  const eqBar = document.querySelector<HTMLElement>('.sim-stage .sim-eq');
+  let eqW = -1;
+  function reserveEq() {
+    if (!eqBar || !eqBar.clientWidth || Math.abs(eqBar.clientWidth - eqW) < 1) return;
+    eqW = eqBar.clientWidth;
+    eqBar.style.minHeight = '';
+    let tall = 0;
+    for (const rule of EQ) {
+      setEq({ rule });
+      tall = Math.max(tall, eqBar.getBoundingClientRect().height);
+    }
+    eqBar.style.minHeight = `${Math.ceil(tall)}px`;
+    eqFor = -1;
+  }
+  if (eqBar) {
+    Object.assign(eqBar.style, { display: 'flex', flexDirection: 'column', justifyContent: 'center' });
+    new ResizeObserver(reserveEq).observe(eqBar);
+    document.fonts?.ready.then(() => { eqW = -1; reserveEq(); });
   }
 
   // ---------- input ----------

@@ -14,7 +14,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="machine-learning"
   title="Linear Models"
-  description="Linear and logistic regression score the input with the same line, z = wx + b. Draw each residual as a literal square, snap to the least-squares optimum, and watch the same descent fit both models."
+  description="Linear and logistic regression score the input with the same line, z = wx + b. Draw each residual as a square, snap to least squares, and watch one descent fit both."
 >
   <div class="sim">
     <div class="sim-view">
@@ -29,11 +29,8 @@ import Try from '../../../components/sim/Try.astro';
       </div>
       <Caption
         legend={[
-          { label: 'data', color: '#7c8cff', id: 'legend-data' },
-          { label: 'class 1', color: '#5eead4', id: 'legend-class' },
           { label: 'the model', color: '#fbbf24' },
           { label: 'the gap the loss measures', color: '#f87171' },
-          { label: 'mean point (x̄, ȳ)', color: '#5eead4', id: 'legend-mean' },
         ]}
         hint="Drag a point to move it · click empty space to add one"
       />
@@ -94,9 +91,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, fixed } from '../../../lib/draw';
+  import { stageInk, fixed, handle, grabCursor } from '../../../lib/draw';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   type Pt = { x: number; y: number };
@@ -115,7 +112,7 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('lm') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, bg } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -224,10 +221,15 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.strokeStyle = ink(0.13);
     ctx.strokeRect(PAD.l + 0.5, PAD.t + 0.5, W - PAD.l - PAD.r, H - PAD.t - PAD.b);
-    for (let x = -3; x <= 3; x++) label(String(x), sx(x), H - PAD.b + 19, 0.4, 'center', 11);
-    for (const y of yticks) label(reg ? String(y) : y.toFixed(1), PAD.l - 9, sy(y) + 4, 0.4, 'right', 11);
-    label('x', W - PAD.r, H - PAD.b + 19, 0.5, 'right', 11);
-    label(reg ? 'y' : 'class', PAD.l - 9, PAD.t + 2, 0.5, 'right', 11);
+    const small = isCompact(canvas);
+    // grows marks so they stay visible and grabbable when the canvas is shown small
+    const g = Math.max(1, 0.6 / screenScale(canvas));
+    for (let x = -3; x <= 3; x++) label(fixed(x, 0), sx(x), H - PAD.b + 24, 0.5, 'center', 10);
+    for (const y of yticks) label(reg ? fixed(y, 0) : fixed(y, 1), PAD.l - 9, sy(y) + 5, 0.5, 'right', 10);
+    if (!small) {
+      label('x', W - PAD.r, H - PAD.b + 24, 0.6, 'right', 10);
+      label(reg ? 'y' : 'class', PAD.l + 8, PAD.t + 18, 0.6, 'left', 10);
+    }
 
     const opt = reg ? ols() : null;
     // in regression each residual is also drawn as a literal square of side |ŷ − y|
@@ -296,27 +298,19 @@ import Try from '../../../components/sim/Try.astro';
         ctx.lineTo(sx(xb), H - PAD.b);
         ctx.stroke();
         ctx.setLineDash([]);
-        label('z = 0', sx(xb) + 7, PAD.t + 15, 0.45, 'left', 11);
+        label('z = 0', sx(xb) + 7, PAD.t + 18, 0.55, 'left', 10);
       }
     }
-    for (const p of P) {
-      ctx.fillStyle = reg ? C0 : p.y > 0.5 ? C1 : C0;
-      ctx.strokeStyle = bg();
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(sx(p.x), sy(p.y), 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
+    P.forEach((p, i) => handle(ctx, sx(p.x), sy(p.y), reg ? C0 : p.y > 0.5 ? C1 : C0, { r: 5 * g, hot: i === drag || i === hover }));
     if (opt) {
       ctx.fillStyle = MEAN;
       ctx.strokeStyle = bg();
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(sx(opt.mx), sy(opt.my), 5, 0, Math.PI * 2);
+      ctx.arc(sx(opt.mx), sy(opt.my), 5 * g, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      label('(x̄, ȳ)', sx(opt.mx) + 9, sy(opt.my) - 8, 0.6, 'left', 11, MEAN);
+      if (!small) label('(x̄, ȳ)', sx(opt.mx) + 10, sy(opt.my) - 10, 0.7, 'left', 10, MEAN);
     }
     words(r, opt);
   }
@@ -325,7 +319,7 @@ import Try from '../../../components/sim/Try.astro';
     const reg = state.mode === 'reg';
     const n = pts().length;
     const q = quality(r.pred);
-    const sign = state.b >= 0 ? '+' : '-';
+    const sign = state.b >= 0 ? '+' : '−';
     setEq({
       rule: [
         ['z = wx + b', C0],
@@ -333,7 +327,7 @@ import Try from '../../../components/sim/Try.astro';
         reg ? ['\\qquad L = \\tfrac{1}{2n}\\sum (\\hat y - y)^2', ERR] : ['\\qquad L = -\\tfrac{1}{n}\\sum \\log p_{\\text{correct}}', ERR],
       ],
       live: [
-        [`z = ${state.w.toFixed(2)}x ${sign} ${Math.abs(state.b).toFixed(2)}`, C0],
+        [`z = ${fixed(state.w, 2)}x ${sign} ${fixed(Math.abs(state.b), 2)}`, C0],
         `\\quad L = ${fixed(r.L, 4)}`,
         [`\\quad \\nabla_w = \\overline{(\\text{pred}-y)\\,x} = ${fixed(r.gw, 3)}`, ERR],
       ],
@@ -345,20 +339,20 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: n ? fixed(r.L, 4) : '—',
       colour: ERR,
-      status: Number.isNaN(q) ? 'Add some points' : reg ? `R² = ${q.toFixed(3)} · ${state.steps} descent steps` : `Accuracy ${(q * 100).toFixed(0)}% · ${state.steps} descent steps`,
+      status: Number.isNaN(q) ? 'Add some points' : reg ? `R² = ${fixed(q, 3)} · ${state.steps} descent steps` : `Accuracy ${fixed(q * 100, 0)}% · ${state.steps} descent steps`,
       note: reg
         ? Number.isFinite(gap)
           ? gap < 1e-3 * Math.max(1, optSse)
-            ? 'At the least-squares optimum: no line gives the squares a smaller total area, and it passes through (x̄, ȳ).'
-            : `The squares total ${sse.toFixed(2)}, which is ${gap.toFixed(2)} more than the least-squares line manages.`
-          : 'The prediction is the score itself, and the error it is scored on is squared.'
-        : 'The score is squashed into a probability, yet the gradient formula is unchanged.',
+            ? 'At the least-squares optimum: no line gives the squares a smaller total area.'
+            : `The squares total ${fixed(sse, 2)}, ${fixed(gap, 2)} more than the least-squares line.`
+          : 'The prediction is the score itself, judged by its squared error.'
+        : 'The score is squashed into a probability; the gradient is unchanged.',
     });
     el('r-fit').previousElementSibling!.textContent = reg ? 'R²' : 'accuracy';
     setRows({
-      'r-fit': Number.isNaN(q) ? '—' : reg ? q.toFixed(3) : `${(q * 100).toFixed(0)}%`,
-      'r-sse': reg && n ? sse.toFixed(3) : '—',
-      'r-opt': reg && Number.isFinite(optSse) ? optSse.toFixed(3) : '—',
+      'r-fit': Number.isNaN(q) ? '—' : reg ? fixed(q, 3) : `${fixed(q * 100, 0)}%`,
+      'r-sse': reg && n ? fixed(sse, 3) : '—',
+      'r-opt': reg && Number.isFinite(optSse) ? fixed(optSse, 3) : '—',
       'r-steps': String(state.steps),
     });
   }
@@ -386,7 +380,17 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // ---- interaction --------------------------------------------------------
-  let drag = -1;
+  let drag = -1, hover = -1;
+  /** The point within reach of the pointer, or -1. */
+  const pointAt = (x: number, y: number) => {
+    const reach = Math.max(16, 12 / screenScale(canvas));
+    let best = -1, bd = reach * reach;
+    pts().forEach((p, i) => {
+      const d = (sx(p.x) - x) ** 2 + (sy(p.y) - y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  };
   const snap = (py: number) => (state.mode === 'reg' ? clamp(dy(py), YRR[0], YRR[1]) : dy(py) > 0.5 ? 1 : 0);
   const at = (e: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
@@ -397,41 +401,47 @@ import Try from '../../../components/sim/Try.astro';
     if (x < PAD.l - 12 || x > W - PAD.r + 12 || y < PAD.t - 12 || y > H - PAD.b + 12) return;
     canvas.setPointerCapture(e.pointerId);
     const P = pts();
-    let best = -1, bd = 16 * 16;
-    P.forEach((p, i) => {
-      const d = (sx(p.x) - x) ** 2 + (sy(p.y) - y) ** 2;
-      if (d < bd) { bd = d; best = i; }
-    });
-    if (best >= 0) { drag = best; return; }
+    const best = pointAt(x, y);
+    if (best >= 0) { drag = best; grabCursor(canvas, true, true); draw(); return; }
     P.push({ x: clamp(dx(x), XR[0], XR[1]), y: snap(y) });
     drag = P.length - 1;
     draw();
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (drag < 0) return;
     const { x, y } = at(e);
+    if (drag < 0) {
+      const h = pointAt(x, y);
+      grabCursor(canvas, h >= 0, false);
+      if (h !== hover) { hover = h; draw(); }
+      return;
+    }
     pts()[drag] = { x: clamp(dx(x), XR[0], XR[1]), y: snap(y) };
     draw();
   });
-  const endDrag = () => (drag = -1);
+  const endDrag = () => {
+    drag = -1;
+    grabCursor(canvas, hover >= 0, false);
+    draw();
+  };
+  canvas.addEventListener('pointerleave', () => { if (drag < 0 && hover >= 0) { hover = -1; draw(); } });
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
 
   // ---- controls -----------------------------------------------------------
-  const setW = slider('w', (v) => { state.w = v / 100; state.steps = 0; stopRun(); draw(); }, (v) => (v / 100).toFixed(2));
-  const setB = slider('b', (v) => { state.b = v / 100; state.steps = 0; stopRun(); draw(); }, (v) => (v / 100).toFixed(2));
+  const setW = slider('w', (v) => { state.w = v / 100; state.steps = 0; stopRun(); draw(); }, (v) => fixed(v / 100, 2));
+  const setB = slider('b', (v) => { state.b = v / 100; state.steps = 0; stopRun(); draw(); }, (v) => fixed(v / 100, 2));
   const syncSliders = () => { setW(Math.round(state.w * 100)); setB(Math.round(state.b * 100)); };
 
   function setMode(m: Mode) {
     state.mode = m;
     modes.select(m);
     const reg = m === 'reg';
-    el('legend-class').hidden = reg;
-    el('legend-mean').hidden = !reg;
-    el('legend-data').textContent = reg ? 'data' : 'class 0';
-    el('reg-tools').style.display = reg ? 'contents' : 'none';
-    el('r-sse').parentElement!.style.display = reg ? '' : 'none';
-    el('r-opt').parentElement!.style.display = reg ? '' : 'none';
+    // the least-squares tools only mean something for regression: they are
+    // dimmed for classification rather than removed, so the panel keeps still
+    for (const c of Array.from(el('reg-tools').children) as HTMLElement[]) {
+      c.classList.toggle('idle', !reg);
+      c.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button').forEach((i) => (i.disabled = !reg));
+    }
     resetWeights();
     draw();
   }
@@ -522,5 +532,8 @@ import Try from '../../../components/sim/Try.astro';
   #lm {
     cursor: crosshair;
     touch-action: none;
+  }
+  .sim-panel :global(.idle) {
+    opacity: 0.38;
   }
 </style>

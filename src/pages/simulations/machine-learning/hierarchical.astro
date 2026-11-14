@@ -25,7 +25,7 @@ import Try from '../../../components/sim/Try.astro';
           aria-label="Points coloured by their current cluster on the left, and the dendrogram of merges growing on the right."
         ></canvas>
       </div>
-      <Caption hint="Click the left half to add points · drag the cut line up and down the dendrogram" />
+      <Caption hint="Bar height is the merge distance · click the left half to add points · drag the cut line up and down the tree" />
       <Result label="Clusters" />
     </div>
 
@@ -77,9 +77,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, transport, result, readout, tries } from '../../../lib/panel';
 
   type Node = { x: number; height: number; members: number[]; left?: Node; right?: Node; repL?: number; repR?: number };
@@ -96,8 +96,8 @@ import Try from '../../../components/sim/Try.astro';
 
   const canvas = el('hc') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
-  const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { ink, css } = stageInk(canvas);
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -232,11 +232,16 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    label('the points', LEFT.x0, LEFT.y0 - 12, 0.45, 'left', 11.5);
-    label('the dendrogram: bar height is the merge distance', RIGHT.x0, RIGHT.y0 - 40, 0.45, 'left', 11.5);
+    // on a phone the axis numbers go, and dots and lines grow to stay visible
+    const small = isCompact(canvas);
+    const g = Math.max(1, 0.6 / screenScale(canvas));
+    if (!small) {
+      label('points', LEFT.x0, LEFT.y0 - 12, 0.5, 'left', 11);
+      label('dendrogram', RIGHT.x0, RIGHT.y0 - 30, 0.5, 'left', 11);
+    }
 
     if (pts.length === 0) {
-      label('click here to add points', LEFT.x0 + 10, LEFT.y0 + 24, 0.4, 'left', 12);
+      label('click to add points', LEFT.x0 + 10, LEFT.y0 + 30, 0.45, 'left', 11);
       words(null, 0);
       return;
     }
@@ -246,7 +251,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.strokeStyle = ink(0.5);
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(pts[i].x, pts[i].y, 5.5, 0, Math.PI * 2);
+      ctx.arc(pts[i].x, pts[i].y, 5.5 * g, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
@@ -259,8 +264,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(RIGHT.x0 - 10, RIGHT.y1);
       ctx.lineTo(RIGHT.x1 + 10, RIGHT.y1);
       ctx.stroke();
-      label('0', RIGHT.x0 - 16, RIGHT.y1 + 4, 0.3, 'right', 11);
-      label(maxH.toFixed(0), RIGHT.x0 - 16, RIGHT.y0 + 4, 0.3, 'right', 11);
+      if (!small) {
+        label('0', RIGHT.x0 - 16, RIGHT.y1 + 5, 0.4, 'right', 11);
+        label(fixed(maxH, 0), RIGHT.x0 - 16, RIGHT.y0 + 5, 0.4, 'right', 11);
+      }
       for (let k = 0; k < mergeNodes.length; k++) {
         const n = mergeNodes[k];
         // merges above the cut are still to come: drawn faintly so the cut has a tree to cross
@@ -268,7 +275,7 @@ import Try from '../../../components/sim/Try.astro';
         const yTop = dy(n.height);
         const lx = dx(n.left!.x), rx = dx(n.right!.x);
         ctx.strokeStyle = col;
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = 1.8 * g;
         ctx.beginPath();
         ctx.moveTo(lx, dy(n.left!.height));
         ctx.lineTo(lx, yTop);
@@ -279,12 +286,12 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fillStyle = ink(0.3);
       for (const leaf of leafNodes) {
         ctx.beginPath();
-        ctx.arc(dx(leaf.x), dy(0), 1.8, 0, Math.PI * 2);
+        ctx.arc(dx(leaf.x), dy(0), 1.8 * g, 0, Math.PI * 2);
         ctx.fill();
       }
       const cy = dy(cutHeight());
       ctx.strokeStyle = CUT;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * g;
       ctx.setLineDash([7, 5]);
       ctx.beginPath();
       ctx.moveTo(RIGHT.x0 - 14, cy);
@@ -293,9 +300,17 @@ import Try from '../../../components/sim/Try.astro';
       ctx.setLineDash([]);
       ctx.fillStyle = CUT;
       ctx.beginPath();
-      ctx.arc(RIGHT.x1 + 18, cy, 5, 0, Math.PI * 2);
+      ctx.arc(RIGHT.x1 + 18, cy, 5 * g, 0, Math.PI * 2);
       ctx.fill();
-      label(`cut · ${cl.nClusters} cluster${cl.nClusters === 1 ? '' : 's'}`, RIGHT.x1, cy - 8, 1, 'right', 11, CUT);
+      // the count sits on a backing of the stage colour so the tree never runs through it
+      const t = `${cl.nClusters} cluster${cl.nClusters === 1 ? '' : 's'}`;
+      const tw = textWidth(t, 11);
+      const ty = cy < RIGHT.y0 + 30 ? cy + 26 * g : cy - 10 * g;
+      ctx.fillStyle = css('--stage-bg', '#0d0e12');
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(RIGHT.x1 - tw - 6, ty - 20 * g, tw + 12, 26 * g);
+      ctx.globalAlpha = 1;
+      label(t, RIGHT.x1, ty, 1, 'right', 11, CUT);
     }
     words(cl, cl.nClusters);
   }
@@ -304,7 +319,7 @@ import Try from '../../../components/sim/Try.astro';
     const last = state.merges > 0 ? mergeNodes[state.merges - 1].height : null;
     setEq({
       rule: [[RULES[state.link], PALETTE[0]]],
-      live: [`\\text{merges} = ${state.merges}`, `\\quad\\text{clusters} = ${nClusters}`, last !== null ? `\\quad\\text{last } d = ${last.toFixed(1)}` : ''],
+      live: [`\\text{merges} = ${state.merges}`, `\\quad\\text{clusters} = ${nClusters}`, last !== null ? `\\quad\\text{last } d = ${fixed(last, 1)}` : ''],
     });
     setResult({
       value: cl ? String(nClusters) : '—',
@@ -312,14 +327,14 @@ import Try from '../../../components/sim/Try.astro';
         ? state.merges >= mergeNodes.length && mergeNodes.length ? `All ${mergeNodes.length} merges done: everything is one cluster` : `${state.merges} of ${mergeNodes.length} merges done`
         : 'No points yet',
       note: last !== null
-        ? `The last merge joined two groups ${last.toFixed(1)} px apart, under ${state.link} linkage. Every branch the cut crosses is one cluster.`
+        ? `The last merge joined two groups ${fixed(last, 1)} px apart, under ${state.link} linkage. Every branch the cut crosses is one cluster.`
         : 'Step joins the two nearest groups; the height of each bar in the dendrogram is how far apart they were.',
     });
     setRows({
       'r-merges': String(state.merges),
       'r-clusters': String(nClusters),
-      'r-last': last !== null ? last.toFixed(1) : '—',
-      'r-cut': cl && mergeNodes.length ? cutHeight().toFixed(1) : '—',
+      'r-last': last !== null ? fixed(last, 1) : '—',
+      'r-cut': cl && mergeNodes.length ? fixed(cutHeight(), 1) : '—',
     });
   }
 

@@ -21,6 +21,7 @@ import Try from '../../../components/sim/Try.astro';
         <canvas id="db" width="1000" height="600" role="img" aria-label="Points coloured by the cluster DBSCAN has flooded them into, with noise in grey and a dashed circle showing the radius epsilon."></canvas>
         <canvas id="rc" width="1000" height="600" hidden role="img" aria-label="A handful of points chosen so that one reachability relation holds and another fails, with the verdicts written out."></canvas>
       </div>
+      <div class="swap">
       <div id="cl-caption">
         <Caption hint="Click the canvas to add points" />
       </div>
@@ -37,12 +38,14 @@ import Try from '../../../components/sim/Try.astro';
           hintId="rc-hint"
         />
       </div>
+      </div>
       <Result label="Clusters found" />
     </div>
 
     <div class="sim-panel">
       <Seg id="mode" label="View" attr="m" options={[{ value: 'clusters', label: 'Clusters' }, { value: 'reach', label: 'Reachability' }]} />
 
+      <div class="swap">
       <div id="cl-controls" class="stack">
         <Transport step />
         <Actions>
@@ -72,10 +75,12 @@ import Try from '../../../components/sim/Try.astro';
           ]}
         />
       </div>
+      </div>
 
       <Slider id="eps" label="Neighborhood ε" min={12} max={90} value={42} />
       <Slider id="mp" label="Min points" min={2} max={12} value={5} />
 
+      <div class="swap">
       <div id="cl-readout">
         <Readout rows={[{ id: 'r-clusters', label: 'clusters found' }, { id: 'r-noise', label: 'noise points' }]} />
       </div>
@@ -88,6 +93,7 @@ import Try from '../../../components/sim/Try.astro';
             { id: 'r-next', label: 'next click sets' },
           ]}
         />
+      </div>
       </div>
     </div>
   </div>
@@ -117,7 +123,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale, textPx } from '../../../lib/sim';
   import { arrow, roundRect } from '../../../lib/theorem';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
@@ -136,7 +142,7 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('db') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, css } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -211,25 +217,26 @@ import Try from '../../../components/sim/Try.astro';
   function draw() {
     ctx.clearRect(0, 0, W, H);
     const seedSet = new Set(seeds);
+    const g = grow(canvas);
     for (let i = 0; i < pts.length; i++) {
       const l = labels[i];
       if (l === -2) {
         ctx.strokeStyle = ink(0.35);
         ctx.lineWidth = 1.3;
         ctx.beginPath();
-        ctx.arc(pts[i].x, pts[i].y, 3.4, 0, Math.PI * 2);
+        ctx.arc(pts[i].x, pts[i].y, 3.4 * g, 0, Math.PI * 2);
         ctx.stroke();
       } else {
         ctx.fillStyle = l === -1 ? ink(0.28) : PALETTE[l % PALETTE.length];
         ctx.beginPath();
-        ctx.arc(pts[i].x, pts[i].y, l === -1 ? 3 : 4.2, 0, Math.PI * 2);
+        ctx.arc(pts[i].x, pts[i].y, (l === -1 ? 3 : 4.2) * g, 0, Math.PI * 2);
         ctx.fill();
       }
       if (seedSet.has(i)) {
         ctx.strokeStyle = ink(0.9);
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(pts[i].x, pts[i].y, 7, 0, Math.PI * 2);
+        ctx.arc(pts[i].x, pts[i].y, 7 * g, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -238,10 +245,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.arc(60, H - 60, state.eps, 0, Math.PI * 2);
+    ctx.arc(100, H - 100, state.eps, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
-    label('ε', 60, H - 56, 0.6, 'center', 12);
+    label('ε', 100, H - 95, 0.6, 'center', 12);
     wordsClusters();
   }
 
@@ -256,7 +263,8 @@ import Try from '../../../components/sim/Try.astro';
     el('result-label').textContent = 'Clusters found';
     setResult({
       value: pts.length ? String(n) : '—',
-      status: pts.length ? `${noise} noise points${unvisited ? ` · ${unvisited} still to visit` : ''} · ε = ${state.eps}, min points ${state.minPts}` : 'No points yet',
+      // one short line either way, so the strip keeps its height while it runs
+      status: !pts.length ? 'No points yet' : unvisited ? `${unvisited} points still to visit` : `${noise} noise points`,
       note: 'A cluster floods outward from a dense core through its ε-neighbours, so it takes whatever shape the data has. Points that never gather enough neighbours are noise.',
     });
     setRows({ 'r-clusters': String(n), 'r-noise': String(noise) });
@@ -308,7 +316,9 @@ import Try from '../../../components/sim/Try.astro';
   const rcanvas = el('rc') as HTMLCanvasElement;
   const rc = setupCanvas(rcanvas, () => drawReach());
   const rctx = rc.ctx;
-  const { label: rlabel, textWidth: rwidth } = makeText(rctx, ink);
+  const { label: rlabel, textWidth: rwidth } = makeText(rctx, ink, 1.42, undefined, 11);
+  /** How much to grow dots so they stay visible when the canvas is shown small. */
+  const grow = (c: HTMLCanvasElement) => Math.max(1, 0.6 / screenScale(c));
 
   type Analysis = {
     c: RCase; N: number[][]; core: boolean[]; lab: number[];
@@ -408,12 +418,13 @@ import Try from '../../../components/sim/Try.astro';
     const pathPQ = A.path(rst.p, rst.q);
     const pathQP = A.path(rst.q, rst.p);
     const connected = A.witness >= 0;
+    const g = grow(rcanvas);
 
     rctx.fillStyle = ACC;
     rctx.globalAlpha = 0.36;
     for (const i of Rp.seen) {
       rctx.beginPath();
-      rctx.arc(pt[i].x, pt[i].y, 15, 0, Math.PI * 2);
+      rctx.arc(pt[i].x, pt[i].y, 15 * g, 0, Math.PI * 2);
       rctx.fill();
     }
     rctx.globalAlpha = 1;
@@ -441,18 +452,18 @@ import Try from '../../../components/sim/Try.astro';
       if (k === 'core') {
         rctx.fillStyle = col;
         rctx.beginPath();
-        rctx.arc(pt[i].x, pt[i].y, 6.5, 0, Math.PI * 2);
+        rctx.arc(pt[i].x, pt[i].y, 6.5 * g, 0, Math.PI * 2);
         rctx.fill();
       } else if (k === 'border') {
         rctx.strokeStyle = col;
         rctx.lineWidth = 2;
         rctx.beginPath();
-        rctx.arc(pt[i].x, pt[i].y, 5.5, 0, Math.PI * 2);
+        rctx.arc(pt[i].x, pt[i].y, 5.5 * g, 0, Math.PI * 2);
         rctx.stroke();
       } else {
         rctx.fillStyle = ink(0.34);
         rctx.beginPath();
-        rctx.arc(pt[i].x, pt[i].y, 3.4, 0, Math.PI * 2);
+        rctx.arc(pt[i].x, pt[i].y, 3.4 * g, 0, Math.PI * 2);
         rctx.fill();
       }
     }
@@ -460,20 +471,22 @@ import Try from '../../../components/sim/Try.astro';
       rctx.strokeStyle = colour;
       rctx.lineWidth = 1.8;
       rctx.beginPath();
-      rctx.arc(pt[i].x, pt[i].y, 13, 0, Math.PI * 2);
+      rctx.arc(pt[i].x, pt[i].y, 13 * g, 0, Math.PI * 2);
       rctx.stroke();
       const t = `${name} · ${A.kind(i)}`;
-      const cy = pt[i].y + (below ? 36 : -28);
+      const fs = textPx(rcanvas, Math.round(11.5 * 1.42), 11);
+      const ph = fs + 8;
+      const cy = pt[i].y + (below ? 13 * g + ph / 2 + 6 : -(13 * g + ph / 2 + 2));
       const w = rwidth(t, 11.5) + 16;
       rctx.fillStyle = css('--stage-bg', '#0d0e12');
       rctx.globalAlpha = 0.92;
-      roundRect(rctx, pt[i].x - w / 2, cy - 11, w, 20, 6);
+      roundRect(rctx, pt[i].x - w / 2, cy - ph / 2 - 2, w, ph, 6);
       rctx.fill();
       rctx.globalAlpha = 1;
       rctx.strokeStyle = ink(0.16);
       rctx.lineWidth = 1;
       rctx.stroke();
-      rlabel(t, pt[i].x, cy + 4, 0.9, 'center', 11.5, colour);
+      rlabel(t, pt[i].x, cy + fs * 0.32, 0.9, 'center', 11.5, colour);
     };
     if (connected && pathPQ.length < 2 && pathQP.length < 2 && A.witness !== rst.p && A.witness !== rst.q) mark(A.witness, 'o', TEAL);
     mark(rst.p, 'p', ink(0.9));
@@ -485,9 +498,10 @@ import Try from '../../../components/sim/Try.astro';
   /** The five verdicts, each with the reason it came out that way. */
   function drawVerdicts(A: Analysis, pathPQ: number[], pathQP: number[], connected: boolean) {
     const pt = A.c.pts;
-    const x0 = 80, y0 = 400;
-    rlabel('core: minPts points within ε, itself included', x0, y0 - 12, 0.42, 'left', 11);
-    rlabel('→ direct · ⇒ chain · ↔ connected', rc.W - x0, y0 - 12, 0.42, 'right', 11);
+    // on a phone only the verdicts stay; the reasons are for a wider screen
+    const small = isCompact(rcanvas);
+    const x0 = small ? 40 : 80, y0 = small ? 370 : 380;
+    if (!small) rlabel('→ direct · ⇒ chain · ↔ connected', x0, y0 - 12, 0.42, 'left', 11);
     rctx.strokeStyle = ink(0.1);
     rctx.beginPath();
     rctx.moveTo(x0, y0);
@@ -515,12 +529,13 @@ import Try from '../../../components/sim/Try.astro';
           ? A.witness === rst.p || A.witness === rst.q ? 'one of them is itself the core that reaches both' : 'the core marked o reaches both of them'
           : A.core[rst.p] || A.core[rst.q] ? 'no single core reaches both' : 'neither of them is reached from any core'],
     ];
+    const pitch = small ? 42 : 34;
     rows.forEach(([sym, name, ok, why], i) => {
-      const y = y0 + 32 + i * 32;
-      rlabel(sym, x0, y, 0.85, 'left', 13);
-      rlabel(name, x0 + 90, y, 0.55, 'left', 11.5);
-      rlabel(ok ? 'yes' : 'no', x0 + 270, y, 1, 'left', 12.5, ok ? TEAL : BAD);
-      rlabel(why, x0 + 318, y, 0.38, 'left', 11);
+      const y = y0 + 34 + i * pitch;
+      rlabel(sym, x0, y, 0.85, 'left', 12);
+      rlabel(name, x0 + (small ? 140 : 90), y, 0.55, 'left', 11);
+      rlabel(ok ? 'yes' : 'no', x0 + (small ? 560 : 290), y, 1, 'left', 12, ok ? TEAL : BAD);
+      if (!small) rlabel(why, x0 + 345, y, 0.45, 'left', 11);
     });
     wordsReach(A, connected);
   }
@@ -528,7 +543,8 @@ import Try from '../../../components/sim/Try.astro';
   function wordsReach(A: Analysis, connected: boolean) {
     setEq({
       rule: ['\\text{core}(p): |N_\\varepsilon(p)| \\ge \\text{minPts}', '\\qquad', [`p \\to q:\\ p\\text{ core},\\ q \\in N_\\varepsilon(p)`, ACC]],
-      live: [`\\varepsilon = ${rst.eps}`, `\\quad\\text{minPts} = ${rst.minPts}`, [`\\quad p\\text{ is }${A.kind(rst.p)}`, ACC], `\\quad q\\text{ is }${A.kind(rst.q)}`],
+      // p and q are named on the canvas and in the panel; the live line stays short
+      live: [`\\varepsilon = ${rst.eps}`, `\\quad\\text{minPts} = ${rst.minPts}`, `\\quad n = ${A.c.pts.length}`],
     });
     el('result-label').textContent = 'p ↔ q connected';
     setResult({
@@ -693,6 +709,22 @@ import Try from '../../../components/sim/Try.astro';
     display: flex;
     flex-direction: column;
     gap: 18px;
+  }
+  /* The two views swap their controls, readouts and captions in one shared
+     cell, so the cell keeps the taller one's height and nothing below jumps. */
+  .swap {
+    display: grid;
+  }
+  .swap > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  .swap > [hidden] {
+    display: block;
+    visibility: hidden;
+  }
+  .swap > .stack[hidden] {
+    display: flex;
   }
   #db {
     cursor: crosshair;

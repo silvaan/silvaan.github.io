@@ -19,16 +19,15 @@ import Try from '../../../components/sim/Try.astro';
         <canvas
           id="cod"
           width="1000"
-          height="600"
+          height="520"
           role="img"
           aria-label="A picture of one high-dimensional effect on the left and the curve of how it grows with the number of dimensions on the right."
         ></canvas>
       </div>
       <Caption
         legend={[
-          { label: 'sampled points', color: '#5eead4' },
+          { label: 'sampled points and the formula', color: '#5eead4' },
           { label: 'the current d', color: '#7c8cff' },
-          { label: 'what the formula predicts', color: 'rgba(94,234,212,0.9)' },
         ]}
       />
       <Result label="Empty space" />
@@ -49,13 +48,15 @@ import Try from '../../../components/sim/Try.astro';
       />
       <Slider id="d" label="Dimensions d" min={1} max={120} value={2} />
       <Transport step />
-      <div data-for="sparsity">
-        <Slider id="frac" label="Fraction of data to capture" min={1} max={50} value={10} display="10%" />
+      <div class="swap">
+        <div data-for="sparsity">
+          <Slider id="frac" label="Fraction of data to capture" min={1} max={50} value={10} display="10%" />
+        </div>
+        <div data-for="shell">
+          <Slider id="eps" label="Crust thickness" min={1} max={40} value={5} display="5%" />
+        </div>
       </div>
-      <div data-for="shell">
-        <Slider id="eps" label="Crust thickness" min={1} max={40} value={5} display="5%" />
-      </div>
-      <div data-for="sparsity shell distance angles">
+      <div data-for="sparsity shell distance angles" data-dim>
         <Slider id="n" label="Sample points n" min={100} max={1200} step={50} value={600} />
       </div>
       <details class="numeric-details">
@@ -90,15 +91,15 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, slider, transport, result, tries } from '../../../lib/panel';
 
   const canvas = el('cod') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
 
@@ -199,8 +200,10 @@ import Try from '../../../components/sim/Try.astro';
   // ---------------------------------------------------------------------------
   // Drawing scaffolding: a square picture on the left, a chart on the right.
   // ---------------------------------------------------------------------------
-  const pic = { x: 40, y: 60, w: 420, h: 420 };
-  const chart = { x: 560, y: 80, w: 400, h: 380 };
+  const pic = { x: 40, y: 50, w: 420, h: 420 };
+  const chart = { x: 560, y: 60, w: 400, h: 400 };
+  // on a phone the titles go and only a few ticks stay; dots grow to stay visible
+  let small = false, g = 1;
   const dom = { x: [0, 1], y: [0, 1] };
   const mx = (v: number) => chart.x + ((v - dom.x[0]) / (dom.x[1] - dom.x[0])) * chart.w;
   const my = (v: number) => chart.y + chart.h - ((v - dom.y[0]) / (dom.y[1] - dom.y[0])) * chart.h;
@@ -219,19 +222,20 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(chart.x, y);
       ctx.lineTo(chart.x + chart.w, y);
       ctx.stroke();
-      label(t.t, chart.x - 8, y + 4, 0.45, 'right', 11.5);
+      label(t.t, chart.x - 8, y + 5, 0.5, 'right', 10);
     }
-    for (const t of xTicks) {
+    for (const t of small ? [xTicks[0], xTicks[Math.floor(xTicks.length / 2)], xTicks[xTicks.length - 1]] : xTicks) {
       const x = mx(t.v);
       ctx.strokeStyle = ink(0.16);
       ctx.beginPath();
       ctx.moveTo(x, chart.y + chart.h);
       ctx.lineTo(x, chart.y + chart.h + 5);
       ctx.stroke();
-      label(t.t, x, chart.y + chart.h + 20, 0.45, 'center', 11.5);
+      label(t.t, x, chart.y + chart.h + 22, 0.5, 'center', 10);
     }
-    label(yTitle, chart.x, chart.y - 12, 0.45, 'left', 11.5);
-    label(xTitle, chart.x + chart.w, chart.y + chart.h + 38, 0.45, 'right', 11.5);
+    if (small) return;
+    label(yTitle, chart.x, chart.y - 12, 0.55, 'left', 10);
+    label(xTitle, chart.x + chart.w, chart.y + chart.h + 42, 0.55, 'right', 10);
   }
   const dTicks: Tick[] = [1, 20, 40, 60, 80, 100, 120].map((v) => ({ v, t: String(v) }));
 
@@ -245,7 +249,8 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.stroke();
   }
-  function dMarker(y: number, text: string) {
+  function dMarker(y: number, text: string, short = text) {
+    if (small) text = short;
     const x = mx(state.d);
     ctx.strokeStyle = ink(0.3);
     ctx.setLineDash([3, 4]);
@@ -257,10 +262,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.setLineDash([]);
     ctx.fillStyle = ACCENT;
     ctx.beginPath();
-    ctx.arc(x, my(y), 5, 0, Math.PI * 2);
+    ctx.arc(x, my(y), 5 * g, 0, Math.PI * 2);
     ctx.fill();
-    const flip = x > chart.x + chart.w - 90;
-    label(text, flip ? x - 10 : x + 10, Math.max(chart.y + 16, my(y) - 12), 0.95, flip ? 'right' : 'left', 11, ACCENT);
+    const flip = x > chart.x + chart.w / 2;
+    label(text, flip ? x - 10 : x + 10, Math.max(chart.y + 24, my(y) - 14), 0.95, flip ? 'right' : 'left', 10, ACCENT);
   }
   function pctTicks(max: number): Tick[] {
     const step = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5].find((s) => max / s <= 4) ?? 1;
@@ -298,13 +303,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(px, chart.y + chart.h);
     ctx.stroke();
     ctx.setLineDash([]);
-    if (!text) return;
+    if (!text || small) return;
     const room = chart.x + chart.w - px;
-    label(text, room < 90 ? px - 8 : px, chart.y + 18 + up, 0.95, room < 90 ? 'right' : 'center', 11.5, colour);
+    label(text, room < 90 ? px - 8 : px, chart.y + 22 + up, 0.95, room < 90 ? 'right' : 'center', 10, colour);
   }
   const picCentre = () => ({ x: pic.x + pic.w / 2, y: pic.y + pic.h / 2, R: pic.w * 0.45 });
-  const picTitle = (text: string) => label(text, pic.x, pic.y - 12, 0.45, 'left', 11.5);
-  const picCaption = (text: string) => label(text, pic.x, pic.y + pic.h + 24, 0.42, 'left', 11.5);
+  const picTitle = (text: string) => { if (!small) label(text, pic.x, pic.y - 12, 0.55, 'left', 10); };
 
   function fromLog10(l: number) {
     if (!isFinite(l)) return '—';
@@ -313,9 +317,9 @@ import Try from '../../../components/sim/Try.astro';
       return v >= 1000 ? Math.round(v).toLocaleString() : String(+v.toPrecision(3));
     }
     const p = Math.floor(l);
-    return `${Math.pow(10, l - p).toFixed(1)}×10^${p}`;
+    return `${fixed(Math.pow(10, l - p), 1)}×10^${p}`;
   }
-  const pct = (x: number, dp = 1) => `${(100 * x).toFixed(dp)}%`;
+  const pct = (x: number, dp = 1) => `${fixed(100 * x, dp)}%`;
   const sup = (s: string) => s.replace(/\^(-?\d+)/g, '<sup>$1</sup>');
   const plain = (s: string) => s.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
@@ -365,13 +369,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillStyle = TEAL;
     for (const [x, y] of pts) {
       ctx.beginPath();
-      ctx.arc(pic.x + x * pic.w, pic.y + pic.h - y * pic.h, 1.7, 0, Math.PI * 2);
+      ctx.arc(pic.x + x * pic.w, pic.y + pic.h - y * pic.h, 1.7 * g, 0, Math.PI * 2);
       ctx.fill();
     }
-    picTitle(`${n} points seen through their first two axes`);
-    picCaption(`${hit.size} of these 100 cells are hit · in d = ${d} it is ${occ} of ${fromLog10(d)}`);
+    picTitle(`${n} points, first two axes`);
 
-    chartFrame([1, DMAX], [0, 1.05], dTicks, [0, 0.25, 0.5, 0.75, 1].map((v) => ({ v, t: v ? `${v * 100}%` : '0' })), 'dimensions d', `side of the box that holds ${state.frac}% of the data`);
+    chartFrame([1, DMAX], [0, 1.05], dTicks, [0, 0.25, 0.5, 0.75, 1].map((v) => ({ v, t: v ? `${v * 100}%` : '0' })), 'dimensions d', `box side holding ${state.frac}% of the data`);
     ctx.strokeStyle = ink(0.25);
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
@@ -379,14 +382,13 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(mx(DMAX), my(1));
     ctx.stroke();
     ctx.setLineDash([]);
-    label('the whole axis', mx(DMAX) - 8, my(1) - 8, 0.4, 'right', 11.5);
     const edge = (dd: number) => Math.pow(f, 1 / dd);
     curve(edge, 1, DMAX, TEAL);
-    dMarker(edge(d), `${pct(edge(d), 0)} of each axis`);
+    dMarker(edge(d), `${pct(edge(d), 0)} of each axis`, pct(edge(d), 0));
 
     setEq({
       rule: ['\\text{cells} = 10^{d}', '\\qquad', [`\\text{side holding a fraction } f = f^{1/d}`, TEAL]],
-      live: [`10^{${d}} \\text{ cells}`, `\\quad ${occ}\\text{ occupied}`, [`\\quad ${f}^{1/${d}} = ${edge(d).toFixed(3)}`, TEAL]],
+      live: [`10^{${d}} \\text{ cells}`, `\\quad ${occ}\\text{ occupied}`, [`\\quad ${f}^{1/${d}} = ${fixed(edge(d), 3)}`, TEAL]],
     });
     setPanel(
       [
@@ -426,12 +428,10 @@ import Try from '../../../components/sim/Try.astro';
     for (let i = 0; i < n; i++) {
       const rad = r[i] * c.R;
       ctx.beginPath();
-      ctx.arc(c.x + rad * Math.cos(bank.ang[i]), c.y + rad * Math.sin(bank.ang[i]), 1.7, 0, Math.PI * 2);
+      ctx.arc(c.x + rad * Math.cos(bank.ang[i]), c.y + rad * Math.sin(bank.ang[i]), 1.7 * g, 0, Math.PI * 2);
       ctx.fill();
     }
-    picTitle('uniform points inside the ball');
-    label(`outer ${state.eps}%`, c.x, c.y - c.R - 10, 1, 'center', 11.5, AMBER);
-    picCaption('each dot sits at its true distance from the centre, at an arbitrary angle');
+    label(`outer ${state.eps}%`, c.x, c.y - c.R - 10, 1, 'center', 10, AMBER);
 
     const bins = 40;
     const counts = histogram(r, 0, 1, bins);
@@ -449,18 +449,18 @@ import Try from '../../../components/sim/Try.astro';
       i === 0 ? ctx.moveTo(mx((a + b) / 2), my(p)) : ctx.lineTo(mx((a + b) / 2), my(p));
     }
     ctx.stroke();
-    vline(Math.pow(0.5, 1 / d), ACCENT, 'half the volume is past here');
+    vline(Math.pow(0.5, 1 / d), ACCENT, 'half the volume');
 
     const inCrust = 1 - Math.pow(1 - eps, d);
     setEq({
       rule: ['V(r) \\propto r^{d}', '\\qquad', ['\\text{crust} = 1 - (1-\\varepsilon)^{d}', AMBER]],
-      live: [`d = ${d}`, `\\quad\\varepsilon = ${eps}`, [`\\quad 1 - ${(1 - eps).toFixed(2)}^{${d}} = ${inCrust.toFixed(4)}`, AMBER]],
+      live: [`d = ${d}`, `\\quad\\varepsilon = ${eps}`, [`\\quad 1 - ${fixed(1 - eps, 2)}^{${d}} = ${fixed(inCrust, 4)}`, AMBER]],
     });
     setPanel(
       [
         [`Volume in the outer ${state.eps}%`, pct(inCrust, 2)],
-        ['Radius splitting it in half', Math.pow(0.5, 1 / d).toFixed(4)],
-        ['Mean distance to the centre', (d / (d + 1)).toFixed(4)],
+        ['Radius splitting it in half', fixed(Math.pow(0.5, 1 / d), 4)],
+        ['Mean distance to the centre', fixed(d / (d + 1), 4)],
         ['Volume inside half the radius', `1 in ${fromLog10(d * Math.log10(2))}`],
       ],
       { label: `Volume in the outer ${state.eps}%`, value: pct(inCrust, 1), note: `Volume grows like r^d, so a shell of the last ${state.eps}% of the radius carries ${pct(inCrust, 1)} of the ball at d = ${d}. The interior is essentially empty.` }
@@ -490,7 +490,7 @@ import Try from '../../../components/sim/Try.astro';
     for (let i = 0; i < n; i++) {
       const rad = (dist[i] / scale) * c.R;
       ctx.beginPath();
-      ctx.arc(c.x + rad * Math.cos(bank.ang[i]), c.y + rad * Math.sin(bank.ang[i]), 1.7, 0, Math.PI * 2);
+      ctx.arc(c.x + rad * Math.cos(bank.ang[i]), c.y + rad * Math.sin(bank.ang[i]), 1.7 * g, 0, Math.PI * 2);
       ctx.fill();
     }
     for (const [v, col] of [[lo, ACCENT], [hi, AMBER]] as [number, string][]) {
@@ -505,9 +505,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
     ctx.fill();
     picTitle('distance from one query point');
-    label('nearest', c.x, c.y + lo * c.R + 16, 1, 'center', 11.5, ACCENT);
-    label('farthest', c.x, c.y - hi * c.R - 8, 1, 'center', 11.5, AMBER);
-    picCaption('every dot at its true distance, angle chosen at random');
+    // "nearest" sits inside the empty middle, "farthest" outside the ring
+    label('nearest', c.x, c.y + Math.max(lo * c.R - 14, 30), 1, 'center', 10, ACCENT);
+    label('farthest', c.x, c.y - hi * c.R - 10, 1, 'center', 10, AMBER);
 
     const bins = 44;
     const counts = histogram(Array.from({ length: n }, (_, i) => dist[i] / scale), 0, 1, bins);
@@ -521,13 +521,13 @@ import Try from '../../../components/sim/Try.astro';
 
     const contrast = (hi - lo) / lo;
     setEq({
-      rule: [['\\dfrac{\\sigma(\\text{dist})}{\\mu(\\text{dist})} \\sim \\dfrac{1}{\\sqrt d}', TEAL], '\\qquad', ['\\dfrac{d_{\\max} - d_{\\min}}{d_{\\min}} \\to 0', AMBER]],
-      live: [`d = ${d}`, [`\\quad\\sigma/\\mu = ${(sd / mean).toFixed(3)}`, TEAL], [`\\quad (d_{\\max}-d_{\\min})/d_{\\min} = ${contrast.toFixed(2)}`, AMBER]],
+      rule: [['\\sigma/\\mu \\sim 1/\\sqrt d', TEAL], '\\qquad', ['d_{\\max}/d_{\\min} \\to 1', AMBER]],
+      live: [`d = ${d}`, [`\\quad\\sigma/\\mu = ${fixed(sd / mean, 3)}`, TEAL], [`\\quad d_{\\max}/d_{\\min} = ${fixed(hi / lo, 2)}`, AMBER]],
     });
     setPanel(
       [
-        ['Nearest neighbour', (lo * scale).toFixed(3)],
-        ['Farthest point', (hi * scale).toFixed(3)],
+        ['Nearest neighbour', fixed(lo * scale, 3)],
+        ['Farthest point', fixed(hi * scale, 3)],
         ['(far − near) ÷ near', pct(contrast, 1)],
         ['Spread ÷ mean', pct(sd / mean, 2)],
       ],
@@ -570,9 +570,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(c.x + c.R, c.y);
     ctx.stroke();
     picTitle('angle to one fixed direction');
-    label('reference', c.x + c.R, c.y - 10, 1, 'right', 11.5, ACCENT);
-    label('90°', c.x + 14, c.y - c.R - 8, 0.45, 'left', 11.5);
-    picCaption('160 random directions, each drawn at its true angle');
+    label('reference', c.x + c.R, c.y - 12, 1, 'right', 10, ACCENT);
+    label('90°', c.x + 14, c.y - c.R - 8, 0.55, 'left', 10);
 
     const bins = 36;
     const theta = Array.from({ length: n }, (_, i) => (Math.acos(cos[i]) * 180) / Math.PI);
@@ -603,14 +602,14 @@ import Try from '../../../components/sim/Try.astro';
     const sdDeg = (180 / Math.PI) * (1 / Math.sqrt(d));
     setEq({
       rule: [['\\cos\\theta \\approx \\mathcal N\\!\\big(0,\\ \\tfrac{1}{d}\\big)', TEAL], '\\qquad', ['\\sigma_{\\cos\\theta} = 1/\\sqrt d', ACCENT]],
-      live: [`d = ${d}`, [`\\quad 1/\\sqrt{${d}} = ${(1 / Math.sqrt(d)).toFixed(3)}`, ACCENT], `\\quad\\theta \\approx 90^\\circ \\pm ${sdDeg.toFixed(1)}^\\circ`],
+      live: [`d = ${d}`, [`\\quad 1/\\sqrt{${d}} = ${fixed(1 / Math.sqrt(d), 3)}`, ACCENT], `\\quad\\theta \\approx 90^\\circ \\pm ${fixed(sdDeg, 1)}^\\circ`],
     });
     setPanel(
       [
         ['Mean cos θ', '0 exactly'],
-        ['Spread of cos θ', `±${(1 / Math.sqrt(d)).toFixed(3)}`],
-        ['Mean |cos θ|', (absSum / n).toFixed(3)],
-        ['Typical angle', `90° ± ${sdDeg.toFixed(1)}°`],
+        ['Spread of cos θ', `±${fixed(1 / Math.sqrt(d), 3)}`],
+        ['Mean |cos θ|', fixed(absSum / n, 3)],
+        ['Typical angle', `90° ± ${fixed(sdDeg, 1)}°`],
         ['Pairs within 80°–100°', pct(near / n, 1)],
       ],
       { label: 'Pairs within 10° of a right angle', value: pct(near / n, 0), note: `cos θ has mean 0 and standard deviation 1/√d, so two random directions in ${d} dimensions land ${pct(near / n, 0)} of the time within 10° of a right angle.` }
@@ -654,27 +653,26 @@ import Try from '../../../components/sim/Try.astro';
     ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
     ctx.fill();
     picTitle('ball inscribed in a cube');
-    label('radius 1', c.x + R / 2, c.y + 18, 1, 'center', 11, TEAL);
-    label(`√d = ${Math.sqrt(d).toFixed(2)}`, c.x + R - 6, c.y - R - 8, 1, 'right', 11, ACCENT);
-    label('corners', c.x - R + 10, c.y + R - 12, 1, 'left', 11, AMBER);
-    picCaption('the shaded part of the box lies outside the ball');
+    label('radius 1', c.x + R / 2, c.y + 24, 1, 'center', 10, TEAL);
+    label(`√d = ${fixed(Math.sqrt(d), 2)}`, c.x + R - 6, c.y - R - 10, 1, 'right', 10, ACCENT);
+    label('corners', c.x - R + 10, c.y + R - 12, 1, 'left', 10, AMBER);
 
     const lo = -95;
     chartFrame([1, DMAX], [lo, 2], dTicks, [{ v: 0, t: '1' }, { v: -20, t: '10^-20' }, { v: -40, t: '10^-40' }, { v: -60, t: '10^-60' }, { v: -80, t: '10^-80' }], 'dimensions d', 'ball volume ÷ cube volume');
     curve((dd) => Math.max(lo, log10BallOverCube(dd)), 1, DMAX, TEAL);
     const ratioLog = log10BallOverCube(d);
-    dMarker(Math.max(lo, ratioLog), `1 in ${fromLog10(-ratioLog)}`);
+    dMarker(Math.max(lo, ratioLog), `1 in ${fromLog10(-ratioLog)}`, `1 in ${fromLog10(-ratioLog)}`);
 
     setEq({
-      rule: [['\\dfrac{V_{\\text{ball}}}{V_{\\text{cube}}} = \\dfrac{\\pi^{d/2}}{\\Gamma(d/2+1)\\,2^{d}}', TEAL], '\\qquad', ['\\text{half-diagonal} = \\sqrt d', ACCENT]],
-      live: [`d = ${d}`, [`\\quad V_{\\text{ball}}/V_{\\text{cube}} = 10^{${ratioLog.toFixed(1)}}`, TEAL], [`\\quad\\sqrt{${d}} = ${Math.sqrt(d).toFixed(2)}`, ACCENT]],
+      rule: [['V_{\\text{ball}}/V_{\\text{cube}} = \\pi^{d/2} / \\big(\\Gamma(d/2+1)\\,2^{d}\\big)', TEAL], '\\qquad', ['\\text{half-diagonal} = \\sqrt d', ACCENT]],
+      live: [`d = ${d}`, [`\\quad V_{\\text{ball}}/V_{\\text{cube}} = 10^{${fixed(ratioLog, 1)}}`, TEAL], [`\\quad\\sqrt{${d}} = ${fixed(Math.sqrt(d), 2)}`, ACCENT]],
     });
     setPanel(
       [
         ['Ball ÷ cube volume', `1 in ${fromLog10(-ratioLog)}`],
         ['Cube volume in the corners', ratioLog < -6 ? '99.9999…%' : pct(1 - Math.pow(10, ratioLog), 4)],
         ['Number of corners', fromLog10(d * Math.log10(2))],
-        ['Half-diagonal ÷ inradius', `${Math.sqrt(d).toFixed(2)} : 1`],
+        ['Half-diagonal ÷ inradius', `${fixed(Math.sqrt(d), 2)} : 1`],
       ],
       { label: 'Share of the cube inside the ball', value: `1 in ${fromLog10(-ratioLog).replace(/\^(-?\d+)/, '^$1')}`, note: `The ball still touches all ${2 * d} faces, yet at d = ${d} it holds 1 part in ${fromLog10(-ratioLog)} of the box. Corners run off to distance √d while the faces stay at 1.` }
     );
@@ -682,6 +680,8 @@ import Try from '../../../components/sim/Try.astro';
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
+    small = isCompact(canvas);
+    g = Math.max(1, 0.6 / screenScale(canvas));
     if (state.mode === 'sparsity') drawSparsity();
     else if (state.mode === 'shell') drawShell();
     else if (state.mode === 'distance') drawDistance();
@@ -691,8 +691,12 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- controls --------------------------------------------------------------
   function syncContext() {
+    // controls a curse does not use are dimmed (or swapped in place), never
+    // removed, so the panel keeps its height from one curse to the next
     document.querySelectorAll<HTMLElement>('[data-for]').forEach((node) => {
-      node.hidden = !node.dataset.for!.split(' ').includes(state.mode);
+      const on = node.dataset.for!.split(' ').includes(state.mode);
+      node.classList.toggle('off', !on);
+      node.querySelectorAll('input').forEach((i) => (i.disabled = !on));
     });
   }
   const setD = slider('d', (v) => { state.d = v; draw(); });
@@ -752,6 +756,19 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  .swap {
+    display: grid;
+  }
+  .swap > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  .swap > .off {
+    visibility: hidden;
+  }
+  [data-dim].off {
+    opacity: 0.38;
+  }
   :global(#mode.seg) {
     flex-direction: column;
     align-items: stretch;

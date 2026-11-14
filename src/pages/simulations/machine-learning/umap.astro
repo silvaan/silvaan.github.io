@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="machine-learning"
   title="UMAP"
-  description="Put a ball around every point, each just big enough to reach its nearest neighbours, and glue the overlaps into edges and triangles: a fuzzy simplicial complex, the shape of the data. Then throw that shape on a page and tug its edges until it lies flat. What settles is the UMAP map."
+  description="Put a ball around every point, just big enough to reach its neighbours, and glue the overlaps into a fuzzy complex: the shape of the data. Then tug that shape flat on a page."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'an edge being tugged', color: '#5eead4' },
           { label: 'a push from a random point', color: '#f9736a' },
         ]}
-        hint="Scroll to zoom · drag to move · on the 3D cloud a drag turns it, shift-drag moves · double-click to reset · hover a point to see its neighbours"
+        hint="Hover a point to see its neighbours · drag to move, scroll to zoom, double-click to reset · on the 3D cloud a drag turns it"
       />
       <Result label="Neighbours kept on the map" />
     </div>
@@ -97,12 +97,9 @@ import Try from '../../../components/sim/Try.astro';
       edges shorten, the triangles come back on the page and the sheet unrolls. <Try id="tugs" />
     </li>
     <li>
-      Raise min_dist to 0.8 and the flat complex puffs up into a loose mesh; drop it to 0 and it shrinks into tight
-      knots. The neighbours kept barely change. <Try id="puff" />
-    </li>
-    <li>
-      With n_neighbors at 3 the balls barely touch: few triangles form, the complex breaks into strands, and so does
-      the map. <Try id="tiny" />
+      Raise min_dist to 0.8 and the flat complex puffs up into a loose mesh, though the neighbours kept barely
+      change. With n_neighbors at 3 the balls barely touch, and the complex and the map break into strands.
+      <Try id="puff" label="min_dist" /> <Try id="tiny" label="n_neighbors 3" />
     </li>
   </Fragment>
 </SimLayout>
@@ -110,7 +107,7 @@ import Try from '../../../components/sim/Try.astro';
 <script>
   import { setupCanvas } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { segmented, slider, result, readout, tries } from '../../../lib/panel';
   import { sqDistances } from '../../../lib/tsne';
   import { fuzzyGraph, fitAB, Layout, NEG_RATE } from '../../../lib/umap';
@@ -631,7 +628,7 @@ import Try from '../../../components/sim/Try.astro';
     }
     // the nearest is named as soon as the core reaches it, the farthest once the rim does
     const marks: [number, string, number][] = [[j0, 'nearest: 1.00', core]];
-    if (ties > 0) marks.push([jk, `farthest: ${G.V[i * N + jk].toFixed(2)}`, ties]);
+    if (ties > 0) marks.push([jk, `farthest: ${fixed(G.V[i * N + jk], 2)}`, ties]);
     if (named || i === S.hover)
       for (const [j, text, a] of marks) {
         ctx.beginPath();
@@ -647,7 +644,7 @@ import Try from '../../../components/sim/Try.astro';
     const { lx, al } = side(i, Rk, named);
     const label = i === S.hover ? 'this point' : named ? 'a loner' : 'in a crowd';
     say(ctx, label, lx, sy[i] - 10, { colour: col, size: 15, weight: 600, align: al, alpha: core, halo: inv(0.85) });
-    say(ctx, `ρ = ${rho.toFixed(2)}, σ = ${sg.toFixed(2)}`, lx, sy[i] + 10, { colour: ink(0.8), size: 13, align: al, alpha: core, halo: inv(0.85) });
+    say(ctx, `ρ = ${fixed(rho, 2)}, σ = ${fixed(sg, 2)}`, lx, sy[i] + 10, { colour: ink(0.8), size: 13, align: al, alpha: core, halo: inv(0.85) });
     ctx.restore();
   }
 
@@ -833,7 +830,7 @@ import Try from '../../../components/sim/Try.astro';
     const slow = t < SLOW;
     const text = slow
       ? `slow motion: one tug, then ${NEG_RATE} shoves from random points`
-      : `full speed, step size ${lay.alpha.toFixed(2)} and shrinking`;
+      : `full speed, step size ${fixed(lay.alpha, 2)} and shrinking`;
     const x = PAGE.x + 14, y = PAGE.y + PAGE.h - 24;
     ctx.save();
     ctx.fillStyle = withAlpha(slow ? PUSH : PULL, light ? 0.12 : 0.14);
@@ -890,7 +887,7 @@ import Try from '../../../components/sim/Try.astro';
     setRows({
       'r-ep': ch >= C.throw ? `${lay.epoch} / ${lay.nEpochs}` : '—',
       'r-th': `${edges.length} · ${tris.length}`,
-      'r-ab': `${AB.a.toFixed(2)}, ${AB.b.toFixed(2)}`,
+      'r-ab': `${fixed(AB.a, 2)}, ${fixed(AB.b, 2)}`,
     });
     if (ch < C.throw) {
       setResult({ value: '100%', status: 'in 3D, by definition', note: NOTE });
@@ -921,6 +918,27 @@ import Try from '../../../components/sim/Try.astro';
     eqFor = ch;
     setEq({ rule: EQ[ch] });
   }
+  // Every chapter has its own equation, some taller than others. Reserve the
+  // tallest once (again when the width changes) so the stage never jumps.
+  const eqBar = document.querySelector<HTMLElement>('.sim-stage .sim-eq');
+  let eqW = -1;
+  function reserveEq() {
+    if (!eqBar || !eqBar.clientWidth || Math.abs(eqBar.clientWidth - eqW) < 1) return;
+    eqW = eqBar.clientWidth;
+    eqBar.style.minHeight = '';
+    let tall = 0;
+    for (const rule of EQ) {
+      setEq({ rule });
+      tall = Math.max(tall, eqBar.getBoundingClientRect().height);
+    }
+    eqBar.style.minHeight = `${Math.ceil(tall)}px`;
+    eqFor = -1;
+  }
+  if (eqBar) {
+    Object.assign(eqBar.style, { display: 'flex', flexDirection: 'column', justifyContent: 'center' });
+    new ResizeObserver(reserveEq).observe(eqBar);
+    document.fonts?.ready.then(() => { eqW = -1; reserveEq(); });
+  }
 
   // ---------- input ----------
   const toLocal = (e: PointerEvent) => {
@@ -942,7 +960,7 @@ import Try from '../../../components/sim/Try.astro';
   // ---------- panel ----------
   const dataSeg = segmented('data', (v) => { S.data = v; rebuild(); });
   const setNN = slider('nn', (v) => { S.nn = v; later(rebuild); });
-  const setMD = slider('md', (v) => { S.md = v; later(relayout); }, (v) => v.toFixed(2));
+  const setMD = slider('md', (v) => { S.md = v; later(relayout); }, (v) => fixed(v, 2));
 
   /** A slider fires on every pixel of a drag: redo the work once it pauses. */
   let timer = 0;
