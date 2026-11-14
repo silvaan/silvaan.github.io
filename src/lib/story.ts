@@ -4,6 +4,7 @@
 // the time spent in it, so jumping to any chapter is just a new start time.
 
 import { segmented, transport } from './panel';
+import { textPx, isCompact } from './sim';
 
 export const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -80,10 +81,13 @@ export function story(o: {
   const finished = () => (o.done ? o.done(i, t) : t >= o.chapters[i].dur);
   document.getElementById(o.nextId ?? 'next')?.addEventListener('click', () => go(Math.min(n - 1, i + 1)));
 
+  const note = storyNote(o.chapters);
+
   function go(k: number) {
     i = k;
     t = 0;
     manual = false;
+    note?.show(k);
     seg.select(String(k));
     dim(k);
     o.enter?.(k);
@@ -116,6 +120,7 @@ export function story(o: {
 
   return {
     start() {
+      note?.show(0);
       o.enter?.(0);
       seg.select('0');
       dim(0);
@@ -132,6 +137,47 @@ export function story(o: {
     touch,
     manual: () => manual,
     get dirty() { return dirty; },
+  };
+}
+
+/**
+ * On a phone the chapter's sentence would be unreadable inside the picture,
+ * so `headline` leaves it out and it is shown here, just under the stage. The
+ * note is as tall as the longest sentence, so changing chapter moves nothing.
+ */
+function storyNote(chapters: Chapter[]) {
+  const stage = document.querySelector<HTMLElement>('.sim-stage');
+  const canvas = stage?.querySelector<HTMLCanvasElement>('canvas');
+  if (!stage || !canvas || !chapters.some((c) => c.body)) return null;
+  const p = document.createElement('p');
+  p.className = 'story-note';
+  p.setAttribute('aria-live', 'polite');
+  stage.after(p);
+  let current = 0;
+  let width = -1;
+  const fit = () => {
+    const on = isCompact(canvas);
+    p.hidden = !on;
+    if (!on) return;
+    const w = p.getBoundingClientRect().width;
+    if (Math.abs(w - width) < 1) return;
+    width = w;
+    p.style.minHeight = '';
+    let tallest = 0;
+    for (const c of chapters) {
+      p.textContent = c.body;
+      tallest = Math.max(tallest, p.getBoundingClientRect().height);
+    }
+    p.style.minHeight = `${Math.ceil(tallest)}px`;
+    p.textContent = chapters[current].body;
+  };
+  new ResizeObserver(fit).observe(canvas);
+  document.fonts?.ready.then(() => { width = -1; fit(); });
+  return {
+    show(k: number) {
+      current = k;
+      p.textContent = chapters[k].body;
+    },
   };
 }
 
@@ -231,35 +277,51 @@ export function headline(
   }
 ) {
   const x = o.x ?? 28, y = o.y ?? 30, width = o.width ?? 560;
+  const canvas = ctx.canvas as HTMLCanvasElement;
+  // on a phone the sentence moves under the stage (see storyNote) and only
+  // the chapter number and title stay in the picture
+  const compact = isCompact(canvas);
+  const numPx = textPx(canvas, 13, compact ? 9 : 12);
+  const titlePx = textPx(canvas, 26, compact ? 11 : 15);
+  const bodyPx = textPx(canvas, 16, 12);
+  const titleY = numPx * 0.6 + titlePx * 0.9 + 1;
   const a = easeOut(o.t / 0.6), dy = (1 - a) * 8;
   ctx.save();
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
-  ctx.font = `600 13px ${SANS}`;
+  ctx.font = `600 ${numPx}px ${SANS}`;
   ctx.fillStyle = withAlpha(o.accent ?? '#7c8cff', 0.95 * a);
   ctx.fillText(`${o.index + 1} / ${o.count}`, x, y + dy);
   if (o.manual) {
     const w0 = ctx.measureText(`${o.index + 1} / ${o.count}`).width + 12;
-    ctx.font = `500 12px ${SANS}`;
-    const label = 'you are in control · Run resumes the tour';
-    const lw = ctx.measureText(label).width + 16;
+    const pillPx = textPx(canvas, 12, compact ? 9 : 11);
+    ctx.font = `500 ${pillPx}px ${SANS}`;
+    const label = compact ? 'paused · Run resumes' : 'you are in control · Run resumes the tour';
+    const lw = ctx.measureText(label).width + pillPx * 1.3;
+    const ph = pillPx * 1.6;
     ctx.fillStyle = withAlpha(o.accent ?? '#7c8cff', 0.16);
     ctx.beginPath();
-    ctx.roundRect(x + w0, y + dy - 13, lw, 19, 9.5);
+    ctx.roundRect(x + w0, y + dy - numPx * 0.95, lw, ph, ph / 2);
     ctx.fill();
     ctx.fillStyle = withAlpha(o.accent ?? '#7c8cff', 0.95);
-    ctx.fillText(label, x + w0 + 8, y + dy + 1);
+    ctx.fillText(label, x + w0 + pillPx * 0.65, y + dy - numPx * 0.95 + ph * 0.72);
   }
-  ctx.font = `650 26px ${SANS}`;
+  ctx.font = `650 ${titlePx}px ${SANS}`;
   ctx.fillStyle = ink(0.95 * a);
-  ctx.fillText(o.title, x, y + 32 + dy);
+  ctx.fillText(o.title, x, y + titleY + dy);
+  if (compact) {
+    ctx.restore();
+    return titleY + titlePx * 0.5;
+  }
   const b = easeOut((o.t - 0.25) / 0.7);
-  ctx.font = `400 16px ${SANS}`;
+  ctx.font = `400 ${bodyPx}px ${SANS}`;
   ctx.fillStyle = ink(0.72 * b);
+  const lead = bodyPx * 1.375;
   const lines = wrap(ctx, o.body, width);
-  lines.forEach((l, k) => ctx.fillText(l, x, y + 60 + k * 22 + (1 - b) * 6));
+  const top = titleY + bodyPx * 1.75;
+  lines.forEach((l, k) => ctx.fillText(l, x, y + top + k * lead + (1 - b) * 6));
   ctx.restore();
-  return 60 + lines.length * 22;
+  return top + lines.length * lead;
 }
 
 /** A short label in the site's sans font, for the bits of prose inside the picture. */
@@ -271,7 +333,8 @@ export function say(
   o: { colour?: string; size?: number; weight?: number; align?: CanvasTextAlign; alpha?: number; halo?: string } = {}
 ) {
   ctx.save();
-  ctx.font = `${o.weight ?? 500} ${o.size ?? 14}px ${SANS}`;
+  const canvas = ctx.canvas as HTMLCanvasElement;
+  ctx.font = `${o.weight ?? 500} ${textPx(canvas, o.size ?? 14, isCompact(canvas) ? 9 : 11)}px ${SANS}`;
   ctx.textAlign = o.align ?? 'left';
   ctx.textBaseline = 'middle';
   ctx.globalAlpha = o.alpha ?? 1;

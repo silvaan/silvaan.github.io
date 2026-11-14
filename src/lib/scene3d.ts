@@ -3,6 +3,8 @@
 // arrows that read as 3D, and a plane shaded in true perspective from a field
 // sampled on a grid. Pages bring their own physics; this only draws.
 
+import { textPx } from './sim';
+
 export type Vec = { x: number; y: number; z: number };
 export type RGB = [number, number, number];
 export type PlaneAxis = 'xy' | 'xz' | 'yz';
@@ -224,7 +226,7 @@ export function drawGizmo(ctx: CanvasRenderingContext2D, cam: Camera3D, H: numbe
     })
     .sort((a, b) => b.depth - a.depth);
   ctx.lineWidth = 2;
-  ctx.font = "600 11px 'JetBrains Mono', monospace";
+  ctx.font = `600 ${textPx(ctx.canvas as HTMLCanvasElement, 11, 11)}px 'JetBrains Mono', monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   for (const a of pr) {
