@@ -41,16 +41,13 @@ const PLANES = [
           { label: 'b', color: COLOR.b },
           { label: 'a × b', color: COLOR.result },
         ]}
-        hint="Drag to orbit · shift-drag to pan · scroll to zoom · set the vectors with the sliders"
+        hint="Drag to orbit, shift-drag to pan, scroll to zoom"
       />
       <Result label="Cross product" />
       <section class="component-cards" aria-label="One component per coordinate plane">
         <div class="component-heading">
           <h2>Three shadows, three components</h2>
-          <p>
-            Each card looks straight at one wall. The signed area of the patch's shadow there is
-            one component of a × b. Hover a card to light up its wall in the scene.
-          </p>
+          <p>Each card looks straight at one wall: the signed area of the shadow there is one component of a × b.</p>
         </div>
         {
           PLANES.map(({ component, plane }, i) => (
@@ -154,7 +151,8 @@ const PLANES = [
 </SimLayout>
 
 <script>
-  import { subHtml, makeText } from '../../../lib/sim';
+  import { subHtml, makeText, textPx } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { check, result, readout, tries } from '../../../lib/panel';
   import {
@@ -200,7 +198,9 @@ const PLANES = [
     scale: () => fitS,
     redraw: () => draw(),
   });
-  const { label, textWidth } = makeText(scene.ctx, scene.inkA);
+  // labels never show smaller than 11 screen px
+  const { label, textWidth } = makeText(scene.ctx, scene.inkA, 1.42, undefined, 11);
+  const tpx = (size: number) => textPx(scene.ctx.canvas, Math.round(size * 1.42), 11);
   const P = (v: Vec) => scene.project(v);
   const seg = (p: Vec, q: Vec) => { const u = P(p), v = P(q); blockLine(u.x, u.y, v.x, v.y); };
   // --- labels: measured boxes, each one nudged to the nearest free spot --------
@@ -245,7 +245,7 @@ const PLANES = [
    * nothing is drawn (false is returned) when none of them is clean.
    */
   function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, onSpot = false, gap = 7, onlyIfFree = false) {
-    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const w = textWidth(text, size) + 6, h = tpx(size) + 4;
     const cands: [number, number][] = onSpot || onlyIfFree ? [[ax, ay]] : [];
     if (onlyIfFree) for (const dy of [0, -6, 6, -12, 12]) for (const dx of [0, -8, 8, -16, 16]) cands.push([ax + dx, ay + dy]);
     else for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
@@ -270,7 +270,7 @@ const PLANES = [
     if (onlyIfFree && bestCost >= 1000) return false;
     const [cx, cy] = best;
     taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
-    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    label(text, cx, cy + tpx(size) * 0.34, 1, 'center', size, colour);
     return true;
   }
 
@@ -408,7 +408,7 @@ const PLANES = [
 
     // each shadow's signed area: inside the shadow when it fits, else beside it
     for (const { plane, area } of tags) {
-      const text = `${area >= 0 ? '+' : '−'}${Math.abs(area).toFixed(2)}`;
+      const text = `${area >= 0 ? '+' : '−'}${fixed(Math.abs(area), 2)}`;
       const m = P(onWall(plane, mul(add(a, b), 0.5)));
       const o = P(onWall(plane, O));
       const col = COLOR.axis[plane];
@@ -427,7 +427,7 @@ const PLANES = [
 
   // --- the cards: each shadow head-on, next to its arithmetic ----------------
 
-  const num = (n: number) => (n < 0 ? `(${n.toFixed(1)})` : n.toFixed(1));
+  const num = (n: number) => (n < 0 ? `(${fixed(n, 1)})` : fixed(n, 1));
 
   function drawCards() {
     const planes = componentPlanes(state.a, state.b);
@@ -455,9 +455,9 @@ const PLANES = [
         <text x="${CX + 6}" y="${sy(R) + 4}" fill="currentColor" font-size="13">${plane.axes[1]}</text>`;
 
       const [p, q] = plane.axes;
-      el(`component-value-${i}`).textContent = `${plane.component} = ${plane.area > 0 ? '+' : ''}${plane.area.toFixed(2)}`;
+      el(`component-value-${i}`).textContent = `${plane.component} = ${plane.area < 0 ? '−' : '+'}${fixed(Math.abs(plane.area), 2)}`;
       el(`component-formula-${i}`).innerHTML = subHtml(
-        `a_${p} b_${q} − a_${q} b_${p}<br>= ${num(plane.a[0])}·${num(plane.b[1])} − ${num(plane.a[1])}·${num(plane.b[0])} = ${plane.area.toFixed(2)}`
+        `a_${p} b_${q} − a_${q} b_${p}<br>= ${num(plane.a[0])}·${num(plane.b[1])} − ${num(plane.a[1])}·${num(plane.b[0])} = ${fixed(plane.area, 2)}`
       );
       el(`component-orientation-${i}`).textContent =
         Math.abs(plane.area) < 1e-10
@@ -487,11 +487,11 @@ const PLANES = [
     const zero = th === null;
 
     setResult({
-      value: `(${c.x.toFixed(2)}, ${c.y.toFixed(2)}, ${c.z.toFixed(2)})`,
+      value: `(${fixed(c.x, 2)}, ${fixed(c.y, 2)}, ${fixed(c.z, 2)})`,
       colour: COLOR.result,
       status: zero
         ? 'Zero vector'
-        : area < 1e-9 ? 'Parallel, so zero area' : `Area ${area.toFixed(2)} · angle ${degrees(th)}`,
+        : area < 1e-9 ? 'Parallel, so zero area' : `Area ${fixed(area, 2)} · angle ${degrees(th)}`,
       note: zero
         ? 'A zero vector spans no patch, and the angle is undefined.'
         : area < 1e-9
@@ -499,11 +499,11 @@ const PLANES = [
           : 'Its length is the area of the patch spanned by a and b, and it points perpendicular to both. Swap a and b to flip it.',
     });
     setRows({
-      'r-area': area.toFixed(3),
-      'r-sine': sine.toFixed(3),
+      'r-area': fixed(area, 3),
+      'r-sine': fixed(sine, 3),
       'r-angle': degrees(th),
-      'r-perp-a': dot(a, c).toFixed(6),
-      'r-perp-b': dot(b, c).toFixed(6),
+      'r-perp-a': fixed(dot(a, c), 6),
+      'r-perp-b': fixed(dot(b, c), 6),
     });
 
     const A = `\\textcolor{${COLOR.a}}{\\mathbf a}`, B = `\\textcolor{${COLOR.b}}{\\mathbf b}`;
@@ -586,6 +586,28 @@ const PLANES = [
   });
 
   scene.pointer({ flat: () => false });
+
+  // hold the header and result strip at the tallest any scenario makes them,
+  // so trying one never moves the page
+  // (again once the maths fonts arrive, unless someone has started playing)
+  function holdHeights() {
+    const boxes = ['.stage-head', '.result-strip'].map((q) => document.querySelector<HTMLElement>(q));
+    const tallest = boxes.map(() => 0);
+    for (const n of ['parallel', 'flat', 'perp', 'tilted']) {
+      show(n);
+      updateReadout();
+      boxes.forEach((b, i) => (tallest[i] = Math.max(tallest[i], b?.getBoundingClientRect().height ?? 0)));
+    }
+    [state.a, state.b] = [state.b, state.a];
+    updateReadout();
+    boxes.forEach((b, i) => (tallest[i] = Math.max(tallest[i], b?.getBoundingClientRect().height ?? 0)));
+    show('tilted');
+    boxes.forEach((b, i) => b && (b.style.minHeight = `${Math.ceil(tallest[i])}px`));
+  }
+  let touched = false;
+  for (const ev of ['pointerdown', 'keydown']) document.querySelector('.sim')?.addEventListener(ev, () => (touched = true), { capture: true });
+  holdHeights();
+  document.fonts?.ready.then(() => { if (!touched) holdHeights(); });
 
   requestAnimationFrame(frame);
 </script>

@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="computer-vision"
   title="Shape from Shading"
-  description="A photograph is flat, yet you see a surface in it. All the eye has is brightness, and brightness is decided by how each patch leans towards the light. Turn that around and the shape can be read back out, provided you guess the light right."
+  description="A photograph is flat, yet you see a surface in it. Brightness depends on how each patch leans towards the light, so the shape can be read back out if you guess the light right."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'the true surface', color: '#5eead4' },
           { label: 'what the shading implies', color: '#a78bfa' },
         ]}
-        hint="Move the mouse over the picture to read a different line · the line always follows the light"
+        hint="Move the pointer over the picture to read another line; it always follows the light"
       />
       <Result label="Agreement" />
     </div>
@@ -86,9 +86,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect, arrow } from '../../../lib/draw';
+  import { stageInk, roundRect, arrow, fixed } from '../../../lib/draw';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
 
   const NOW = '#f59e0b';
@@ -102,7 +102,8 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('sfs') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11 screen px; a phone drops the grey second lines
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -234,7 +235,7 @@ import Try from '../../../components/sim/Try.astro';
   const SUN = { x: 190, y: 456, r: 52 };
   const PT = { x: 400, y: 116, w: 540, h: 134 };
   const PR = { x: 400, y: 330, w: 540, h: 134 };
-  const sgn = (v: number) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2);
+  const sgn = (v: number) => fixed(v, 2);
 
   function panel(x: number, y: number, w: number, h: number, r = 10) {
     ctx.fillStyle = inv(0.55);
@@ -257,7 +258,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.setLineDash([]);
     if (!data) {
-      label(empty, box.x + box.w / 2, mid + 4, 0.35, 'center', 12);
+      label(isCompact(canvas) ? 'nothing to invert' : empty, box.x + box.w / 2, mid + 4, 0.35, 'center', 12);
       return;
     }
     let mx = 1e-6;
@@ -306,6 +307,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(x, y, 3, 0, Math.PI * 2);
     ctx.fill();
+    if (isCompact(canvas)) return;
     label(state.flip ? 'the light, and your guess' : 'where the light is', x, y + r + 22, 0.45, 'center', 12);
     label(`${state.az}° round, ${state.ev}° up`, x, y + r + 38, 0.3, 'center', 11);
   }
@@ -316,8 +318,10 @@ import Try from '../../../components/sim/Try.astro';
     const A = lightFrom(state.flip ? (state.az + 180) % 360 : state.az);
     const line = readLine(A);
 
-    label('what you see', IMG.x, IMG.y - 30, 0.55, 'left', 13);
-    label('brightness, and nothing else', IMG.x, IMG.y - 12, 0.32, 'left', 11);
+    const compact = isCompact(canvas);
+    const ty = compact ? 16 : 30;
+    label('what you see', IMG.x, IMG.y - ty, 0.55, 'left', 13);
+    if (!compact) label('brightness, and nothing else', IMG.x, IMG.y - 12, 0.32, 'left', 11);
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.4)';
     ctx.shadowBlur = 14;
@@ -350,12 +354,12 @@ import Try from '../../../components/sim/Try.astro';
 
     sun(L, A);
 
-    label('the true surface along that line', PT.x, PT.y - 30, 0.55, 'left', 13);
-    label('what is really there', PT.x, PT.y - 12, 0.32, 'left', 11);
+    label(compact ? 'the true surface' : 'the true surface along that line', PT.x, PT.y - ty, 0.55, 'left', 13);
+    if (!compact) label('what is really there', PT.x, PT.y - 12, 0.32, 'left', 11);
     plot(PT, line?.truth ?? null, TRUE, 'nothing to read');
 
-    label('the surface the shading implies', PR.x, PR.y - 30, 0.55, 'left', 13);
-    label('read out of the brightness alone', PR.x, PR.y - 12, 0.32, 'left', 11);
+    label(compact ? 'what the shading implies' : 'the surface the shading implies', PR.x, PR.y - ty, 0.55, 'left', 13);
+    if (!compact) label('read out of the brightness alone', PR.x, PR.y - 12, 0.32, 'left', 11);
     plot(PR, line?.guess ?? null, GUESS, 'the light is overhead: the picture says nothing');
 
     const c = line ? corr(line.truth, line.guess) : 0;
@@ -380,15 +384,15 @@ import Try from '../../../components/sim/Try.astro';
       value: line ? sgn(c) : '—',
       colour: !line ? undefined : c > 0.5 ? TRUE : c < -0.5 ? GUESS : NOW,
       status: line
-        ? `light at ${state.az}°, ${state.ev}° up · assumed at ${state.flip ? (state.az + 180) % 360 : state.az}° · relief ${state.relief.toFixed(2)}×`
+        ? `light at ${state.az}°, ${state.ev}° up · assumed at ${state.flip ? (state.az + 180) % 360 : state.az}° · relief ${fixed(state.relief, 2)}×`
         : `the light is ${state.ev}° up, so its sideways part is only ${sgn(flat)}`,
       note: !line
-        ? 'Lit from almost straight above, every patch returns nearly the same brightness whichever way it leans. The picture is one flat grey and there is nothing in it to invert.'
+        ? 'Lit from almost straight above, every patch shows the same grey: nothing to invert.'
         : c < -0.5
-          ? 'The recovered surface is the true one turned inside out. Believe the light is on the wrong side and every bump reads as a dent, from a picture that never changed.'
+          ? 'Guess the light on the wrong side and the shape comes out inside out: bumps read as dents.'
           : c > 0.5
-            ? 'Believe the light correctly and the shape comes back out of the brightness, though only its form and never its height.'
-            : 'Neither reading fits. The slopes here are steep enough that brightness is no longer close to linear in them, and the running total drifts away from the truth.',
+            ? 'Guess the light right and the shape comes back, though only its form, not its height.'
+            : 'Neither reading fits: the slopes are too steep for brightness to stay linear in them.',
     });
   }
 
@@ -434,5 +438,19 @@ import Try from '../../../components/sim/Try.astro';
     over: () => show('bumps', 135, 85),
   });
 
+  // hold the header at its tallest (negative numbers, or no line to read) so
+  // the equation never pushes the picture down as the light moves
+  {
+    const head = document.querySelector<HTMLElement>('.stage-head');
+    let tallest = 0;
+    for (const tail of ['\\quad r = −0.00', '\\quad \\text{nothing to invert}'] as const) {
+      setEq({
+        rule: [['I = \\max(0,\\; \\hat n \\cdot \\ell)', NOW], '\\qquad', ['\\ell \\cdot \\nabla z \\approx \\ell_z - I', GUESS]],
+        live: [['\\ell = (−0.00,\\, −0.00,\\, −0.00)', GUESS], [tail, GUESS]],
+      });
+      tallest = Math.max(tallest, head?.getBoundingClientRect().height ?? 0);
+    }
+    if (head) head.style.minHeight = `${Math.ceil(tallest)}px`;
+  }
   recompute();
 </script>

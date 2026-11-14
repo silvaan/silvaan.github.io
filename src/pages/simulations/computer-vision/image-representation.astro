@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="computer-vision"
   title="Image Representation"
-  description="A photograph in memory is a grid of whole numbers and nothing else. Move the magnifier and the patch under it appears as a picture and as its numbers at the same moment. Then take the numbers apart: one channel at a time, and fewer and fewer values each."
+  description="A photograph in memory is a grid of whole numbers and nothing else. Move the magnifier and the patch under it shows as a picture and as its numbers at once."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'blue', color: '#60a5fa' },
           { label: 'the patch under the magnifier', color: '#f59e0b' },
         ]}
-        hint="Move the pointer over the photograph to take the magnifier with you"
+        hint="Move the pointer over the photograph to move the magnifier"
       />
       <Result label="One photograph" />
     </div>
@@ -90,7 +90,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { el, segmented, slider, result, readout, tries } from '../../../lib/panel';
@@ -103,7 +103,9 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('rep') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11 screen px; the numbers in the cells are sized to the cell
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
+  const raw = makeText(ctx, ink, 1);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -196,9 +198,17 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // --- layout ----------------------------------------------------------------
-  const PHOTO = { x: 60, y: 104, s: 360 };
-  const GRID = { x: 580, y: 104, s: 360 };
-  const scale = PHOTO.s / IMG;
+  // a phone gets bigger panels and only the titles
+  let PHOTO = { x: 60, y: 104, s: 360 };
+  let GRID = { x: 580, y: 104, s: 360 };
+  let scale = PHOTO.s / IMG;
+  let compact = false;
+  function layout() {
+    compact = isCompact(canvas);
+    PHOTO = compact ? { x: 20, y: 86, s: 440 } : { x: 60, y: 104, s: 360 };
+    GRID = compact ? { x: 540, y: 86, s: 440 } : { x: 580, y: 104, s: 360 };
+    scale = PHOTO.s / IMG;
+  }
   /** Top-left pixel of the patch, kept inside the picture. */
   const patch = () => {
     const k = state.zoom;
@@ -225,11 +235,12 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function photoPanel(p: { k: number; x: number; y: number }) {
-    label('the photograph', PHOTO.x, PHOTO.y - 30, 0.55, 'left', 13);
-    label(
-      ready ? `${IMG} × ${IMG} · ${CHAN_NAME[state.chan]} · ${state.bits} bit${state.bits > 1 ? 's' : ''}` : 'loading',
-      PHOTO.x, PHOTO.y - 12, 0.32, 'left', 11
-    );
+    label('the photograph', PHOTO.x, PHOTO.y - (compact ? 22 : 30), 0.55, 'left', 13);
+    if (!compact)
+      label(
+        ready ? `${IMG} × ${IMG} · ${CHAN_NAME[state.chan]} · ${state.bits} bit${state.bits > 1 ? 's' : ''}` : 'loading',
+        PHOTO.x, PHOTO.y - 12, 0.32, 'left', 11
+      );
     frame(PHOTO.x, PHOTO.y, PHOTO.s);
     if (!ready) return;
     ctx.save();
@@ -256,23 +267,25 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(GRID.x, GRID.y + GRID.s);
     ctx.stroke();
 
-    label(
-      `the patch starts at column ${p.x}, row ${p.y}`,
-      PHOTO.x, PHOTO.y + PHOTO.s + 26, 0.42, 'left', 11.5
-    );
+    if (!compact) label(`column ${p.x}, row ${p.y}`, PHOTO.x, PHOTO.y + PHOTO.s + 26, 0.42, 'left', 11.5);
   }
 
   function gridPanel(p: { k: number; x: number; y: number }) {
     const cs = GRID.s / p.k;
     const three = state.chan === 'all';
-    const room = three ? cs >= 44 : cs >= 26;
+    // numbers are printed only when a cell is big enough on screen to hold them at 11 px
+    const k = screenScale(canvas) || 1;
+    const numPx = (compact ? 9.5 : 11) / k;
+    const room = three ? cs >= numPx * 3.6 + 8 && cs >= 44 : cs >= numPx * 2.2 + 10 && cs >= 26;
     const numbers = state.view === 'num' && room;
 
-    label(state.view === 'num' ? 'the same patch, written out' : 'the same patch, as shades', GRID.x, GRID.y - 30, 0.55, 'left', 13);
-    label(
-      `${p.k} × ${p.k} pixels · values 0 to ${levels() - 1}`,
-      GRID.x, GRID.y - 12, 0.32, 'left', 11
-    );
+    const title = state.view === 'num' && room ? 'the same patch, written out' : 'the same patch, as shades';
+    label(compact ? (numbers ? 'the patch, as numbers' : 'the patch, as shades') : title, GRID.x, GRID.y - (compact ? 22 : 30), 0.55, 'left', 13);
+    if (!compact)
+      label(
+        state.view === 'num' && !room ? 'cells too small to print: zoom in' : `${p.k} × ${p.k} pixels · values 0 to ${levels() - 1}`,
+        GRID.x, GRID.y - 12, 0.32, 'left', 11
+      );
     frame(GRID.x, GRID.y, GRID.s);
     if (!ready) return;
 
@@ -297,12 +310,13 @@ import Try from '../../../components/sim/Try.astro';
         ctx.strokeRect(bx + 5.5, by + 5.5, 12, 12);
         const v = pixel(i);
         if (three) {
-          const size = Math.min(11, cs / 5.2);
+          const size = Math.max(numPx, Math.min(15.6, (cs - 8) / 3.6));
           [R, G, B].forEach((colour, j) =>
-            label(String(v[j]), bx + cs - 7, by + 18 + j * (size * 1.5), 0.95, 'right', size, colour)
+            raw.label(String(v[j]), bx + cs - 6, by + 3 + size * (1.0 + j * 1.18), 0.95, 'right', size, colour)
           );
         } else {
-          label(String(v[0]), bx + cs / 2 + 6, by + cs / 2 + 6, 0.85, 'center', Math.min(17, cs / 2.6));
+          const size = Math.max(numPx, Math.min(24, cs / 2.6));
+          raw.label(String(v[0]), bx + cs / 2 + 6, by + cs / 2 + size * 0.36, 0.85, 'center', size);
         }
       }
     ctx.strokeStyle = ink(numbers ? 0.16 : 0.1);
@@ -318,14 +332,6 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.restore();
 
-    label(
-      state.view === 'num' && !room
-        ? 'the cells are too small to print at this magnifier, so only the shades are drawn'
-        : state.view === 'num'
-          ? 'every cell is what is stored, and nothing else is'
-          : 'the same numbers, painted instead of printed',
-      GRID.x, GRID.y + GRID.s + 26, 0.42, 'left', 11.5
-    );
   }
 
   function centreLight(p: { k: number; x: number; y: number }) {
@@ -336,6 +342,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function draw() {
+    layout();
     ctx.clearRect(0, 0, W, H);
     const p = patch();
     photoPanel(p);
@@ -363,7 +370,7 @@ import Try from '../../../components/sim/Try.astro';
       'r-lev': String(levels()),
       'r-size': `${kb.toFixed(1)} kB`,
       'r-under': `${p.k * p.k} pixel${p.k > 1 ? 's' : ''}, ${p.k * p.k * chans} numbers`,
-      'r-light': ready ? centreLight(p) : '—',
+      'r-light': ready ? centreLight(p) : '…',
     });
     setResult({
       value: nums.toLocaleString('en-US'),

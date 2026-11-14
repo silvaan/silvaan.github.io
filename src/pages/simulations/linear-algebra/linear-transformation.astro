@@ -36,7 +36,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'F and its image', color: '#f472b6' },
           { label: 'unit square, area = det A', color: 'rgba(94,234,212,0.45)' },
         ]}
-        hint="Drag the tips of î and ĵ, or the ring marked v"
+        hint="Drag the tips of î and ĵ, or the dot v"
       />
       <Result label="det of the frame shown" />
     </div>
@@ -75,25 +75,30 @@ import Try from '../../../components/sim/Try.astro';
           { value: 'linear', label: 'Straight blend' },
         ]}
       />
-      <Seg
-        id="zoom"
-        label="View"
-        attr="z"
-        options={[
-          { value: 'fit', label: 'Fit to the picture' },
-          { value: 'wide', label: 'Wide' },
-        ]}
-      />
       <Slider id="t" label="Sweep I → A, t" min={0} max={100} value={100} display="1.00" />
       <Transport animate="Animate I → A" reset={false} />
-      <Checks
-        label="Show"
-        items={[
-          { id: 'fig', label: 'The figure, an F', checked: true },
-          { id: 'ghost', label: 'The original grid and F', checked: true },
-          { id: 'vec', label: 'A vector to drag', checked: true },
-        ]}
-      />
+      <details class="numeric-details">
+        <summary>More</summary>
+        <div class="more">
+          <Seg
+            id="zoom"
+            label="View"
+            attr="z"
+            options={[
+              { value: 'fit', label: 'Fit to the picture' },
+              { value: 'wide', label: 'Wide' },
+            ]}
+          />
+          <Checks
+            label="Show"
+            items={[
+              { id: 'fig', label: 'The figure, an F', checked: true },
+              { id: 'ghost', label: 'The original grid and F', checked: true },
+              { id: 'vec', label: 'A vector to drag', checked: true },
+            ]}
+          />
+        </div>
+      </details>
       <Readout
         title="Values"
         rows={[
@@ -109,7 +114,7 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      Pick <b>Shear</b> and drag the ring <b>v</b>. Its image is x steps along Aî
+      Pick <b>Shear</b> and drag the dot <b>v</b>. Its image is x steps along Aî
       plus y steps along Aĵ (the dashed legs): where the basis lands decides
       everything. <Try id="shear" />
     </li>
@@ -132,9 +137,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, textPx, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed, handle, grabCursor } from '../../../lib/draw';
   import { el, segmented, slider, matrix, check, result, readout, tries } from '../../../lib/panel';
 
   // A = the target matrix; M = the matrix actually drawn, interpolated from I by t.
@@ -143,12 +148,17 @@ import Try from '../../../components/sim/Try.astro';
   const M: Mat = { ...A };
   const view = { t: 1, path: 'polar', showGhost: true, showVec: true, showFig: true, zoom: 'fit' };
   const vec = { x: 2, y: 1 };
+  type Handle = 'i' | 'j' | 'v';
+  let dragging: Handle | null = null;
+  let hover: Handle | null = null;
   const IH = '#7c8cff', JH = '#5eead4', VEC = '#fbbf24', FIG = '#f472b6';
 
   const canvas = el('lin') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  // labels never show smaller than 11 screen px
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
+  const tpx = (size: number) => textPx(canvas, Math.round(size * 1.42), 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -247,7 +257,7 @@ import Try from '../../../components/sim/Try.astro';
    * nothing is drawn (false is returned) when none of them is clean.
    */
   function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, onSpot = false, gap = 7, onlyIfFree = false) {
-    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const w = textWidth(text, size) + 6, h = tpx(size) + 4;
     const cands: [number, number][] = onSpot || onlyIfFree ? [[ax, ay]] : [];
     if (onlyIfFree) for (const dy of [0, -6, 6, -12, 12]) for (const dx of [0, -8, 8, -16, 16]) cands.push([ax + dx, ay + dy]);
     else for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
@@ -272,7 +282,7 @@ import Try from '../../../components/sim/Try.astro';
     if (onlyIfFree && bestCost >= 1000) return false;
     const [cx, cy] = best;
     taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
-    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    label(text, cx, cy + tpx(size) * 0.34, 1, 'center', size, colour);
     return true;
   }
 
@@ -346,10 +356,8 @@ import Try from '../../../components/sim/Try.astro';
     seg(mid.px, mid.py, q.px, q.py, JH, [5, 4]);
     seg(ORIGIN.x, ORIGIN.y, p.px, p.py, ink(0.4), [3, 4]);
     arrowTo(q, VEC);
-    ctx.strokeStyle = VEC;
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(p.px, p.py, 6, 0, Math.PI * 2); ctx.stroke();
-    blockDot(p.px, p.py, 8);
+    handle(ctx, p.px, p.py, VEC, { r: Math.max(6, 5 / screenScale(canvas)), hot: dragging === 'v' || hover === 'v' });
+    blockDot(p.px, p.py, 10);
   }
 
   function draw() {
@@ -405,7 +413,8 @@ import Try from '../../../components/sim/Try.astro';
     }
 
     const vo = { x: M.a * vec.x + M.b * vec.y, y: M.c * vec.x + M.d * vec.y };
-    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = M[k].toFixed(2)));
+    const f2 = (v: number) => fixed(v, 2);
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = f2(M[k])));
     const detA = A.a * A.d - A.b * A.c;
     const turned = view.path === 'polar' ? (angleOf() * view.t * 180) / Math.PI : null;
     const pathNote =
@@ -419,17 +428,17 @@ import Try from '../../../components/sim/Try.astro';
       live: [[`A\\hat{\\imath}=(${M.a.toFixed(2)},${M.c.toFixed(2)})`, IH], [`\\quad A\\hat{\\jmath}=(${M.b.toFixed(2)},${M.d.toFixed(2)})`, JH], `\\quad\\det A = ${det.toFixed(3)}`],
     });
     setResult({
-      value: det.toFixed(3),
+      value: fixed(det, 3),
       colour: Math.abs(det) < 0.02 ? '#f87171' : det >= 0 ? JH : '#f87171',
-      status: `t = ${view.t.toFixed(2)} · ${Math.abs(det) < 0.02 ? 'flattened onto a line' : `î → (${M.a.toFixed(2)}, ${M.c.toFixed(2)}) · ĵ → (${M.b.toFixed(2)}, ${M.d.toFixed(2)})${det < 0 ? ' · orientation reversed' : ''}`}`,
+      status: `t = ${f2(view.t)} · ${Math.abs(det) < 0.02 ? 'flattened onto a line' : `î → (${f2(M.a)}, ${f2(M.c)}) · ĵ → (${f2(M.b)}, ${f2(M.d)})${det < 0 ? ' · orientation reversed' : ''}`}`,
       note: view.t >= 0.999 ? 'The two columns are just where the basis lands; every other vector follows by adding.' : pathNote,
     });
     setRows({
-      'r-i': `(${M.a.toFixed(2)}, ${M.c.toFixed(2)})`,
-      'r-j': `(${M.b.toFixed(2)}, ${M.d.toFixed(2)})`,
-      'r-v': view.showVec ? `(${vec.x.toFixed(2)}, ${vec.y.toFixed(2)})` : '—',
-      'r-av': view.showVec ? `(${vo.x.toFixed(2)}, ${vo.y.toFixed(2)})` : '—',
-      'r-turn': turned === null ? '—' : `${turned.toFixed(1)}°`,
+      'r-i': `(${f2(M.a)}, ${f2(M.c)})`,
+      'r-j': `(${f2(M.b)}, ${f2(M.d)})`,
+      'r-v': view.showVec ? `(${f2(vec.x)}, ${f2(vec.y)})` : '·',
+      'r-av': view.showVec ? `(${f2(vo.x)}, ${f2(vo.y)})` : '·',
+      'r-turn': turned === null ? '·' : `${fixed(turned, 1)}°`,
     });
   }
 
@@ -490,8 +499,6 @@ import Try from '../../../components/sim/Try.astro';
   });
 
   // drag the basis tips where they land, and the free vector at its input tip
-  type Handle = 'i' | 'j' | 'v';
-  let dragging: Handle | null = null;
   const mouse = (e: PointerEvent) => {
     const rect = canvas.getBoundingClientRect();
     return { mx: ((e.clientX - rect.left) / rect.width) * W, my: ((e.clientY - rect.top) / rect.height) * H };
@@ -500,7 +507,7 @@ import Try from '../../../components/sim/Try.astro';
     if (which === 'v' && !view.showVec) return false;
     const { mx, my } = mouse(e);
     const t = which === 'i' ? toScreen(1, 0) : which === 'j' ? toScreen(0, 1) : rawToScreen(vec.x, vec.y);
-    return Math.hypot(mx - t.px, my - t.py) < 16;
+    return Math.hypot(mx - t.px, my - t.py) < Math.max(16, 20 / screenScale(canvas));
   }
   canvas.addEventListener('pointerdown', (e) => {
     dragging = near(e, 'i') ? 'i' : near(e, 'j') ? 'j' : near(e, 'v') ? 'v' : null;
@@ -511,9 +518,12 @@ import Try from '../../../components/sim/Try.astro';
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!dragging) {
-      canvas.style.cursor = near(e, 'i') || near(e, 'j') || near(e, 'v') ? 'grab' : 'default';
+      const h: Handle | null = near(e, 'i') ? 'i' : near(e, 'j') ? 'j' : near(e, 'v') ? 'v' : null;
+      grabCursor(canvas, !!h, false);
+      if (h !== hover) { hover = h; draw(); }
       return;
     }
+    grabCursor(canvas, true, true);
     const { mx, my } = mouse(e);
     const wx = (mx - ORIGIN.x) / UNIT, wy = (ORIGIN.y - my) / UNIT;
     const snap = (v: number) => (Math.abs(v - Math.round(v)) < 0.08 ? Math.round(v) : +v.toFixed(2));
@@ -533,6 +543,7 @@ import Try from '../../../components/sim/Try.astro';
   const endDrag = () => {
     if (!dragging) return;
     dragging = null;
+    grabCursor(canvas, true, false);
     fit();
     draw();
   };
@@ -545,6 +556,12 @@ import Try from '../../../components/sim/Try.astro';
 </script>
 
 <style>
+  .more {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 12px;
+  }
   #lin {
     touch-action: none;
   }

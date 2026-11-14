@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="computer-vision"
   title="Boxes and Overlap"
-  description="A detector does not hand you one box for one object. It hands you a heap of overlapping guesses with scores on them, and two rules turn that heap into an answer: a number for how much two boxes are the same box, and a procedure that keeps the best and deletes its neighbours. Step through it one decision at a time."
+  description="A detector hands you a heap of overlapping, scored guesses. Two rules turn it into an answer: a number for how much two boxes are the same box, and keep the best, delete its neighbours."
   shortcuts={['run', 'step', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -33,7 +33,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'deleted for overlapping a better one', color: '#f87171' },
           { label: 'still waiting its turn', color: 'rgba(229,231,235,0.55)' },
         ]}
-        hint="Stage 2 of 2: thin the heap · step through the decisions, or click any box to compare it yourself"
+        hint="Step through the decisions, or click any box to compare it yourself"
       />
       <Result label="After the overlap rule" />
     </div>
@@ -65,9 +65,7 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      This is <b>stage 2</b> of the pipeline that
-      <a href="/simulations/computer-vision/object-detection">Finding an Object</a>
-      starts: a heap of scored, overlapping guesses (drawn here on a robot scene
+      This is <b>stage 2</b> of the pipeline that <a href="/simulations/computer-vision/object-detection">Finding an Object</a> starts: a heap of scored, overlapping guesses (drawn here on a robot scene
       of its own). Step through <b>non-maximum suppression</b>: keep the best box
       left, delete what overlaps it by more than the threshold. <Try id="nms" label="Run" />
     </li>
@@ -87,7 +85,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { el, slider, check, transport, result, readout, tries } from '../../../lib/panel';
@@ -269,7 +267,9 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('bb') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11 screen px; a phone drops the secondary ones
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
+  let compact = false;
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -307,8 +307,8 @@ import Try from '../../../components/sim/Try.astro';
 
   function scenePanel() {
     const kept = queue.filter((c) => c.state === 1);
-    label('the heap, and what is left of it', SC.x, SC.y - 30, 0.55, 'left', 13);
-    label(`${at} of ${queue.length} decided`, SC.x, SC.y - 12, 0.32, 'left', 11);
+    label(compact ? 'the heap' : 'the heap, and what is left of it', SC.x, SC.y - (compact ? 18 : 30), 0.55, 'left', 13);
+    if (!compact) label(`${at} of ${queue.length} decided`, SC.x, SC.y - 12, 0.32, 'left', 11);
     panel(SC.x, SC.y, SC.s);
     ctx.save();
     roundRect(ctx, SC.x, SC.y, SC.s, SC.s, 12);
@@ -333,8 +333,8 @@ import Try from '../../../components/sim/Try.astro';
 
   /** The queue, in the order the rule works through it. */
   function queuePanel() {
-    label('by score', QX + QW / 2, SC.y - 30, 0.55, 'center', 13);
-    label('the order asked', QX + QW / 2, SC.y - 12, 0.32, 'center', 11);
+    label('by score', QX + QW / 2, SC.y - (compact ? 18 : 30), 0.55, 'center', 13);
+    if (!compact) label('the order asked', QX + QW / 2, SC.y - 12, 0.32, 'center', 11);
     const rh = Math.min(15, SC.s / Math.max(1, queue.length));
     queue.forEach((c, i) => {
       const y = SC.y + i * rh;
@@ -343,9 +343,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.fillStyle = i < at ? ink(0.06) : 'transparent';
       if (i < at) ctx.fillRect(QX, y, QW, rh - 1);
       ctx.fillStyle = c.state === 1 ? KEEP : c.state === 2 ? `${DEAD}cc` : ink(0.28);
-      ctx.fillRect(QX + 26, y + 2, (QW - 60) * c.v, rh - 5);
-      label(c.v.toFixed(2), QX, y + rh - 3, now ? 0.95 : 0.5, 'left', 10, now ? WAIT : undefined);
-      label(c.state === 1 ? 'keep' : c.state === 2 ? 'gone' : '·', QX + QW - 2, y + rh - 3, now ? 0.95 : 0.55, 'right', 10, colour);
+      // the bar starts clear of the score printed before it
+      const bx0 = compact ? 0 : 42;
+      ctx.fillRect(QX + bx0, y + 2, (QW - bx0 - 40) * c.v, rh - 5);
+      if (!compact) {
+        label(c.v.toFixed(2), QX, y + rh - 3, now ? 0.95 : 0.5, 'left', 10, now ? WAIT : undefined);
+        label(c.state === 1 ? 'keep' : c.state === 2 ? 'gone' : '·', QX + QW - 2, y + rh - 3, now ? 0.95 : 0.55, 'right', 10, colour);
+      }
       if (now) {
         ctx.strokeStyle = WAIT;
         ctx.lineWidth = 1;
@@ -356,13 +360,14 @@ import Try from '../../../components/sim/Try.astro';
 
   /** The two boxes the current decision is about, drawn big. */
   function overlapPanel() {
-    label('how much the same box', OV.x, OV.y - 30, 0.55, 'left', 13);
+    label(compact ? 'the overlap' : 'how much the same box', OV.x, OV.y - (compact ? 18 : 30), 0.55, 'left', 13);
     const j = inspect ? { a: inspect, b: bestKeptAgainst(inspect), v: 0, killed: false } : judged;
     if (j && j.b) j.v = iou(j.a, j.b);
-    label(
-      j && j.b ? 'the box being judged, against the kept one' : 'nothing to compare yet',
-      OV.x, OV.y - 12, 0.32, 'left', 11
-    );
+    if (!compact)
+      label(
+        j && j.b ? 'the box being judged, against the kept one' : 'nothing to compare yet',
+        OV.x, OV.y - 12, 0.32, 'left', 11
+      );
     panel(OV.x, OV.y, OV.s);
     if (!j || !j.b) return;
     const a = j.a, b = j.b;
@@ -396,12 +401,16 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeRect(A.x, A.y, A.w, A.h);
     ctx.setLineDash([]);
     ctx.restore();
-    label('the kept one', B.x + 4, B.y - 6, 0.9, 'left', 11, KEEP);
-    label('the one being judged', A.x + 4, A.y + A.h + 14, 0.9, 'left', 11, WAIT);
     const v = iou(a, b);
-    label(`shared ${Math.round(inter(a, b))} ÷ covered ${Math.round(a.w * a.h + b.w * b.h - inter(a, b))} = ${v.toFixed(2)}`, OV.x + OV.s / 2, OV.y + OV.s - 34, 0.5, 'center', 12, TRUTH);
+    if (!compact) {
+      label('the kept one', B.x + 4, B.y - 6, 0.9, 'left', 11, KEEP);
+      label('the one being judged', A.x + 4, A.y + A.h + 14, 0.9, 'left', 11, WAIT);
+      label(`shared ${Math.round(inter(a, b))} ÷ covered ${Math.round(a.w * a.h + b.w * b.h - inter(a, b))} = ${v.toFixed(2)}`, OV.x + OV.s / 2, OV.y + OV.s - 34, 0.5, 'center', 12, TRUTH);
+    }
     label(
-      v > state.iou ? `${v.toFixed(2)} is over ${state.iou.toFixed(2)}, so it goes` : `${v.toFixed(2)} is under ${state.iou.toFixed(2)}, so it stays`,
+      compact
+        ? `${v.toFixed(2)} ${v > state.iou ? '>' : '≤'} ${state.iou.toFixed(2)}: ${v > state.iou ? 'goes' : 'stays'}`
+        : v > state.iou ? `${v.toFixed(2)} is over ${state.iou.toFixed(2)}, so it goes` : `${v.toFixed(2)} is under ${state.iou.toFixed(2)}, so it stays`,
       OV.x + OV.s / 2, OV.y + OV.s - 14, 0.9, 'center', 12.5, v > state.iou ? DEAD : KEEP
     );
   }
@@ -419,6 +428,7 @@ import Try from '../../../components/sim/Try.astro';
   };
 
   function draw() {
+    compact = isCompact(canvas);
     ctx.clearRect(0, 0, W, H);
     scenePanel();
     queuePanel();
@@ -455,16 +465,16 @@ import Try from '../../../components/sim/Try.astro';
       colour: kept.length === REAL.length && found === REAL.length ? KEEP : TRUTH,
       status: `${queue.length} in the heap · ${at} decided · ${found} of ${REAL.length} robots found, ${kept.length - found} false alarm${kept.length - found === 1 ? '' : 's'} · overlap allowed ${state.iou.toFixed(2)}`,
       note: !done
-        ? 'The rule has not finished. Every box still waiting will be kept or deleted by exactly one comparison against the boxes already kept.'
+        ? 'Not finished: each waiting box is kept or deleted by one comparison with the kept ones.'
         : state.iou < 0.15
-          ? 'At this overlap almost anything counts as the same box, so boxes on genuinely different robots delete each other and objects go missing.'
+          ? 'Almost anything counts as the same box, so boxes on different robots delete each other.'
           : state.iou > 0.6
-            ? 'At this overlap only near-identical boxes count as the same, so each robot keeps a small stack of its own guesses and the count comes out too high.'
+            ? 'Only near-identical boxes count as the same, so each robot keeps a stack of guesses.'
             : found === REAL.length && kept.length === REAL.length
-              ? 'One box per robot and nothing else, which is what the two rules are for. Neither of them knows anything about robots.'
+              ? 'One box per robot and nothing else, though neither rule knows anything about robots.'
               : found === REAL.length
-                ? 'Every robot has exactly one box, and the extras are boxes on places where there is no robot at all. No overlap rule can remove those, because they overlap nothing: only the score can.'
-                : 'Some robots have no box at all now. Between them, the score needed to enter and the overlap allowed have thrown away every guess at them.',
+                ? 'Every robot has one box; the extras overlap nothing, so only the score can remove them.'
+                : 'Some robots have no box now: the two rules threw away every guess at them.',
     });
   }
 

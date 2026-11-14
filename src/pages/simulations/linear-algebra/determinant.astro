@@ -77,15 +77,6 @@ import Try from '../../../components/sim/Try.astro';
           { value: '1,2,0.5,1', label: 'Collapse' },
         ]}
       />
-      <Seg
-        id="zoom"
-        label="View"
-        attr="z"
-        options={[
-          { value: 'fit', label: 'Fit to the picture' },
-          { value: 'wide', label: 'Wide' },
-        ]}
-      />
       <Slider id="t" label="Sweep I → A" min={0} max={100} value={100} display="1.00" />
       <Transport animate="Animate I → A" />
       <Seg
@@ -100,14 +91,28 @@ import Try from '../../../components/sim/Try.astro';
           { value: 'flip', label: 'Reflect' },
         ]}
       />
-      <Checks
-        label="Show"
-        items={[
-          { id: 'shape', label: 'The figure, an F inside the square', checked: true },
-          { id: 'hgt', label: 'Base times height' },
-          { id: 'ghost', label: 'The original grid', checked: true },
-        ]}
-      />
+      <details class="numeric-details">
+        <summary>More</summary>
+        <div class="more">
+          <Seg
+            id="zoom"
+            label="View"
+            attr="z"
+            options={[
+              { value: 'fit', label: 'Fit to the picture' },
+              { value: 'wide', label: 'Wide' },
+            ]}
+          />
+          <Checks
+            label="Show"
+            items={[
+              { id: 'shape', label: 'The figure, an F inside the square', checked: true },
+              { id: 'hgt', label: 'Base times height' },
+              { id: 'ghost', label: 'The original grid', checked: true },
+            ]}
+          />
+        </div>
+      </details>
       <Readout
         title="Values"
         rows={[
@@ -143,9 +148,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, textPx, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed, grabCursor } from '../../../lib/draw';
   import { el, segmented, slider, matrix, check, result, readout, tries } from '../../../lib/panel';
 
   // ad − bc is the area of the parallelogram spanned by the columns, signed by
@@ -169,7 +174,9 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('det') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  // labels never show smaller than 11 screen px
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
+  const tpx = (size: number) => textPx(canvas, Math.round(size * 1.42), 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -265,7 +272,7 @@ import Try from '../../../components/sim/Try.astro';
    * nothing is drawn (false is returned) when none of them is clean.
    */
   function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, onSpot = false, gap = 7, onlyIfFree = false) {
-    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const w = textWidth(text, size) + 6, h = tpx(size) + 4;
     const cands: [number, number][] = onSpot || onlyIfFree ? [[ax, ay]] : [];
     if (onlyIfFree) for (const dy of [0, -6, 6, -12, 12]) for (const dx of [0, -8, 8, -16, 16]) cands.push([ax + dx, ay + dy]);
     else for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
@@ -290,7 +297,7 @@ import Try from '../../../components/sim/Try.astro';
     if (onlyIfFree && bestCost >= 1000) return false;
     const [cx, cy] = best;
     taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
-    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    label(text, cx, cy + tpx(size) * 0.34, 1, 'center', size, colour);
     return true;
   }
 
@@ -431,8 +438,8 @@ import Try from '../../../components/sim/Try.astro';
     // inside the parallelogram if there is a clean spot, else just past its far corner
     const far = pt(M, 1, 1);
     if (area > 0.12)
-      place(`area ${area.toFixed(2)}`, 12, D >= 0 ? TEAL : HOT, mid.px, mid.py, Math.PI / 2, true, 4, true) ||
-        place(`area ${area.toFixed(2)}`, 12, D >= 0 ? TEAL : HOT, far.px, far.py, away(far), false, 8);
+      place(`area ${fixed(area, 2)}`, 12, D >= 0 ? TEAL : HOT, mid.px, mid.py, Math.PI / 2, true, 4, true) ||
+        place(`area ${fixed(area, 2)}`, 12, D >= 0 ? TEAL : HOT, far.px, far.py, away(far), false, 8);
     else place('flattened', 12, HOT, mid.px, mid.py, -Math.PI / 2, false, 6);
     if (view.bkey !== 'none') {
       const lp = pt(BA, 0.5, 0.5);
@@ -440,12 +447,12 @@ import Try from '../../../components/sim/Try.astro';
       place('B A', 12, WARM, lp.px, lp.py, -Math.PI / 2, true, 4, true) || place('B A', 12, WARM, bf.px, bf.py, away(bf), false, 8);
     }
     if (bh) {
-      place(`height ${bh.h.toFixed(2)}`, 11, WARM, (bh.pv.px + bh.pf.px) / 2, (bh.pv.py + bh.pf.py) / 2, 0, false, 6);
-      place(`base ${bh.ul.toFixed(2)}`, 11, ACC, bh.pm.px, bh.pm.py, Math.PI / 2, false, 8);
+      place(`height ${fixed(bh.h, 2)}`, 11, WARM, (bh.pv.px + bh.pf.px) / 2, (bh.pv.py + bh.pf.py) / 2, 0, false, 6);
+      place(`base ${fixed(bh.ul, 2)}`, 11, ACC, bh.pm.px, bh.pm.py, Math.PI / 2, false, 8);
     }
 
     // --- words, numbers, meter
-    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = M[k].toFixed(2)));
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = fixed(M[k], 2)));
     const flat = Math.abs(D) < 0.02;
     const col = flat ? HOT : D >= 0 ? TEAL : HOT;
     setEq({
@@ -456,25 +463,27 @@ import Try from '../../../components/sim/Try.astro';
       ],
     });
     setResult({
-      value: D.toFixed(3),
+      value: fixed(D, 3),
       colour: col,
-      status: flat ? 'Area 0 · the plane is flattened onto a line · not invertible' : `Area ${area.toFixed(3)} · orientation ${D > 0 ? 'kept' : 'reversed'} · invertible`,
+      status: flat ? 'Area 0 · the plane is flattened onto a line · not invertible' : `Area ${fixed(area, 3)} · orientation ${D > 0 ? 'kept' : 'reversed'} · invertible`,
       note: flat
         ? 'Zero area means a whole dimension was thrown away, and nothing thrown away can be recovered.'
         : view.bkey !== 'none'
-          ? `Doing A and then B scales area twice over, so det(BA) = det B · det A = ${det(B).toFixed(2)} × ${D.toFixed(2)} = ${det(BA).toFixed(3)}.`
+          ? `Doing A and then B scales area twice over, so det(BA) = det B · det A = ${fixed(det(B), 2)} × ${fixed(D, 2)} = ${fixed(det(BA), 3)}.`
           : 'Every region in the plane, not just this square, comes out scaled by exactly this much.',
     });
     const frac = Math.max(-1, Math.min(1, D / 6));
     el('meter').style.setProperty('--meter-color', col);
-    el('meter-fill').style.left = `${50 + Math.min(0, frac) * 50}%`;
-    el('meter-fill').style.width = `${Math.abs(frac) * 50}%`;
-    el('meter-dot').style.left = `${50 + frac * 50}%`;
+    // moved with transforms, so the meter never shifts the layout
+    const fill = el('meter-fill'), mdot = el('meter-dot');
+    fill.style.cssText = `left: 50%; width: 50%; transform-origin: left center; transform: scaleX(${frac})`;
+    mdot.style.left = '50%';
+    mdot.style.transform = `translateX(${(frac * (fill.parentElement?.clientWidth ?? 0)) / 2}px)`;
     setRows({
-      'r-area': area.toFixed(3),
-      'r-shape': view.shape ? `${SHAPE_AREA.toFixed(3)} → ${(SHAPE_AREA * area).toFixed(3)}` : '—',
-      'r-detB': view.bkey === 'none' ? '—' : det(B).toFixed(3),
-      'r-detBA': view.bkey === 'none' ? '—' : det(BA).toFixed(3),
+      'r-area': fixed(area, 3),
+      'r-shape': view.shape ? `${fixed(SHAPE_AREA, 3)} → ${fixed(SHAPE_AREA * area, 3)}` : '·',
+      'r-detB': view.bkey === 'none' ? '·' : fixed(det(B), 3),
+      'r-detBA': view.bkey === 'none' ? '·' : fixed(det(BA), 3),
     });
   }
 
@@ -551,7 +560,7 @@ import Try from '../../../components/sim/Try.astro';
   };
   function nearTip(l: { x: number; y: number }, which: 'i' | 'j') {
     const p = which === 'i' ? pt(shown(), 1, 0) : pt(shown(), 0, 1);
-    return Math.hypot(l.x - p.px, l.y - p.py) < 17;
+    return Math.hypot(l.x - p.px, l.y - p.py) < Math.max(17, 20 / screenScale(canvas));
   }
   canvas.addEventListener('pointerdown', (e) => {
     const l = local(e);
@@ -560,7 +569,8 @@ import Try from '../../../components/sim/Try.astro';
   });
   canvas.addEventListener('pointermove', (e) => {
     const l = local(e);
-    if (!drag) { canvas.style.cursor = nearTip(l, 'i') || nearTip(l, 'j') ? 'grab' : 'default'; return; }
+    grabCursor(canvas, !!drag || nearTip(l, 'i') || nearTip(l, 'j'), !!drag);
+    if (!drag) return;
     const snap = (v: number) => (Math.abs(v - Math.round(v)) < 0.07 ? Math.round(v) : +v.toFixed(2));
     const x = Math.max(-3, Math.min(3, snap((l.x - O.x) / UNIT)));
     const y = Math.max(-3, Math.min(3, snap((O.y - l.y) / UNIT)));
@@ -572,17 +582,44 @@ import Try from '../../../components/sim/Try.astro';
   const stop = () => {
     if (!drag) return;
     drag = null;
+    grabCursor(canvas, true, false);
     fit();
     draw();
   };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
+  // hold the header and result strip at the tallest any preset or try makes
+  // them, so trying one never moves the page (again once the maths fonts
+  // arrive, unless someone has started playing)
+  function holdHeights() {
+    const boxes = ['.stage-head', '.result-strip'].map((q) => document.querySelector<HTMLElement>(q));
+    const tallest = boxes.map(() => 0);
+    const opts = (id: string) => [...document.querySelectorAll<HTMLElement>(`#${id} [data-${id === 'presets' ? 'm' : 'b'}]`)].map((x) => x.dataset.m ?? x.dataset.b!);
+    for (const m of opts('presets'))
+      for (const b of opts('bmat')) {
+        show(m, { b });
+        boxes.forEach((x, i) => (tallest[i] = Math.max(tallest[i], x?.getBoundingClientRect().height ?? 0)));
+      }
+    boxes.forEach((x, i) => x && (x.style.minHeight = `${Math.ceil(tallest[i])}px`));
+    show('1.4,0.6,0.3,1.2');
+  }
+  let touched = false;
+  for (const ev of ['pointerdown', 'keydown']) document.querySelector('.sim')?.addEventListener(ev, () => (touched = true), { capture: true });
+  holdHeights();
+  document.fonts?.ready.then(() => { if (!touched) holdHeights(); });
+
   fit();
   draw();
 </script>
 
 <style>
+  .more {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 12px;
+  }
   #det {
     touch-action: none;
   }

@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="computer-vision"
   title="Finding an Object"
-  description="A detector is a picture of the thing you want and a window that walks the whole scene asking how much this looks like that. Drag the window anywhere to read its answer, or set it running and watch it sweep, filling in a score for every position and every size. The boxes come last, out of a threshold and an overlap rule."
+  description="A detector is a picture of the thing you want and a window that walks the scene asking how much this looks like that. Drag the window, or run it and watch every position get a score."
   shortcuts={['run', 'step', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -34,7 +34,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'a box that survived', color: '#34d399' },
           { label: 'the score, once that window has been asked', color: '#7c8cff' },
         ]}
-        hint="Stage 1 of 2: score every window · drag the window anywhere, Run sweeps it over everything"
+        hint="Drag the window anywhere; Run sweeps it over every position"
       />
       <Result label="Found" />
     </div>
@@ -105,9 +105,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect } from '../../../lib/draw';
+  import { stageInk, roundRect, grabCursor } from '../../../lib/draw';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
   const OBJ = '#f59e0b', KEEP = '#34d399', HEAT = '#7c8cff', NOW = '#e5e7eb';
@@ -342,7 +342,9 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('det') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11 screen px; a phone drops the secondary ones
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
+  let compact = false;
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -529,13 +531,13 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = colour;
     ctx.lineWidth = width;
     ctx.strokeRect(x, y, w, h);
-    if (text) label(text, x + 2, Math.min(b.y + b.s - 4, y + h + 13), 1, 'left', 11, colour);
+    if (text && !compact) label(text, x + 2, Math.min(b.y + b.s - 4, y + h + 13), 1, 'left', 11, colour);
   }
 
   function scenePanel() {
     const z = sizes[cur.si];
-    label('the scene', PH.x, PH.y - 30, 0.55, 'left', 13);
-    label(`${kept.length} box${kept.length === 1 ? '' : 'es'} from ${over.length} window${over.length === 1 ? '' : 's'}`, PH.x, PH.y - 12, 0.32, 'left', 11);
+    label('the scene', PH.x, PH.y - (compact ? 18 : 30), 0.55, 'left', 13);
+    if (!compact) label(`${kept.length} box${kept.length === 1 ? '' : 'es'} from ${over.length} window${over.length === 1 ? '' : 's'}`, PH.x, PH.y - 12, 0.32, 'left', 11);
     panel(PH.x, PH.y, PH.s);
     ctx.save();
     roundRect(ctx, PH.x, PH.y, PH.s, PH.s, 12);
@@ -550,9 +552,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineWidth = 1.6;
       ctx.strokeRect(PH.x + o.box[0] * u, PH.y + o.box[1] * u, o.box[2] * u, o.box[3] * u);
       ctx.setLineDash([]);
-      label('taken from here', PH.x + o.box[0] * u, PH.y + o.box[1] * u - 6, 0.9, 'left', 11, OBJ);
+      if (!compact) label('taken from here', PH.x + o.box[0] * u, PH.y + o.box[1] * u - 6, 0.9, 'left', 11, OBJ);
     }
-    kept.forEach((r, i) => boxOn(PH, r, KEEP, 2, i < 6 ? r.v.toFixed(2) : ''));
+    // the scores of neighbouring boxes would print over each other: the boxes alone say enough
+    kept.forEach((r) => boxOn(PH, r, KEEP, 2));
     // the trail turns a sweep that would otherwise look like a jump into a walk
     const u = PH.s / IMG;
     trail.forEach((t, i) => {
@@ -595,14 +598,14 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = colour;
     ctx.lineWidth = 1.4;
     ctx.strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
-    label(text, x + T / 2, y + T + 15, 0.45, 'center', 11);
+    if (!compact) label(text, x + T / 2, y + T + 15, 0.45, 'center', 11);
   }
 
   function middle() {
     const T = 74;
     const o = OBJECTS[state.obj];
-    label('the comparison', MIDX, PH.y - 30, 0.55, 'center', 13);
-    label(`${G} × ${G} numbers each`, MIDX, PH.y - 12, 0.32, 'center', 11);
+    label(compact ? 'compare' : 'the comparison', MIDX, PH.y - (compact ? 18 : 30), 0.55, 'center', 13);
+    if (!compact) label(`${G} × ${G} numbers each`, MIDX, PH.y - 12, 0.32, 'center', 11);
     thumbAt(MIDX - T - 5, PH.y, T, tplShown, state.mirror && cur.flip === 1, OBJ, state.mirror && cur.flip === 1 ? 'mirrored' : 'template');
     const z = sizes[cur.si];
     if (z) {
@@ -610,23 +613,23 @@ import Try from '../../../components/sim/Try.astro';
       thumbAt(MIDX + 5, PH.y, T, buf, false, NOW, 'window');
     }
     label(cur.v === UNASKED ? '—' : cur.v.toFixed(2), MIDX, PH.y + T + 46, 1, 'center', 21, cur.v > state.thresh ? KEEP : HEAT);
-    label(`${o.box[2]}×${o.box[3]}${z ? ` · now ${z.s.toFixed(2)}×` : ''}`, MIDX, PH.y + T + 66, 0.3, 'center', 10.5);
+    if (!compact) label(`${o.box[2]}×${o.box[3]}${z ? ` · now ${z.s.toFixed(2)}×` : ''}`, MIDX, PH.y + T + 66, 0.3, 'center', 10.5);
 
     const top = PH.y + T + 92;
-    label('every size tried', MIDX, top - 6, 0.45, 'center', 11.5);
+    if (!compact) label('every size tried', MIDX, top - 6, 0.45, 'center', 11.5);
     const rh = Math.min(20, (PH.s - (top - PH.y) - 6) / Math.max(1, sizes.length));
     sizes.forEach((z2, i) => {
       const y = top + 8 + i * rh;
       let best = -2;
       for (let k = 0; k < IMG * IMG; k++) if (z2.map[k] !== UNASKED && z2.map[k] > best) best = z2.map[k];
       const on = i === cur.si;
-      label(`${z2.s.toFixed(2)}×`, MIDX - 86, y + 4, on ? 0.9 : 0.4, 'left', 10.5, on ? NOW : undefined);
+      if (!compact) label(`${z2.s.toFixed(2)}×`, MIDX - 86, y + 4, on ? 0.9 : 0.4, 'left', 10.5, on ? NOW : undefined);
       const bw = 96, t = Math.max(0, Math.min(1, best));
       ctx.fillStyle = ink(0.08);
       ctx.fillRect(MIDX - 44, y - 5, bw, 10);
       ctx.fillStyle = on ? NOW : `${HEAT}99`;
       ctx.fillRect(MIDX - 44, y - 5, bw * t, 10);
-      label(best < -1 ? '—' : best.toFixed(2), MIDX + 56, y + 4, on ? 0.9 : 0.4, 'left', 10.5, on ? NOW : undefined);
+      if (!compact) label(best < -1 ? '·' : best.toFixed(2), MIDX + 56, y + 4, on ? 0.9 : 0.4, 'left', 10.5, on ? NOW : undefined);
     });
   }
 
@@ -667,8 +670,8 @@ import Try from '../../../components/sim/Try.astro';
     heatCx.putImageData(px, 0, 0);
   }
   function mapPanel() {
-    label('what every window answered', MAP.x, MAP.y - 30, 0.55, 'left', 13);
-    label(`${asked.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} asked so far`, MAP.x, MAP.y - 12, 0.32, 'left', 11);
+    label(compact ? 'every window' : 'what every window answered', MAP.x, MAP.y - (compact ? 18 : 30), 0.55, 'left', 13);
+    if (!compact) label(`${asked.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} asked so far`, MAP.x, MAP.y - 12, 0.32, 'left', 11);
     panel(MAP.x, MAP.y, MAP.s);
     if (!sizes.length) return;
     paintHeat();
@@ -684,6 +687,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function draw() {
+    compact = isCompact(canvas);
     ctx.clearRect(0, 0, W, H);
     scenePanel();
     middle();
@@ -715,12 +719,12 @@ import Try from '../../../components/sim/Try.astro';
       colour: kept.length ? KEEP : OBJ,
       status: `looking for ${o.name} in the ${state.pic} · ${asked.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} windows asked over ${sizes.length} size${sizes.length === 1 ? '' : 's'}${state.mirror ? ', both ways round' : ''} · ${over.length} cleared ${state.thresh.toFixed(2)}`,
       note: !done
-        ? 'The sweep has not finished, so the map is only filled in where the window has been and the boxes are only the ones found so far.'
+        ? 'Not finished: the map is filled only where the window has been, the boxes so far.'
         : !kept.length
-          ? 'Nothing cleared the threshold. A detector that can only say yes is not a detector, so this is an answer too, and the right one when the thing is not there.'
+          ? 'Nothing cleared the threshold: an answer too, and the right one when the thing is absent.'
           : state.scales === 1
-            ? 'One size only, so anything larger or smaller than the template is read by a window that does not fit it, and loses marks for a reason that has nothing to do with what is inside it.'
-            : 'Every extra size is another sweep of the whole scene, and the mirror doubles that again. The boxes get better and the bill goes up, which is the trade every sliding-window detector makes.',
+            ? 'One size only: anything larger or smaller than the template is read by a window that misfits.'
+            : 'Each extra size is another sweep, and the mirror doubles it: better boxes, a bigger bill.',
     });
   }
 
@@ -750,10 +754,10 @@ import Try from '../../../components/sim/Try.astro';
   });
   canvas.addEventListener('pointermove', (e) => {
     const p = local(e);
-    canvas.style.cursor = onScene(p) ? 'grab' : 'default';
+    grabCursor(canvas, onScene(p), dragging);
     if (dragging) moveTo(p);
   });
-  const drop = () => (dragging = false);
+  const drop = () => { dragging = false; grabCursor(canvas, false, false); };
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 

@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="computer-vision"
   title="Image Filters"
-  description="A filter is a small square of numbers. Slide it over a photograph, multiply and add, and the same handful of weights will blur it, sharpen it or leave nothing but its edges. Pick one, resize it, or drag the weights until it is yours."
+  description="A filter is a small square of numbers. Slide it over a photograph, multiply and add, and the same few weights will blur it, sharpen it or keep only its edges."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -30,7 +30,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'a positive weight', color: '#f87171' },
           { label: 'a negative weight', color: '#60a5fa' },
         ]}
-        hint="Drag a weight up or down to change it · the picture follows immediately"
+        hint="Drag a weight up or down; the picture follows"
       />
       <Result label="Filter" />
     </div>
@@ -92,7 +92,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, isCompact, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { el, segmented, result, readout, tries } from '../../../lib/panel';
@@ -173,7 +173,10 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('filt') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink, inv } = stageInk(canvas);
-  const { label } = makeText(ctx, ink);
+  // labels never show under 11 screen px; the numbers inside the weight cells
+  // are sized to their cell instead (see draw)
+  const { label } = makeText(ctx, ink, 1.42, undefined, 11);
+  const raw = makeText(ctx, ink, 1);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -264,11 +267,18 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // --- layout ----------------------------------------------------------------
-  const IN = { x: 40, y: 96, s: 340 };
-  const OUT = { x: 620, y: 96, s: 340 };
+  // on a phone the photographs give up some room so the weights stay readable
+  let IN = { x: 40, y: 96, s: 340 };
+  let OUT = { x: 620, y: 96, s: 340 };
   const MID = 500, MIDY = 262;
+  let compact = false;
+  function layout() {
+    compact = isCompact(canvas);
+    IN = compact ? { x: 16, y: 112, s: 300 } : { x: 40, y: 96, s: 340 };
+    OUT = compact ? { x: W - 16 - 300, y: 112, s: 300 } : { x: 620, y: 96, s: 340 };
+  }
 
-  const cellSize = () => (state.size === 3 ? 54 : 40);
+  const cellSize = () => (compact ? (state.size === 3 ? 92 : 58) : state.size === 3 ? 54 : 44);
   const gridTop = () => MIDY - (state.size * cellSize()) / 2;
   const gridLeft = () => MID - (state.size * cellSize()) / 2;
 
@@ -306,20 +316,25 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function draw() {
+    layout();
     ctx.clearRect(0, 0, W, H);
 
-    label('the photograph', IN.x, IN.y - 30, 0.55, 'left', 13);
-    label(ready ? `${IMG} × ${IMG}, ${state.mode === 'rgb' ? 'three channels' : 'one grey channel'}` : 'loading', IN.x, IN.y - 12, 0.32, 'left', 11);
+    // a phone keeps the titles and drops the grey second lines
+    label('the photograph', IN.x, IN.y - (compact ? 22 : 30), 0.55, 'left', 13);
+    if (!compact) label(ready ? `${IMG} × ${IMG}, ${state.mode === 'rgb' ? 'three channels' : 'one grey channel'}` : 'loading', IN.x, IN.y - 12, 0.32, 'left', 11);
     board(IN.x, IN.y, IN.s, srcCv, ready);
 
-    label('filtered', OUT.x, OUT.y - 30, 0.55, 'left', 13);
-    label(`every pixel, ${NAMES[state.kernel]}`, OUT.x, OUT.y - 12, 0.32, 'left', 11);
+    label('filtered', OUT.x, OUT.y - (compact ? 22 : 30), 0.55, 'left', 13);
+    if (!compact) label(`every pixel, ${NAMES[state.kernel]}`, OUT.x, OUT.y - 12, 0.32, 'left', 11);
     board(OUT.x, OUT.y, OUT.s, outCv, ready);
 
     // the weights, big enough to read and to drag
     const n = state.size, cs = cellSize(), gx = gridLeft(), gy = gridTop();
-    label('the weights', MID, gy - 34, 0.55, 'center', 13);
-    label('drag one up or down', MID, gy - 16, 0.32, 'center', 11);
+    label('the weights', MID, gy - (compact ? 22 : 34), 0.55, 'center', 13);
+    if (!compact) label('drag one up or down', MID, gy - 16, 0.32, 'center', 11);
+    // cell numbers: at least 11 screen px on a desktop, as large as the cell allows on a phone
+    const k = screenScale(canvas) || 1;
+    const cellPx = Math.min(Math.max(n === 3 ? 21 : 15.6, 11 / k), (cs - 8) / 2.5);
     let mx = 1e-6;
     for (const v of K.flat()) mx = Math.max(mx, Math.abs(v));
     for (let y = 0; y < n; y++)
@@ -330,7 +345,7 @@ import Try from '../../../components/sim/Try.astro';
         roundRect(ctx, bx + 1.5, by + 1.5, cs - 3, cs - 3, 5);
         ctx.fill();
         const hot = t > 0.55;
-        label(short(v), bx + cs / 2, by + cs / 2 + (n === 3 ? 5 : 4), 1, 'center', n === 3 ? 15 : 11, hot ? '#0d0e12' : ink(0.8));
+        raw.label(short(v), bx + cs / 2, by + cs / 2 + cellPx * 0.36, 1, 'center', cellPx, hot ? '#0d0e12' : ink(0.8));
       }
     if (drag) {
       ctx.strokeStyle = FIELD;
@@ -339,11 +354,12 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     }
     const s = sum();
-    label(`they add to ${short(s)}`, MID, gy + n * cs + 26, 0.45, 'center', 12, Math.abs(s - 1) < 1e-6 || Math.abs(s) < 1e-6 ? FIELD : undefined);
-    label(
-      Math.abs(s) < 1e-6 ? 'only changes survive' : Math.abs(s - 1) < 1e-6 ? 'brightness is kept' : 'the picture drifts',
-      MID, gy + n * cs + 46, 0.3, 'center', 11
-    );
+    label(`they add to ${short(s)}`, MID, gy + n * cs + (compact ? 40 : 26), 0.45, 'center', 12, Math.abs(s - 1) < 1e-6 || Math.abs(s) < 1e-6 ? FIELD : undefined);
+    if (!compact)
+      label(
+        Math.abs(s) < 1e-6 ? 'only changes survive' : Math.abs(s - 1) < 1e-6 ? 'brightness is kept' : 'the picture drifts',
+        MID, gy + n * cs + 46, 0.3, 'center', 11
+      );
 
     setEq({
       rule: [['g[i,j] = \\sum_{u,v} k[u,v]\\; f[i+u,\\, j+v]', POS]],
@@ -352,7 +368,7 @@ import Try from '../../../components/sim/Try.astro';
     setRows({
       'r-sum': short(s),
       'r-size': `${n * n}${state.mode === 'rgb' ? ' × 3' : ''}`,
-      'r-range': ready ? `${short(lo)} … ${short(hi)}` : '—',
+      'r-range': ready ? `${short(lo)} … ${short(hi)}` : '…',
     });
     setResult({
       value: NAMES[state.kernel],

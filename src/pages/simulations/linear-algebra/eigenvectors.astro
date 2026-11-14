@@ -71,22 +71,27 @@ import Try from '../../../components/sim/Try.astro';
       </Actions>
       <Slider id="t" label="Sweep I → A" min={0} max={100} value={100} display="1.00" />
       <Transport animate="Animate I → A" />
-      <Seg
-        id="zoom"
-        label="View"
-        attr="z"
-        options={[
-          { value: 'fit', label: 'Fit to the picture' },
-          { value: 'wide', label: 'Wide' },
-        ]}
-      />
-      <Checks
-        label="Show"
-        items={[
-          { id: 'fan', label: 'Where A sends every direction' },
-          { id: 'circle', label: 'The unit circle and its image', checked: true },
-        ]}
-      />
+      <details class="numeric-details">
+        <summary>More</summary>
+        <div class="more">
+          <Seg
+            id="zoom"
+            label="View"
+            attr="z"
+            options={[
+              { value: 'fit', label: 'Fit to the picture' },
+              { value: 'wide', label: 'Wide' },
+            ]}
+          />
+          <Checks
+            label="Show"
+            items={[
+              { id: 'fan', label: 'Where A sends every direction' },
+              { id: 'circle', label: 'The unit circle and its image', checked: true },
+            ]}
+          />
+        </div>
+      </details>
       <Readout
         title="Values"
         rows={[
@@ -124,9 +129,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas, makeText } from '../../../lib/sim';
+  import { setupCanvas, makeText, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, arrow } from '../../../lib/draw';
+  import { stageInk, arrow, fixed } from '../../../lib/draw';
   import { el, segmented, slider, matrix, check, result, readout, tries } from '../../../lib/panel';
 
   // The whole question is one picture: does Av stay on the line through v?
@@ -139,7 +144,9 @@ import Try from '../../../components/sim/Try.astro';
   const canvas = el('eigen') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
   const { ink } = stageInk(canvas);
-  const { label, textWidth } = makeText(ctx, ink);
+  // labels never show smaller than 11 screen px
+  const { label, textWidth } = makeText(ctx, ink, 1.42, undefined, 11);
+  const tpx = (size: number) => textPx(canvas, Math.round(size * 1.42), 11);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
@@ -240,7 +247,7 @@ import Try from '../../../components/sim/Try.astro';
    * no other label, and stays inside `area`.
    */
   function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, gap = 7, area: Box = { x0: 0, y0: 0, x1: W, y1: H }) {
-    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const w = textWidth(text, size) + 6, h = tpx(size) + 4;
     const cands: [number, number][] = [];
     for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
       for (let k = 0; k < 12; k++) {
@@ -262,7 +269,7 @@ import Try from '../../../components/sim/Try.astro';
     });
     const [cx, cy] = best;
     taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
-    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    label(text, cx, cy + tpx(size) * 0.34, 1, 'center', size, colour);
   }
   const PLANE_BOX: Box = { x0: PLANE.x, y0: PLANE.y, x1: PLANE.x + PLANE.w, y1: PLANE.y + PLANE.h };
 
@@ -385,26 +392,26 @@ import Try from '../../../components/sim/Try.astro';
       const R = Math.min(O.x - 30, H / 2 - 30) / UNIT;
       const s = Math.cos(eg.th - view.theta) > 0 ? -1 : 1;
       const e = toPx(s * Math.cos(eg.th) * R, s * Math.sin(eg.th) * R);
-      place(`λ = ${eg.l.toFixed(2).replace('-', '−')}`, 12, EIG, e.px, e.py, Math.atan2(e.py - O.y, e.px - O.x) + Math.PI / 2, 6, PLANE_BOX);
+      place(`λ = ${fixed(eg.l, 2)}`, 12, EIG, e.px, e.py, Math.atan2(e.py - O.y, e.px - O.x) + Math.PI / 2, 6, PLANE_BOX);
     }
 
-    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = m[k].toFixed(2)));
+    (['a', 'b', 'c', 'd'] as const).forEach((k) => (el('m-' + k).textContent = fixed(m[k], 2)));
     const lam = signed * stretch;
-    const eigText = eigs.length ? eigs.map((e) => e.l.toFixed(2)).join(', ') : 'complex';
+    const eigText = eigs.length ? eigs.map((e) => fixed(e.l, 2)).join(', ') : 'complex';
     setEq({
       rule: [['A\\mathbf v', OUT], '=', ['\\lambda\\,\\mathbf v', EIG], '\\quad\\text{Av stays on the line through v}'],
       live: [
         eigs.length ? [`\\lambda = ${eigs.map((e) => e.l.toFixed(2)).join(',\\;')}`, EIG] : ['\\lambda \\notin \\mathbb R', HOT],
         [`\\quad |A\\mathbf v| = ${stretch.toFixed(2)}\\,|\\mathbf v|`, OUT],
-        [`\\quad \\text{off its line by } ${Math.abs(turn).toFixed(1)}^{\\circ}`, aligned ? EIG : IN],
+        [`\\quad \\theta = ${Math.abs(turn).toFixed(1)}^{\\circ}`, aligned ? EIG : IN],
       ],
     });
     setResult({
-      value: `${Math.abs(turn).toFixed(1)}°`,
+      value: `${fixed(Math.abs(turn), 1)}°`,
       colour: aligned ? EIG : undefined,
       status: aligned
-        ? `v is an eigenvector: Av = ${lam.toFixed(2)} v${lam < 0 ? ', flipped back along its own line' : ''}`
-        : `Av has left v's line: it is ${Math.abs(turn).toFixed(1)}° off it and ${stretch.toFixed(2)} times as long`,
+        ? `An eigenvector: Av = ${fixed(lam, 2)} v${lam < 0 ? ', flipped' : ''}`
+        : `Off v's line by ${fixed(Math.abs(turn), 1)}°, ${fixed(stretch, 2)} times as long`,
       note: !eigs.length
         ? 'A turns every real direction, so no v can stay on its line: the eigenvalues are complex.'
         : view.t < 0.999
@@ -415,10 +422,10 @@ import Try from '../../../components/sim/Try.astro';
     });
     setRows({
       'r-eig': eigText,
-      'r-dir': eigs.length ? eigs.map((e) => `${deg(e.th).toFixed(1)}°`).join(', ') : '—',
-      'r-turn': `${Math.abs(turn).toFixed(1)}°`,
-      'r-stretch': stretch.toFixed(3),
-      'r-trdet': `${tr(m).toFixed(2)}, ${det(m).toFixed(2)}`,
+      'r-dir': eigs.length ? eigs.map((e) => `${fixed(deg(e.th), 1)}°`).join(', ') : 'none',
+      'r-turn': `${fixed(Math.abs(turn), 1)}°`,
+      'r-stretch': fixed(stretch, 3),
+      'r-trdet': `${fixed(tr(m), 2)}, ${fixed(det(m), 2)}`,
     });
   }
 
@@ -546,11 +553,38 @@ import Try from '../../../components/sim/Try.astro';
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
+  // hold the header and result strip at the tallest any preset makes them, so
+  // trying one never moves the page
+  // (again once the maths fonts arrive, unless someone has started playing)
+  function holdHeights() {
+    const boxes = ['.stage-head', '.result-strip'].map((q) => document.querySelector<HTMLElement>(q));
+    const tallest = boxes.map(() => 0);
+    const measure = () => boxes.forEach((b, i) => (tallest[i] = Math.max(tallest[i], b?.getBoundingClientRect().height ?? 0)));
+    const home = '1.5,0.8,0.4,1.1';
+    for (const m of [home, '2,1,1,2', '2,0,0,0.5', '1,1,2,0', '1,1,0,1', '0,-1,1,0']) {
+      preset(m);
+      aimAt((60 * Math.PI) / 180); draw(); measure();
+      for (const e of eigen(At())) { aimAt(e.th); draw(); measure(); }
+    }
+    boxes.forEach((b, i) => b && (b.style.minHeight = `${Math.ceil(tallest[i])}px`));
+    preset(home);
+    aimAt((60 * Math.PI) / 180);
+  }
+  let touched = false;
+  for (const ev of ['pointerdown', 'keydown']) document.querySelector('.sim')?.addEventListener(ev, () => (touched = true), { capture: true });
+  holdHeights();
+  document.fonts?.ready.then(() => { if (!touched) { holdHeights(); draw(); } });
   fit();
   draw();
 </script>
 
 <style>
+  .more {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 12px;
+  }
   #eigen {
     cursor: grab;
     touch-action: none;

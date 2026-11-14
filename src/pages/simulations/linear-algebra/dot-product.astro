@@ -36,7 +36,7 @@ import '../../../styles/vector-lab.css';
           { label: 'b', color: COLOR.b },
           { label: 'shadow of b on a', color: COLOR.result, id: 'legend-shadow' },
         ]}
-        hint="Drag an arrowhead to move it · drag empty space to pan · scroll to zoom"
+        hint="Drag an arrowhead to move it, or empty space to pan"
       />
       <Result label="Dot product" />
       <div class="meter" id="meter" role="img" aria-label="Where a · b sits between −|a||b| and |a||b|">
@@ -65,23 +65,28 @@ import '../../../styles/vector-lab.css';
           { value: 'back', label: 'Opposed' },
         ]}
       />
-      <Matrix
-        label={`<span style="color:${COLOR.a}">Vector a</span>`}
-        min={-3}
-        max={3}
-        step={0.1}
-        entries={[{ id: 'ax', label: 'x', value: 2 }, { id: 'ay', label: 'y', value: 0.6 }, { id: 'az', label: 'z', value: 0 }]}
-      />
-      <Matrix
-        label={`<span style="color:${COLOR.b}">Vector b</span>`}
-        min={-3}
-        max={3}
-        step={0.1}
-        entries={[{ id: 'bx', label: 'x', value: 0.8 }, { id: 'by', label: 'y', value: 1.8 }, { id: 'bz', label: 'z', value: 0 }]}
-      />
       <Slider id="angle" label="Angle between them, swinging b" min={0} max={180} value={0} display="—" />
-      <Checks items={[{ id: 'spin', label: 'Spin the scene' }]} />
       <Transport run={false} />
+      <details class="numeric-details">
+        <summary>Edit the vectors</summary>
+        <div class="more">
+          <Matrix
+            label={`<span style="color:${COLOR.a}">Vector a</span>`}
+            min={-3}
+            max={3}
+            step={0.1}
+            entries={[{ id: 'ax', label: 'x', value: 2 }, { id: 'ay', label: 'y', value: 0.6 }, { id: 'az', label: 'z', value: 0 }]}
+          />
+          <Matrix
+            label={`<span style="color:${COLOR.b}">Vector b</span>`}
+            min={-3}
+            max={3}
+            step={0.1}
+            entries={[{ id: 'bx', label: 'x', value: 0.8 }, { id: 'by', label: 'y', value: 1.8 }, { id: 'bz', label: 'z', value: 0 }]}
+          />
+          <Checks items={[{ id: 'spin', label: 'Spin the scene' }]} />
+        </div>
+      </details>
       <Readout
         title="Values & calculations"
         rows={[
@@ -115,7 +120,8 @@ import '../../../styles/vector-lab.css';
 </SimLayout>
 
 <script>
-  import { makeText } from '../../../lib/sim';
+  import { makeText, textPx } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { slider, check, result, readout, tries } from '../../../lib/panel';
   import {
@@ -159,7 +165,9 @@ import '../../../styles/vector-lab.css';
     redraw: () => draw(),
   });
 
-  const { label, textWidth } = makeText(scene.ctx, scene.inkA);
+  // labels never show smaller than 11 screen px
+  const { label, textWidth } = makeText(scene.ctx, scene.inkA, 1.42, undefined, 11);
+  const tpx = (size: number) => textPx(canvas, Math.round(size * 1.42), 11);
   const P = (v: Vec) => scene.project(v);
   const seg = (p: Vec, q: Vec) => { const u = P(p), v = P(q); blockLine(u.x, u.y, v.x, v.y); };
   // --- labels: measured boxes, each one nudged to the nearest free spot --------
@@ -204,7 +212,7 @@ import '../../../styles/vector-lab.css';
    * nothing is drawn (false is returned) when none of them is clean.
    */
   function place(text: string, size: number, colour: string, ax: number, ay: number, prefer = -Math.PI / 4, onSpot = false, gap = 7, onlyIfFree = false) {
-    const w = textWidth(text, size) + 6, h = size * 1.42 + 4;
+    const w = textWidth(text, size) + 6, h = tpx(size) + 4;
     const cands: [number, number][] = onSpot || onlyIfFree ? [[ax, ay]] : [];
     if (onlyIfFree) for (const dy of [0, -6, 6, -12, 12]) for (const dx of [0, -8, 8, -16, 16]) cands.push([ax + dx, ay + dy]);
     else for (const step of [0, 1, 2, 3, 5, 7, 10, 14, 19]) {
@@ -229,7 +237,7 @@ import '../../../styles/vector-lab.css';
     if (onlyIfFree && bestCost >= 1000) return false;
     const [cx, cy] = best;
     taken.push({ x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 });
-    label(text, cx, cy + size * 1.42 * 0.34, 1, 'center', size, colour);
+    label(text, cx, cy + tpx(size) * 0.34, 1, 'center', size, colour);
     return true;
   }
 
@@ -320,7 +328,7 @@ import '../../../styles/vector-lab.css';
     if (rect && Math.abs(s) > 0.3) {
       // the shadow's length: inside the rectangle just under the shadow if it
       // fits, otherwise just past the shadow's end, below the line of a
-      const text = `shadow ${s.toFixed(2)}`;
+      const text = `shadow ${fixed(s, 2)}`;
       const m = P(add(mul(g.foot, 0.5), mul(g.n, -0.26)));
       const f = P(g.foot), slant = P(add(g.foot, add(mul(g.ahat, s > 0 ? 0.3 : -0.3), mul(g.n, -0.3))));
       place(text, 12, SH, m.x, m.y, 0, true, 4, true) ||
@@ -328,7 +336,7 @@ import '../../../styles/vector-lab.css';
     }
     if (rect && Math.abs(s) > 0.6 && g.lengthA > 0.5) {
       // the product in the middle of the rectangle, or under its far side
-      const text = `a · b = ${d.toFixed(2)}`;
+      const text = `a · b = ${fixed(d, 2)}`;
       const c = P(mul(add(g.foot, down), 0.5)), e = P(add(mul(g.foot, 0.5), down)), out = P(add(mul(g.foot, 0.5), mul(down, 1.3)));
       place(text, 13, SH, c.x, c.y, 0, true, 4, true) || place(text, 13, SH, e.x, e.y, Math.atan2(out.y - e.y, out.x - e.x), false, 8);
     }
@@ -354,7 +362,7 @@ import '../../../styles/vector-lab.css';
 
     el('legend-shadow').style.setProperty('--dot', col);
     setResult({
-      value: d.toFixed(2),
+      value: fixed(d, 2),
       colour: col,
       status: zero
         ? 'Zero vector'
@@ -363,27 +371,29 @@ import '../../../styles/vector-lab.css';
         ? 'A zero vector has no direction, so the angle is undefined and the product is zero.'
         : Math.abs(d) < 1e-9
           ? 'Nothing of b lies along a, so the rectangle has no width.'
-          : `|a| × shadow = ${g.lengthA.toFixed(2)} × ${s.toFixed(2)}. The shadow falls ${d > 0 ? 'along' : 'against'} a, and that is where the sign comes from.`,
+          : `|a| × shadow = ${fixed(g.lengthA, 2)} × ${fixed(s, 2)}. The shadow falls ${d > 0 ? 'along' : 'against'} a, and that is where the sign comes from.`,
     });
 
     const span = g.lengthA * g.lengthB;
     const frac = span > 1e-9 ? Math.max(-1, Math.min(1, d / span)) : 0;
     el('meter').style.setProperty('--meter-color', col);
-    el('meter-fill').style.left = `${50 + Math.min(0, frac) * 50}%`;
-    el('meter-fill').style.width = `${Math.abs(frac) * 50}%`;
-    el('meter-dot').style.left = `${50 + frac * 50}%`;
-    el('meter-min').textContent = `−|a||b| = ${(-span).toFixed(2)}`;
-    el('meter-max').textContent = `|a||b| = ${span.toFixed(2)}`;
+    // moved with transforms, so the meter never shifts the layout
+    const fill = el('meter-fill'), mdot = el('meter-dot');
+    fill.style.cssText = `left: 50%; width: 50%; transform-origin: left center; transform: scaleX(${frac})`;
+    mdot.style.left = '50%';
+    mdot.style.transform = `translateX(${(frac * (fill.parentElement?.clientWidth ?? 0)) / 2}px)`;
+    el('meter-min').textContent = `−|a||b| = ${fixed(-span, 2)}`;
+    el('meter-max').textContent = `|a||b| = ${fixed(span, 2)}`;
 
     const angle = el('angle') as HTMLInputElement;
     angle.disabled = g.angle === null;
     if (document.activeElement !== angle) setAngle(Math.round(g.angle ?? 0));
     el('angleval').textContent = degrees(g.angle);
     el('scene-hint').textContent = is3D()
-      ? 'Drag to orbit · shift-drag to pan · scroll to zoom · set the vectors with the sliders'
-      : 'Drag an arrowhead to move it · drag empty space to pan · scroll to zoom';
+      ? 'Drag to orbit, shift-drag to pan, scroll to zoom'
+      : 'Drag an arrowhead to move it, or empty space to pan';
 
-    setRows({ 'r-la': g.lengthA.toFixed(3), 'r-lb': g.lengthB.toFixed(3), 'r-shadow': s.toFixed(3), 'r-angle': degrees(g.angle) });
+    setRows({ 'r-la': fixed(g.lengthA, 3), 'r-lb': fixed(g.lengthB, 3), 'r-shadow': fixed(s, 3), 'r-angle': degrees(g.angle) });
 
     const idx = [0, 1, 2].slice(0, state.dim);
     const symbolic = idx.map((i) => `a_${AXIS[i]}b_${AXIS[i]}`).join('+');
@@ -504,5 +514,34 @@ import '../../../styles/vector-lab.css';
     },
   });
 
+  // hold the header and result strip at the tallest any scenario makes them,
+  // in either view, so trying one never moves the page
+  // (again once the maths fonts arrive, unless someone has started playing)
+  function holdHeights() {
+    const boxes = ['.stage-head', '.result-strip'].map((q) => document.querySelector<HTMLElement>(q));
+    const tallest = boxes.map(() => 0);
+    for (const d of [3, 2] as const)
+      for (const n of ['tilted', 'perp', 'same', 'back']) {
+        show(n, d);
+        updateReadout();
+        boxes.forEach((b, i) => (tallest[i] = Math.max(tallest[i], b?.getBoundingClientRect().height ?? 0)));
+      }
+    boxes.forEach((b, i) => b && (b.style.minHeight = `${Math.ceil(tallest[i])}px`));
+    show('tilted', 2);
+  }
+  let touched = false;
+  for (const ev of ['pointerdown', 'keydown']) document.querySelector('.sim')?.addEventListener(ev, () => (touched = true), { capture: true });
+  holdHeights();
+  document.fonts?.ready.then(() => { if (!touched) holdHeights(); });
+
   requestAnimationFrame(frame);
 </script>
+
+<style>
+  .more {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 12px;
+  }
+</style>

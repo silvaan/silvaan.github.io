@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="computer-vision"
   title="Segmentation Output"
-  description="A segmentation network answers with as many pictures as there are classes, each the size of the input, each a map of one probability. At any pixel they add up to 1, and keeping the largest turns the stack into a mask."
+  description="A segmentation network answers with one picture per class, each the size of the input and each a map of one probability. They add up to 1, and keeping the largest makes a mask."
   shortcuts={['fullscreen']}
 >
   <div class="sim">
@@ -32,7 +32,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'house', color: '#f87171' },
           { label: 'sun', color: '#fbbf24' },
         ]}
-        hint="Move the mouse over the picture, any channel or the mask to read that pixel everywhere"
+        hint="Point at the picture, a channel or the mask to read that pixel everywhere"
       />
       <Result label="At this pixel" />
     </div>
@@ -84,7 +84,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { segmented, slider, result, readout, tries } from '../../../lib/panel';
@@ -272,7 +272,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.restore();
   }
-  function arrow(x0: number, y0: number, x1: number, y1: number, text: string) {
+  function arrow(x0: number, y0: number, x1: number, y1: number) {
     ctx.save();
     ctx.strokeStyle = ink(0.35);
     ctx.fillStyle = ink(0.35);
@@ -287,7 +287,6 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(x1 - 9, y1 + 5);
     ctx.fill();
     ctx.restore();
-    say(ctx, text, (x0 + x1) / 2, y0 - 12, { colour: ink(0.5), size: 12, align: 'center' });
   }
 
   // ---------- drawing ----------
@@ -297,22 +296,25 @@ import Try from '../../../components/sim/Try.astro';
     ctx.clearRect(0, 0, W, H);
     const n = S.n, q = S.j * n + S.i, pr = CLASSES.map((_, c) => P[q * C + c]), b = top(q);
 
-    // titles
+    // titles; a phone keeps them short and drops the grey second lines
+    const compact = isCompact(canvas);
     say(ctx, 'the picture', PIC.ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, `${n} × ${n} × 3`, PIC.ox, 58, { colour: ink(0.5), size: 13 });
-    say(ctx, 'the output: one channel per class', CH[0].ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, `${n} × ${n} × ${C}, each pixel a probability`, CH[0].ox, 58, { colour: ink(0.5), size: 13 });
+    say(ctx, compact ? 'the output' : 'the output: one channel per class', CH[0].ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
     say(ctx, 'the mask', MASK.ox, 36, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, `${n} × ${n}, the largest of the four`, MASK.ox, 58, { colour: ink(0.5), size: 13 });
+    if (!compact) {
+      say(ctx, `${n} × ${n} × 3`, PIC.ox, 58, { colour: ink(0.5), size: 13 });
+      say(ctx, `${n} × ${n} × ${C}, each pixel a probability`, CH[0].ox, 58, { colour: ink(0.5), size: 13 });
+      say(ctx, `${n} × ${n}, the largest`, MASK.ox, 58, { colour: ink(0.5), size: 13 });
+    }
 
     drawPlane(photo, PIC, ink(0.3));
-    arrow(PIC.ox + PIC.ax + 8, PIC.oy + PIC.vy / 2, CH[0].ox - 8, PIC.oy + PIC.vy / 2, 'network');
+    arrow(PIC.ox + PIC.ax + 8, PIC.oy + PIC.vy / 2, CH[0].ox - 8, PIC.oy + PIC.vy / 2);
     CLASSES.forEach((cl, c) => {
       drawPlane(chans[c], CH[c], withAlpha(cl.colour, 0.7));
-      say(ctx, `p(${cl.name})`, CH[c].ox, CH[c].oy - 14, { colour: cl.colour, size: 14, weight: 650 });
+      say(ctx, compact ? cl.name : `p(${cl.name})`, CH[c].ox, CH[c].oy - 14, { colour: cl.colour, size: 14, weight: 650 });
     });
     const last = CH[C - 1];
-    arrow(last.ox + last.ax + 10, MASK.oy + MASK.vy / 2, MASK.ox - 8, MASK.oy + MASK.vy / 2, 'largest');
+    arrow(last.ox + last.ax + 10, MASK.oy + MASK.vy / 2, MASK.ox - 8, MASK.oy + MASK.vy / 2);
     drawPlane(mask, MASK, ink(0.3));
 
     // the same pixel everywhere, threaded together
@@ -331,7 +333,7 @@ import Try from '../../../components/sim/Try.astro';
     cell(MASK, S.i, S.j, ink(0.95));
     CH.forEach((p, c) => {
       const t = centre(p);
-      say(ctx, pr[c].toFixed(2), t.x + 10, t.y - 12, { colour: ink(0.95), size: 13, weight: 700, halo: inv(0.9) });
+      say(ctx, pr[c].toFixed(2), t.x + 10, t.y - 12, { colour: ink(0.95), size: compact ? 14.5 : 13, weight: 700, halo: inv(0.9) });
     });
 
     // the pixel, written out
@@ -343,31 +345,34 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     ctx.strokeStyle = ink(0.3);
     ctx.stroke();
-    say(ctx, `r ${px[0]}`, PIC.ox + 44, y0 + 22, { colour: '#f87171', size: 12.5, weight: 600 });
-    say(ctx, `g ${px[1]}`, PIC.ox + 44, y0 + 36, { colour: '#4ade80', size: 12.5, weight: 600 });
-    say(ctx, `b ${px[2]}`, PIC.ox + 44, y0 + 50, { colour: '#60a5fa', size: 12.5, weight: 600 });
-    say(ctx, '3 numbers in', PIC.ox, y0 + 72, { colour: ink(0.5), size: 12 });
+    if (!compact) {
+      say(ctx, `r ${px[0]}`, PIC.ox + 44, y0 + 22, { colour: '#f87171', size: 12.5, weight: 600 });
+      say(ctx, `g ${px[1]}`, PIC.ox + 44, y0 + 36, { colour: '#4ade80', size: 12.5, weight: 600 });
+      say(ctx, `b ${px[2]}`, PIC.ox + 44, y0 + 50, { colour: '#60a5fa', size: 12.5, weight: 600 });
+      say(ctx, '3 numbers in', PIC.ox, y0 + 72, { colour: ink(0.5), size: 12 });
+    }
 
     // four numbers out, as one bar that always fills to 1
     const bx = CH[0].ox, bw = 400, bh = 30, by = y0 + 18;
-    say(ctx, 'the same pixel in the output: 4 numbers that add up to 1', bx, y0, { colour: ink(0.85), size: 14, weight: 650 });
+    say(ctx, compact ? '4 numbers, adding to 1' : 'the same pixel in the output: 4 numbers that add up to 1', bx, y0, { colour: ink(0.85), size: 14, weight: 650 });
     let x = bx;
     pr.forEach((p, c) => {
       const w = p * bw;
       ctx.fillStyle = CLASSES[c].colour;
       ctx.fillRect(x, by, w, bh);
-      if (w > 64) say(ctx, `${CLASSES[c].name} ${p.toFixed(2)}`, x + 7, by + bh / 2, { colour: '#0d0e12', size: 12.5, weight: 650 });
+      const t = compact ? p.toFixed(2) : `${CLASSES[c].name} ${p.toFixed(2)}`;
+      if (w > (compact ? 110 : 64)) say(ctx, t, x + 7, by + bh / 2, { colour: '#0d0e12', size: compact ? 14.5 : 13, weight: 650 });
       x += w;
     });
     ctx.strokeStyle = ink(0.3);
     ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
     say(ctx, '= 1', bx + bw + 8, by + bh / 2, { colour: ink(0.8), size: 14, weight: 700 });
-    say(ctx, pr.map((p, c) => `${CLASSES[c].name} ${p.toFixed(3)}`).join('  +  '), bx, by + bh + 20, { colour: ink(0.55), size: 12 });
+    if (!compact) say(ctx, pr.map((p, c) => `${CLASSES[c].name} ${p.toFixed(3)}`).join('  +  '), bx, by + bh + 20, { colour: ink(0.55), size: 12 });
 
     // the label the mask stores
-    say(ctx, `label ${b} · ${CLASSES[b].name}`, MASK.ox, y0, { colour: CLASSES[b].colour, size: 14, weight: 650 });
-    say(ctx, `1 number out, ${pr[b] >= 0.9 ? 'and a sure one' : `though only ${pr[b].toFixed(2)} sure`}`, MASK.ox, y0 + 22, { colour: ink(0.55), size: 12 });
-    CLASSES.forEach((cl, k) => {
+    say(ctx, compact ? `${b} · ${CLASSES[b].name}` : `label ${b} · ${CLASSES[b].name}`, MASK.ox, y0, { colour: CLASSES[b].colour, size: 14, weight: 650 });
+    if (!compact) say(ctx, `1 number out, ${pr[b] >= 0.9 ? 'a sure one' : `${pr[b].toFixed(2)} sure`}`, MASK.ox, y0 + 22, { colour: ink(0.55), size: 12 });
+    if (!compact) CLASSES.forEach((cl, k) => {
       ctx.fillStyle = cl.colour;
       roundRect(ctx, MASK.ox + (k % 2) * 104, y0 + 44 + Math.floor(k / 2) * 22, 12, 12, 2);
       ctx.fill();
@@ -397,8 +402,8 @@ import Try from '../../../components/sim/Try.astro';
       status: pr.map((p, c) => `${CLASSES[c].name} ${p.toFixed(2)}`).join(' · '),
       note:
         pr[b] > 0.9
-          ? 'One class takes nearly all of the probability: the network is sure what this pixel is.'
-          : 'The pixel is split between classes, usually because it sits on an edge. The mask still has to pick one.',
+          ? 'Nearly all the probability sits on one class: the network is sure what this is.'
+          : 'The pixel is split between classes, usually on an edge, yet the mask must pick one.',
       colour: CLASSES[b].colour,
     });
   }

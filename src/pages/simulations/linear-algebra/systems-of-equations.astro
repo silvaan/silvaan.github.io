@@ -122,7 +122,7 @@ import Try from '../../../components/sim/Try.astro';
 
 <script>
   import katex from 'katex';
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
   import { el, segmented, matrix, transport, result, readout, tries } from '../../../lib/panel';
@@ -345,8 +345,16 @@ import Try from '../../../components/sim/Try.astro';
     const unit = () => (Math.min(W, H) / 2 - 18) / frame().r;
     const S = (p: Pt) => ({ x: W / 2 + (p.x - frame().cx) * unit(), y: H / 2 - (p.y - frame().cy) * unit() });
     const world = (m: Pt) => ({ x: frame().cx + (m.x - W / 2) / unit(), y: frame().cy - (m.y - H / 2) / unit() });
-    /** Text grows a little when the canvas is drawn small (a phone, stacked pictures). */
-    const fs = () => Math.max(1, Math.min(1.7, (0.95 * W) / Math.max(1, canvas.clientWidth)));
+    /**
+     * The logical size of a label asked for at `size`: grown so it shows at
+     * least 11 screen px (12.5 for the main labels), however small the canvas.
+     */
+    const sz = (size: number) => {
+      const k = screenScale(canvas) || 1;
+      return Math.min(size * 2.2, Math.max(size, (size >= 12 ? 12.5 : 11.2) / k));
+    };
+    /** How much labels have grown, for spacing things around them. */
+    const fs = () => sz(13) / 13;
 
     let boxes: Box[] = [];
     let segs: [number, number, number, number][] = [];
@@ -369,10 +377,10 @@ import Try from '../../../components/sim/Try.astro';
 
     type Run = [string, string];
     function measure(runs: Run[], size: number) {
-      ctx.font = `${Math.round(size * fs())}px ${FONT}`;
+      ctx.font = `${Math.round(sz(size))}px ${FONT}`;
       let w = 0;
       for (const [t] of runs) w += ctx.measureText(t).width;
-      return { w, h: size * fs() * 1.15 };
+      return { w, h: sz(size) * 1.15 };
     }
     function paint(runs: Run[], cx: number, cy: number, size: number) {
       const { w } = measure(runs, size);
@@ -544,27 +552,27 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     }
     function title(name: string, sub: string) {
-      const s = fs();
+      const px = Math.round(sz(12)), s = px / 11;
       // a plate in the stage colour, so lines passing under the title never run through it
-      ctx.font = `600 ${Math.round(11 * s)}px ${FONT}`;
-      const pw = Math.max(ctx.measureText(name.toUpperCase()).width, (ctx.font = `${Math.round(11 * s)}px ${FONT}`, ctx.measureText(sub).width));
+      ctx.font = `600 ${px}px ${FONT}`;
+      const spaced = name.toUpperCase();
+      const w1 = ctx.measureText(spaced).width;
+      ctx.font = `${px}px ${FONT}`;
+      const w2 = ctx.measureText(sub).width;
       ctx.globalAlpha = 0.88;
       ctx.fillStyle = bg();
       ctx.beginPath();
-      ctx.roundRect(8, 7, pw + 14, 32 * s + 8, 5);
+      ctx.roundRect(8, 7, Math.max(w1, w2) + 14, 32 * s + 8, 5);
       ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.font = `600 ${Math.round(11 * s)}px ${FONT}`;
+      ctx.font = `600 ${px}px ${FONT}`;
       ctx.fillStyle = ink(0.62);
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      const spaced = name.toUpperCase();
       ctx.fillText(spaced, 14, 12);
-      const w1 = ctx.measureText(spaced).width;
-      ctx.font = `${Math.round(11 * s)}px ${FONT}`;
+      ctx.font = `${px}px ${FONT}`;
       ctx.fillStyle = ink(0.4);
       ctx.fillText(sub, 14, 12 + 16 * s);
-      const w2 = ctx.measureText(sub).width;
       ctx.textBaseline = 'alphabetic';
       block({ x0: 8, y0: 6, x1: 20 + Math.max(w1, w2), y1: 12 + 32 * s });
     }
@@ -893,7 +901,7 @@ import Try from '../../../components/sim/Try.astro';
       rule: ['A\\mathbf{x}=', ['\\mathbf{b}', P.B], '\\quad\\Longleftrightarrow\\quad', ['x\\,\\mathbf{a}_1', P.X], '+', ['y\\,\\mathbf{a}_2', P.Y], '=', ['\\mathbf{b}', P.B]],
       live: p
         ? [[`${texNum(p.x)}\\,${a1}`, P.X], '+', [`${texNum(p.y)}\\,${a2}`, P.Y], '=', [b, P.B]]
-        : [['x\\,' + a1, P.X], '+', ['y\\,' + a2, P.Y], '\\neq', [b, P.B], '\\text{ for every } x, y'],
+        : [['x\\,' + a1, P.X], '+', ['y\\,' + a2, P.Y], '\\neq', [b, P.B]],
     });
     const det = sol.det;
     const detText = fixed(det, 3);
@@ -1169,30 +1177,39 @@ import Try from '../../../components/sim/Try.astro';
     touch-action: none;
     border: 1px solid var(--border);
   }
+  /* fixed sizes, so the strip never changes shape while elimination runs */
   .elim {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr);
     align-items: center;
-    justify-content: center;
-    gap: 10px 26px;
-    padding: 14px 6px 4px;
+    gap: 10px 22px;
+    padding: 14px 10px 4px;
+    min-height: 6.6rem;
   }
   .aug {
     font-size: 1.15rem;
-    min-width: 11.5em;
-    text-align: center;
+    width: 15rem;
+    height: 3.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
   }
   .elim-side {
     display: flex;
     flex-direction: column;
     gap: 8px;
     min-width: 0;
-    max-width: 100%;
+    min-height: 5.2rem;
+    justify-content: center;
   }
   .elim-now {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.82rem;
     color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .elim-ops {
     display: flex;
@@ -1230,8 +1247,32 @@ import Try from '../../../components/sim/Try.astro';
     .pictures {
       grid-template-columns: 1fr;
     }
+    .elim {
+      grid-template-columns: minmax(0, 1fr);
+      justify-items: center;
+      min-height: 0;
+      height: 8rem;
+    }
     .aug {
       font-size: 1rem;
+    }
+    .elim-side {
+      align-items: center;
+      width: 100%;
+      min-height: 0;
+    }
+    /* on a phone the current step is enough; the list of steps is left out */
+    .elim-ops {
+      display: none;
+    }
+    .elim-now {
+      white-space: normal;
+      text-align: center;
+      height: 2.9em;
+      line-height: 1.45;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
   }
 </style>

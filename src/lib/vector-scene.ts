@@ -3,6 +3,7 @@
 // zoom / drag-a-tip pointer handling, and the panel controls both pages use.
 
 import { setupCanvas, makeText } from './sim';
+import { fixed } from './draw';
 import { type Vector3 as Vec, len, mul, AXIS } from './vector-geometry';
 
 export const COLOR = {
@@ -36,7 +37,8 @@ export function createScene(
   const cssVar = (n: string) => getComputedStyle(canvas).getPropertyValue(n).trim();
   const inkA = (al: number) => `rgba(${cssVar('--stage-ink') || '232,233,236'},${al})`;
   const bg = () => cssVar('--stage-bg') || '#0d0e12';
-  const { label } = makeText(ctx, inkA);
+  // labels never show smaller than 11 screen px
+  const { label } = makeText(ctx, inkA, 1.42, undefined, 11);
 
   const CAM = 15, FOCAL = 11.5;
 
@@ -228,8 +230,7 @@ export function vectorSliders(state: { a: Vec; b: Vec }, onInput: (which: Which,
   return sync;
 }
 
-/** Degrees with one decimal, but exactly "90" when it is exactly ninety. */
-export const degrees = (deg: number | null) =>
-  deg === null ? 'undefined' : `${Math.abs(deg - 90) < 1e-9 ? '90' : deg.toFixed(1)}°`;
+/** Degrees with one decimal, always, so the readout keeps its width. */
+export const degrees = (deg: number | null) => (deg === null ? 'undefined' : `${fixed(deg, 1)}°`);
 
-export const lenLabel = (v: Vec) => len(v).toFixed(2);
+export const lenLabel = (v: Vec) => fixed(len(v), 2);
