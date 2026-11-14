@@ -4,9 +4,8 @@ export const SITE_DESCRIPTION =
 export const SITE_URL = 'https://silvaan.xyz';
 
 export const NAV_LINKS = [
-  { href: '/', label: 'Posts' },
   { href: '/simulations', label: 'Simulations' },
-  { href: '/archive', label: 'Archive' },
+  { href: '/archive', label: 'Notes' },
 ];
 
 export const SOCIAL = {

@@ -8,9 +8,12 @@ import 'katex/dist/katex.min.css';
 interface Props {
   title?: string;
   description?: string;
+  /** Site-relative path of the preview image for link cards. */
+  image?: string;
 }
 
-const { title, description = SITE_DESCRIPTION } = Astro.props;
+const { title, description = SITE_DESCRIPTION, image = '/og/default.jpg' } = Astro.props;
+const imageUrl = new URL(image, Astro.site);
 const pageTitle = title ? `${title} · ${SITE_TITLE}` : SITE_TITLE;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 ---
@@ -19,13 +22,27 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 
 <script is:inline>
-  // Apply the saved theme before first paint to avoid a flash.
+  // Apply the theme before first paint to avoid a flash: the one you picked,
+  // or else whatever your system asks for.
   (function () {
+    var root = document.documentElement;
+    var saved = null;
     try {
-      var t = localStorage.getItem('theme');
-      if (t === 'light' || t === 'dark')
-        document.documentElement.dataset.theme = t;
+      saved = localStorage.getItem('theme');
     } catch (e) {}
+    var mq = window.matchMedia && matchMedia('(prefers-color-scheme: light)');
+    if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
+    else if (mq && mq.matches) root.dataset.theme = 'light';
+    if (mq && mq.addEventListener)
+      mq.addEventListener('change', function (e) {
+        try {
+          if (localStorage.getItem('theme')) return;
+        } catch (err) {}
+        root.dataset.theme = e.matches ? 'light' : 'dark';
+        window.dispatchEvent(new CustomEvent('themechange', { detail: root.dataset.theme }));
+      });
+    // ?embed: the page is shown inside a post, so drop the site chrome.
+    if (/[?&]embed(=|&|$)/.test(location.search)) root.classList.add('embed');
   })();
 </script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -40,11 +57,13 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 <meta property="og:title" content={pageTitle} />
 <meta property="og:description" content={description} />
 <meta property="og:url" content={canonical} />
+<meta property="og:image" content={imageUrl} />
 <meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content={imageUrl} />
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
   rel="stylesheet"
-  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap"
 />

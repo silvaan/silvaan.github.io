@@ -1,0 +1,172 @@
+---
+/**
+ * Site search: a button in the header and a dialog that opens on ⌘K / Ctrl+K
+ * or "/". The index (sims, paths, notes) is fetched from /search.json the
+ * first time the dialog opens, so pages do not carry it.
+ */
+---
+
+<button type="button" class="search-btn" data-search-open aria-label="Search simulations (Ctrl+K)">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+    <circle cx="11" cy="11" r="6.5"></circle>
+    <path d="M20 20l-4.2-4.2"></path>
+  </svg>
+  <span class="search-btn-label">Search</span>
+  <kbd class="search-btn-kbd" data-search-kbd>Ctrl K</kbd>
+</button>
+
+<dialog class="search-dialog" aria-label="Search">
+  <div class="search-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5"></circle>
+      <path d="M20 20l-4.2-4.2"></path>
+    </svg>
+    <input
+      type="search"
+      placeholder="Search simulations, paths and notes"
+      autocomplete="off"
+      spellcheck="false"
+      aria-controls="search-results"
+    />
+    <kbd>esc</kbd>
+  </div>
+  <ul class="search-results" id="search-results" role="listbox"></ul>
+  <p class="search-foot"><kbd>↑</kbd><kbd>↓</kbd> to move · <kbd>enter</kbd> to open</p>
+</dialog>
+
+<script>
+  type Item = {
+    kind: 'sim' | 'path' | 'note';
+    title: string;
+    area: string;
+    color: string;
+    text: string;
+    href: string;
+    thumb?: string;
+    thumbLight?: string;
+    added?: string;
+  };
+
+  const dialog = document.querySelector<HTMLDialogElement>('.search-dialog')!;
+  const input = dialog.querySelector('input')!;
+  const list = dialog.querySelector<HTMLUListElement>('.search-results')!;
+  let items: Item[] | null = null;
+  let shown: Item[] = [];
+  let active = 0;
+
+  if (/Mac|iPhone|iPad/.test(navigator.platform)) {
+    document.querySelectorAll('[data-search-kbd]').forEach((k) => (k.textContent = '⌘K'));
+  }
+
+  // accents and case never matter: "schrodinger" finds Schrödinger
+  const fold = (s: string) =>
+    s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+  function score(it: Item, words: string[]) {
+    const t = fold(it.title), a = fold(it.area), d = fold(it.text);
+    let total = 0;
+    for (const w of words) {
+      if (t.startsWith(w)) total += 8;
+      else if (new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(t)) total += 6;
+      else if (t.includes(w)) total += 4;
+      else if (a.includes(w)) total += 2;
+      else if (d.includes(w)) total += 1;
+      else return 0;
+    }
+    return total + (it.kind === 'sim' ? 0.5 : 0);
+  }
+
+  function esc(s: string) {
+    return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+  }
+
+  function render() {
+    const q = fold(input.value.trim());
+    const all = items ?? [];
+    if (!q) {
+      // nothing typed: the newest sims, then the paths
+      const sims = all
+        .filter((i) => i.kind === 'sim' && i.added)
+        .sort((a, b) => (a.added! < b.added! ? 1 : -1))
+        .slice(0, 5);
+      shown = [...sims, ...all.filter((i) => i.kind === 'path').slice(0, 4)];
+    } else {
+      const words = q.split(/\s+/);
+      shown = all
+        .map((it) => ({ it, s: score(it, words) }))
+        .filter((x) => x.s > 0)
+        .sort((a, b) => b.s - a.s)
+        .slice(0, 12)
+        .map((x) => x.it);
+    }
+    active = 0;
+    list.innerHTML = shown.length
+      ? (q ? '' : '<li class="search-group">New and paths</li>') +
+        shown
+          .map(
+            (it, i) => `<li role="option" id="sr-${i}" aria-selected="${i === 0}">
+            <a href="${it.href}" style="--area:${it.color || 'var(--accent)'}">
+              ${
+                it.thumb
+                  ? `<img class="thumb-dark" src="${it.thumb}" alt="" loading="lazy" /><img class="thumb-light" src="${it.thumbLight}" alt="" loading="lazy" />`
+                  : `<span class="search-kind">${it.kind === 'path' ? '→' : it.kind === 'note' ? '¶' : '•'}</span>`
+              }
+              <span class="search-text">
+                <span class="search-title">${esc(it.title)}</span>
+                <span class="search-meta"><i></i>${esc(it.area)} · ${esc(it.text)}</span>
+              </span>
+            </a></li>`
+          )
+          .join('')
+      : `<li class="search-empty">Nothing matches “${esc(input.value)}”.</li>`;
+    input.setAttribute('aria-activedescendant', shown.length ? 'sr-0' : '');
+  }
+
+  function move(d: number) {
+    if (!shown.length) return;
+    active = (active + d + shown.length) % shown.length;
+    list.querySelectorAll('[role=option]').forEach((li, i) => {
+      li.setAttribute('aria-selected', String(i === active));
+      if (i === active) li.scrollIntoView({ block: 'nearest' });
+    });
+    input.setAttribute('aria-activedescendant', `sr-${active}`);
+  }
+
+  async function open() {
+    if (dialog.open) return;
+    dialog.showModal();
+    input.select();
+    if (!items) {
+      list.innerHTML = '<li class="search-empty">Loading…</li>';
+      try {
+        items = await (await fetch('/search.json')).json();
+      } catch {
+        items = [];
+      }
+    }
+    render();
+  }
+
+  document.querySelectorAll('[data-search-open]').forEach((b) => b.addEventListener('click', open));
+  input.addEventListener('input', render);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') (e.preventDefault(), move(1));
+    else if (e.key === 'ArrowUp') (e.preventDefault(), move(-1));
+    else if (e.key === 'Enter' && shown[active]) location.href = shown[active].href;
+  });
+  // a click on the backdrop closes it
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+  document.addEventListener('keydown', (e) => {
+    const t = e.target as HTMLElement;
+    const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      dialog.open ? dialog.close() : open();
+    } else if (e.key === '/' && !typing && !dialog.open) {
+      e.preventDefault();
+      open();
+    }
+  });
+</script>
