@@ -6,6 +6,8 @@
 // the common "chrome" (fullscreen, keyboard shortcuts, shareable links) once so
 // each sim page stays focused on its own maths.
 
+import { holdLayout } from './stable';
+
 export interface CanvasSetup {
   ctx: CanvasRenderingContext2D;
   /** Logical drawing width, unchanged by device pixel ratio. */
@@ -27,6 +29,8 @@ export function setupCanvas(
   const W = canvas.width;
   const H = canvas.height;
   const ctx = canvas.getContext('2d')!;
+  // remembered so text helpers can tell how big a logical pixel is on screen
+  canvas.dataset.logicalW = String(W);
 
   function applyDPR() {
     const dpr = Math.min(3, window.devicePixelRatio || 1);
@@ -42,8 +46,46 @@ export function setupCanvas(
   };
   document.addEventListener('fullscreenchange', repaint);
   window.addEventListener('themechange', () => redraw?.());
+  // the box can change size without a fullscreen change (classroom mode, a
+  // rotated phone); sims that size text from the screen need a repaint then
+  if (redraw) {
+    let shown = canvas.clientWidth;
+    let raf = 0;
+    new ResizeObserver(() => {
+      if (canvas.clientWidth === shown) return;
+      shown = canvas.clientWidth;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => redraw());
+    }).observe(canvas);
+  }
 
   return { ctx, W, H };
+}
+
+/* ---------- text that stays readable at any size ----------
+   A canvas is drawn in its own logical pixels and then scaled to fit its box,
+   so a 10px label on a 1000-wide canvas shows at 8px in a 800px column and at
+   3px on a phone. These helpers let a sim size text by what it shows as. */
+
+/** Screen pixels per logical pixel for this canvas, right now. */
+export function screenScale(canvas: HTMLCanvasElement) {
+  const W = Number(canvas.dataset.logicalW) || canvas.width;
+  return canvas.clientWidth > 0 ? canvas.clientWidth / W : 1;
+}
+
+/**
+ * A logical font size that shows at no less than `min` screen pixels. It never
+ * grows past `grow` times the size the sim asked for, so a label that would
+ * need to be huge on a phone is better left out (see `isCompact`).
+ */
+export function textPx(canvas: HTMLCanvasElement, size: number, min = 11, grow = 2) {
+  return Math.round(Math.min(size * grow, Math.max(size, min / screenScale(canvas))));
+}
+
+/** True when the canvas is shown so small (a phone) that secondary labels
+ *  should be dropped rather than shrunk. */
+export function isCompact(canvas: HTMLCanvasElement) {
+  return canvas.clientWidth > 0 && canvas.clientWidth < 560;
 }
 
 /**
@@ -70,8 +112,16 @@ export function makeText(
   ctx: CanvasRenderingContext2D,
   ink: (alpha: number) => string,
   scale = 1.42,
-  font = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+  font = 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  /** When set, no label shows smaller than this many screen pixels. */
+  minPx = 0
 ) {
+  // the logical pixel size of a label: what the sim asked for, raised to the
+  // floor on screen when there is one
+  const sizeOf = (size: number) => {
+    const px = Math.round(size * scale);
+    return minPx ? textPx(ctx.canvas as HTMLCanvasElement, px, minPx) : px;
+  };
   /** lift: 0 on the line, -1 lowered, +1 raised. */
   type Part = { t: string; lift: -1 | 0 | 1 };
 
@@ -139,7 +189,7 @@ export function makeText(
 
   /** Width the same text would occupy, for laying out legends by hand. */
   function textWidth(text: string, size: number) {
-    const px = Math.round(size * scale);
+    const px = sizeOf(size);
     const sp = Math.round(px * 0.72);
     let w = 0;
     for (const p of parts(text)) {
@@ -158,7 +208,7 @@ export function makeText(
     size = 11,
     colour?: string
   ) {
-    const px = Math.round(size * scale);
+    const px = sizeOf(size);
     const sp = Math.round(px * 0.72);
     const ps = parts(text);
     ctx.fillStyle = colour ?? ink(alpha);
@@ -349,6 +399,20 @@ const SHARE_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6 M11 6l.5-.5a3.5 3.5 0 0 1 5 5l-1.5 1.5 M13 18l-.5.5a3.5 3.5 0 0 1-5-5L9 12"/></svg>';
 
 function buildToolbar(stage: Element) {
+  // SimLayout builds the header before first paint, so nothing moves when
+  // this script arrives; only pages outside it get one built here.
+  if (stage.querySelector(':scope > .stage-head > .stage-tools, :scope > .stage-tools')) {
+    const head = stage.querySelector<HTMLElement>(':scope > .stage-head');
+    const bar = stage.querySelector<HTMLElement>('.stage-tools');
+    const eq = head?.querySelector('.stage-eq');
+    if (head && bar && eq) {
+      const mirror = () => head.style.setProperty('--tools-w', `${bar.getBoundingClientRect().width}px`);
+      mirror();
+      new ResizeObserver(mirror).observe(bar);
+      stage.querySelectorAll(':scope > .sim-eq').forEach((b) => eq.appendChild(b));
+    }
+    return;
+  }
   const bar = document.createElement('div');
   bar.className = 'stage-tools';
   bar.innerHTML =
@@ -395,7 +459,17 @@ export function initStageChrome() {
 
   installKeyboard(stage);
   installShareButton(stage);
+  holdLayout();
 
   // Restore shared state after the sim's own script has initialised.
-  requestAnimationFrame(() => requestAnimationFrame(() => applyState(location.search)));
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      applyState(location.search);
+      // Asked for less motion: start paused, one click on Run away.
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        const run = document.getElementById('run');
+        if (run?.getAttribute('aria-pressed') === 'true') run.click();
+      }
+    })
+  );
 }

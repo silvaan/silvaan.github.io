@@ -70,6 +70,40 @@ const around = paths.length ? {} : areaNeighbours(key);
       <slot />
     </div>
 
+    <template id="stage-tools-tpl">
+      <div class="stage-tools">
+        <button type="button" data-share aria-label="Copy shareable link" title="Copy link to this setup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6 M11 6l.5-.5a3.5 3.5 0 0 1 5 5l-1.5 1.5 M13 18l-.5.5a3.5 3.5 0 0 1-5-5L9 12"></path></svg>
+          <span class="share-label">Link</span>
+        </button>
+        <button type="button" data-fullscreen aria-label="Toggle fullscreen" title="Fullscreen (f)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4 M20 9V5a1 1 0 0 0-1-1h-4 M4 15v4a1 1 0 0 0 1 1h4 M20 15v4a1 1 0 0 0-1 1h-4"></path></svg>
+        </button>
+      </div>
+    </template>
+    <script is:inline>
+      // Put the stage header (equation slot and tools) in place while the page
+      // is still being parsed, with room held for the equation, so nothing
+      // below it moves when the sim's script arrives and typesets it.
+      (function () {
+        var stage = document.querySelector('[data-sim-format] .sim-stage');
+        var tpl = document.getElementById('stage-tools-tpl');
+        if (!stage || !tpl || stage.querySelector('.stage-tools')) return;
+        var tools = tpl.content.firstElementChild.cloneNode(true);
+        if (!stage.closest('[data-sim-format="standard"]')) {
+          stage.appendChild(tools);
+          return;
+        }
+        var head = document.createElement('div');
+        head.className = 'stage-head';
+        var eq = document.createElement('div');
+        eq.className = 'stage-eq';
+        head.append(eq, tools);
+        stage.insertBefore(head, stage.firstChild);
+        stage.classList.add('eq-pending');
+      })();
+    </script>
+
     {
       hasObserve && (
         <section class="observe" data-observe>
@@ -92,6 +126,22 @@ const around = paths.length ? {} : areaNeighbours(key);
         </section>
       )
     }
+    <script is:inline>
+      // The prompts go under the controls, beside the canvas, so "Show me" is
+      // pressed next to what it changes. Done during parsing so it never jumps.
+      // (Classic pages float their panel over a fullscreen stage and style it
+      // as a direct child of .sim, so they keep the prompts below.)
+      (function () {
+        var observe = document.querySelector('[data-observe]');
+        var sim = document.querySelector('[data-sim-format="standard"] .sim');
+        var panel = sim && sim.querySelector(':scope > .sim-panel');
+        if (!observe || !panel) return;
+        var side = document.createElement('div');
+        side.className = 'sim-side';
+        panel.replaceWith(side);
+        side.append(panel, observe);
+      })();
+    </script>
 
     <nav class="sim-next" aria-label="Where to go next">
       {
@@ -171,26 +221,20 @@ const around = paths.length ? {} : areaNeighbours(key);
 
 <script>
   import { initStageChrome } from '../lib/sim';
+  import { holdTallest } from '../lib/stable';
   initStageChrome();
 
   const root = document.documentElement;
   const sim = document.querySelector<HTMLElement>('.sim');
-  const panel = sim?.querySelector<HTMLElement>(':scope > .sim-panel');
   const observe = document.querySelector<HTMLElement>('[data-observe]');
 
-  /* ---------- What to observe: beside the canvas, one item at a time ---------- */
-  if (observe) {
-    // The panel column has room under the controls; put the prompts there so
-    // "Show me" is pressed right next to what it changes.
-    // (Classic pages float their panel over a fullscreen stage and style it
-    // as a direct child of .sim, so they keep the prompts below.)
-    if (panel && sim?.closest('[data-sim-format="standard"]')) {
-      const side = document.createElement('div');
-      side.className = 'sim-side';
-      panel.replaceWith(side);
-      side.append(panel, observe);
-    }
+  // A page that never typesets an equation gives back the room held for one.
+  addEventListener('load', () =>
+    setTimeout(() => document.querySelector('.sim-stage.eq-pending')?.classList.remove('eq-pending'), 1500)
+  );
 
+  /* ---------- What to observe: one item at a time ---------- */
+  if (observe) {
     const items = Array.from(observe.querySelectorAll<HTMLLIElement>(':scope > ol > li'));
     if (items.length > 1) {
       const nav = observe.querySelector<HTMLElement>('.observe-nav')!;
@@ -217,6 +261,8 @@ const around = paths.length ? {} : areaNeighbours(key);
         if (b) show(Number(b.dataset.go));
       });
       show(0);
+      // as tall as the tallest item, so stepping never changes its height
+      holdTallest(observe.querySelector('ol')!, items, 'on');
     }
   }
 

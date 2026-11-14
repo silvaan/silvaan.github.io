@@ -33,8 +33,31 @@ function texColour(c: string) {
 
 const TEX = { throwOnError: false, displayMode: false, output: 'html' } as const;
 
+/**
+ * The widest each part has been, in em of its line, keyed by the part's TeX
+ * with the numbers taken out: "h = 1.20" and "h = 0.4" are the same part, so
+ * the slot keeps the width of the longer one and nothing beside it moves.
+ */
+type Widths = Map<string, number>;
+const shape = (line: number, tex: string) => `${line}|${tex.replace(/[−-]?\d[\d.,]*/g, '#')}`;
+
+function holdParts(line: HTMLElement, keys: string[], widths: Widths) {
+  const spans = Array.from(line.children) as HTMLElement[];
+  if (!spans.length || !line.offsetParent) return;
+  const em = parseFloat(getComputedStyle(line).fontSize) || 16;
+  const measured = spans.map((s) => s.getBoundingClientRect().width / em);
+  spans.forEach((span, j) => {
+    const key = keys[j];
+    if (!key) return;
+    const w = Math.max(widths.get(key) ?? 0, measured[j]);
+    widths.set(key, w);
+    span.style.display = 'inline-block';
+    span.style.minWidth = `${w.toFixed(3)}em`;
+  });
+}
+
 /** Render lines into a bar; the first two are TeX, anything after is prose. */
-function render(bar: HTMLElement, lines: Part[][]) {
+function render(bar: HTMLElement, lines: Part[][], widths?: Widths) {
   bar.textContent = '';
   lines.forEach((parts, i) => {
     const line = document.createElement('div');
@@ -52,6 +75,7 @@ function render(bar: HTMLElement, lines: Part[][]) {
       katex.render(tex, span, TEX);
       line.appendChild(span);
       bar.appendChild(line);
+      if (widths) holdParts(line, [shape(i, tex)], widths);
       return;
     }
 
@@ -65,6 +89,9 @@ function render(bar: HTMLElement, lines: Part[][]) {
       line.appendChild(span);
     }
     bar.appendChild(line);
+    // only the live numbers change from frame to frame; the prose line wraps
+    if (widths && i === 1)
+      holdParts(line, shown.map((p, j) => shape(i, `${j}:${typeof p === 'string' ? p : p[0]}`)), widths);
   });
 }
 
@@ -88,8 +115,11 @@ function fit(bar: HTMLElement) {
 function cached(bar: HTMLElement) {
   let last = '';
   let width = 0;
+  const widths: Widths = new Map();
   new ResizeObserver(() => {
     if (bar.clientWidth === width) return;
+    // a new width wraps differently: let the parts find their sizes again
+    if (width) widths.clear();
     width = bar.clientWidth;
     fit(bar);
   }).observe(bar);
@@ -100,8 +130,10 @@ function cached(bar: HTMLElement) {
     const key = JSON.stringify(lines);
     if (key === last) return;
     last = key;
-    render(bar, lines);
+    render(bar, lines, widths);
     fit(bar);
+    // the space SimLayout reserved for the equation can go: it is here now
+    bar.closest('.sim-stage')?.classList.remove('eq-pending');
   };
 }
 

@@ -44,6 +44,7 @@ export function slider(
   const input = el(id) as HTMLInputElement;
   const out = el(id + 'val');
   const show = (v: number) => { if (out) out.textContent = fmt(v); };
+  if (out) reserveWidth(out, input, fmt);
   input.addEventListener('input', () => {
     const v = +input.value;
     show(v);
@@ -54,6 +55,30 @@ export function slider(
     input.value = String(v);
     show(+input.value);
   };
+}
+
+/**
+ * Give a slider's readout the width of the widest thing it can print, so the
+ * label beside it never shifts as the value changes. The readout is set in a
+ * monospace face, so a character count is an exact width.
+ */
+function reserveWidth(out: HTMLElement, input: HTMLInputElement, fmt: (v: number) => string) {
+  const min = +input.min || 0, max = +input.max || 100;
+  const step = input.step === 'any' ? 0 : +input.step || 1;
+  const n = step ? Math.min(400, Math.round((max - min) / step)) : 200;
+  let widest = (out.textContent ?? '').length;
+  for (let i = 0; i <= n; i++) {
+    let v = min + ((max - min) * i) / n;
+    if (step) v = Math.round((v - min) / step) * step + min;
+    try {
+      widest = Math.max(widest, fmt(+v.toFixed(10)).length);
+    } catch {
+      /* a formatter that only knows some values */
+    }
+  }
+  out.style.display = 'inline-block';
+  out.style.textAlign = 'right';
+  out.style.minWidth = `${widest}ch`;
 }
 
 /** A checkbox by id, calling back with its state on change. */
@@ -71,6 +96,17 @@ export function check(id: string, onChange: (on: boolean) => void) {
 export function transport(h: { onRun?: (running: boolean) => void; onStep?: () => void; onReset?: () => void }) {
   const run = document.getElementById('run') as HTMLButtonElement | null;
   let running = run?.textContent?.trim() === 'Pause';
+  // as wide as the wider of its two labels, so Step and Reset never move
+  if (run) {
+    const label = run.textContent;
+    let w = 0;
+    for (const t of ['Pause', 'Run']) {
+      run.textContent = t;
+      w = Math.max(w, run.getBoundingClientRect().width);
+    }
+    run.textContent = label;
+    if (w) run.style.minWidth = `${Math.ceil(w)}px`;
+  }
   const paint = () => {
     if (!run) return;
     run.textContent = running ? 'Pause' : 'Run';
