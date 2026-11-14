@@ -8,6 +8,7 @@ import Readout from '../../../components/sim/Readout.astro';
 import Result from '../../../components/sim/Result.astro';
 import Caption from '../../../components/sim/Caption.astro';
 import Try from '../../../components/sim/Try.astro';
+import Actions from '../../../components/sim/Actions.astro';
 
 const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
 ---
@@ -15,12 +16,12 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
 <SimLayout
   areaSlug="physics"
   title="Electromagnetic Waves"
-  description="Shake a charge and watch its field ripple outward as a glowing shell, at the speed the medium allows. Build a dipole antenna to see its radiation glow as a doughnut round the wire, with E and B turning transverse in 3D, or switch to statics for the Coulomb field lines of fixed charges and the magnetic circles round a wire."
+  description="Shake a charge and its field ripples outward as a glowing shell, at the speed the medium allows. A dipole antenna radiates a doughnut; statics shows the field lines of fixed charges and a wire."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="em3d" class="em-canvas" width="820" height="720" role="img" aria-label="Charges in three dimensions with the electric and magnetic fields they make: arrows on a plane or through a volume for radiating charges, field lines for static charges and a current-carrying wire."></canvas>
+        <canvas id="em3d" class="em-canvas" width="900" height="660" role="img" aria-label="Charges in three dimensions with the electric and magnetic fields they make: arrows on a plane or through a volume for radiating charges, field lines for static charges and a current-carrying wire."></canvas>
       </div>
       <Caption
         legend={[
@@ -44,11 +45,13 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
           { value: 'statics', label: 'Statics' },
         ]}
       />
-      <Transport step running>
+      <Transport step running />
+      <!-- one row in every scene: Shake, or the two statics buttons -->
+      <Actions>
         <button type="button" class="btn ghost" id="shake">Shake</button>
         <button type="button" class="btn ghost" id="newq" hidden>New charges</button>
         <button type="button" class="btn ghost" id="flip" hidden>Flip current</button>
-      </Transport>
+      </Actions>
       <Seg
         id="field"
         label="Show"
@@ -70,9 +73,6 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
             { value: 'off', label: 'Off' },
           ]}
         />
-        <div id="fogop-wrap">
-          <Slider id="fogop" label="Fog opacity" min={0.2} max={3} step={0.05} value={1} display="1.00" hint={['thin', 'dense']} />
-        </div>
       </div>
       <div id="layout-wrap">
         <Seg
@@ -84,28 +84,34 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
           ]}
         />
       </div>
-      <div id="plane-wrap">
-        <Seg
-          id="plane"
-          label="Plane"
-          options={[
-            { value: 'xy', label: 'XY' },
-            { value: 'xz', label: 'XZ' },
-            { value: 'yz', label: 'YZ' },
-          ]}
-        />
-        <Slider id="offset" label="Plane offset" min={-6} max={6} step={0.1} value={0} display="0.0" />
-      </div>
-      <Slider id="density" label="Density" min={1} max={8} step={1} value={4} display="15 × 15" />
-      <div id="look-wrap">
-        <Checks items={[{ id: 'fronts', label: 'Wavefronts', checked: true }]} />
-      </div>
       <Slider id="eps" label="Permittivity ε<sub>r</sub>" min={1} max={80} step={0.1} value={1} display="1.0" />
-      <Slider id="mu" label="Permeability μ<sub>r</sub>" min={1} max={10} step={0.1} value={1} display="1.0" />
-      <Slider id="sigma" label="Loss σ" min={0} max={2} step={0.02} value={0} display="0.00" />
       <div id="freq-wrap">
         <Slider id="freq" label="Antenna frequency f" min={0.1} max={1.5} step={0.05} value={0.55} display="0.55" />
       </div>
+      <details class="numeric-details">
+        <summary>More</summary>
+        <div id="plane-wrap">
+          <Seg
+            id="plane"
+            label="Plane"
+            options={[
+              { value: 'xy', label: 'XY' },
+              { value: 'xz', label: 'XZ' },
+              { value: 'yz', label: 'YZ' },
+            ]}
+          />
+          <Slider id="offset" label="Plane offset" min={-6} max={6} step={0.1} value={0} display="0.0" />
+        </div>
+        <Slider id="density" label="Density" min={1} max={8} step={1} value={4} display="15 × 15" />
+        <div id="fogop-wrap">
+          <Slider id="fogop" label="Fog opacity" min={0.2} max={3} step={0.05} value={1} display="1.00" hint={['thin', 'dense']} />
+        </div>
+        <div id="look-wrap">
+          <Checks items={[{ id: 'fronts', label: 'Wavefronts', checked: true }]} />
+        </div>
+        <Slider id="mu" label="Permeability μ<sub>r</sub>" min={1} max={10} step={0.1} value={1} display="1.0" />
+        <Slider id="sigma" label="Loss σ" min={0} max={2} step={0.02} value={0} display="0.00" />
+      </details>
       <Readout
         rows={[
           { id: 'nOut', label: 'n = √(ε<sub>r</sub> μ<sub>r</sub>)' },
@@ -142,7 +148,7 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, readout, result, tries } from '../../../lib/panel';
   import { Camera3D, fieldRamp } from '../../../lib/scene3d';
@@ -153,6 +159,8 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const isLight = () => css('--stage-light') === '1';
   const ink = () => css('--stage-ink') || '232,233,236';
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number) => (isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, 11));
 
   const CAM = 17;
   const cam = new Camera3D(W, H, { dist: CAM, yaw: 0.72, pitch: -0.42, zoom: 0.9 });
@@ -903,9 +911,10 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
       line3(planePoint(u, FIELD_MIN), planePoint(u, FIELD_MAX), c, 1);
       line3(planePoint(FIELD_MIN, u), planePoint(FIELD_MAX, u), c, 1);
     }
+    if (isCompact(canvas)) return;
     const lab = project(planePoint(FIELD_MAX, FIELD_MIN));
-    ctx.fillStyle = `rgba(${ink()},0.5)`;
-    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    ctx.fillStyle = `rgba(${ink()},0.6)`;
+    ctx.font = `500 ${fpx(11)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(`${state.plane.toUpperCase()} · ${AXIS[state.plane]} = ${state.planePos.toFixed(1)}`, lab.sx + 8, lab.sy);
@@ -1091,7 +1100,8 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
   function drawCharge(c: Charge) {
     const p = project(c.p);
     if (p.zc <= 0.3) return;
-    const r = Math.max(6, 12 * p.s * (0.7 + 0.3 * Math.min(2, Math.abs(c.q))));
+    // never smaller than about 7 screen px, so it stays something to grab on a phone
+    const r = Math.max(textPx(canvas, 6, 7, 3), 12 * p.s * (0.7 + 0.3 * Math.min(2, Math.abs(c.q))));
     const pos = c.q >= 0;
     const [cr, cg, cb] = pos ? [248, 113, 113] : [96, 165, 250];
 
@@ -1119,7 +1129,7 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
     }
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = `700 ${Math.max(10, r * 1.25)}px system-ui, sans-serif`;
+    ctx.font = `700 ${Math.min(r * 1.7, Math.max(fpx(10), r * 1.25))}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(pos ? '+' : '−', p.sx, p.sy + 0.5);
@@ -1157,7 +1167,7 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
       })
       .sort((a, b) => b.depth - a.depth);
     ctx.lineWidth = 2;
-    ctx.font = "600 11px 'JetBrains Mono', monospace";
+    ctx.font = `600 ${fpx(11)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     for (const a of pr) {
@@ -1413,7 +1423,7 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
       setResult({
         value: qs,
         status: `${pos.length} positive, ${neg.length} negative · current ${state.current > 0 ? 'up' : 'down'} the wire`,
-        note: 'E lines start on + and end on −, or run off to infinity, and never cross. B lines close on themselves: there is no magnetic charge to start on.',
+        note: 'E lines run from + to − or off to infinity, and never cross. B lines close on themselves: there is no magnetic charge.',
       });
       return;
     }
@@ -1427,13 +1437,13 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
         '=\\dfrac{\\hat{\\mathbf n}\\times\\mathbf E}{v}',
       ],
       live: state.scene === 'dipole'
-        ? [`v = \\dfrac{c}{n} = \\dfrac{c}{${n().toFixed(2)}}`, `\\quad \\lambda = \\dfrac{v}{f} = ${lambda().toFixed(2)}\\,\\text{u}`]
+        ? [`v = \\dfrac{c}{n} = \\dfrac{c}{${n().toFixed(2)}}`, `\\quad \\lambda = v/f = ${lambda().toFixed(2)}\\,\\text{u}`]
         : [`v = \\dfrac{c}{n} = \\dfrac{c}{${n().toFixed(2)}}`, `\\quad |\\mathbf a| = ${V.norm(charges[0]?.a ?? V.zero()).toFixed(2)}`],
     });
     setResult({
       value: `${(1 / n()).toFixed(3)} c`,
       status: state.scene === 'dipole'
-        ? `n = ${n().toFixed(3)} · η = ${eta().toFixed(1)} Ω · λ = ${lambda().toFixed(2)} u (box ${2 * BOX} u)`
+        ? `n = ${n().toFixed(3)} · η = ${eta().toFixed(1)} Ω · λ = ${lambda().toFixed(2)} u`
         : `n = ${n().toFixed(3)} · η = ${eta().toFixed(1)} Ω`,
       note: state.scene === 'dipole'
         ? 'The rings are one wavelength apart. Far out, E and B are at right angles to each other and to the direction of travel.'
@@ -1443,23 +1453,30 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
 
   // --- controls -------------------------------------------------------------------
 
+  /** Grey out a control that does nothing in this scene, without moving the panel. */
+  function usable(id: string, on: boolean) {
+    const box = el(id);
+    box.classList.toggle('em-off', !on);
+    box.toggleAttribute('inert', !on);
+  }
   function panelFor() {
     const statics = state.scene === 'statics';
     el('newq').hidden = !statics;
     el('flip').hidden = !statics;
-    el('shake').hidden = state.scene !== 'charge';
-    el('layout-wrap').hidden = statics;
+    el('shake').hidden = statics;
+    usable('shake', state.scene === 'charge');
+    usable('layout-wrap', !statics);
     const look = looks();
-    el('plane-wrap').hidden = !look.plane;
-    el('look-wrap').hidden = statics;
-    el('freq-wrap').hidden = state.scene !== 'dipole';
-    el('fogop-wrap').hidden = !look.fog;
-    el('lg-heat').hidden = !look.fog && !look.shade;
+    usable('plane-wrap', look.plane);
+    usable('look-wrap', !statics);
+    usable('freq-wrap', state.scene === 'dipole');
+    usable('fogop-wrap', look.fog);
+    el('lg-heat').style.visibility = look.fog || look.shade ? '' : 'hidden';
     // statics has no plane; without WebGL2 there is no fog
     const vb = (v: string) => el('view').querySelector(`[data-v="${v}"]`) as HTMLElement;
     vb('plane').hidden = vb('both').hidden = statics;
     if (!vol) vb('fog').hidden = vb('both').hidden = true;
-    el('view-wrap').hidden = statics && !vol;
+    usable('view-wrap', !(statics && !vol));
     views.select(statics ? (state.view === 'off' ? 'off' : 'fog') : state.view);
     el('result-label').textContent = statics ? 'Field lines' : 'Wave speed in this medium';
   }
@@ -1558,7 +1575,7 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
       const d = Math.hypot(loc.x - p.sx, loc.y - p.sy);
       if (d < bestD) { bestD = d; best = c; }
     }
-    if (best && bestD < 34) {
+    if (best && bestD < Math.max(34, (22 * W) / canvas.getBoundingClientRect().width)) {
       state.selectedId = best.id;
       toManual(best);
       best.shakeFrom = -1;
@@ -1625,6 +1642,9 @@ const E_COLOR = '#60a5fa', B_COLOR = '#f87171';
 </script>
 
 <style>
+  .em-off {
+    opacity: 0.4;
+  }
   .em-canvas {
     cursor: grab;
     touch-action: none;

@@ -16,7 +16,7 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
 <SimLayout
   areaSlug="physics"
   title="Wave Equation"
-  description="A drum skin where every point accelerates toward the average of its four neighbours. Put a probe anywhere and watch that pull live: down on a crest, up in a trough, nothing on a straight slope. Swap in the heat equation and the same pull only slides the point into place."
+  description="A drum skin where every point accelerates toward the average of its four neighbours. Drop a probe and watch that pull live: down on a crest, up in a trough, nothing on a straight slope."
 >
   <div class="sim">
     <div class="sim-view">
@@ -31,7 +31,7 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
           { label: 'neighbour average ū', color: UB_COL },
           { label: 'acceleration a', color: A_COL, id: 'leg-a' },
         ]}
-        hint="Click the skin to drop a pulse; hold and drag to pull a finger through it. Drag the yellow probe (or pick Move the probe) to inspect any point. Drag off the skin (or right-drag) to orbit, scroll to zoom."
+        hint="Click the skin to drop a pulse, or drag to pull a finger through it. Drag the yellow probe to inspect any point; drag off the skin to orbit, scroll to zoom."
       />
       <Result label="Neighbours’ pull on the probe, ū − u" />
     </div>
@@ -119,7 +119,7 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import type { Part } from '../../../lib/equation';
   import { Camera3D, orbitControls, drawBackdrop, V } from '../../../lib/scene3d';
@@ -333,6 +333,8 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
   // --- drawing --------------------------------------------------------------
   const canvas = el('wave') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number) => (isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, 11));
   const VH = 532; // the 3D view; the energy strip sits below it
   const VW = W - 150; // the drum is centred left of the lens panel
   const TR = { x: 64, y: VH + 30, w: W - 96, h: H - VH - 46 };
@@ -687,9 +689,9 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(flat, (VW - s) / 2, 40, s, s);
     ctx.fillStyle = `rgba(${ink},0.6)`;
-    ctx.font = '12px ui-monospace, monospace';
+    ctx.font = `${fpx(12)}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText('WebGL2 is not available here, so the skin is shown from above, flat.', VW / 2, 24);
+    ctx.fillText('flat view (no WebGL2)', VW / 2, 24);
     ctx.textAlign = 'left';
   }
 
@@ -896,14 +898,14 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.roundRect(x, y, w, LP.h, 10);
     ctx.fill();
     ctx.stroke();
-    label('THE PROBE AND ITS 4 NEIGHBOURS', x + 14, y + 22, 0.5, 'left', 9.5);
+    const compact = isCompact(canvas);
     const v = verdict();
     const words = (state.heat ? VERDICT_HEAT : VERDICT_WAVE)[v];
     const glyph = v === 'down' ? '↓ ' : v === 'up' ? '↑ ' : '';
     ctx.fillStyle = v === 'down' || v === 'up' ? pal.a : `rgba(${ink},0.62)`;
-    ctx.font = '600 14px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText(glyph + words, x + 14, y + 44);
-    label(state.heat ? 'arrow = velocity, v = D∇²u' : 'arrow = acceleration, a = c²∇²u', x + 14, y + 62, 0.5, 'left', 10);
+    ctx.font = `600 ${fpx(15)}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.fillText(glyph + words, x + 14, y + 30);
+    if (!compact) label(state.heat ? 'arrow: v = D∇²u' : 'arrow: a = c²∇²u', x + 14, y + 54, 0.55);
 
     // side view, north–south receding so all four neighbours show
     const box = { t: y + 70, b: y + 262 };
@@ -929,8 +931,8 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.stroke();
     ctx.setLineDash([]);
     const gapMid = (base + base - P.gap * G) / 2, gapShown = Math.abs(P.gap * G) > 4;
-    if (restY > box.t + 8 && restY < box.b - 4 && !(gapShown && Math.abs(restY - gapMid) < 14))
-      label('rest', x + 14, restY + 4, 0.45, 'left', 10);
+    if (!compact && restY > box.t + 8 && restY < box.b - 4 && !(gapShown && Math.abs(restY - gapMid) < 14))
+      label('rest', x + 14, restY + 4, 0.5, 'left', 10);
     // stems from rest up to each point
     const T = at.map((q, n) => lift(q, P.nb[n] - P.u));
     const C = { x: cx, y: base };
@@ -966,17 +968,17 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     const ubY = base - P.gap * G;
     ctx.beginPath(); ctx.moveTo(cx - 10, ubY); ctx.lineTo(cx + 10, ubY); ctx.stroke();
     ctx.fillStyle = pal.ub;
-    ctx.font = 'italic 600 14px ui-serif, Georgia, serif';
+    ctx.font = `italic 600 ${fpx(15)}px ui-serif, Georgia, serif`;
     ctx.fillText('ū', UB[0].x + 9, UB[0].y + 5);
     // neighbour beads, back to front
     for (const n of [2, 1, 0, 3]) {
       ctx.fillStyle = `rgba(${ink},0.92)`;
       ctx.beginPath(); ctx.arc(T[n].x, T[n].y, 4.2, 0, 2 * Math.PI); ctx.fill();
-      label(at[n].n, T[n].x + (n === 1 ? -8 : 8), T[n].y + (n === 2 ? -6 : n === 3 ? 14 : 4), 0.45, n === 1 ? 'right' : 'left', 10);
+      if (!compact) label(at[n].n, T[n].x + (n === 1 ? -8 : 8), T[n].y + (n === 2 ? -6 : n === 3 ? 14 : 4), 0.5, n === 1 ? 'right' : 'left', 10);
     }
     // the gap ū − u: a bracket left of the point
     const gx = x + 48;
-    if (Math.abs(ubY - C.y) > 4) {
+    if (!compact && Math.abs(ubY - C.y) > 4) {
       ctx.strokeStyle = `rgba(${ink},0.3)`;
       ctx.setLineDash([1.5, 3]);
       ctx.beginPath(); ctx.moveTo(gx + 4, C.y); ctx.lineTo(cx - 8, C.y); ctx.stroke();
@@ -989,7 +991,7 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
       ctx.moveTo(gx - 3, ubY); ctx.lineTo(gx + 3, ubY);
       ctx.stroke();
       ctx.fillStyle = `rgba(${ink},0.7)`;
-      ctx.font = 'italic 12px ui-serif, Georgia, serif';
+      ctx.font = `italic ${fpx(12)}px ui-serif, Georgia, serif`;
       ctx.textAlign = 'right';
       ctx.fillText('ū − u', gx - 5, (C.y + ubY) / 2 + 4);
       ctx.textAlign = 'left';
@@ -999,21 +1001,20 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.strokeStyle = light ? 'rgba(255,255,255,0.95)' : 'rgba(10,12,18,0.95)';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(C.x, C.y, 6.5, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-    ctx.font = 'italic 600 14px ui-serif, Georgia, serif';
-    ctx.fillText('u', C.x - 4, C.y + (ubY > C.y + 4 ? -11 : 21));
+    ctx.font = `italic 600 ${fpx(15)}px ui-serif, Georgia, serif`;
+    ctx.fillText('u', C.x - 4, C.y + (ubY > C.y + 4 ? -11 : 9 + fpx(15)));
     // what the gap does: an acceleration (waves) or a velocity (heat)
     const L = Math.max(-84, Math.min(84, 3 * (ubY - C.y)));
     const ax = cx + 17;
     arrow(ax, C.y, C.y + L, pal.a, 2.8);
     if (Math.abs(L) >= 10) {
       ctx.fillStyle = pal.a;
-      ctx.font = 'italic 600 14px ui-serif, Georgia, serif';
+      ctx.font = `italic 600 ${fpx(15)}px ui-serif, Georgia, serif`;
       ctx.fillText(state.heat ? 'v' : 'a', ax + 8, C.y + L * 0.6 + 5);
     }
     ctx.restore();
-    if (restY <= box.t + 2 || restY >= box.b - 2)
-      label(restY < box.t ? 'rest ↑' : 'rest ↓', x + w - 12, restY < box.t ? box.t + 12 : box.b - 6, 0.45, 'right', 10);
-    label('gaps magnified', x + w - 12, y + 44, 0.35, 'right', 9.5);
+    if (!compact && (restY <= box.t + 2 || restY >= box.b - 2))
+      label(restY < box.t ? 'rest ↑' : 'rest ↓', x + w - 12, restY < box.t ? box.t + 14 : box.b - 6, 0.5, 'right', 10);
 
     // history: height and pull at the probe over the last few seconds
     const sx0 = x + 30, sw = w - 44, sy = y + 314, sh = 22;
@@ -1021,12 +1022,12 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.beginPath(); ctx.moveTo(x + 12, y + 270.5); ctx.lineTo(x + w - 12, y + 270.5); ctx.stroke();
     ctx.strokeStyle = `rgba(${ink},0.2)`;
     ctx.beginPath(); ctx.moveTo(sx0, sy + 0.5); ctx.lineTo(sx0 + sw, sy + 0.5); ctx.stroke();
-    ctx.font = 'italic 600 13px ui-serif, Georgia, serif';
+    ctx.font = `italic 600 ${fpx(14)}px ui-serif, Georgia, serif`;
     ctx.fillStyle = pal.u;
     ctx.fillText('u', x + 14, sy - 6);
     ctx.fillStyle = pal.a;
     ctx.fillText(state.heat ? 'v' : 'a', x + 14, sy + 16);
-    label('AT THE PROBE, OVER TIME', x + 14, y + 286, 0.42, 'left', 9.5);
+    if (!compact) label('probe over time', x + 14, y + 290, 0.5);
     const n = pu.length;
     if (n > 1) {
       const xs = (q: number) => sx0 + sw - ((n - 1 - q) / (LSPAN - 1)) * sw;
@@ -1058,7 +1059,7 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
   }
   function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 11) {
     ctx.fillStyle = `rgba(${ink},${alpha})`;
-    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.font = `${fpx(size)}px ui-monospace, monospace`;
     ctx.textAlign = align;
     ctx.fillText(text, x, y);
     ctx.textAlign = 'left';
@@ -1070,7 +1071,8 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.moveTo(14, VH + 6.5);
     ctx.lineTo(W - 14, VH + 6.5);
     ctx.stroke();
-    label(state.heat ? 'energy over time (all potential while diffusing)' : 'energy over time', TR.x, top - 10, 0.55);
+    const compact = isCompact(canvas);
+    label(compact ? 'energy' : state.heat ? 'energy (all potential while diffusing)' : 'energy over time', TR.x, top - 10, 0.55);
     let mx = state.eRef;
     for (const p of trace) mx = Math.max(mx, p.k + p.v);
     mx = mx * 1.12 || 1;
@@ -1090,8 +1092,10 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     ctx.lineTo(TR.x + TR.w, yr);
     ctx.stroke();
     ctx.setLineDash([]);
-    label('put in', TR.x - 8, yr + 4, 0.45, 'right', 10);
-    label('0', TR.x - 8, bot + 4, 0.35, 'right', 10);
+    if (!compact) {
+      label('put in', TR.x - 8, yr + 4, 0.5, 'right', 10);
+      label('0', TR.x - 8, bot + 4, 0.45, 'right', 10);
+    }
     if (trace.length > 1) {
       const start = frameNo - trace.length + 1;
       const band = (lo: (p: { k: number; v: number }) => number, hi: (p: { k: number; v: number }) => number, colour: string) => {
@@ -1121,26 +1125,30 @@ const U_COL = '#f59e0b', UB_COL = '#0ea5e9', A_COL = '#ec4899';
     for (const m of marks) {
       if (m.f < x0) continue;
       const x = Math.round(xAt(m.f)) + 0.5;
-      const room = x - lastX > 64;
+      const room = !compact && x - lastX > 90;
       if (room) lastX = x;
       ctx.strokeStyle = `rgba(${ink},0.3)`;
       ctx.beginPath();
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
       ctx.stroke();
-      const right = x > TR.x + TR.w - 80;
-      if (room) label(m.text, right ? x - 4 : x + 4, top + 8, 0.5, right ? 'right' : 'left', 10);
+      const right = x > TR.x + TR.w - 100;
+      if (room) label(m.text, right ? x - 4 : x + 4, top + fpx(10), 0.5, right ? 'right' : 'left', 10);
     }
     // the split right now, at the end of the strip
     const e = eTot() || 1;
-    label(`kinetic ${((100 * eK) / e).toFixed(0)}%`, TR.x + TR.w, top - 10, 0.9, 'right');
+    const pct = (v: number) => `${((100 * v) / e).toFixed(0).padStart(3, '\u2007')}%`;
+    const kv = `${compact ? 'kin' : 'kinetic'} ${pct(eK)}`;
+    const pv = `${compact ? 'pot' : 'potential'} ${pct(eV)}`;
+    const sw = Math.round(fpx(11) * 0.7);
+    label(kv, TR.x + TR.w, top - 10, 0.9, 'right');
+    const kw = ctx.measureText(kv).width;
     ctx.fillStyle = KE;
-    ctx.fillRect(TR.x + TR.w - ctx.measureText(`kinetic ${((100 * eK) / e).toFixed(0)}%`).width - 14, top - 18, 8, 8);
-    const pv = `potential ${((100 * eV) / e).toFixed(0)}%`;
-    const kw = ctx.measureText(`kinetic ${((100 * eK) / e).toFixed(0)}%`).width + 30;
-    label(pv, TR.x + TR.w - kw, top - 10, 0.9, 'right');
+    ctx.fillRect(TR.x + TR.w - kw - sw - 6, top - 10 - sw, sw, sw);
+    const gap = kw + sw + 22;
+    label(pv, TR.x + TR.w - gap, top - 10, 0.9, 'right');
     ctx.fillStyle = PE;
-    ctx.fillRect(TR.x + TR.w - kw - ctx.measureText(pv).width - 14, top - 18, 8, 8);
+    ctx.fillRect(TR.x + TR.w - gap - ctx.measureText(pv).width - sw - 6, top - 10 - sw, sw, sw);
   }
 
   function draw() {

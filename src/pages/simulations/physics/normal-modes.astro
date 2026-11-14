@@ -35,7 +35,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'nodes', color: '#8b909c' },
           { label: 'sand', color: '#d6b46a', id: 'leg-sand' },
         ]}
-        hint="Drag the string to pull it and let go to pluck. In the spectrum, drag a bar up or down to mix that mode in; click a bar to play it alone."
+        hint="Drag the string and let go to pluck it. Drag a bar in the spectrum to mix that mode in; click it to play it alone."
       />
       <Result label="Mode n = 1: f / f₁" />
     </div>
@@ -62,8 +62,8 @@ import Try from '../../../components/sim/Try.astro';
       <Checks
         items={[
           { id: 'nodes', label: 'Nodes and nodal lines', checked: true },
-          { id: 'sand', label: 'Sand on the skin (Chladni)', checked: true },
           { id: 'sound', label: 'Sound (196 Hz fundamental)' },
+          { id: 'sand', label: 'Sand on the skin (Chladni)', checked: true },
         ]}
       />
       <Readout
@@ -102,7 +102,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import type { Part } from '../../../lib/equation';
   import { Camera3D, orbitControls, drawBackdrop, V } from '../../../lib/scene3d';
@@ -163,6 +163,8 @@ import Try from '../../../components/sim/Try.astro';
   // --- colours ---------------------------------------------------------------
   const canvas = el('nm') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number) => (isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, 11));
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   let ink = '232,233,236', light = false;
   const readTheme = () => {
@@ -392,7 +394,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 11, colour?: string) {
     ctx.fillStyle = colour ?? inkA(alpha);
-    ctx.font = `${size}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.font = `${fpx(size)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = align;
     ctx.fillText(text, x, y);
     ctx.textAlign = 'left';
@@ -462,7 +464,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(X1, MID);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(`your pluck · the line is the sum of ${NS} modes`, sxs(pull.x), MID - AMP * pull.h + (pull.h >= 0 ? -14 : 24), 0.6, 'center');
+      label(isCompact(canvas) ? 'your pluck' : `your pluck: the sum of ${NS} modes`, sxs(pull.x), MID - AMP * pull.h + (pull.h >= 0 ? -14 : 14 + fpx(11)), 0.6, 'center');
     }
 
     ctx.strokeStyle = inkA(0.92);
@@ -475,7 +477,7 @@ import Try from '../../../components/sim/Try.astro';
     if (solo1 && state.nodes) {
       const n = modes[act[0]].m;
       for (let j = 1; j < n; j++) nodeDot(sxs(j / n), MID);
-      if (n > 1) label('node', sxs(1 / n), MID + 24, 0.55, 'center');
+      if (n > 1 && !isCompact(canvas)) label('node', sxs(1 / n), MID + 12 + fpx(11), 0.55, 'center');
     }
     for (const x of [X0, X1]) peg(x, MID);
     drawLanes();
@@ -579,7 +581,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(40, LANES.top - 39.5);
     ctx.lineTo(W - 40, LANES.top - 39.5);
     ctx.stroke();
-    label(`each mode on its own, at its own rate: add the ${K} lanes and you get the ${beads ? 'chain' : 'string'} above`, X0, LANES.top - 22, 0.5);
+    const compact = isCompact(canvas);
+    if (!compact) label(`each mode alone: together they make the ${beads ? 'chain' : 'string'}`, X0, LANES.top - 20, 0.55);
     for (let k = 0; k < K; k++) {
       const y0 = LANES.top + (k + 0.5) * lh, col = modeColour(k), on = Math.abs(A[k]) > 1e-4;
       ctx.strokeStyle = inkA(0.09);
@@ -587,8 +590,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(X0, Math.round(y0) + 0.5);
       ctx.lineTo(X1, Math.round(y0) + 0.5);
       ctx.stroke();
-      label(modes[k].label.replace(/ /g, ''), X0 - 12, y0 + 4, 1, 'right', 10.5, on ? col : inkA(0.3));
-      label(`${modes[k].ratio.toFixed(2)}×`, X1 + 12, y0 + 4, on ? 0.6 : 0.25, 'left', 10.5);
+      if (!compact) {
+        label(modes[k].label.replace(/ /g, ''), X0 - 12, y0 + 4, 1, 'right', 10.5, on ? col : inkA(0.4));
+        label(`${modes[k].ratio.toFixed(2)}×`, X1 + 12, y0 + 4, on ? 0.6 : 0.35, 'left', 10.5);
+      }
       if (!on) continue;
       const a = A[k] * phase(k) * gain;
       ctx.strokeStyle = col;
@@ -932,7 +937,7 @@ import Try from '../../../components/sim/Try.astro';
     fctx.putImageData(fimg, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(flat, FLAT.x, FLAT.y, FLAT.s, FLAT.s);
-    label('WebGL2 is not available here, so the skin is shown from above, flat.', W / 2, 24, 0.6, 'center', 12);
+    label('flat view (no WebGL2)', W / 2, 24, 0.6, 'center', 12);
   }
   /** Where a point of the skin lands on screen. */
   function skinXY(x: number, y: number, z: number) {
@@ -1028,8 +1033,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(14, VH + 8.5);
     ctx.lineTo(W - 14, VH + 8.5);
     ctx.stroke();
-    label('spectrum: each mode at its frequency f / f₁, as tall as its amplitude', SP.x, VH + 26, 0.55);
-    label('drag a bar to mix · click it to play it alone', SP.x + SP.w, VH + 26, 0.4, 'right');
+    const compact = isCompact(canvas);
+    label(compact ? 'spectrum' : 'spectrum: each mode at f / f₁, as tall as its amplitude', SP.x, VH + 26, 0.55);
 
     // whole multiples of the fundamental: a string's notes land exactly on these
     const top = Math.floor(xMax());
@@ -1042,15 +1047,17 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(x, SP.y + SP.h);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(`${i}×`, x, SP.y + SP.h + 16, 0.45, 'center');
+      label(`${i}×`, x, SP.y + SP.h + 4 + fpx(11), 0.5, 'center');
     }
     ctx.strokeStyle = inkA(0.3);
     ctx.beginPath();
     ctx.moveTo(SP.x, BASE + 0.5);
     ctx.lineTo(SP.x + SP.w, BASE + 0.5);
     ctx.stroke();
-    label('+', SP.x - 12, BASE - HB + 8, 0.35, 'center');
-    label('−', SP.x - 12, BASE + HB, 0.35, 'center');
+    if (!compact) {
+      label('+', SP.x - 12, BASE - HB + 8, 0.45, 'center');
+      label('−', SP.x - 12, BASE + HB, 0.45, 'center');
+    }
 
     const bw = barW();
     modes.forEach((md, k) => {
@@ -1076,7 +1083,7 @@ import Try from '../../../components/sim/Try.astro';
       }
       if (on || k === hover) {
         const y = BASE - a * HB;
-        const txt = `${md.label} · ${md.ratio.toFixed(2)}×`;
+        const txt = compact ? `${md.ratio.toFixed(2)}×` : `${md.label} · ${md.ratio.toFixed(2)}×`;
         const ly = a >= 0 ? Math.min(y, BASE) - 8 : Math.max(y, BASE) + 18;
         label(txt, x, ly, 1, 'center', 11.5, col);
       }
@@ -1164,20 +1171,20 @@ import Try from '../../../components/sim/Try.astro';
         : 'One note, so the shape stands still and only breathes; the nodal lines never move.';
     if (state.obj === 'square')
       return 'A square drum’s overtones go as √(m² + n²): 1.58, 2, 2.24 times the fundamental. Some coincide, none fall on a harmonic series.';
-    return 'The overtones sit at zeros of Bessel functions, 1.59, 2.14, 2.30 times the fundamental. They never line up, which is why a drum thuds instead of singing a note.';
+    return 'Overtones sit at zeros of Bessel functions: 1.59, 2.14, 2.30 times the fundamental. They never line up, so a drum thuds instead of singing.';
   }
   function updateText() {
     const k = state.sel, md = modes[k];
     setEq({ rule: RULE[state.obj], live: liveLine(k) });
     const r = md.ratio, whole = Math.abs(r - Math.round(r)) < 1e-9;
-    const lo = Math.floor(r), off = (100 * (r - Math.round(r))) / Math.round(r);
+    const off = (100 * (r - Math.round(r))) / Math.round(r);
     el('result-label').textContent = `Mode ${md.label}: f / f₁`;
     setResult({
       value: `${r.toFixed(2)} ×`,
       colour: modeColour(k),
       status: whole
-        ? `${r === 1 ? 'the fundamental itself' : `exactly ${Math.round(r)} × the fundamental: a harmonic`} · ${Math.round(F1 * r)} Hz when f₁ = ${F1} Hz`
-        : `between ${lo} and ${lo + 1}, ${off >= 0 ? '+' : '−'}${Math.abs(off).toFixed(1)}% off the nearest whole multiple · ${Math.round(F1 * r)} Hz when f₁ = ${F1} Hz`,
+        ? `${r === 1 ? 'the fundamental' : `harmonic ${Math.round(r)}`} · ${Math.round(F1 * r)} Hz when f₁ = ${F1} Hz`
+        : `${off >= 0 ? '+' : '−'}${Math.abs(off).toFixed(1)}% off a whole multiple · ${Math.round(F1 * r)} Hz when f₁ = ${F1} Hz`,
       note: note(),
     });
     const act = active();
@@ -1329,7 +1336,8 @@ import Try from '../../../components/sim/Try.astro';
 
   const showCheck = (id: string, on: boolean) => {
     const lab = el(id).closest('label') as HTMLElement | null;
-    if (lab) lab.style.display = on ? '' : 'none';
+    // hidden, not removed, so the panel keeps its height when the object changes
+    if (lab) lab.style.visibility = on ? '' : 'hidden';
   };
   function setObj(o: Obj) {
     state.obj = o;
@@ -1342,11 +1350,11 @@ import Try from '../../../components/sim/Try.astro';
     if (G) buildShell();
     modeIn.max = String(modes.length);
     showCheck('sand', is2D());
-    (el('scatter') as HTMLButtonElement).hidden = !is2D();
-    el('leg-sand').style.display = is2D() ? '' : 'none';
+    el('scatter').style.visibility = is2D() ? '' : 'hidden';
+    el('leg-sand').style.visibility = is2D() ? '' : 'hidden';
     el('scene-hint').textContent = is2D()
-      ? 'Click the skin to poke it. Drag off the drum to orbit, scroll to zoom. In the spectrum, drag a bar to mix that mode in; click a bar to play it alone.'
-      : `Drag the ${o === 'string' ? 'string' : 'chain'} to pull it and let go to pluck. In the spectrum, drag a bar up or down to mix that mode in; click a bar to play it alone.`;
+      ? 'Click the skin to poke it; drag off the drum to orbit. Drag a bar in the spectrum to mix that mode in; click it to play it alone.'
+      : `Drag the ${o === 'string' ? 'string' : 'chain'} and let go to pluck it. Drag a bar in the spectrum to mix that mode in; click it to play it alone.`;
     scatter();
     buildVoices();
     state.t = 0;

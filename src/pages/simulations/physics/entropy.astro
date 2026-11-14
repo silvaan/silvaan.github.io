@@ -14,7 +14,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Entropy"
-  description="Lift the wall and a gas fills its box. Every collision could run backwards, and flipping every velocity really does send the gas home. Entropy counts the arrangements that look alike, S = k ln Ω, and chaos is why that count wins."
+  description="Lift the wall and a gas fills its box. Every collision could run backwards, yet the gas never goes home. Entropy counts the arrangements that look alike, S = k ln Ω."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -103,7 +103,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
+  import { fixed } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, result, readout, tries } from '../../../lib/panel';
   import { story, headline, say, withAlpha, beat, easeOut, lerp } from '../../../lib/story';
@@ -338,9 +339,14 @@ import Try from '../../../components/sim/Try.astro';
     marks.push({ f: frameNo, text, rgb });
   }
 
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number, min = 11) =>
+    isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, min);
+  /** say() sizes, raised on a phone so its floor of 9px is actually reached. */
+  const sz = (size: number) => (isCompact(canvas) ? Math.max(size, 14) : size);
   function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 11) {
     ctx.fillStyle = `rgba(${ink()},${alpha})`;
-    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.font = `${fpx(size)}px ui-monospace, monospace`;
     ctx.textAlign = align;
     ctx.fillText(text, x, y);
     ctx.textAlign = 'left';
@@ -375,11 +381,11 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.stroke();
     // the macrostate itself, printed while the cells are big enough to read
-    if (c * r <= 32 && state.grid) {
-      ctx.font = `${c * r <= 8 ? 15 : 12}px ui-monospace, monospace`;
+    if (c * r <= (isCompact(canvas) ? 8 : 32) && state.grid) {
+      ctx.font = `${fpx(c * r <= 8 ? 15 : 12)}px ui-monospace, monospace`;
       ctx.textAlign = 'right';
       for (let k = 0; k < counts.length; k++) {
-        const x = BOX.x + ((k % c) + 1) * cw - 6, y = BOX.y + ((k / c) | 0) * ch + (c * r <= 8 ? 20 : 16);
+        const x = BOX.x + ((k % c) + 1) * cw - 6, y = BOX.y + ((k / c) | 0) * ch + 5 + fpx(c * r <= 8 ? 15 : 12);
         if (state.mode === 'one') {
           ctx.fillStyle = `rgba(${ink()},0.42)`;
           ctx.fillText(String(counts[k]), x, y);
@@ -471,14 +477,13 @@ import Try from '../../../components/sim/Try.astro';
     }
     if (state.hold > performance.now()) {
       const ok = state.back === 'exact';
-      const text = ok
-        ? 'back at the exact starting state, every particle to the last bit'
-        : `missed: off by ${state.backErr.toFixed(2)} box heights on average`;
-      ctx.font = '600 14px ui-monospace, monospace';
+      const text = ok ? 'back exactly, to the last bit' : `missed by ${fixed(state.backErr, 2)} box heights`;
+      ctx.font = `600 ${fpx(14)}px ui-monospace, monospace`;
       const tw = ctx.measureText(text).width;
       const cx = BOX.x + BOX.w / 2, cy = BOX.y + BOX.h / 2;
       ctx.fillStyle = light() ? 'rgba(255,255,255,0.88)' : 'rgba(13,14,18,0.82)';
-      ctx.fillRect(cx - tw / 2 - 14, cy - 18, tw + 28, 34);
+      const th = fpx(14);
+      ctx.fillRect(cx - tw / 2 - 14, cy - th * 1.3, tw + 28, th * 2.4);
       ctx.fillStyle = ok ? ACC : WARM;
       ctx.textAlign = 'center';
       ctx.fillText(text, cx, cy + 4);
@@ -488,9 +493,10 @@ import Try from '../../../components/sim/Try.astro';
 
   function drawTrace() {
     const top = TR.y, bot = TR.y + TR.h;
-    label('S / k over time', TR.x, top - 14, 0.55);
-    label(`ceiling ${sMax.toFixed(1)}`, TR.x + TR.w, top - 4, 0.45, 'right');
-    label(sMax.toFixed(0), TR.x - 8, top + 4, 0.35, 'right');
+    const compact = isCompact(canvas);
+    label('S / k over time', TR.x, top - 10, 0.6);
+    if (!compact) label(`ceiling ${sMax.toFixed(1)}`, TR.x + TR.w, top - 10, 0.5, 'right');
+    if (!compact) label(sMax.toFixed(0), TR.x - 8, top + 4, 0.45, 'right');
     ctx.strokeStyle = `rgba(${ink()},0.22)`;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
@@ -509,7 +515,7 @@ import Try from '../../../components/sim/Try.astro';
     let lo = sHalf - 0.25 * (sMax - sHalf);
     for (const v of trace) if (v < lo) lo = v;
     lo = Math.max(0, lo);
-    label(lo.toFixed(0), TR.x - 8, bot, 0.35, 'right');
+    if (!compact) label(lo.toFixed(0), TR.x - 8, bot, 0.45, 'right');
     const x0 = frameNo - SPAN;
     const xAt = (f: number) => TR.x + ((f - x0) / SPAN) * TR.w;
     const yAt = (s: number) => bot - Math.max(0, Math.min(1.02, (s - lo) / (sMax - lo || 1))) * TR.h;
@@ -522,8 +528,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(TR.x + TR.w, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      label(state.mode === 'one' ? 'best with all in one half' : 'best while unmixed', TR.x + TR.w, y - 4, 0.4, 'right', 10);
-      label(sHalf.toFixed(0), TR.x - 8, y + 4, 0.35, 'right');
+      if (!compact) {
+        label(state.mode === 'one' ? 'best with all in one half' : 'best while unmixed', TR.x + TR.w, y - 5, 0.5, 'right');
+        if (yAt(sHalf) - top > fpx(11) * 1.4) label(sHalf.toFixed(0), TR.x - 8, y + 4, 0.45, 'right');
+      }
     }
     for (const m of marks) {
       if (m.f < x0) continue;
@@ -534,9 +542,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
       ctx.stroke();
+      if (compact) continue;
       ctx.fillStyle = `rgba(${rgb},0.8)`;
-      ctx.font = '10px ui-monospace, monospace';
-      ctx.textAlign = x > TR.x + TR.w - 90 ? 'right' : 'left';
+      ctx.font = `${fpx(11)}px ui-monospace, monospace`;
+      ctx.textAlign = x > TR.x + TR.w - 140 ? 'right' : 'left';
       ctx.fillText(m.text, x + (ctx.textAlign === 'right' ? -4 : 4), bot - 5);
       ctx.textAlign = 'left';
     }
@@ -630,9 +639,10 @@ import Try from '../../../components/sim/Try.astro';
   function waysPanel(t: number) {
     const { x, y, w, h } = SIDE;
     const small = 1 - beat(t, 6.2, 6.8);
+    const compact = isCompact(canvas);
     if (small > 0) {
       ctx.globalAlpha = small;
-      say(ctx, '4 particles, left | right: all 16 ways', x, y + 4, { colour: inkA(0.6), size: 13 });
+      say(ctx, compact ? '4 particles: 16 ways' : '4 particles, left | right: all 16 ways', x, y + 4, { colour: inkA(0.6), size: sz(13) });
       const order = Array.from({ length: 16 }, (_, m) => m).sort((a, b) => popcount(b) - popcount(a) || a - b);
       const used = [0, 0, 0, 0, 0];
       order.forEach((m, k) => {
@@ -660,9 +670,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.globalAlpha = small;
       for (let left = 4; left >= 0; left--) {
         const cx = x + 6 + (4 - left) * 63 + 26;
-        say(ctx, `${left} | ${4 - left}`, cx, y + h - 22, { colour: inkA(0.6), size: 13, align: 'center' });
+        say(ctx, compact ? `${left}|${4 - left}` : `${left} | ${4 - left}`, cx, y + h - 22, { colour: inkA(0.6), size: sz(13), align: 'center' });
         const n = [1, 4, 6, 4, 1][left];
-        say(ctx, `${n} way${n > 1 ? 's' : ''}`, cx, y + h - 60 - n * 24, { colour: left === 2 && t > 4 ? '#5eead4' : inkA(0.75), size: 13, weight: 600, align: 'center', alpha: beat(t, 3.2, 3.8) });
+        say(ctx, compact ? String(n) : `${n} way${n > 1 ? 's' : ''}`, cx, y + h - 60 - n * 24, { colour: left === 2 && t > 4 ? '#5eead4' : inkA(0.75), size: sz(13), weight: 600, align: 'center', alpha: beat(t, 3.2, 3.8) });
       }
       ctx.globalAlpha = 1;
     }
@@ -674,15 +684,15 @@ import Try from '../../../components/sim/Try.astro';
     const gx = (f: number) => x + 10 + (1 - f) * (w - 20);
     const top = y + 40, bot = y + h - 40;
     ctx.globalAlpha = big;
-    say(ctx, 'ways to split N particles, for each share on the left', x, y + 4, { colour: inkA(0.6), size: 13 });
+    say(ctx, compact ? 'ways per split' : 'ways to split N particles, for each share on the left', x, y + 4, { colour: inkA(0.6), size: sz(13) });
     ctx.strokeStyle = inkA(0.25);
     ctx.beginPath();
     ctx.moveTo(x + 10, bot + 0.5);
     ctx.lineTo(x + w - 10, bot + 0.5);
     ctx.stroke();
-    say(ctx, 'all left', gx(1), bot + 16, { colour: inkA(0.5), size: 12, align: 'center' });
-    say(ctx, 'half', gx(0.5), bot + 16, { colour: inkA(0.5), size: 12, align: 'center' });
-    say(ctx, 'all right', gx(0), bot + 16, { colour: inkA(0.5), size: 12, align: 'center' });
+    say(ctx, 'all left', gx(1), bot + 18, { colour: inkA(0.55), size: sz(12), align: 'left' });
+    if (!compact) say(ctx, 'half', gx(0.5), bot + 18, { colour: inkA(0.55), size: sz(12), align: 'center' });
+    say(ctx, 'all right', gx(0), bot + 18, { colour: inkA(0.55), size: sz(12), align: 'right' });
     Ns.forEach((N, k) => {
       if (shown[k] <= 0) return;
       const latest = k === Ns.length - 1 || shown[k + 1] <= 0;
@@ -698,9 +708,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
       if (latest) {
         ctx.globalAlpha = big * shown[k];
-        say(ctx, `N = ${N}`, x + w - 10, top - 10, { colour: ACC, size: 18, weight: 700, align: 'right' });
-        say(ctx, `even split: 10^${(peak / Math.LN10).toFixed(1)} ways`, gx(0.5), top - 8, { colour: '#5eead4', size: 13, weight: 650, align: 'center', halo: `rgba(${css('--stage-ink-inv') || '13,14,18'},0.85)` });
-        say(ctx, 'all left: 1 way', gx(1) + 4, bot - 14, { colour: WARM, size: 13, weight: 650 });
+        say(ctx, `N = ${N}`, x + w - 10, top - 10, { colour: ACC, size: sz(18), weight: 700, align: 'right' });
+        say(ctx, compact ? `10^${(peak / Math.LN10).toFixed(0)}` : `even split: 10^${(peak / Math.LN10).toFixed(1)} ways`, gx(0.5), top - 8, { colour: '#5eead4', size: sz(13), weight: 650, align: 'center', halo: `rgba(${css('--stage-ink-inv') || '13,14,18'},0.85)` });
+        if (!compact) say(ctx, 'all left: 1 way', gx(1) + 4, bot - 14, { colour: WARM, size: sz(13), weight: 650 });
       }
     });
     ctx.globalAlpha = 1;
@@ -710,21 +720,21 @@ import Try from '../../../components/sim/Try.astro';
   /** The other chapters: the entropy now, as a number and a bar to its ceiling. */
   function meterPanel() {
     const { x, y, w } = SIDE;
-    say(ctx, 'entropy now', x, y + 4, { colour: inkA(0.55), size: 13 });
-    say(ctx, `S/k = ${S.toFixed(1)}`, x, y + 40, { colour: ACC, size: 30, weight: 700 });
-    say(ctx, `Ω ≈ ${pow10(S)} arrangements`, x, y + 76, { colour: inkA(0.8), size: 15 });
+    // on a phone only the number and the two bars stay; the rest is in the result strip
+    const compact = isCompact(canvas);
+    say(ctx, 'entropy now', x, y + 4, { colour: inkA(0.6), size: sz(13) });
+    say(ctx, `S/k = ${S.toFixed(1)}`, x, y + 40, { colour: ACC, size: sz(30), weight: 700 });
+    if (!compact) say(ctx, `Ω ≈ ${pow10(S)} arrangements`, x, y + 76, { colour: inkA(0.8), size: sz(15) });
     const f = Math.max(0, Math.min(1, S / (sMax || 1)));
     ctx.fillStyle = inkA(0.08);
     ctx.fillRect(x, y + 100, w, 14);
     ctx.fillStyle = ACC;
     ctx.fillRect(x, y + 100, w * f, 14);
-    say(ctx, `${(100 * f).toFixed(0)}% of the ceiling ${sMax.toFixed(0)}`, x, y + 130, { colour: inkA(0.6), size: 13 });
-    const [c, r] = CELLS[state.cells];
-    say(ctx, `counted in ${c * r} cells`, x, y + 152, { colour: inkA(0.45), size: 12 });
+    if (!compact) say(ctx, `${(100 * f).toFixed(0)}% of the ceiling ${sMax.toFixed(0)}`, x, y + 132, { colour: inkA(0.6), size: sz(13) });
     // the plainest summary of all: how many on each side
     let left = 0;
     for (let i = 0; i < state.N; i++) if (X[i] / Q < LX / 2) left++;
-    say(ctx, `left ${left}  ·  right ${state.N - left}`, x, y + 196, { colour: inkA(0.85), size: 18, weight: 650 });
+    say(ctx, compact ? `${left} · ${state.N - left}` : `left ${left}  ·  right ${state.N - left}`, x, y + 190, { colour: inkA(0.85), size: sz(18), weight: 650 });
     ctx.fillStyle = withAlpha(ACC, 0.8);
     ctx.fillRect(x, y + 214, (w * left) / state.N, 10);
     ctx.fillStyle = withAlpha(WARM, 0.6);
@@ -812,9 +822,11 @@ import Try from '../../../components/sim/Try.astro';
     if (ch === 2) waysPanel(t);
     else meterPanel();
     if (ch === 4) {
-      const msg = state.dir < 0
+      const msg = isCompact(canvas)
+        ? state.dir < 0 ? phase ? 'flipped + nudged' : 'flipped' : 'forwards'
+        : state.dir < 0
         ? phase ? 'velocities flipped, one particle a billionth off' : 'every velocity flipped: the film runs backwards'
-        : phase ? 'again, but this time a nudge of 10⁻⁹ comes with the flip' : 'running forwards…';
+        : phase ? 'again, now with a nudge of 10⁻⁹' : 'running forwards…';
       say(ctx, msg, BOX.x + 10, BOX.y - 14, { colour: phase && state.dir < 0 ? WARM : ACC, size: 14, weight: 650 });
     }
     headline(ctx, inkA, { index: ch, count: chapters.length, title: chapters[ch].title, body: chapters[ch].body, t, width: 620, accent: ACC, manual: st.manual() });

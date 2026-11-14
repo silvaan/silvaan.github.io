@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Heat Equation"
-  description="The heat equation says temperature spreads out over time. Here it plays out in a 3D room: a radiator on one wall warms it, a cold window on the opposite wall chills it, and heat diffuses between them as glowing fog. Paint your own heat or cold on the slice and watch a thermometer settle."
+  description="Temperature spreads out over time. In this 3D room a radiator warms one wall, a cold window chills the other, and heat diffuses between them as glowing fog. Paint heat or cold and watch a thermometer settle."
 >
   <div class="sim">
     <div class="sim-view">
@@ -119,7 +119,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, result, readout, slider, segmented, check, transport, tries } from '../../../lib/panel';
   import {
@@ -133,6 +133,9 @@ import Try from '../../../components/sim/Try.astro';
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const isLight = () => css('--stage-light') === '1';
   const ink = () => css('--stage-ink') || '232,233,236';
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (cv: HTMLCanvasElement, size: number) =>
+    isCompact(cv) ? textPx(cv, size, 9.5, 3) : textPx(cv, size, 11);
 
   // ---- the room ----------------------------------------------------------------------
   // Lengths in metres: a 4 m × 2.8 m × 4 m room, x from the radiator wall to the
@@ -394,7 +397,9 @@ import Try from '../../../components/sim/Try.astro';
   const th = setupCanvas(thermoCanvas, () => drawThermo());
   function drawThermo() {
     const c = th.ctx, Ws = th.W, Hs = th.H;
-    const pad = { l: 30, r: 8, t: 8, b: 16 };
+    // a small panel canvas, never a phone-sized stage: always the desktop floor
+    const fs = textPx(thermoCanvas, 10, 11);
+    const pad = { l: Math.round(fs * 3.2), r: 8, t: 8, b: Math.round(fs * 1.6) };
     let lo = 10, hi = 30;
     for (let k = 0; k < hist.n; k++) {
       lo = Math.min(lo, hist.p[k], hist.m[k]);
@@ -407,7 +412,7 @@ import Try from '../../../components/sim/Try.astro';
     const faint = getComputedStyle(thermoCanvas).getPropertyValue('--text-faint').trim() || '#8b93a5';
     c.clearRect(0, 0, Ws, Hs);
     c.lineWidth = 1;
-    c.font = "10px 'JetBrains Mono', monospace";
+    c.font = `${fs}px 'JetBrains Mono', monospace`;
     c.fillStyle = faint;
     c.textAlign = 'left';
     const stepT = hi - lo > 40 ? 20 : 10;
@@ -418,7 +423,7 @@ import Try from '../../../components/sim/Try.astro';
       c.moveTo(pad.l, y);
       c.lineTo(Ws - pad.r, y);
       c.stroke();
-      c.fillText(v + '°', 4, y + 3);
+      c.fillText(v + '°', 2, y + fs * 0.35);
     }
     const tEnd = Math.max(60, tSim);
     c.textAlign = 'right';
@@ -661,8 +666,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1;
     ctx.stroke();
     const lab = cam.project(planePoint(p, off, hu, -hv));
-    ctx.fillStyle = `rgba(${ink()},0.55)`;
-    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    if (isCompact(canvas)) return;
+    ctx.fillStyle = `rgba(${ink()},0.6)`;
+    ctx.font = `500 ${fpx(canvas, 11)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(`${p.toUpperCase()} · ${planeAxisName(p)} = ${off.toFixed(2)} m`, lab.sx + 8, lab.sy);
@@ -732,13 +738,14 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fillStyle = col;
     ctx.fill();
     const txt = `${tp.toFixed(1)} °C`;
-    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    const fs = fpx(canvas, 12);
+    ctx.font = `600 ${fs}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     const w = ctx.measureText(txt).width;
     ctx.fillStyle = light ? 'rgba(255,255,255,0.82)' : 'rgba(13,14,18,0.7)';
     ctx.beginPath();
-    ctx.roundRect(pr.sx + 12, pr.sy - 10, w + 10, 20, 5);
+    ctx.roundRect(pr.sx + 12, pr.sy - fs * 0.85, w + 10, fs * 1.7, 5);
     ctx.fill();
     ctx.fillStyle = col;
     ctx.fillText(txt, pr.sx + 17, pr.sy + 0.5);
@@ -765,10 +772,11 @@ import Try from '../../../components/sim/Try.astro';
     ctx.strokeStyle = `rgba(${ink()},0.25)`;
     ctx.lineWidth = 1;
     ctx.strokeRect(x - 0.5, y0 - 0.5, w + 1, y1 - y0 + 1);
-    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    const compact = isCompact(canvas);
+    ctx.font = `500 ${fpx(canvas, 11)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    for (const t of [70, 60, 50, 40, 30, 18, 10, 0, -10]) {
+    for (const t of compact ? [70, 40, 18, -10] : [70, 60, 50, 40, 30, 18, 10, 0, -10]) {
       const y = ty(t);
       ctx.fillStyle = `rgba(${ink()},${t === TREF ? 0.75 : 0.5})`;
       ctx.fillText(`${t}°`, x - 6, y);
@@ -776,7 +784,7 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.textAlign = 'center';
     ctx.fillStyle = `rgba(${ink()},0.55)`;
-    ctx.fillText('°C', x + w / 2, y0 - 14);
+    ctx.fillText('°C', x + w / 2, y0 - fpx(canvas, 11));
     // the thermometer's reading as a small arrow beside the bar
     const yp = ty(Math.max(TMIN, Math.min(TMAX, tp)));
     ctx.fillStyle = light ? '#0d9488' : PROBE;

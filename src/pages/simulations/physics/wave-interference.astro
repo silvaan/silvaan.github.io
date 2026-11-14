@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Wave Interference"
-  description="Two sources send out ripples that cross and combine. Where crests meet crests the wave doubles; where crest meets trough it cancels to stillness. Those cancellations trace the dark fringes behind the double-slit experiment."
+  description="Two sources send out ripples that cross and combine. Crest on crest, the wave doubles; crest on trough, it cancels to stillness. Those still lines are the dark fringes of the double slit."
   shortcuts={['run', 'fullscreen']}
 >
   <div class="sim">
@@ -20,7 +20,7 @@ import Try from '../../../components/sim/Try.astro';
       <div class="sim-stage">
         <canvas id="wi" class="wi-canvas" width="640" height="460" role="img" aria-label="Ripples from one or two point sources spreading across a plane and interfering, with still nodal lines where they cancel."></canvas>
       </div>
-      <Caption hint="Drag either source. The colourless lines that never move are nodal lines, where the two waves are exactly out of phase" />
+      <Caption hint="Drag either source. The still, colourless lines are nodal lines, where the two waves are exactly out of phase." />
       <Result label="Source separation" />
     </div>
 
@@ -68,7 +68,8 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx } from '../../../lib/sim';
+  import { handle, grabCursor } from '../../../lib/draw';
   import { equation } from '../../../lib/equation';
   import { el, result, readout, slider, segmented, transport, tries } from '../../../lib/panel';
 
@@ -167,27 +168,21 @@ import Try from '../../../components/sim/Try.astro';
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(off, 0, 0, W, H);
 
-    // source markers
+    // source markers: draggable, so they look like every other handle
     const ink = css('--stage-ink') || '232,233,236';
-    for (let s = 0; s < state.n; s++) {
-      ctx.fillStyle = `rgba(${ink},1)`;
-      ctx.strokeStyle = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.7)`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(sources[s].x, sources[s].y, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
+    const ring = `rgba(${css('--stage-ink-inv') || '13,14,18'},0.8)`;
+    for (let s = 0; s < state.n; s++)
+      handle(ctx, sources[s].x, sources[s].y, `rgb(${ink})`, { r: textPx(canvas, 6, 5), hot: s === drag || s === over, ring });
 
     const two = state.n === 2;
     const sep = Math.hypot(sources[0].x - sources[1].x, sources[0].y - sources[1].y);
-    setRows({ sep: two ? sep.toFixed(0) + ' px' : '—', wl2: state.wl + ' px' });
+    setRows({ sep: two ? sep.toFixed(0) + ' px' : '–', wl2: state.wl + ' px' });
     setResult({
       value: two ? `${sep.toFixed(0)} px` : 'one source',
-      status: `wavelength ${state.wl} px${two ? ` · ${(sep / state.wl).toFixed(1)} wavelengths apart` : ''}`,
+      status: `wavelength ${state.wl} px · ${two ? `${(sep / state.wl).toFixed(1)} wavelengths apart` : 'nothing to interfere'}`,
       note: two
-        ? 'Only the difference in path length matters, so the pattern is a set of fixed fringes. Move the sources apart and they crowd together.'
-        : 'A single source makes rings and nothing cancels. Add the second one to see the still lines appear.',
+        ? 'Only the path difference matters, so the fringes stay fixed. Move the sources apart and they crowd together.'
+        : 'A single source makes rings and nothing cancels. Add a second source to see the still lines appear.',
     });
     setEq({
       rule: [
@@ -197,9 +192,9 @@ import Try from '../../../components/sim/Try.astro';
         '\\Rightarrow\\text{ node}',
       ],
       live: [
-        `d = ${two ? sep.toFixed(0) + '\\,\\text{px}' : '\\text{--}'}`,
+        `d = ${two ? sep.toFixed(0) : '\\text{--}\\phantom{0}'}\\,\\text{px}`,
         `\\quad\\lambda = ${state.wl}\\,\\text{px}`,
-        `\\quad d/\\lambda = ${two ? (sep / state.wl).toFixed(1) : '\\text{--}'}`,
+        `\\quad d/\\lambda = ${two ? (sep / state.wl).toFixed(1) : '\\text{--}\\phantom{0}'}`,
       ],
     });
   }
@@ -218,24 +213,37 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // drag sources
-  let drag = -1;
-  canvas.addEventListener('pointerdown', (e) => {
+  let drag = -1, over = -1;
+  function sourceAt(e: PointerEvent) {
     const rect = canvas.getBoundingClientRect();
     const mx = ((e.clientX - rect.left) / rect.width) * W;
     const my = ((e.clientY - rect.top) / rect.height) * H;
-    drag = -1;
+    const reach = Math.max(22, (16 * W) / rect.width); // at least 16 screen px
+    let hit = -1;
     for (let s = 0; s < state.n; s++)
-      if (Math.hypot(mx - sources[s].x, my - sources[s].y) < 22) drag = s;
+      if (Math.hypot(mx - sources[s].x, my - sources[s].y) < reach) hit = s;
+    return hit;
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    drag = sourceAt(e);
     if (drag >= 0) canvas.setPointerCapture(e.pointerId);
+    grabCursor(canvas, drag >= 0, drag >= 0);
+    dirty = true;
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (drag < 0) return;
+    if (drag < 0) {
+      const o = sourceAt(e);
+      if (o !== over) { over = o; dirty = true; }
+      grabCursor(canvas, over >= 0, false);
+      return;
+    }
     const rect = canvas.getBoundingClientRect();
     sources[drag].x = Math.max(10, Math.min(W - 10, ((e.clientX - rect.left) / rect.width) * W));
     sources[drag].y = Math.max(10, Math.min(H - 10, ((e.clientY - rect.top) / rect.height) * H));
     dirty = true;
   });
-  const stop = () => (drag = -1);
+  canvas.addEventListener('pointerleave', () => { if (drag < 0 && over >= 0) { over = -1; dirty = true; } });
+  const stop = () => { drag = -1; grabCursor(canvas, over >= 0, false); dirty = true; };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
 
@@ -269,11 +277,7 @@ import Try from '../../../components/sim/Try.astro';
 
 <style>
   .wi-canvas {
-    cursor: grab;
     touch-action: none;
-  }
-  .wi-canvas:active {
-    cursor: grabbing;
   }
   .legend {
     display: flex;

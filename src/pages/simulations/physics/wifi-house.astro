@@ -14,7 +14,7 @@ import Actions from '../../../components/sim/Actions.astro';
 <SimLayout
   areaSlug="physics"
   title="Wi-Fi in a House"
-  description="Maxwell's equations solved on the GPU over a whole house at the true wavelength, 12.5 cm at 2.4 GHz and 6 cm at 5 GHz. Watch the router's wave spill through doorways, bounce off walls and leave dead spots a few centimetres across, then switch to the signal map to see which rooms a phone can still stream from, and why 5 GHz is faster but fades sooner."
+  description="Maxwell's equations solved over a whole house at the true Wi-Fi wavelength. Watch the wave spill through doorways and bounce off walls, and see which rooms a phone can still stream from."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -30,7 +30,7 @@ import Actions from '../../../components/sim/Actions.astro';
           { label: '−67 dBm: video calls', color: '#9ca3af' },
           { label: '−80 dBm: barely connects', color: '#f87171' },
         ]}
-        hint="Drag the router, the phone or the mesh node · click the floor to put the phone there · drag empty space to orbit · scroll to zoom"
+        hint="Drag the router, phone or mesh node, or click the floor to move the phone. Drag empty space to orbit, scroll to zoom."
       />
       <Result label="Signal at the phone" />
     </div>
@@ -136,7 +136,7 @@ import Actions from '../../../components/sim/Actions.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, result, readout, slider, segmented, check, transport, tries } from '../../../lib/panel';
   import { Camera3D, orbitControls, drawBackdrop, PlaneShade, ramp32, type Vec } from '../../../lib/scene3d';
@@ -146,6 +146,9 @@ import Actions from '../../../components/sim/Actions.astro';
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   const isLight = () => css('--stage-light') === '1';
   const ink = () => css('--stage-ink') || '232,233,236';
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number) => (isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, 11));
+  const MONO = "'JetBrains Mono', monospace";
 
   // ---- physics constants -------------------------------------------------------------
   // The house is 12 m × 9 m; the grid adds 45 cm of outdoors on every side, the
@@ -1185,7 +1188,7 @@ void main() {
   }
 
   function drawLabels(light: boolean) {
-    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.font = `600 ${fpx(11)}px ${MONO}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
@@ -1197,10 +1200,11 @@ void main() {
       ctx.fillStyle = `rgba(${ink()},${light ? 0.7 : 0.65})`;
       ctx.fillText(r.name.toUpperCase(), q.sx, q.sy);
     }
+    if (isCompact(canvas)) return;
     const f = P((FRIDGE.x0 + FRIDGE.x1) / 2, (FRIDGE.y0 + FRIDGE.y1) / 2, 1.35);
-    ctx.font = "500 9.5px 'JetBrains Mono', monospace";
-    ctx.fillStyle = `rgba(${ink()},0.6)`;
-    ctx.fillText('fridge', f.sx, f.sy - 12);
+    ctx.font = `500 ${fpx(11)}px ${MONO}`;
+    ctx.fillStyle = `rgba(${ink()},0.65)`;
+    ctx.fillText('fridge', f.sx, f.sy - 14);
   }
 
   const HEAD = { router: 0.75, node: 0.75, phone: 1.0 };
@@ -1249,7 +1253,7 @@ void main() {
     ctx.beginPath();
     ctx.arc(t.sx, t.sy + 4.5, 1.6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.font = `600 ${fpx(11)}px ${MONO}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText(label, t.sx, t.sy - 15);
@@ -1279,28 +1283,31 @@ void main() {
     const rate = linkRate(dbm);
     const txt = dbm > -150 ? `${fmtDbm(dbm)} dBm` : 'no signal';
     const sub = rate > 0 ? `${rate >= 100 ? Math.round(rate) : rate.toFixed(1)} Mbit/s` : 'no link';
-    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    const f1 = fpx(12), f2 = fpx(11);
+    ctx.font = `600 ${f1}px ${MONO}`;
     const w1 = ctx.measureText(txt).width;
-    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    ctx.font = `500 ${f2}px ${MONO}`;
     const w2 = ctx.measureText(sub).width;
     const bw = Math.max(w1 + 24, w2) + 14;
-    const bx = t.sx + 14, by = t.sy - 20;
+    const bh = f1 + f2 + 14;
+    // kept inside the canvas when the phone sits near its right edge
+    const bx = t.sx + 14 + bw > W - 4 ? t.sx - 14 - bw : t.sx + 14, by = t.sy - bh / 2 - 2;
     ctx.fillStyle = light ? 'rgba(255,255,255,0.88)' : 'rgba(13,14,18,0.78)';
     ctx.beginPath();
-    ctx.roundRect(bx, by, bw, 36, 6);
+    ctx.roundRect(bx, by, bw, bh, 6);
     ctx.fill();
     ctx.strokeStyle = `rgba(${ink()},0.18)`;
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = "600 12px 'JetBrains Mono', monospace";
+    ctx.font = `600 ${f1}px ${MONO}`;
     ctx.fillStyle = q.colour(light);
-    ctx.fillText(txt, bx + 7, by + 11);
-    bars(bx + 11 + w1, by + 16, q.bars, q.colour(light), light);
-    ctx.font = "500 10px 'JetBrains Mono', monospace";
-    ctx.fillStyle = `rgba(${ink()},0.7)`;
-    ctx.fillText(sub, bx + 7, by + 26);
+    ctx.fillText(txt, bx + 7, by + 5 + f1 / 2);
+    bars(bx + 11 + w1, by + 5 + f1 * 0.9, q.bars, q.colour(light), light);
+    ctx.font = `500 ${f2}px ${MONO}`;
+    ctx.fillStyle = `rgba(${ink()},0.75)`;
+    ctx.fillText(sub, bx + 7, by + 9 + f1 + f2 / 2);
   }
 
   /** The straight line from the access point the phone uses, which the multi-wall model follows. */
@@ -1320,7 +1327,8 @@ void main() {
   let barGrad: CanvasGradient | null = null, barFor: boolean | null = null;
   function drawColourBar(light: boolean, dbm: number) {
     const x = W - 40, y0 = 70, y1 = H - 150, w = 10;
-    ctx.font = "500 10px 'JetBrains Mono', monospace";
+    const fs = fpx(11);
+    ctx.font = `500 ${fs}px ${MONO}`;
     if (state.view === 'wave') {
       // a small key for the wave: crest and trough
       const s = waveStops(light);
@@ -1328,7 +1336,7 @@ void main() {
       ctx.textBaseline = 'middle';
       const items: [string, string][] = [['Ez > 0', stopColour(s.pos, 0.8)], ['Ez < 0', stopColour(s.neg, 0.8)]];
       items.forEach(([t, c], i) => {
-        const y = y0 + i * 18;
+        const y = y0 + i * Math.max(18, fs * 1.5);
         ctx.fillStyle = c;
         ctx.fillRect(x, y - 5, w, 10);
         ctx.fillStyle = `rgba(${ink()},0.6)`;
@@ -1354,7 +1362,7 @@ void main() {
     ctx.strokeRect(x - 0.5, y0 - 0.5, w + 1, y1 - y0 + 1);
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    for (const d of [-30, -40, -50, -67, -80, -95]) {
+    for (const d of isCompact(canvas) ? [-30, -67, -80, -95] : [-30, -40, -50, -67, -80, -95]) {
       const y = ty(d), key = d === -67 || d === -80;
       ctx.fillStyle = d === -80 ? (light ? '#dc2626' : '#f87171') : `rgba(${ink()},${key ? 0.85 : 0.5})`;
       ctx.fillText(String(d).replace('-', '−'), x - 6, y);
@@ -1362,7 +1370,7 @@ void main() {
     }
     ctx.textAlign = 'center';
     ctx.fillStyle = `rgba(${ink()},0.55)`;
-    ctx.fillText('dBm', x + w / 2, y0 - 14);
+    ctx.fillText('dBm', x + w / 2, y0 - 4 - fs * 0.6);
     if (dbm > -150) {
       const yp = ty(Math.max(-95, Math.min(-30, dbm)));
       ctx.fillStyle = COL.phone(light);
@@ -1376,24 +1384,26 @@ void main() {
   }
 
   function drawInfo(light: boolean) {
-    ctx.font = "500 11px 'JetBrains Mono', monospace";
+    const fs = fpx(11), compact = isCompact(canvas);
+    ctx.font = `500 ${fs}px ${MONO}`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = `rgba(${ink()},0.6)`;
+    ctx.fillStyle = `rgba(${ink()},0.65)`;
     const lam = lambda() * 100;
-    const what = state.view === 'wave' ? 'Ez, instantaneous' : state.view === 'signal' ? 'mean power, dBm' : 'multi-wall model, dBm';
-    ctx.fillText(`${band().label} · λ = ${lam.toFixed(1)} cm · ${what}`, 14, 12);
+    const what = state.view === 'wave' ? 'Ez now' : state.view === 'signal' ? 'mean power' : 'multi-wall model';
+    ctx.fillText(compact ? `λ = ${lam.toFixed(1)} cm` : `${band().label} · λ = ${lam.toFixed(1)} cm · ${what}`, 14, 12);
+    const row2 = 12 + fs * 1.45, row3 = 12 + fs * 2.9;
     // pixels per wavelength at the camera's target
     if (gpu && state.view === 'wave' && (lambda() * cam.k) / cam.dist < 8) {
       ctx.fillStyle = light ? '#b45309' : '#fbbf24';
-      ctx.fillText(`zoom in to see the ${lam.toFixed(lam < 10 ? 0 : 1)} cm waves (scroll, or Zoom to phone)`, 14, 44);
+      ctx.fillText(compact ? 'zoom in to see the waves' : `zoom in to see the ${lam.toFixed(lam < 10 ? 0 : 1)} cm waves`, 14, row3);
     }
     if (!gpu) {
       ctx.fillStyle = light ? '#b45309' : '#fbbf24';
-      ctx.fillText('No WebGL2 float targets here: showing the multi-wall model only', 14, 28);
+      ctx.fillText(compact ? 'no WebGL2: model only' : 'no WebGL2 float targets: model only', 14, row2);
     } else if (fillFrac() < 1 && state.view !== 'model') {
-      ctx.fillStyle = `rgba(${ink()},0.5)`;
-      ctx.fillText(`filling the house · ${Math.round(fillFrac() * 100)} %`, 14, 28);
+      ctx.fillStyle = `rgba(${ink()},0.55)`;
+      ctx.fillText(`filling the house · ${Math.round(fillFrac() * 100)} %`, 14, row2);
     }
   }
 

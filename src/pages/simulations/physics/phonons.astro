@@ -13,14 +13,14 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Phonons"
-  description="Nothing here knows what a wave is. Every mass obeys Hooke's law and pulls only on its four neighbours. Out of that comes a pulse that travels at a speed nobody wrote down, and a shortest possible wavelength that no continuous material would have."
+  description="Nothing here knows what a wave is: each mass pulls only on its four neighbours. Out of that comes a pulse with a speed nobody wrote down, and a shortest possible wavelength."
 >
   <div class="sim">
     <div class="sim-view">
       <div class="sim-stage">
-        <canvas id="ph" class="ph-canvas" width="900" height="660" role="img" aria-label="A grid of masses joined by springs seen in three dimensions, a pulse or plane wave crossing it, the dispersion relation, and the motion of one followed mass over time."></canvas>
+        <canvas id="ph" class="ph-canvas" width="900" height="632" role="img" aria-label="A grid of masses joined by springs seen in three dimensions, a pulse or plane wave crossing it, the dispersion relation, and the motion of one followed mass over time."></canvas>
       </div>
-      <Caption hint="Drag to orbit; each line is one spring, each crossing one mass, and a mass only ever feels its four neighbours" />
+      <Caption hint="Drag to orbit. Each line is a spring and each crossing a mass, which only feels its four neighbours." />
       <Result label="Sound speed a√(k/m)" />
     </div>
 
@@ -75,7 +75,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { el, segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
 
@@ -222,14 +222,16 @@ import Try from '../../../components/sim/Try.astro';
 
   // --- canvas --------------------------------------------------------------
   const canvas = document.getElementById('ph') as HTMLCanvasElement;
-  const { ctx, W, H } = setupCanvas(canvas, () => {});
+  const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number) => (isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, 11));
   const css = (v2: string) => getComputedStyle(canvas).getPropertyValue(v2).trim();
   const ink = () => css('--stage-ink') || '232,233,236';
   const ACC = '#7c8cff', WARM = '#f59e0b';
 
-  const CX = 450, CY = 258, CAM = 3.2, FOCAL = 2.7, SCALE = 232, HEIGHT = 0.34;
-  const DISP = { x: 44, y: 532, w: 366, h: 96 };
-  const TR = { x: 492, y: 532, w: 366, h: 96 };
+  const CX = 450, CY = 230, CAM = 3.2, FOCAL = 2.7, SCALE = 232, HEIGHT = 0.34;
+  const DISP = { x: 44, y: 504, w: 366, h: 96 };
+  const TR = { x: 492, y: 504, w: 366, h: 96 };
 
   function project(x: number, y: number, z: number) {
     const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
@@ -322,7 +324,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function label(text: string, x: number, y: number, alpha = 0.55, align: CanvasTextAlign = 'left', size = 12) {
     ctx.fillStyle = `rgba(${ink()},${alpha})`;
-    ctx.font = `${size}px ui-monospace, monospace`;
+    ctx.font = `${fpx(size)}px ui-monospace, monospace`;
     ctx.textAlign = align;
     ctx.fillText(text, x, y);
     ctx.textAlign = 'left';
@@ -332,7 +334,8 @@ import Try from '../../../components/sim/Try.astro';
     const wmax = omegaMax();
     const X = (kk: number) => DISP.x + (kk / Math.PI) * DISP.w;
     const Y = (w: number) => DISP.y + DISP.h - Math.min(1, w / (wmax * 1.15)) * DISP.h;
-    label('WHICH WAVES THE GRID ALLOWS   ω vs q', DISP.x, DISP.y - 12, 0.5);
+    const compact = isCompact(canvas);
+    label('allowed waves  ω(q)', DISP.x, DISP.y - 12, 0.6);
 
     ctx.strokeStyle = `rgba(${ink()},0.25)`;
     ctx.lineWidth = 1;
@@ -373,16 +376,19 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(X(kWave()), Y(omegaLattice()), 4, 0, Math.PI * 2);
       ctx.fill();
     }
-    label('continuum', X(Math.PI * 0.42), Y(cSound() * Math.PI * 0.42) - 8, 0.4, 'left', 11);
-    label('lattice', X(Math.PI * 0.8), Y(2 * Math.sqrt(s()) * Math.abs(Math.sin(Math.PI * 0.4))) + 14, 0.5, 'left', 11);
-    label('q = π/a', X(Math.PI), DISP.y + DISP.h + 15, 0.4, 'right', 11);
-    label('λ = 2a', X(Math.PI), DISP.y + DISP.h + 27, 0.3, 'right', 11);
-    label('long waves', DISP.x + 2, DISP.y + DISP.h + 15, 0.35, 'left', 11);
-    label(`ω_max = ${wmax.toFixed(2)}`, DISP.x + DISP.w, DISP.y - 12, 0.4, 'right', 11);
+    // left of the dashed line, which climbs to the right
+    label('continuum', X(Math.PI * 0.3) - 6, Y(cSound() * Math.PI * 0.3) - 6, 0.5, 'right', 11);
+    label('lattice', X(Math.PI * 0.8), Y(2 * Math.sqrt(s()) * Math.abs(Math.sin(Math.PI * 0.4))) + 4 + fpx(11), 0.6, 'left', 11);
+    const below = DISP.y + DISP.h + 4 + fpx(11);
+    label(compact ? 'λ = 2a' : 'q = π/a · λ = 2a', X(Math.PI), below, 0.5, 'right', 11);
+    if (!compact) {
+      label('long waves', DISP.x + 2, below, 0.5, 'left', 11);
+      label(`ω_max = ${wmax.toFixed(2)}`, DISP.x + DISP.w, DISP.y - 12, 0.5, 'right', 11);
+    }
   }
 
   function drawTrace() {
-    label('THE FOLLOWED MASS, over time', TR.x, TR.y - 12, 0.5);
+    label('followed mass, over time', TR.x, TR.y - 12, 0.6);
     ctx.strokeStyle = `rgba(${ink()},0.25)`;
     ctx.setLineDash([4, 4]);
     ctx.lineWidth = 1;
@@ -402,8 +408,7 @@ import Try from '../../../components/sim/Try.astro';
       }
       ctx.stroke();
     }
-    label('rest position', TR.x + 4, TR.y + TR.h / 2 - 5, 0.3, 'left', 11);
-    label('it returns to where it started', TR.x + TR.w, TR.y + TR.h + 15, 0.35, 'right', 11);
+    if (!isCompact(canvas)) label('rest', TR.x + 4, TR.y + TR.h / 2 - 5, 0.45, 'left', 11);
   }
 
   function draw() {
@@ -435,7 +440,9 @@ import Try from '../../../components/sim/Try.astro';
     });
     setResult({
       value: cSound().toFixed(3),
-      status: wave ? `ω on the lattice ${omegaLattice().toFixed(3)}, ${(cSound() * kWave()).toFixed(3)} if it were continuous · group velocity ${vGroup().toFixed(3)} · the grid allows nothing above ω = ${omegaMax().toFixed(3)}` : `measured crest speed ${N < 40 ? 'needs a finer grid' : isNaN(crestSpeed) ? 'measuring' : crestSpeed.toFixed(3)} · the grid allows nothing above ω = ${omegaMax().toFixed(3)}`,
+      status: wave
+        ? `ω ${omegaLattice().toFixed(3)} on the lattice, ${(cSound() * kWave()).toFixed(3)} if continuous · group velocity ${vGroup().toFixed(3)}`
+        : `measured crest speed ${N < 40 ? 'needs a finer grid' : isNaN(crestSpeed) ? 'measuring…' : crestSpeed.toFixed(3)} · highest ω ${omegaMax().toFixed(3)}`,
       note: 'Long waves cannot tell the lattice from a continuum and travel at a√(k/m). Short ones can and run slower: at λ = 2a neighbours move opposite ways and the wave stops travelling altogether.',
     });
     // the lattice curve is drawn amber, the continuum line dashed in ink
@@ -443,8 +450,8 @@ import Try from '../../../components/sim/Try.astro';
       rule: [['\\omega(q) = 2\\sqrt{k/m}\\,\\big|\\sin(qa/2)\\big|', WARM], '\\quad\\text{not}\\quad', '\\omega = c\\,q'],
       live: [
         `c = a\\sqrt{k/m} = ${cSound().toFixed(3)}`,
-        [`\\quad\\omega = ${wave ? omegaLattice().toFixed(3) : '\\text{--}'}`, WARM],
-        `\\quad c\\,q = ${wave ? (cSound() * kWave()).toFixed(3) : '\\text{--}'}`,
+        [`\\quad\\omega = ${wave ? omegaLattice().toFixed(3) : '\\text{--}\\phantom{.00}'}`, WARM],
+        `\\quad c\\,q = ${wave ? (cSound() * kWave()).toFixed(3) : '\\text{--}\\phantom{.00}'}`,
         `\\quad\\omega_{\\max} = ${omegaMax().toFixed(3)}`,
       ],
     });

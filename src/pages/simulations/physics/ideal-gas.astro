@@ -13,7 +13,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="physics"
   title="Ideal Gas"
-  description="A few hundred argon atoms in a glass cylinder under a piston, and nothing else. Pressure is the drumming of their impacts, temperature is how fast they fly, and PV = NkT is not a law you have to be told: it is what the counting adds up to."
+  description="A few hundred argon atoms under a piston, and nothing else. Pressure is the drumming of their impacts, temperature is how fast they fly, and PV = NkT is what the counting adds up to."
 >
   <div class="sim">
     <div class="sim-view">
@@ -27,7 +27,7 @@ import Try from '../../../components/sim/Try.astro';
           { label: 'wall hit', color: '#f59e0b' },
           { label: 'NkT/V', color: '#34d399' },
         ]}
-        hint="Drag the piston to squeeze or expand · drag anywhere else to orbit · scroll to zoom · click the plot to switch it. The atoms are hard spheres 0.5 nm across with the mass of argon, in a cylinder 24 nm wide. Because they take up a little room themselves, a hard squeeze reads a few percent above NkT/V."
+        hint="Drag the piston to squeeze or expand; drag elsewhere to orbit, scroll to zoom, click the plot to switch it. The atoms take up a little room, so a hard squeeze reads a few percent above NkT/V."
       />
       <Result label="Pressure, measured" />
     </div>
@@ -102,7 +102,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
   import { Camera3D, orbitControls, drawBackdrop, V, type Vec, type Projected } from '../../../lib/scene3d';
@@ -364,6 +364,8 @@ import Try from '../../../components/sim/Try.astro';
   // --- canvas ----------------------------------------------------------------
   const canvas = document.getElementById('gas') as HTMLCanvasElement;
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  /** Logical font size that shows at least 11px on a desktop, 9px on a phone. */
+  const fpx = (size: number) => (isCompact(canvas) ? textPx(canvas, size, 9, 3) : textPx(canvas, size, 11));
   const css = (v: string) => getComputedStyle(canvas).getPropertyValue(v).trim();
   let INK = '232,233,236', LIGHT = false, BG = [13, 14, 18];
   function readTheme() {
@@ -709,35 +711,25 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(b.sx - 5, b.sy);
     ctx.lineTo(b.sx + 5, b.sy);
     ctx.stroke();
-    ctx.font = '600 13px ui-monospace, monospace';
+    ctx.font = `600 ${fpx(13)}px ui-monospace, monospace`;
     ctx.textAlign = 'left';
     const my = (a.sy + b.sy) / 2, lx = Math.max(a.sx, b.sx) + 10;
-    ctx.fillText(`h ${state.h.toFixed(1)} nm`, lx, my - 4);
-    ctx.font = '12px ui-monospace, monospace';
-    ctx.fillStyle = 'rgba(124,140,255,0.85)';
-    ctx.fillText(`V ${(volume() / 1000).toFixed(2)}×10³ nm³`, lx, my + 13);
+    ctx.fillText(`h ${state.h.toFixed(1)} nm`, lx, my + 4);
   }
 
   function drawSceneLabels(plateBot: Projected[]) {
     const low = plateBot.reduce((a, q) => (q.sy > a.sy ? q : a));
     const bath = state.walls === 'bath';
-    ctx.font = '13px ui-monospace, monospace';
+    ctx.font = `${fpx(13)}px ui-monospace, monospace`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = bath ? `rgb(${plateRGB()})` : ink(0.55);
-    ctx.fillText(bath ? `heater plate held at ${state.temp} K` : 'insulated base: no heat in or out', low.sx, Math.min(H - 10, low.sy + 20));
+    ctx.fillStyle = bath ? `rgb(${plateRGB()})` : ink(0.6);
+    ctx.fillText(bath ? `heater plate at ${state.temp} K` : 'insulated base', low.sx, Math.min(H - 10, low.sy + 6 + fpx(13)));
     ctx.textAlign = 'left';
     if (!touched) {
-      ctx.font = '12px ui-monospace, monospace';
-      ctx.fillStyle = ink(0.6);
+      ctx.font = `${fpx(12)}px ui-monospace, monospace`;
+      ctx.fillStyle = ink(0.65);
       ctx.fillText('drag the piston', knob.sx + knob.r + 8, knob.sy + 4);
     }
-    // the gas temperature, in the corner of the scene
-    ctx.font = '12px ui-monospace, monospace';
-    ctx.fillStyle = ink(0.55);
-    ctx.fillText(
-      bath ? 'plate held at T: the gas settles at its temperature' : 'insulated: energy enters only as piston work',
-      18, 24
-    );
   }
 
   // atoms and sparks, far to near
@@ -844,8 +836,10 @@ import Try from '../../../components/sim/Try.astro';
     return list[i];
   }
 
-  function txt(s: string, x: number, y: number, o: { size?: number; color?: string; align?: CanvasTextAlign; weight?: string } = {}) {
-    ctx.font = `${o.weight ?? ''} ${o.size ?? 12}px ui-monospace, monospace`;
+  /** A label; `minor` ones are left out on a phone rather than shrunk. */
+  function txt(s: string, x: number, y: number, o: { size?: number; color?: string; align?: CanvasTextAlign; weight?: string; minor?: boolean } = {}) {
+    if (o.minor && isCompact(canvas)) return;
+    ctx.font = `${o.weight ?? ''} ${fpx(o.size ?? 12)}px ui-monospace, monospace`;
     ctx.fillStyle = o.color ?? ink(0.55);
     ctx.textAlign = o.align ?? 'left';
     ctx.fillText(s, x, y);
@@ -896,7 +890,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
       if (major) {
         const v = (pScale * k) / 20;
-        txt(String(v), x + Math.cos(a) * (r - 42), y + Math.sin(a) * (r - 42) + 4, { size: 11, align: 'center', color: ink(0.55) });
+        txt(String(v), x + Math.cos(a) * (r - 44), y + Math.sin(a) * (r - 44) + 4, { size: 11, align: 'center', color: ink(0.6), minor: true });
       }
     }
     // where NkT/V says the needle should be
@@ -926,10 +920,8 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.arc(x, y, 6, 0, Math.PI * 2);
     ctx.fill();
-    txt('kPa', x, y + 30, { size: 11, align: 'center', color: ink(0.45) });
-    txt(fmtKPa(avg.pf), x, y + 54, { size: 18, align: 'center', color: P_COL, weight: '600' });
-    txt(`${(avg.pf / 101325).toFixed(2)} atm`, x, y + 70, { size: 11, align: 'center', color: ink(0.45) });
-    txt('pressure, from impacts', x, 246, { size: 12, align: 'center', color: ink(0.6) });
+    txt(`${fmtKPa(avg.pf)} kPa`, x, y + 58, { size: 16, align: 'center', color: P_COL, weight: '600' });
+    txt('pressure', x, 246, { size: 12, align: 'center', color: ink(0.65), minor: true });
   }
 
   function drawThermo() {
@@ -967,7 +959,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(x + w / 2 + 3, yy);
       ctx.lineTo(x + w / 2 + 9, yy);
       ctx.stroke();
-      txt(String(T), x + w / 2 + 13, yy + 4, { size: 11, color: ink(0.5) });
+      txt(String(T), x + w / 2 + 13, yy + 4, { size: 11, color: ink(0.55), minor: true });
     }
     // where the plate is
     if (state.walls === 'bath') {
@@ -979,10 +971,10 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(x - w / 2 - 11, yp + 5);
       ctx.closePath();
       ctx.fill();
-      txt('plate', x - w / 2 - 14, yp + 4, { size: 11, align: 'right', color: ink(0.55) });
+      txt('plate', x - w / 2 - 14, yp + 4, { size: 11, align: 'right', color: ink(0.6), minor: true });
     }
     txt(`${Tg.toFixed(0)} K`, x, 222, { size: 17, align: 'center', color: T_COL, weight: '600' });
-    txt('gas temperature', x, 246, { size: 12, align: 'center', color: ink(0.6) });
+    txt('temperature', x, 246, { size: 12, align: 'center', color: ink(0.65), minor: true });
   }
 
   // P-V path, sampled while running
@@ -996,8 +988,9 @@ import Try from '../../../components/sim/Try.astro';
   function frameBox(title: string, legend: [string, string, 'line' | 'dash' | 'dot' | 'bar'][]) {
     txt(title, PL.x - 44, PL.y - 22, { size: 12, color: ink(0.75), weight: '600' });
     let lx = PL.x + PL.w;
-    ctx.font = '11px ui-monospace, monospace';
-    for (let k = legend.length - 1; k >= 0; k--) {
+    ctx.font = `${fpx(11)}px ui-monospace, monospace`;
+    // on a phone the caption's legend has to do
+    for (let k = isCompact(canvas) ? -1 : legend.length - 1; k >= 0; k--) {
       const [label, col, kind] = legend[k];
       const tw = ctx.measureText(label).width;
       txt(label, lx, PL.y - 22, { size: 11, align: 'right', color: ink(0.6) });
@@ -1047,9 +1040,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(PL.x, y);
       ctx.lineTo(PL.x + PL.w, y);
       ctx.stroke();
-      txt(String((Pmax * k) / 4), PL.x - 6, y + 4, { size: 11, align: 'right', color: ink(0.45) });
+      txt(String((Pmax * k) / 4), PL.x - 6, y + 4, { size: 11, align: 'right', color: ink(0.55), minor: true });
     }
-    txt('kPa', PL.x - 6, PL.y + PL.h + 4, { size: 11, align: 'right', color: P_COL });
+    txt('kPa', PL.x - 6, PL.y + PL.h + 4, { size: 11, align: 'right', color: P_COL, minor: true });
     for (let v = 2; v <= Vmax; v += 2) {
       const x = xAt(v);
       ctx.strokeStyle = ink(0.3);
@@ -1057,9 +1050,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.moveTo(x, PL.y + PL.h);
       ctx.lineTo(x, PL.y + PL.h + 4);
       ctx.stroke();
-      txt(String(v), x, PL.y + PL.h + 16, { size: 11, align: 'center', color: ink(0.45) });
+      txt(String(v), x, PL.y + PL.h + 4 + fpx(11), { size: 11, align: 'center', color: ink(0.55), minor: true });
     }
-    txt('V (10³ nm³)', PL.x + PL.w, PL.y + PL.h + 32, { size: 11, align: 'right', color: V_COL });
+    txt(isCompact(canvas) ? 'V' : 'V (10³ nm³)', PL.x + PL.w, PL.y + PL.h + 8 + 2 * fpx(11), { size: 11, align: 'right', color: V_COL });
     // isotherm and adiabat through where the law puts the gas now
     const vc = volume() / 1000, pc = lawNow() / 1000;
     ctx.save();
@@ -1147,10 +1140,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     const vStep = vScale <= 1000 ? 250 : vScale <= 2000 ? 500 : 1000;
     for (let v = 0; v <= vScale; v += vStep) {
-      txt(String(v), xAt(v), PL.y + PL.h + 16, { size: 11, align: 'center', color: ink(0.45) });
+      if (v % (2 * vStep) === 0 || !isCompact(canvas))
+        txt(String(v), xAt(v), PL.y + PL.h + 4 + fpx(11), { size: 11, align: 'center', color: ink(0.55) });
     }
-    txt('speed (m/s)', PL.x + PL.w, PL.y + PL.h + 32, { size: 11, align: 'right', color: ink(0.55) });
-    txt(`curve at T = ${T.toFixed(0)} K`, PL.x + PL.w - 4, PL.y + 14, { size: 11, align: 'right', color: ink(0.55) });
+    txt('speed (m/s)', PL.x + PL.w, PL.y + PL.h + 8 + 2 * fpx(11), { size: 11, align: 'right', color: ink(0.6), minor: true });
     // the speed that sets the temperature
     const vr = Math.sqrt(3 * a);
     ctx.strokeStyle = 'rgba(244,63,94,0.7)';
@@ -1160,7 +1153,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(xAt(vr), PL.y + PL.h);
     ctx.stroke();
     ctx.setLineDash([]);
-    txt('v_rms', xAt(vr), PL.y + 12, { size: 11, color: T_COL, align: 'center' });
+    txt('v_rms', xAt(vr), PL.y + 12, { size: 11, color: T_COL, align: 'center', minor: true });
   }
 
   function drawInstruments(dtReal: number) {
@@ -1215,7 +1208,7 @@ import Try from '../../../components/sim/Try.astro';
     setResult({
       value: `${fmtKPa(avg.pf)} kPa`,
       colour: P_COL,
-      status: `NkT/V predicts ${fmtKPa(avg.lf)} kPa · ratio ${ratio.toFixed(3)} over 10 s · T ${T.toFixed(0)} K · V ${(volume() / 1000).toFixed(2)}×10³ nm³`,
+      status: `NkT/V predicts ${fmtKPa(avg.lf)} kPa · ratio ${ratio.toFixed(3)} · T ${T.toFixed(0)} K`,
       note: note(),
     });
     setRows({
