@@ -12,7 +12,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="biology"
   title="Turing Patterns"
-  description="Two chemicals spread and react, one switching the other on and both spreading at different speeds. From a nearly even start they settle into spots, stripes and mazes, like the coat of a leopard or a zebra."
+  description="Two chemicals react and spread, one switching the other on, at different speeds. From a nearly even start they settle into spots, stripes and mazes, like a leopard's or a zebra's coat."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -89,11 +89,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, handle, grabCursor } from '../../../lib/draw';
   import { segmented, slider, transport, result, readout, tries } from '../../../lib/panel';
-  import { say, withAlpha, isLight } from '../../../lib/story';
+  import { say, isLight } from '../../../lib/story';
 
   // The Gray-Scott model: u is fed in everywhere, v turns u into more v and
   // is removed. Both diffuse, u faster than v. Solved on a wrapped grid with
@@ -187,13 +187,21 @@ import Try from '../../../components/sim/Try.astro';
   const VMAX = 0.42;
 
   // ---------- layout ----------
-  const FX = 20, FY = 20, FW = 680, FH = 518;
+  // the field on the left and the (F, k) map beside it; on a phone the field
+  // fills the stage on its own and the sliders stand in for the map
+  const FIELD = { x: 20, y: 20, w: 680, h: 518 };
   const RX = 728;
-  const MAP = { x: 768, y: 52, w: 204, h: 204, k0: 0.04, k1: 0.07, F0: 0, F1: 0.09 };
+  const MAP = { x: 768, y: 96, w: 196, h: 196, k0: 0.04, k1: 0.07, F0: 0, F1: 0.09 };
+  let compact = false;
+  function layout() {
+    compact = isCompact(canvas);
+    Object.assign(FIELD, compact ? { x: (W - H * (GW / GH)) / 2, y: 0, w: H * (GW / GH), h: H } : { x: 20, y: 20, w: 680, h: 518 });
+  }
   const mx = (k: number) => MAP.x + ((k - MAP.k0) / (MAP.k1 - MAP.k0)) * MAP.w;
   const my = (F: number) => MAP.y + MAP.h - ((F - MAP.F0) / (MAP.F1 - MAP.F0)) * MAP.h;
 
   function draw() {
+    layout();
     const light = isLight(canvas);
     if (light !== lutLight) buildLut(light);
     ctx.clearRect(0, 0, W, H);
@@ -205,18 +213,19 @@ import Try from '../../../components/sim/Try.astro';
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(tile, FX, FY, FW, FH);
+    ctx.drawImage(tile, FIELD.x, FIELD.y, FIELD.w, FIELD.h);
     ctx.restore();
+    if (compact) return;
     ctx.strokeStyle = ink(0.25);
     ctx.lineWidth = 1;
-    ctx.strokeRect(FX - 0.5, FY - 0.5, FW + 1, FH + 1);
+    ctx.strokeRect(FIELD.x - 0.5, FIELD.y - 0.5, FIELD.w + 1, FIELD.h + 1);
     drawMap();
     drawKey();
   }
 
   /** The (F, k) plane: where patterns live, the presets, and the current setting. */
   function drawMap() {
-    say(ctx, 'where you are: kill k and feed F', RX, 26, { colour: ink(0.85), size: 13.5, weight: 650 });
+    say(ctx, 'kill k and feed F', RX, MAP.y - 34, { colour: ink(0.85), size: 13.5, weight: 650 });
     ctx.fillStyle = ink(0.04);
     ctx.fillRect(MAP.x, MAP.y, MAP.w, MAP.h);
     ctx.strokeStyle = ink(0.3);
@@ -238,46 +247,33 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.restore();
     say(ctx, 'v dies out', MAP.x + MAP.w - 8, MAP.y + MAP.h - 16, { colour: ink(0.5), size: 11.5, align: 'right' });
-    say(ctx, 'patterns hug', mx(0.0415), my(0.082), { colour: ink(0.5), size: 11.5 });
-    say(ctx, 'the line', mx(0.0415), my(0.082) + 14, { colour: ink(0.5), size: 11.5 });
+    say(ctx, 'patterns', mx(0.0415), my(0.082), { colour: ink(0.5), size: 11.5 });
+    say(ctx, 'near the line', mx(0.0415), my(0.082) + 15, { colour: ink(0.5), size: 11.5 });
     for (const [key, p] of Object.entries(PRESETS)) {
       const on = key === S.preset;
       ctx.fillStyle = on ? V : ink(0.55);
       ctx.beginPath();
       ctx.arc(mx(p.k), my(p.F), on ? 4 : 3, 0, Math.PI * 2);
       ctx.fill();
-      const left = key === 'maze' || key === 'holes';
+      const left = key === 'maze' || key === 'holes' || key === 'coral';
       const off = on ? 12 : 7;
       say(ctx, p.name, mx(p.k) + (left ? -off : off), my(p.F), { colour: on ? ink(0.9) : ink(0.55), size: 11, align: left ? 'right' : 'left', weight: on ? 650 : 500, halo: inv(0.8) });
     }
     // the current setting
-    const cx = mx(S.k), cy = my(S.F);
-    ctx.strokeStyle = ink(0.95);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = withAlpha(V, 0.9);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(cx - 12, cy); ctx.lineTo(cx - 8, cy);
-    ctx.moveTo(cx + 8, cy); ctx.lineTo(cx + 12, cy);
-    ctx.moveTo(cx, cy - 12); ctx.lineTo(cx, cy - 8);
-    ctx.moveTo(cx, cy + 8); ctx.lineTo(cx, cy + 12);
-    ctx.stroke();
-    say(ctx, 'kill k →', MAP.x + MAP.w, MAP.y + MAP.h + 14, { colour: KILL, size: 12, align: 'right', weight: 600 });
-    say(ctx, `${MAP.k0}`, MAP.x, MAP.y + MAP.h + 14, { colour: ink(0.45), size: 11 });
-    say(ctx, 'feed', MAP.x - 6, MAP.y + 8, { colour: FEED, size: 12, align: 'right', weight: 600 });
-    say(ctx, 'F ↑', MAP.x - 6, MAP.y + 23, { colour: FEED, size: 12, align: 'right', weight: 600 });
-    say(ctx, `${MAP.F1}`, MAP.x - 6, MAP.y + 42, { colour: ink(0.45), size: 11, align: 'right' });
-    say(ctx, '0', MAP.x - 6, MAP.y + MAP.h - 4, { colour: ink(0.45), size: 11, align: 'right' });
+    handle(ctx, mx(S.k), my(S.F), V, { r: 5, hot: drag === 'map' });
+    say(ctx, 'kill k →', MAP.x + MAP.w, MAP.y + MAP.h + 16, { colour: KILL, size: 12, align: 'right', weight: 600 });
+    say(ctx, `${MAP.k0}`, MAP.x, MAP.y + MAP.h + 16, { colour: ink(0.45), size: 11 });
+    say(ctx, 'F ↑', MAP.x - 7, MAP.y + 8, { colour: FEED, size: 12, align: 'right', weight: 600 });
+    say(ctx, `${MAP.F1}`, MAP.x - 7, MAP.y + 28, { colour: ink(0.45), size: 11, align: 'right' });
+    say(ctx, '0', MAP.x - 7, MAP.y + MAP.h - 4, { colour: ink(0.45), size: 11, align: 'right' });
   }
 
+  /** How the colour reads: a bar from no v to lots. */
   function drawKey() {
-    let y = 306;
+    let y = MAP.y + MAP.h + 70;
     say(ctx, 'colour: how much v', RX, y, { colour: ink(0.85), size: 13, weight: 650 });
     y += 18;
-    const bw = 244;
+    const bw = 236;
     for (let i = 0; i < bw; i++) {
       const c = lut[Math.round((i / (bw - 1)) * 255)];
       ctx.fillStyle = `rgb(${c & 255},${(c >> 8) & 255},${(c >> 16) & 255})`;
@@ -285,19 +281,8 @@ import Try from '../../../components/sim/Try.astro';
     }
     ctx.strokeStyle = ink(0.25);
     ctx.strokeRect(RX + 0.5, y + 0.5, bw - 1, 11);
-    say(ctx, 'none', RX, y + 24, { colour: ink(0.5), size: 11.5 });
-    say(ctx, 'lots', RX + bw, y + 24, { colour: ink(0.5), size: 11.5, align: 'right' });
-    y += 58;
-    const lines: [string, string][] = [
-      ['u is fed in everywhere at rate F.', FEED],
-      ['Where v meets u, it turns u into', V],
-      ['more v: uv² switches itself on.', V],
-      ['v is taken away at rate F + k.', KILL],
-      [`u spreads ${S.ratio.toFixed(1)}× as fast as v, so a`, ink(0.7)],
-      ['patch of v starves its neighbours', ink(0.7)],
-      ['of u and keeps them at a distance.', ink(0.7)],
-    ];
-    lines.forEach(([l, c]) => { say(ctx, l, RX, y, { colour: c, size: 12.5 }); y += 20; });
+    say(ctx, 'none', RX, y + 26, { colour: ink(0.5), size: 11.5 });
+    say(ctx, 'lots', RX + bw, y + 26, { colour: ink(0.5), size: 11.5, align: 'right' });
   }
 
   // ---------- numbers ----------
@@ -362,10 +347,10 @@ import Try from '../../../components/sim/Try.astro';
     const b = canvas.getBoundingClientRect();
     return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
   }
-  const inField = (p: { x: number; y: number }) => p.x >= FX && p.x < FX + FW && p.y >= FY && p.y < FY + FH;
-  const inMap = (p: { x: number; y: number }) => p.x >= MAP.x && p.x <= MAP.x + MAP.w && p.y >= MAP.y && p.y <= MAP.y + MAP.h;
+  const inField = (p: { x: number; y: number }) => p.x >= FIELD.x && p.x < FIELD.x + FIELD.w && p.y >= FIELD.y && p.y < FIELD.y + FIELD.h;
+  const inMap = (p: { x: number; y: number }) => !compact && p.x >= MAP.x && p.x <= MAP.x + MAP.w && p.y >= MAP.y && p.y <= MAP.y + MAP.h;
   function brush(p: { x: number; y: number }) {
-    const gx = ((p.x - FX) / FW) * GW, gy = ((p.y - FY) / FH) * GH, R = 4;
+    const gx = ((p.x - FIELD.x) / FIELD.w) * GW, gy = ((p.y - FIELD.y) / FIELD.h) * GH, R = 4;
     for (let dy = -R; dy <= R; dy++)
       for (let dx = -R; dx <= R; dx++) {
         if (dx * dx + dy * dy > R * R) continue;
@@ -389,11 +374,12 @@ import Try from '../../../components/sim/Try.astro';
   });
   canvas.addEventListener('pointermove', (e) => {
     const p = toStage(e);
-    canvas.style.cursor = inField(p) || inMap(p) ? 'crosshair' : '';
+    if (drag === 'map' || inMap(p)) grabCursor(canvas, true, drag === 'map');
+    else canvas.style.cursor = inField(p) ? 'crosshair' : '';
     if (drag === 'field' && inField(p)) brush(p);
     if (drag === 'map') pickMap({ x: Math.min(MAP.x + MAP.w, Math.max(MAP.x, p.x)), y: Math.min(MAP.y + MAP.h, Math.max(MAP.y, p.y)) });
   });
-  const drop = () => (drag = '');
+  const drop = () => { drag = ''; canvas.style.cursor = ''; };
   canvas.addEventListener('pointerup', drop);
   canvas.addEventListener('pointercancel', drop);
 
@@ -414,6 +400,7 @@ import Try from '../../../components/sim/Try.astro';
     setFeed(S.F);
     setKill(S.k);
     custom();
+    panelText();
   }
   function preset(key: string, ratio = 2) {
     const p = PRESETS[key];
@@ -427,6 +414,7 @@ import Try from '../../../components/sim/Try.astro';
     seg.select(key);
     seed();
     tp.setRunning(true);
+    panelText();
   }
   const seg = segmented('preset', (key) => preset(key, S.ratio));
   const tp = transport({ onReset: () => { seed(); tp.setRunning(true); } });

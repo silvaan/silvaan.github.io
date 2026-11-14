@@ -82,9 +82,9 @@ const RAB = '#4f9cf9', FOX = '#f97316';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk, roundRect } from '../../../lib/draw';
+  import { stageInk, roundRect, fixed } from '../../../lib/draw';
   import { slider, transport, result, readout, tries } from '../../../lib/panel';
   import { say, withAlpha, isLight, clamp01 } from '../../../lib/story';
 
@@ -94,7 +94,13 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   const RAB = '#4f9cf9', FOX = '#f97316', EQ = '#a78bfa';
 
   const canvas = document.getElementById('lv') as HTMLCanvasElement;
+  // On a phone the field and the two plots stack in a tall picture instead of
+  // shrinking side by side, and only the key labels are drawn.
+  const STACK = isCompact(canvas);
+  if (STACK) { canvas.width = 600; canvas.height = 1000; }
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  /** Text size that stays readable on a phone. */
+  const sz = (size: number) => (STACK ? Math.max(size * 1.4, 17) : size);
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
@@ -191,7 +197,7 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   }
 
   // ---------- the field ----------
-  const FIELD = { x: 24, y: 52, w: 372, h: 524 };
+  const FIELD = STACK ? { x: 24, y: 52, w: 552, h: 290 } : { x: 24, y: 52, w: 372, h: 524 };
   type Agent = {
     x: number; y: number; vx: number; vy: number; tx: number; ty: number;
     born: number; dying: number; eaten: boolean; face: number;
@@ -330,8 +336,10 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   }
 
   // ---------- layout of the two plots ----------
-  const TS = { x: 476, y: 52, w: 496, h: 176 };
-  const PP = { x: 476, y: 300, w: 496, h: 248 };
+  const TS = STACK ? { x: 64, y: 420, w: 512, h: 150 } : { x: 476, y: 52, w: 496, h: 176 };
+  const PP = STACK ? { x: 64, y: 668, w: 512, h: 270 } : { x: 476, y: 300, w: 496, h: 248 };
+  /** Where the title of a plot starts, a little left of its axis. */
+  const TITLE_X = STACK ? 24 : TS.x - 40;
   const tsX = (t: number) => TS.x + ((t - Math.max(0, T - WINDOW)) / WINDOW) * TS.w;
   const tsY = (n: number) => TS.y + TS.h - (n / nMax) * TS.h;
   const ppX = (x: number) => PP.x + (x / xMax) * PP.w;
@@ -342,7 +350,7 @@ const RAB = '#4f9cf9', FOX = '#f97316';
     for (let v = 0; v <= max + 1e-9; v += s) out.push(v);
     return out;
   };
-  const fmt = (v: number) => (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2));
+  const fmt = (v: number) => fixed(v, v >= 10 ? 0 : v >= 1 ? 1 : 2);
 
   function frame(b: { x: number; y: number; w: number; h: number }) {
     ctx.strokeStyle = ink(0.25);
@@ -355,15 +363,15 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   }
 
   function drawTime() {
-    say(ctx, 'the two populations over time', TS.x - 40, 22, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, 'the two populations over time', TITLE_X, TS.y - 30, { colour: ink(0.85), size: sz(15), weight: 650 });
     frame(TS);
     for (const v of ticks(nMax)) {
       const y = tsY(v);
       ctx.strokeStyle = ink(0.06);
       ctx.beginPath(); ctx.moveTo(TS.x, y); ctx.lineTo(TS.x + TS.w, y); ctx.stroke();
-      say(ctx, String(v), TS.x - 8, y, { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, String(v), TS.x - 8, y, { colour: ink(0.45), size: sz(11), align: 'right' });
     }
-    say(ctx, 'time', TS.x + TS.w, TS.y + TS.h + 14, { colour: ink(0.45), size: 11, align: 'right' });
+    if (!STACK) say(ctx, 'time', TS.x + TS.w, TS.y + TS.h + 14, { colour: ink(0.45), size: 11, align: 'right' });
     ctx.save();
     ctx.beginPath();
     ctx.rect(TS.x, TS.y - 4, TS.w, TS.h + 8);
@@ -404,7 +412,7 @@ const RAB = '#4f9cf9', FOX = '#f97316';
       ctx.strokeStyle = ink(0.6);
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(x0, yb); ctx.lineTo(x1, yb); ctx.stroke();
-      say(ctx, 'lag', x1 + 4, yb - 1, { colour: ink(0.6), size: 11, halo: inv(0.9) });
+      if (!STACK) say(ctx, 'lag', x1 + 4, yb - 1, { colour: ink(0.6), size: 11, halo: inv(0.9) });
     }
     ctx.restore();
     const last = hist[hist.length - 1];
@@ -432,12 +440,13 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   }
 
   function drawPhase() {
-    say(ctx, 'the phase plane: rabbits against foxes', PP.x - 40, PP.y - 30, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, STACK ? 'rabbits against foxes' : 'the phase plane: rabbits against foxes', TITLE_X, PP.y - (STACK ? 34 : 30), { colour: ink(0.85), size: sz(15), weight: 650 });
     frame(PP);
-    for (const v of ticks(xMax)) say(ctx, String(v), ppX(v), PP.y + PP.h + 12, { colour: ink(0.45), size: 11, align: 'center' });
-    for (const v of ticks(yMax)) say(ctx, String(v), PP.x - 8, ppY(v), { colour: ink(0.45), size: 11, align: 'right' });
-    say(ctx, 'rabbits x', PP.x + PP.w, PP.y + PP.h + 28, { colour: RAB, size: 12, weight: 600, align: 'right' });
-    say(ctx, 'foxes y', PP.x + 8, PP.y + 8, { colour: FOX, size: 12, weight: 600 });
+    const tx = ticks(xMax).filter((_, k) => !STACK || k % 2 === 0);
+    for (const v of tx) say(ctx, String(v), ppX(v), PP.y + PP.h + (STACK ? 18 : 12), { colour: ink(0.45), size: sz(11), align: 'center' });
+    for (const v of ticks(yMax)) say(ctx, String(v), PP.x - 8, ppY(v), { colour: ink(0.45), size: sz(11), align: 'right' });
+    say(ctx, 'rabbits x', PP.x + PP.w, PP.y + PP.h + (STACK ? 44 : 28), { colour: RAB, size: sz(12), weight: 600, align: 'right' });
+    say(ctx, 'foxes y', PP.x + 8, PP.y + (STACK ? 12 : 8), { colour: FOX, size: sz(12), weight: 600 });
 
     // which way the state is pushed everywhere
     ctx.strokeStyle = ink(0.16);
@@ -465,8 +474,8 @@ const RAB = '#4f9cf9', FOX = '#f97316';
     ctx.strokeStyle = withAlpha(FOX, 0.7);
     ctx.beginPath(); ctx.moveTo(ex, PP.y); ctx.lineTo(ex, PP.y + PP.h); ctx.stroke();
     ctx.setLineDash([]);
-    say(ctx, 'rabbits steady: y = α/β', PP.x + PP.w - 4, ey - 10, { colour: RAB, size: 11.5, weight: 600, align: 'right', halo: inv(0.85) });
-    say(ctx, 'foxes steady: x = γ/δ', ex + 6, PP.y + 8, { colour: FOX, size: 11.5, weight: 600, halo: inv(0.85) });
+    say(ctx, STACK ? 'y = α/β' : 'rabbits steady: y = α/β', PP.x + PP.w - 4, ey - (STACK ? 14 : 10), { colour: RAB, size: sz(11.5), weight: 600, align: 'right', halo: inv(0.85) });
+    say(ctx, STACK ? 'x = γ/δ' : 'foxes steady: x = γ/δ', ex + 6, PP.y + (STACK ? 12 : 8), { colour: FOX, size: sz(11.5), weight: 600, halo: inv(0.85) });
 
     // the full loop this state is on, and the part already travelled
     ctx.strokeStyle = ink(0.22);
@@ -535,8 +544,8 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   }
 
   function drawField() {
-    say(ctx, 'the field', FIELD.x, 22, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, per === 1 ? 'one icon per animal' : `one icon per ${per} animals`, FIELD.x + FIELD.w, 22, { colour: ink(0.5), size: 12, align: 'right' });
+    say(ctx, 'the field', FIELD.x, 22, { colour: ink(0.85), size: sz(15), weight: 650 });
+    say(ctx, per === 1 ? 'one icon per animal' : `one icon per ${per} animals`, FIELD.x + FIELD.w, 22, { colour: ink(0.5), size: sz(12), align: 'right' });
     ctx.fillStyle = isLight(canvas) ? 'rgba(132,190,96,0.16)' : 'rgba(132,190,96,0.07)';
     roundRect(ctx, FIELD.x, FIELD.y, FIELD.w, FIELD.h, 10);
     ctx.fill();
@@ -547,14 +556,26 @@ const RAB = '#4f9cf9', FOX = '#f97316';
     for (const f of foxes) drawAgent(f, SPR.f, 19);
     // the counts, big, in the corner
     const lr = alive(rabbits).length, lf = alive(foxes).length;
+    if (STACK) {
+      // on a phone the counts sit on one line in the corner
+      const by = FIELD.y + FIELD.h - 22;
+      ctx.fillStyle = inv(0.75);
+      roundRect(ctx, FIELD.x + 8, by - 18, 300, 36, 6);
+      ctx.fill();
+      say(ctx, `${Math.round(X)} rabbits`, FIELD.x + 18, by, { colour: RAB, size: sz(14), weight: 700 });
+      say(ctx, `${Math.round(Y)} foxes`, FIELD.x + 170, by, { colour: FOX, size: sz(14), weight: 700 });
+      return;
+    }
     const bx = FIELD.x + 12, by = FIELD.y + FIELD.h - 40;
     ctx.fillStyle = inv(0.75);
     roundRect(ctx, bx - 4, by - 14, 168, 50, 6);
     ctx.fill();
     say(ctx, `${Math.round(X)} rabbits`, bx + 4, by, { colour: RAB, size: 14, weight: 700 });
     say(ctx, `${Math.round(Y)} foxes`, bx + 4, by + 22, { colour: FOX, size: 14, weight: 700 });
-    say(ctx, per === 1 ? '' : `${lr} icons`, bx + 152, by, { colour: ink(0.45), size: 11, align: 'right' });
-    say(ctx, per === 1 ? '' : `${lf} icons`, bx + 152, by + 22, { colour: ink(0.45), size: 11, align: 'right' });
+    if (per !== 1) {
+      say(ctx, `${lr} icons`, bx + 152, by, { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, `${lf} icons`, bx + 152, by + 22, { colour: ink(0.45), size: 11, align: 'right' });
+    }
   }
 
   function draw() {
@@ -565,7 +586,7 @@ const RAB = '#4f9cf9', FOX = '#f97316';
   }
 
   // ---------- numbers ----------
-  const f2 = (v: number, n = 2) => v.toFixed(n);
+  const f2 = (v: number, n = 2) => fixed(v, n);
   function phaseNote() {
     const moreR = X > eqX(), moreF = Y > eqY();
     if (!moreF && !moreR) return ['Rabbits recovering', 'Few foxes are left, so rabbits breed faster than they are eaten, while the starving foxes keep dwindling.'];
@@ -602,9 +623,9 @@ const RAB = '#4f9cf9', FOX = '#f97316';
         ['\\dfrac{dy}{dt} = \\delta x y - \\gamma y', FOX],
       ],
       live: [
-        [`\\dot x = ${f2(P.a)}\\cdot${Math.round(X)} - ${f2(P.b, 3)}\\cdot${Math.round(X)}\\cdot${Math.round(Y)} = ${f2(deriv(X, Y)[0], 1)}`, RAB],
+        [`\\dot x = ${f2(P.a)}\\cdot${Math.round(X)} - ${f2(P.b, 3)}\\cdot${Math.round(X)}\\cdot${Math.round(Y)} = ${deriv(X, Y)[0].toFixed(1)}`, RAB],
         '\\qquad',
-        [`\\dot y = ${f2(P.d, 3)}\\cdot${Math.round(X)}\\cdot${Math.round(Y)} - ${f2(P.g)}\\cdot${Math.round(Y)} = ${f2(deriv(X, Y)[1], 1)}`, FOX],
+        [`\\dot y = ${f2(P.d, 3)}\\cdot${Math.round(X)}\\cdot${Math.round(Y)} - ${f2(P.g)}\\cdot${Math.round(Y)} = ${deriv(X, Y)[1].toFixed(1)}`, FOX],
       ],
     });
   }
@@ -681,10 +702,10 @@ const RAB = '#4f9cf9', FOX = '#f97316';
 
   // ---------- panel ----------
   const tp = transport({ onReset: () => restart() });
-  const setA = slider('alpha', (v) => { P.a = v; retrace(); }, (v) => v.toFixed(2));
-  const setB = slider('beta', (v) => { P.b = v; retrace(); }, (v) => v.toFixed(3));
-  const setG = slider('gamma', (v) => { P.g = v; retrace(); }, (v) => v.toFixed(2));
-  const setD = slider('delta', (v) => { P.d = v; retrace(); }, (v) => v.toFixed(3));
+  const setA = slider('alpha', (v) => { P.a = v; retrace(); }, (v) => fixed(v, 2));
+  const setB = slider('beta', (v) => { P.b = v; retrace(); }, (v) => fixed(v, 3));
+  const setG = slider('gamma', (v) => { P.g = v; retrace(); }, (v) => fixed(v, 2));
+  const setD = slider('delta', (v) => { P.d = v; retrace(); }, (v) => fixed(v, 3));
   const setX0 = slider('x0', (v) => restart(v, start.y));
   const setY0 = slider('y0', (v) => restart(start.x, v));
   /** Default rates, a chosen start, running. */

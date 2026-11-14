@@ -88,11 +88,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
   import { segmented, slider, check, transport, result, readout, tries, el } from '../../../lib/panel';
-  import { say, withAlpha, isLight, beat } from '../../../lib/story';
+  import { say as sayRaw, withAlpha, isLight, beat } from '../../../lib/story';
 
   // Molecules as random walkers in a tank. Each one keeps a little of its
   // velocity from one moment to the next and gets a random kick (Langevin
@@ -104,7 +104,14 @@ import Try from '../../../components/sim/Try.astro';
   type Setup = 'walk' | 'diffuse' | 'membrane' | 'osmosis';
 
   const canvas = document.getElementById('osm') as HTMLCanvasElement;
+  // On a phone the stage shows only the tank, cut to its own width so it is
+  // drawn twice as large; the numbers beside it are in the result and readout.
+  const narrow = isCompact(canvas);
+  if (narrow) canvas.width = 640;
   const { ctx, W, H } = setupCanvas(canvas);
+  /** Labels sized by what they show as on screen, never below 11px (9.5px on a phone). */
+  const say: typeof sayRaw = (c, text, x, y, o = {}) =>
+    sayRaw(c, text, x, y, { ...o, size: textPx(canvas, o.size ?? 14, isCompact(canvas) ? 9.5 : 11, 3) });
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
@@ -288,6 +295,7 @@ import Try from '../../../components/sim/Try.astro';
       }
     } else initOsmosis();
     panelFor();
+    panelText();
   }
 
   /** The one molecule the trail follows, in stage coordinates. */
@@ -419,11 +427,6 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
   }
   const label = (txt: string, x: number, y: number, o: Parameters<typeof say>[4] = {}) => say(ctx, txt, x, y, { colour: ink(0.6), size: 13, ...o });
-  /** Lines of prose in the right-hand column. */
-  function prose(lines: string[], y: number, c = ink(0.65)) {
-    lines.forEach((l) => { label(l, RX, y, { colour: c, size: 13 }); y += 20; });
-    return y;
-  }
   function trailPath(colour: string, width: number) {
     if (trail.length < 4) return;
     ctx.save();
@@ -488,11 +491,11 @@ import Try from '../../../components/sim/Try.astro';
       label('typical distance', C0.x, Math.min(FLOOR - 12, C0.y + r + 12), { align: 'center', alpha: crowdA, halo: inv(0.85), colour: ink(0.75) });
     }
     label('start', C0.x + 10, C0.y + 14, { size: 12, colour: ink(0.55), halo: inv(0.8), alpha: 1 - crowdA });
-    label('one molecule, then the 300 that started with it', X0, TOP - 16, { size: 12.5, colour: ink(0.6) });
-    msdChart(crowdA);
+    label(narrow ? 'one molecule, then 300' : `one molecule, then the ${ENS} that started with it`, X0, TOP - 16, { size: 12.5, colour: ink(0.6) });
+    if (!narrow) msdChart(crowdA);
   }
   function msdChart(crowdA: number) {
-    const x0 = RX + 34, y0 = 300, w = 300, h = 210, T = Math.max(14, simT), D = Dof(walk), top = 4 * D * T * 1.1;
+    const x0 = RX + 34, y0 = 380, w = 300, h = 280, T = Math.max(14, simT), D = Dof(walk), top = 4 * D * T * 1.1;
     label('squared distance from the start', RX, 70, { colour: ink(0.85), size: 14, weight: 650 });
     ctx.strokeStyle = ink(0.3);
     ctx.lineWidth = 1;
@@ -543,16 +546,10 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
     label('a straight path: ∝ t²', X(T / 6) + 8, Y(top * 0.93), { size: 12, colour: ink(0.55) });
     label('∝ t', X(T) - 4, Y(4 * D * T) - 14, { size: 13, weight: 650, colour: PICK, align: 'right' });
-    let y = y0 + 40;
-    const row = (txt: string, c: string, a = 1) => { label(txt, RX, y, { colour: c, size: 13, alpha: a }); y += 21; };
-    row('thin: the one molecule, alone', withAlpha(PICK, 0.85));
-    row(`thick: average of all ${ENS}, which started together`, PICK, crowdA);
-    if (simT >= 4) {
-      const r1 = Math.sqrt(msdAt(simT / 4)), r2 = Math.sqrt(msd());
-      y += 6;
-      label(`after ${fixed(simT / 4, 1)} s: ${Math.round(r1)} px   after ${fixed(simT, 1)} s: ${Math.round(r2)} px`, RX, y, { colour: ink(0.85), size: 14, weight: 600, alpha: crowdA });
-      label('four times the time, only twice the distance', RX, y + 22, { colour: ink(0.6), size: 13, alpha: crowdA });
-    }
+    let y = y0 + 44;
+    const row = (txt: string, c: string, a = 1) => { label(txt, RX, y, { colour: c, size: 13, alpha: a }); y += 24; };
+    row('thin: the one molecule', withAlpha(PICK, 0.85));
+    row(`thick: the average of all ${ENS}`, PICK, crowdA);
   }
 
   // ---------- diffusion and the membrane ----------
@@ -562,12 +559,13 @@ import Try from '../../../components/sim/Try.astro';
     dots(bg, WATER, 2, light ? 0.5 : 0.4, plain(bg));
     dots(crowd, colour, sugar ? 8 : 4.5, 0.95, plain(crowd));
     followDraw();
-    label('a closed tank', X1, TOP - 16, { size: 12, align: 'right', colour: ink(0.5) });
+    if (!narrow) label('a closed tank', X1, TOP - 16, { size: 12, align: 'right', colour: ink(0.5) });
     if (sugar) {
       label('membrane', XM, TOP - 16, { size: 12.5, align: 'center', colour: ink(0.75), weight: 600 });
-      label('sugar is too big for the pores', X0, TOP - 16, { size: 12, colour: SUGAR, weight: 600 });
+      label('sugar cannot pass', X0, TOP - 16, { size: 12, colour: SUGAR, weight: 600 });
     } else label('a crowd released on the left', X0, TOP - 16, { size: 12, colour: PICK, weight: 600 });
     profile(colour, sugar);
+    if (narrow) return;
     let y = 70;
     if (!sugar) {
       let left = 0;
@@ -585,16 +583,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
       ctx.setLineDash([]);
       label(`${Math.round(100 * f)}%`, RX + 8, by + 13, { colour: light ? '#fff' : '#0d0e12', weight: 700, size: 14, alpha: f > 0.14 ? 1 : 0 });
-      label('half', RX + bw / 2, by + 44, { size: 12, align: 'center', colour: ink(0.5) });
-      y = by + 84;
-      label('No force acts on the crowd.', RX, y, { colour: ink(0.85), size: 14, weight: 600 });
-      prose([
-        'Every molecule is as likely to step left',
-        'as right. Where there are more of them,',
-        'more leave than arrive, so the flow runs',
-        'from crowded to empty, at a rate set by',
-        'how steep the slope is: Fick’s law.',
-      ], y + 24);
+      label('half', RX + bw / 2, by + 46, { size: 12, align: 'center', colour: ink(0.5) });
       return;
     }
     label('crossings through the membrane', RX, y, { colour: ink(0.85), size: 14, weight: 650 });
@@ -603,19 +592,10 @@ import Try from '../../../components/sim/Try.astro';
     row('sugar: 0, ever', SUGAR);
     row(`water, left to right: ${crossings[0]}`, WATER);
     row(`water, right to left: ${crossings[1]}`, WATER);
-    y += 14;
-    prose([
-      'Each half’s sugar spreads until the',
-      'membrane stops it, so the sugar stays',
-      'uneven. The water crosses freely. The',
-      'tank is closed, so water cannot pile up',
-      'on one side: about as much crosses',
-      'each way. Osmosis opens the top.',
-    ], y);
   }
   function profile(colour: string, wall: boolean) {
     const bw = (2 * CW) / NB, hgt = STRIP.bot - STRIP.top, vmax = 5;
-    label(wall ? 'how much sugar, across the tank' : 'how crowded, across the tank', X0, STRIP.top - 12, { size: 12, colour: ink(0.6) });
+    label(wall ? 'how much sugar, across the tank' : 'how crowded, across the tank', X0, STRIP.top - 14, { size: 12, colour: ink(0.6) });
     for (let b = 0; b < NB; b++) {
       const v = Math.min(vmax, histS[b]), hh = (v / vmax) * hgt;
       ctx.fillStyle = withAlpha(colour, 0.6);
@@ -632,7 +612,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(X0, even); ctx.lineTo(X1, even);
     ctx.stroke();
     ctx.setLineDash([]);
-    label('even', X1 + 6, even, { size: 11.5, colour: ink(0.5) });
+    if (!narrow) label('even', X1 + 6, even, { size: 11.5, colour: ink(0.5) });
     if (wall) {
       ctx.strokeStyle = ink(0.6);
       ctx.lineWidth = 2;
@@ -642,7 +622,7 @@ import Try from '../../../components/sim/Try.astro';
     }
     // the net flow at a few places: minus the slope (Fick's law)
     const ay = BOX_BOT + 24;
-    label('net flow', X1 + 6, ay, { size: 11.5, colour: ink(0.5) });
+    if (!narrow) label('net flow', X1 + 6, ay, { size: 11.5, colour: ink(0.5) });
     for (let b = 2; b < NB; b += 2) {
       const x = X0 + b * bw;
       if (wall && b === NB / 2) continue;
@@ -679,7 +659,7 @@ import Try from '../../../components/sim/Try.astro';
     dots(O.water, WATER, 2.2, light ? 0.7 : 0.6, at(O.water));
     dots(O.sugar, SUGAR, 8, 0.95, at(O.sugar));
     followDraw();
-    label('open at the top', X1, TOP - 16, { size: 12, align: 'right', colour: ink(0.5) });
+    if (!narrow) label('open at the top', X1, TOP - 16, { size: 12, align: 'right', colour: ink(0.5) });
     label('membrane', XM, TOP - 16, { size: 12.5, align: 'center', colour: ink(0.75), weight: 600 });
     const was = 1 - beat(simT, 4, 6);
     if (was > 0) {
@@ -702,7 +682,7 @@ import Try from '../../../components/sim/Try.astro';
       arrowTo(xa, FLOOR - hs[hi], xa, FLOOR - hs[1 - hi], ink(0.75), 1.6);
       say(ctx, `Δh ${Math.round(dh)}`, xa + (hi === 0 ? -8 : 8), FLOOR - (hs[0] + hs[1]) / 2, { size: 13, weight: 650, colour: ink(0.85), align: hi === 0 ? 'right' : 'left', halo: inv(0.85) });
     }
-    osmoColumn();
+    if (!narrow) osmoColumn();
   }
   function osmoColumn() {
     const phi = [freeWater(0), freeWater(1)];
@@ -720,7 +700,7 @@ import Try from '../../../components/sim/Try.astro';
       y += 46;
     }
     y += 2;
-    label('free water: the share of molecules that are water', RX, y, { colour: ink(0.85), size: 13, weight: 600 });
+    label('free water: share that is water', RX, y, { colour: ink(0.85), size: 13, weight: 600 });
     y += 22;
     label(`left ${Math.round(phi[0] * 100)}%`, RX, y, { colour: ink(0.75), size: 14, weight: 600 });
     label(`right ${Math.round(phi[1] * 100)}%`, RX + 130, y, { colour: ink(0.75), size: 14, weight: 600 });
@@ -738,14 +718,6 @@ import Try from '../../../components/sim/Try.astro';
     };
     bar(pull, withAlpha(SUGAR, 0.85), 'less free water draws it in');
     bar(push, withAlpha(WATER, 0.85), 'the extra height pushes back');
-    y += 16;
-    prose([
-      'Any water molecule that reaches a pore can',
-      'cross, so more arrive from the side with more',
-      'free water. Crossing into the taller column',
-      'means pushing against its weight, so the',
-      'level stops where the two balance.',
-    ], y);
   }
   /** Van 't Hoff at 25 °C: Π = Δc·R·T, and the column of water it holds up. */
   function realWorld() {
@@ -765,11 +737,11 @@ import Try from '../../../components/sim/Try.astro';
     let live: (string | [string, string])[] = [];
     if (S.setup === 'walk') {
       const m = msd(), d = simT > 0.5 ? m / (4 * simT) : 0;
-      live = [`t = ${t}\\text{ s}`, `\\quad \\langle r^2 \\rangle = ${Math.round(m)}\\text{ px}^2`, [`\\quad \\langle r^2\\rangle / 4t = ${Math.round(d)}\\text{ px}^2\\!/\\text{s}`, PICK]];
+      live = [`t = ${t}\\text{ s}`, [`\\quad \\langle r^2\\rangle / 4t = ${Math.round(d)}\\text{ px}^2\\!/\\text{s}`, PICK]];
       const r1 = Math.sqrt(msdAt(simT / 4)), r2 = Math.sqrt(m);
       setResult({
         value: simT >= 4 && r1 > 0 ? `×${fixed(r2 / r1, 2)}` : '…',
-        status: simT >= 4 ? `typical distance ${Math.round(r1)} px after ${fixed(simT / 4, 1)} s, ${Math.round(r2)} px after ${t} s` : 'waiting for 4 seconds of wandering',
+        status: simT >= 4 ? `${Math.round(r1)} px after ${fixed(simT / 4, 1)} s, ${Math.round(r2)} px after ${t} s` : 'waiting for 4 seconds of wandering',
         note: 'How much farther the crowd gets in four times the time. A molecule moving in a straight line would get four times as far; a random walker only twice.',
         colour: PICK,
       });
@@ -790,7 +762,7 @@ import Try from '../../../components/sim/Try.astro';
       live = [`t = ${t}\\text{ s}`, [`\\quad \\text{sugar crossings: 0}`, SUGAR], [`\\quad \\text{water: } ${crossings[0]} \\rightarrow,\\ ${crossings[1]} \\leftarrow`, WATER]];
       setResult({
         value: '0',
-        status: `water crossed ${crossings[0]} times to the right and ${crossings[1]} to the left`,
+        status: `water crossings: ${crossings[0]} → and ${crossings[1]} ←`,
         note: 'The pores are wide enough for water and too narrow for sugar. The sugar stays where it started; in a closed tank the water flows about equally both ways.',
         colour: SUGAR,
       });
@@ -798,14 +770,14 @@ import Try from '../../../components/sim/Try.astro';
       const { bar, m } = realWorld();
       const dh = O.hs[0] - O.hs[1], net = O.rate[0] - O.rate[1];
       const side = Math.abs(dh) < 1 ? '' : dh > 0 ? ', left higher' : ', right higher';
-      live = [`\\Pi = ${fixed(Math.abs(S.cl - S.cr), 2)} \\times 0.0831 \\times 298 = ${fixed(bar, 2)}\\text{ bar}`, [`\\quad \\Delta h = ${fixed(m, 1)}\\text{ m of water}`, WATER]];
+      live = [[`\\Pi = ${fixed(bar, 2)}\\text{ bar}`, SUGAR], [`\\quad \\Delta h = ${fixed(m, 1)}\\text{ m of water}`, WATER]];
       setResult({
         value: `Δh ${Math.round(Math.abs(dh))} px${side}`,
-        status: `net water flow ${Math.round(Math.abs(net))}/s into the ${net >= 0 ? 'left' : 'right'} · ${O.water.n} water, ${O.sugar.n} sugar`,
+        status: `net water flow ${Math.round(Math.abs(net))}/s into the ${net >= 0 ? 'left' : 'right'}`,
         note:
           S.cl === S.cr
-            ? 'The same sugar on both sides: no pull either way, and the levels only jiggle.'
-            : `For real sugar water at 25 °C, ${fixed(Math.abs(S.cl - S.cr), 2)} mol/L of difference gives an osmotic pressure of ${fixed(bar, 1)} bar, enough to hold up ${m < 10 ? fixed(m, 1) : Math.round(m)} m of water. The stage is far more crowded than real sugar water, so its numbers are not to scale.`,
+            ? 'The same sugar on both sides: as much water crosses each way, so nothing pulls either way and the levels only jiggle around where they started.'
+            : `In real sugar water at 25 °C, ${fixed(Math.abs(S.cl - S.cr), 2)} mol/L of difference gives ${fixed(bar, 1)} bar, enough to hold up ${m < 10 ? fixed(m, 1) : Math.round(m)} m of water. The stage is far more crowded, so its own numbers are not to scale.`,
         colour: WATER,
       });
     }

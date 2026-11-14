@@ -82,7 +82,7 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, fixed } from '../../../lib/draw';
   import { slider, check, transport, result, readout, tries } from '../../../lib/panel';
@@ -92,11 +92,19 @@ import Try from '../../../components/sim/Try.astro';
   // (and dying at r·(N/K − 1) when there are more than K). On average that is
   // the logistic law dN/dt = r N (1 − N/K); the plot sets the counted cells
   // against the curve it predicts and the exponential it would be without the brake.
-  const CELL = '#4ade80', LOGI = '#60a5fa', EXP = '#fb923c', FOOD = '#facc15', RATE = '#c084fc';
+  const CELL = '#4ade80', LOGI = '#60a5fa', EXP = '#fb923c', FOOD = '#facc15';
   const N0 = 8, TMAX = 30, SPEED = 1.25, MAX = 1700, KMAX = 1500;
 
   const canvas = document.getElementById('pg') as HTMLCanvasElement;
+  // a phone gets the dish above the plot, so the labels can stay readable
+  const tall = isCompact(canvas);
+  if (tall) {
+    canvas.width = 600;
+    canvas.height = 890;
+  }
   const { ctx, W, H } = setupCanvas(canvas);
+  /** Label sizes: the phone layout is shown at about half size, so its labels start bigger. */
+  const z = (size: number) => (tall ? size * 1.6 : size);
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
@@ -104,7 +112,7 @@ import Try from '../../../components/sim/Try.astro';
   let light = isLight(canvas);
 
   // ---------- the dish ----------
-  const DX = 270, DY = 300, RMAX = 218;
+  const DX = tall ? 300 : 270, DY = tall ? 290 : 300, RMAX = tall ? 200 : 218;
   /** How far apart cells settle: K of them, packed in a hexagonal grid, fill the dish whatever its size. */
   const D0 = RMAX * Math.sqrt(Math.PI / (KMAX * 0.866));
   const RC = 0.44 * D0;
@@ -227,7 +235,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // ---------- drawing ----------
-  const PL = { x: 600, y: 70, w: 360, h: 430 };
+  const PL = tall ? { x: 96, y: 610, w: 470, h: 210 } : { x: 600, y: 70, w: 360, h: 430 };
   const SANS = 'Inter, ui-sans-serif, system-ui, sans-serif';
 
   function drawDish() {
@@ -270,12 +278,11 @@ import Try from '../../../components/sim/Try.astro';
     }
 
     // counts and the food bar
-    say(ctx, `${N} cells`, 34, 40, { colour: CELL, size: 24, weight: 700 });
-    say(ctx, `hour ${S.t.toFixed(1)}`, 34, 68, { colour: ink(0.6), size: 14 });
-    say(ctx, `the dish holds K = ${S.K}`, 506, 40, { colour: ink(0.6), size: 13, align: 'right' });
-    const bx = DX - 120, by = 552, bw = 240;
-    say(ctx, 'food and room left', bx, by - 16, { colour: ink(0.6), size: 12.5 });
-    say(ctx, `${Math.round(food * 100)}%`, bx + bw, by - 16, { colour: FOOD, size: 13, weight: 700, align: 'right' });
+    say(ctx, `${N} cells`, 34, 40, { colour: CELL, size: z(22), weight: 700 });
+    say(ctx, `hour ${fixed(S.t, 1)}`, 34, tall ? 80 : 68, { colour: ink(0.6), size: z(13) });
+    const bw = tall ? 300 : 240, bx = DX - bw / 2, by = DY + RMAX + (tall ? 56 : 34);
+    say(ctx, 'food and room left', bx, by - (tall ? 22 : 16), { colour: ink(0.6), size: z(12.5) });
+    say(ctx, `${Math.round(food * 100)}%`, bx + bw, by - (tall ? 22 : 16), { colour: FOOD, size: z(13), weight: 700, align: 'right' });
     ctx.fillStyle = ink(0.1);
     ctx.fillRect(bx, by, bw, 10);
     ctx.fillStyle = FOOD;
@@ -308,21 +315,22 @@ import Try from '../../../components/sim/Try.astro';
       const y = sc.y(v);
       ctx.strokeStyle = ink(0.07);
       ctx.beginPath(); ctx.moveTo(PL.x, y); ctx.lineTo(PL.x + PL.w, y); ctx.stroke();
-      say(ctx, fmt(v), PL.x - 8, y, { colour: ink(0.5), size: 11.5, align: 'right' });
+      say(ctx, fmt(v), PL.x - 8, y, { colour: ink(0.5), size: z(11.5), align: 'right' });
     }
     for (let t = 0; t <= TMAX; t += 5) {
       const x = tx(t);
       ctx.strokeStyle = ink(0.07);
       ctx.beginPath(); ctx.moveTo(x, PL.y); ctx.lineTo(x, PL.y + PL.h); ctx.stroke();
-      say(ctx, String(t), x, PL.y + PL.h + 14, { colour: ink(0.5), size: 11.5, align: 'center' });
+      if (tall && t % 10) continue;
+      say(ctx, String(t), x, PL.y + PL.h + z(14), { colour: ink(0.5), size: z(11.5), align: 'center' });
     }
     ctx.strokeStyle = ink(0.35);
     ctx.beginPath();
     ctx.moveTo(PL.x, PL.y); ctx.lineTo(PL.x, PL.y + PL.h); ctx.lineTo(PL.x + PL.w, PL.y + PL.h);
     ctx.stroke();
     ctx.restore();
-    say(ctx, 'hours', PL.x + PL.w, PL.y + PL.h + 34, { colour: ink(0.55), size: 12, align: 'right' });
-    say(ctx, S.log ? 'cells N (log scale)' : 'cells N', PL.x, PL.y - 20, { colour: ink(0.6), size: 12.5, weight: 600 });
+    say(ctx, 'hours', PL.x + PL.w, PL.y + PL.h + z(32), { colour: ink(0.55), size: z(12), align: 'right' });
+    say(ctx, S.log ? 'cells N (log scale)' : 'cells N', PL.x, PL.y - z(20), { colour: ink(0.6), size: z(12.5), weight: 600 });
 
     ctx.save();
     ctx.beginPath();
@@ -386,12 +394,13 @@ import Try from '../../../components/sim/Try.astro';
 
     // labels on the curves
     const p = pieces[pieces.length - 1];
-    say(ctx, `K = ${p.K}`, PL.x + PL.w - 4, sc.y(p.K) - 11, { colour: ink(0.65), size: 12.5, weight: 650, align: 'right', halo: inv(0.85) });
+    say(ctx, `K = ${p.K}`, PL.x + PL.w - 4, sc.y(p.K) - z(11), { colour: ink(0.65), size: z(12.5), weight: 650, align: 'right', halo: inv(0.85) });
     if (S.exp && exit) {
       const n = expo(pieceAt(S.t), S.t);
-      say(ctx, 'pure exponential', exit.x + 8, PL.y + 12, { colour: EXP, size: 12.5, weight: 650, halo: inv(0.85) });
-      say(ctx, `off the chart by hour ${exit.t.toFixed(0)}`, exit.x + 8, PL.y + 28, { colour: withAlpha(EXP, 0.85), size: 11.5, halo: inv(0.85) });
-      if (S.t > exit.t) say(ctx, `would be ${big(n)} by now`, exit.x + 8, PL.y + 44, { colour: withAlpha(EXP, 0.85), size: 11.5, halo: inv(0.85) });
+      // once it has left the chart, what it would have reached replaces when it left
+      const sub = S.t > exit.t ? `would be ${big(n)} by now` : `off the chart by hour ${exit.t.toFixed(0)}`;
+      say(ctx, 'pure exponential', exit.x + 8, PL.y + z(12), { colour: EXP, size: z(12.5), weight: 650, halo: inv(0.85) });
+      say(ctx, sub, exit.x + 8, PL.y + z(29), { colour: withAlpha(EXP, 0.85), size: z(11.5), halo: inv(0.85) });
     }
     // where growth is fastest
     const half = p.K / 2;
@@ -403,7 +412,7 @@ import Try from '../../../components/sim/Try.astro';
       ctx.beginPath();
       ctx.arc(x, y, 4.5, 0, Math.PI * 2);
       ctx.fill();
-      say(ctx, 'steepest at K/2', x + 10, y + 2, { colour: LOGI, size: 12.5, weight: 650, halo: inv(0.85) });
+      say(ctx, 'steepest at K/2', x + 10, y + 2, { colour: LOGI, size: z(12.5), weight: 650, halo: inv(0.85) });
     }
   }
   const big = (n: number) =>
@@ -424,11 +433,11 @@ import Try from '../../../components/sim/Try.astro';
     const food = 1 - N / S.K, rate = S.r * N * food;
     const T2 = food > 0.005 ? Math.log(2) / (S.r * food) : Infinity;
     setEq({
-      rule: ['\\frac{dN}{dt} =', ['r', RATE], ['N', CELL], ['\\left(1 - \\frac{N}{K}\\right)', FOOD]],
+      rule: ['\\frac{dN}{dt} =', 'r', ['N', CELL], ['\\left(1 - \\frac{N}{K}\\right)', FOOD]],
       live: [
         '\\frac{dN}{dt} =',
-        [S.r.toFixed(2), RATE], '\\times', [String(N), CELL], '\\times', [fixed(food, 2).replace('−', '-'), FOOD],
-        `= ${fixed(rate, 0).replace('−', '-')} \\text{ cells per hour}`,
+        S.r.toFixed(2), '\\times', [String(N), CELL], '\\times', [fixed(food, 2).replace('−', '-'), FOOD],
+        `= ${fixed(rate, 0).replace('−', '-')} \\text{ /h}`,
       ],
     });
     const exp = expo(pieceAt(S.t), S.t);
@@ -442,15 +451,15 @@ import Try from '../../../components/sim/Try.astro';
     const full = N / S.K;
     setResult({
       value: isFinite(T2) ? `${T2.toFixed(1)} h` : food < 0 ? 'shrinking' : 'never',
-      status: `${N} cells, ${Math.round(full * 100)}% of K · alone, a cell doubles every ${(Math.log(2) / S.r).toFixed(1)} h`,
+      status: `${N} cells · ${Math.round(full * 100)}% of K`,
       note:
         food < 0
-          ? 'More cells than the dish can feed: some die, and the count falls back towards K.'
+          ? 'More cells than the dish can feed: some die, and the count falls back to K.'
           : full < 0.2
-            ? 'Almost all the food is left, so every cell divides at nearly the full rate: the count doubles every ln 2 / r hours, like the exponential.'
+            ? 'Almost all the food is left: every cell divides at nearly the full rate.'
             : full < 0.8
-              ? 'Each new cell eats into what is left, so division slows: growth in cells per hour peaks at K/2 and then falls.'
-              : 'The dish is nearly full. A cell divides only when one gets food and room, so the doubling time runs off to infinity.',
+              ? 'Each new cell eats into what is left, so division slows after K/2.'
+              : 'The dish is nearly full, so the doubling time runs off to infinity.',
       colour: food < 0.02 ? FOOD : CELL,
     });
   }

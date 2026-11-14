@@ -11,7 +11,7 @@ import Try from '../../../components/sim/Try.astro';
 <SimLayout
   areaSlug="biology"
   title="Action Potential"
-  description="A neuron fires by opening sodium gates, then potassium gates, in that order. Below a threshold nothing happens; above it the spike is always the same, and it runs down the axon by setting off the next patch."
+  description="A neuron fires by opening sodium gates, then potassium gates. Below a threshold nothing happens; above it the spike is always the same, and it runs down the axon patch by patch."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -87,11 +87,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, textPx, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
   import { slider, result, readout, tries, transport, el } from '../../../lib/panel';
-  import { say, withAlpha, isLight, glows, lerp, clamp01 } from '../../../lib/story';
+  import { say as sayRaw, withAlpha, isLight, glows, lerp, clamp01 } from '../../../lib/story';
   import { Cable, HH, REST, THRESHOLD } from '../../../lib/action-potential';
 
   // A squid giant axon as a row of Hodgkin–Huxley patches. The electrode
@@ -105,6 +105,12 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
   const glow = glows();
+
+  // Labels are sized by what they show as on screen. On a phone only the
+  // essential ones are drawn (`full` is false), each grown to stay legible.
+  let compact = false;
+  const say: typeof sayRaw = (c, text, x, y, o = {}) =>
+    sayRaw(c, text, x, y, { ...o, size: textPx(canvas, o.size ?? 14, compact ? 9.5 : 11, compact ? 3 : 2) });
 
   let light = isLight(canvas);
   const pal = () =>
@@ -254,7 +260,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
 
     say(ctx, 'outside the cell', PX0 + 4, OUT.y0 - 12, { colour: ink(0.5), size: 12.5, weight: 600 });
-    say(ctx, 'inside the cell', PX0 + 4, IN.y1 - 6, { colour: ink(0.5), size: 12.5, weight: 600 });
+    say(ctx, 'inside the cell', PX0 + 4, IN.y1 - 4, { colour: ink(0.5), size: 12.5, weight: 600 });
     for (const q of IONS) ion(q.x + 5 * Math.sin(wob * q.w + q.ph), q.y + 4 * Math.sin(wob * 0.8 * q.w + 2 * q.ph), q.na, 0.85);
 
     membrane();
@@ -266,15 +272,15 @@ import Try from '../../../components/sim/Try.astro';
 
     const naState = m3 * h > 0.05 ? 'open' : h < 0.3 ? 'plugged' : 'closed';
     const kState = n4 > 0.08 ? 'open' : 'closed';
-    say(ctx, 'Na⁺ gate', naX[0], MY1 + 56, { colour: P.na, size: 12, weight: 650, align: 'center' });
-    say(ctx, naState, naX[0], MY1 + 71, { colour: ink(0.6), size: 11.5, align: 'center' });
-    say(ctx, 'K⁺ gate', kX[2], MY1 + 56, { colour: P.k, size: 12, weight: 650, align: 'center' });
-    say(ctx, kState, kX[2], MY1 + 71, { colour: ink(0.6), size: 11.5, align: 'center' });
-    say(ctx, 'pump', pumpX, MY1 + 56, { colour: ink(0.55), size: 12, weight: 600, align: 'center' });
+    if (!compact) {
+      const tag = { size: 12, weight: 650, halo: inv(0.85) };
+      say(ctx, `Na⁺ gate ${naState}`, PX0 + 4, MY1 + 58, { ...tag, colour: P.na });
+      say(ctx, `K⁺ gate ${kState}`, PX1 - 2, MY1 + 58, { ...tag, colour: P.k, align: 'right' });
+      say(ctx, 'pump', pumpX, MY1 + 58, { ...tag, colour: ink(0.6), align: 'center' });
+    }
 
     pipette(cable.pushing(E));
-    say(ctx, `${V < 0 ? '−' : '+'}${Math.abs(V).toFixed(0)} mV`, PX1 - 4, IN.y1 - 34, { colour: P.v, size: 28, weight: 700, align: 'right', halo: inv(0.8) });
-    say(ctx, 'inside minus outside', PX1 - 4, IN.y1 - 10, { colour: ink(0.5), size: 12, align: 'right' });
+    say(ctx, `${V < 0 ? '−' : '+'}${Math.abs(V).toFixed(0)} mV`, PX1 - 4, IN.y1 - 22, { colour: P.v, size: compact ? 42 : 28, weight: 700, align: 'right', halo: inv(0.8) });
   }
 
   function membrane() {
@@ -414,13 +420,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     ctx.stroke();
     ctx.restore();
-    say(ctx, 'electrode', x + 40, FRAME.y1 - 14, { colour: ink(0.5), size: 12 });
+    if (!compact) say(ctx, 'electrode', x + 42, FRAME.y1 - 14, { colour: ink(0.5), size: 12, halo: inv(0.8) });
     if (!on) return;
     for (let j = 0; j < 7; j++) {
       const a = j * 0.9 + wob * 3, r = 10 + ((wob * 40 + j * 9) % 34);
       say(ctx, '+', x + r * Math.cos(a), y - 4 + r * Math.sin(a) * 0.7, { colour: P.push, size: 15, weight: 800, align: 'center', alpha: 1 - r / 46 });
     }
-    say(ctx, 'push', x + 34, y + 4, { colour: P.push, size: 13, weight: 700 });
   }
 
   // ---------- the trace at the electrode ----------
@@ -431,17 +436,16 @@ import Try from '../../../components/sim/Try.astro';
   const tx = (s: number) => G.x0 + (s / SW) * (G.x1 - G.x0);
 
   function plot() {
-    say(ctx, 'voltage at the electrode', G.x0, G.vy0 - 24, { colour: ink(0.8), size: 13.5, weight: 650 });
+    say(ctx, compact ? 'voltage, mV' : 'voltage at the electrode, mV', G.x0, G.vy0 - 20, { colour: ink(0.8), size: 13.5, weight: 650 });
     ctx.save();
     ctx.strokeStyle = ink(0.14);
     ctx.lineWidth = 1;
     ctx.strokeRect(G.x0 + 0.5, G.vy0 + 0.5, G.x1 - G.x0, G.vy1 - G.vy0);
     for (const v of [40, 0, -40, -80]) {
-      say(ctx, `${v < 0 ? '−' : v > 0 ? '+' : ''}${Math.abs(v)}`, G.x0 - 6, vy(v), { colour: ink(0.45), size: 11, align: 'right' });
+      if (!compact) say(ctx, `${v < 0 ? '−' : v > 0 ? '+' : ''}${Math.abs(v)}`, G.x0 - 6, vy(v), { colour: ink(0.45), size: 11, align: 'right' });
       ctx.strokeStyle = ink(v === 0 ? 0.14 : 0.06);
       ctx.beginPath(); ctx.moveTo(G.x0, vy(v)); ctx.lineTo(G.x1, vy(v)); ctx.stroke();
     }
-    say(ctx, 'mV', G.x0 - 6, G.vy0 + 8, { colour: ink(0.45), size: 11, align: 'right' });
     ctx.setLineDash([5, 5]);
     const guide = (v: number, c: string) => { ctx.strokeStyle = c; ctx.beginPath(); ctx.moveTo(G.x0, vy(v)); ctx.lineTo(G.x1, vy(v)); ctx.stroke(); };
     guide(HH.ENa, withAlpha(P.na, 0.5));
@@ -449,16 +453,18 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineWidth = 1.4;
     guide(THRESH_V, ink(0.55));
     ctx.restore();
-    say(ctx, 'where Na⁺ would stop: +50', G.x1 - 6, vy(HH.ENa) + 10, { colour: P.na, size: 11.5, align: 'right' });
-    say(ctx, 'where K⁺ would stop: −77', G.x1 - 6, vy(HH.EK) + 10, { colour: P.k, size: 11.5, align: 'right' });
-    say(ctx, 'threshold ≈ −53', G.x1 - 6, vy(THRESH_V) - 9, { colour: ink(0.75), size: 11.5, weight: 600, align: 'right', halo: inv(0.8) });
+    if (!compact) {
+      say(ctx, 'Na⁺ stops flowing: +50', G.x1 - 6, vy(HH.ENa) + 11, { colour: P.na, size: 11.5, align: 'right' });
+      say(ctx, 'K⁺ stops flowing: −77', G.x1 - 6, vy(HH.EK) - 10, { colour: P.k, size: 11.5, align: 'right' });
+    }
+    say(ctx, compact ? 'threshold' : 'threshold ≈ −53', G.x1 - 6, vy(THRESH_V) - 10, { colour: ink(0.75), size: 11.5, weight: 600, align: 'right', halo: inv(0.8) });
 
     // older sweeps stay as faint traces, for comparing spikes
     sweeps.forEach((s, j) => trace(s, j === sweeps.length - 1));
-    if (!sweeps.length) say(ctx, 'press Stimulate, or click anywhere', (G.x0 + G.x1) / 2, vy(-20), { colour: ink(0.5), size: 13, align: 'center' });
+    if (!sweeps.length) say(ctx, compact ? 'press Stimulate' : 'press Stimulate, or click anywhere', (G.x0 + G.x1) / 2, vy(-20), { colour: ink(0.5), size: 13, align: 'center' });
 
     // the push, as a strip under the trace
-    say(ctx, 'push', G.x0 - 6, (G.sy0 + G.sy1) / 2, { colour: P.push, size: 11.5, weight: 600, align: 'right' });
+    if (!compact) say(ctx, 'push', G.x0 - 6, (G.sy0 + G.sy1) / 2, { colour: P.push, size: 11.5, weight: 600, align: 'right' });
     const s = sweep();
     if (s) {
       for (const p of s.pushes) {
@@ -479,13 +485,15 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
 
     // the gates: m and h of Na⁺, n of K⁺
-    say(ctx, 'gate variables', G.x0, G.gy0 - 14, { colour: ink(0.7), size: 12.5, weight: 600 });
+    if (!compact) say(ctx, 'gates: share open', G.x0, G.gy0 - 14, { colour: ink(0.7), size: 12.5, weight: 600 });
     ctx.save();
     ctx.strokeStyle = ink(0.14);
     ctx.strokeRect(G.x0 + 0.5, G.gy0 + 0.5, G.x1 - G.x0, G.gy1 - G.gy0);
     ctx.restore();
-    say(ctx, '1', G.x0 - 6, G.gy0 + 6, { colour: ink(0.45), size: 11, align: 'right' });
-    say(ctx, '0', G.x0 - 6, G.gy1 - 4, { colour: ink(0.45), size: 11, align: 'right' });
+    if (!compact) {
+      say(ctx, '1', G.x0 - 6, G.gy0 + 6, { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, '0', G.x0 - 6, G.gy1 - 4, { colour: ink(0.45), size: 11, align: 'right' });
+    }
     if (s && s.len > 1) {
       const curve = (a: Float32Array, c: string, dash: number[]) => {
         ctx.save();
@@ -501,17 +509,19 @@ import Try from '../../../components/sim/Try.astro';
       curve(s.h, P.na, [5, 4]);
       curve(s.n, P.k, []);
       // names at the pen, kept apart when the curves run together
-      const k = s.len - 1, xe = Math.min(tx(k * DS) + 6, G.x1 - 30);
+      const k = s.len - 1, xe = Math.min(tx(k * DS) + 6, G.x1 - 30), gap = textPx(canvas, 12.5, compact ? 9.5 : 11, compact ? 3 : 2);
       const labs = [
         { t: 'm', y: gy(s.m[k]), c: P.na },
         { t: 'h', y: gy(s.h[k]), c: P.na },
         { t: 'n', y: gy(s.n[k]), c: P.k },
       ].sort((a, b) => a.y - b.y);
-      for (let j = 1; j < 3; j++) labs[j].y = Math.max(labs[j].y, labs[j - 1].y + 12);
-      for (const l of labs) say(ctx, l.t, xe, Math.min(l.y, G.gy1 + 30), { colour: l.c, size: 12.5, weight: 700, halo: inv(0.85) });
+      for (let j = 1; j < 3; j++) labs[j].y = Math.max(labs[j].y, labs[j - 1].y + gap);
+      const lift = Math.max(0, labs[2].y - (G.gy1 + 8));
+      for (const l of labs) say(ctx, l.t, xe, l.y - lift, { colour: l.c, size: 12.5, weight: 700, halo: inv(0.85) });
     }
-    for (let ms = 0; ms <= SW; ms += 5) say(ctx, `${ms}`, tx(ms), G.gy1 + 13, { colour: ink(0.45), size: 11, align: 'center' });
-    say(ctx, 'ms after the push', G.x1, G.gy1 + 28, { colour: ink(0.45), size: 11, align: 'right' });
+    if (compact) return;
+    for (let ms = 0; ms <= SW; ms += 5) say(ctx, `${ms}`, tx(ms), G.gy1 + 14, { colour: ink(0.45), size: 11, align: 'center' });
+    say(ctx, 'ms', G.x0 - 6, G.gy1 + 14, { colour: ink(0.45), size: 11, align: 'right' });
   }
 
   function trace(s: Sweep, current: boolean) {
@@ -535,7 +545,8 @@ import Try from '../../../components/sim/Try.astro';
     const { i, v } = peakOf(s);
     if (s.len > i + 4 && (v > 0 || !s.pushes[0].away)) {
       const lab = `${fmtX(s.pushes[0].x)}×${s.pushes[0].away ? ' elsewhere' : ''}`;
-      if (v > 0) say(ctx, lab, tx(i * DS) + 8, vy(v) - 6 + (current ? 0 : 12), { colour: P.push, size: 12, weight: 700, alpha: current ? 1 : 0.6, halo: inv(0.85) });
+      if (compact) { /* the push strength is in the readout */ }
+      else if (v > 0) say(ctx, lab, tx(i * DS) + 8, vy(v) - 6 + (current ? 0 : 12), { colour: P.push, size: 12, weight: 700, alpha: current ? 1 : 0.6, halo: inv(0.85) });
       else say(ctx, lab, tx(i * DS), vy(v) - 14, { colour: P.push, size: 12, weight: 700, align: 'center', alpha: current ? 1 : 0.6, halo: inv(0.85) });
     }
   }
@@ -572,7 +583,7 @@ import Try from '../../../components/sim/Try.astro';
         if (Math.random() < b) parts.push({ x, born: wob, na: false, dx: (Math.random() - 0.5) * 8 });
       }
 
-    say(ctx, 'the whole axon: click it to push at that spot', AX.x1, AX.y - AX.r - 30, { colour: ink(0.75), size: 12.5, weight: 600, align: 'right' });
+    say(ctx, 'the whole axon', AX.x1, AX.y - AX.r - 26, { colour: ink(0.75), size: 12.5, weight: 600, align: 'right' });
     // the tube, coloured by the voltage in each patch
     ctx.save();
     ctx.beginPath();
@@ -626,16 +637,16 @@ import Try from '../../../components/sim/Try.astro';
     // a scale bar
     const cm = (AX.x1 - AX.x0) / (N * cable.dx);
     ctx.save();
+    if (compact) ctx.globalAlpha = 0;
     ctx.strokeStyle = ink(0.45);
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(AX.x1 - 2 * cm, AX.y + AX.r + 24); ctx.lineTo(AX.x1, AX.y + AX.r + 24); ctx.stroke();
     ctx.restore();
-    say(ctx, '2 cm', AX.x1 - cm, AX.y + AX.r + 36, { colour: ink(0.5), size: 11.5, align: 'center' });
-    say(ctx, 'squid giant axon, 0.5 mm across', AX.x1 - 2 * cm - 14, AX.y + AX.r + 24, { colour: ink(0.5), size: 12, align: 'right' });
+    if (!compact) say(ctx, '2 cm', AX.x1 - 2 * cm - 10, AX.y + AX.r + 24, { colour: ink(0.5), size: 11.5, align: 'right' });
 
     // the voltage along it, now
     const py = (v: number) => PROF.y0 + ((50 - v) / 140) * (PROF.y1 - PROF.y0);
-    say(ctx, 'voltage along the axon, now', AX.x0, PROF.y0 - 14, { colour: ink(0.75), size: 12.5, weight: 600 });
+    say(ctx, compact ? 'voltage along it' : 'voltage along the axon, now', AX.x0, PROF.y0 - 16, { colour: ink(0.75), size: 12.5, weight: 600 });
     ctx.save();
     ctx.setLineDash([5, 5]);
     ctx.strokeStyle = ink(0.12);
@@ -647,8 +658,10 @@ import Try from '../../../components/sim/Try.astro';
     for (let i = 0; i < N; i++) i ? ctx.lineTo(cx(i), py(V[i])) : ctx.moveTo(cx(i), py(V[i]));
     ctx.stroke();
     ctx.restore();
-    say(ctx, '0 mV', AX.x1 + 4, py(0), { colour: ink(0.45), size: 10.5 });
-    say(ctx, 'rest', AX.x1 + 4, py(REST.V), { colour: ink(0.45), size: 10.5 });
+    if (!compact) {
+      say(ctx, '0 mV', AX.x1 - 2, py(0) - 10, { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, 'rest', AX.x1 - 2, py(REST.V) - 10, { colour: ink(0.45), size: 11, align: 'right' });
+    }
   }
 
   // ---------- numbers ----------
@@ -669,13 +682,13 @@ import Try from '../../../components/sim/Try.astro';
     });
     const s = sweep();
     if (!s) {
-      setResult({ value: '…', status: 'no push yet', note: 'At rest the inside sits 65 mV below the outside: K⁺ leaking out leaves negative charge behind.' });
+      setResult({ value: '…', status: 'no push yet', note: 'At rest the inside sits 65 mV below the outside: K⁺ leaks out through the few open K⁺ gates and leaves negative charge behind. Press Stimulate to push.' });
       return;
     }
     const { i, v } = peakOf(s), settled = s.len > i + 20 || s.len === NSW;
-    const fired = spikesIn(s), x = s.pushes.map((p) => `${fmtX(p.x)}×${p.away ? ' (elsewhere on the axon)' : ''}`).join(' then ');
+    const fired = spikesIn(s), x = s.pushes.map((p) => `${fmtX(p.x)}×${p.away ? ' (elsewhere)' : ''}`).join(' then ');
     if (!settled) {
-      setResult({ value: '…', status: `push of ${x} the threshold`, note: 'Watching the voltage at the electrode.' });
+      setResult({ value: '…', status: `push of ${x} the threshold`, note: 'Watching the voltage at the electrode. If the push lifts it past about −53 mV, the Na⁺ gates open faster than the K⁺ gates can answer, and it fires.' });
       return;
     }
     const tooSoon = s.pushes.length > 1 && fired < s.pushes.length;
@@ -685,7 +698,7 @@ import Try from '../../../components/sim/Try.astro';
       note: tooSoon
         ? 'The second push came while the Na⁺ gates were still plugged (h low) and the K⁺ gates still open: the membrane is refractory and cannot fire again yet.'
         : v > 0
-          ? 'The voltage heads for +50 mV, where Na⁺ would stop flowing in, and turns back before it gets there as the Na⁺ gates plug and the K⁺ gates open. Any push past the threshold gives this same peak.'
+          ? 'The voltage heads for +50 mV, where Na⁺ would stop flowing in, and turns back as the Na⁺ gates plug and the K⁺ gates open. Any push past the threshold gives this peak.'
           : 'Below the threshold the voltage rises only as far as the push takes it, then leaks back to rest, and the axon further along never notices.',
       colour: v > 0 ? P.v : undefined,
     });
@@ -706,6 +719,7 @@ import Try from '../../../components/sim/Try.astro';
     const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
     last = now;
     light = isLight(canvas);
+    compact = isCompact(canvas);
     P = pal();
     const live = tp.running() ? dt : 0;
     wob += live;

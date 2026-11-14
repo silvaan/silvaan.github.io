@@ -281,7 +281,7 @@ export function headline(
   // on a phone the sentence moves under the stage (see storyNote) and only
   // the chapter number and title stay in the picture
   const compact = isCompact(canvas);
-  const numPx = textPx(canvas, 13, compact ? 9 : 12);
+  const numPx = textPx(canvas, 13, compact ? 9.5 : 12, compact ? 3 : 2);
   const titlePx = textPx(canvas, 26, compact ? 11 : 15);
   const bodyPx = textPx(canvas, 16, 12);
   const titleY = numPx * 0.6 + titlePx * 0.9 + 1;
@@ -294,7 +294,7 @@ export function headline(
   ctx.fillText(`${o.index + 1} / ${o.count}`, x, y + dy);
   if (o.manual) {
     const w0 = ctx.measureText(`${o.index + 1} / ${o.count}`).width + 12;
-    const pillPx = textPx(canvas, 12, compact ? 9 : 11);
+    const pillPx = textPx(canvas, 12, compact ? 9.5 : 11, compact ? 3 : 2);
     ctx.font = `500 ${pillPx}px ${SANS}`;
     const label = compact ? 'paused · Run resumes' : 'you are in control · Run resumes the tour';
     const lw = ctx.measureText(label).width + pillPx * 1.3;
@@ -334,7 +334,7 @@ export function say(
 ) {
   ctx.save();
   const canvas = ctx.canvas as HTMLCanvasElement;
-  ctx.font = `${o.weight ?? 500} ${textPx(canvas, o.size ?? 14, isCompact(canvas) ? 9 : 11)}px ${SANS}`;
+  ctx.font = `${o.weight ?? 500} ${textPx(canvas, o.size ?? 14, isCompact(canvas) ? 9.5 : 11, isCompact(canvas) ? 3 : 2)}px ${SANS}`;
   ctx.textAlign = o.align ?? 'left';
   ctx.textBaseline = 'middle';
   ctx.globalAlpha = o.alpha ?? 1;

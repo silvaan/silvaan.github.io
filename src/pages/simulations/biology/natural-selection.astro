@@ -92,7 +92,7 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact, textPx } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { segmented, slider, check, transport, result, readout, tries } from '../../../lib/panel';
@@ -107,16 +107,24 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
   const N = 120, KILL = 0.5, USER_K = 12;
 
   const canvas = document.getElementById('ns') as HTMLCanvasElement;
+  // a phone gets the bark on top and the two plots under it, so the labels can stay readable
+  const tall = isCompact(canvas);
+  if (tall) {
+    canvas.width = 600;
+    canvas.height = 980;
+  }
   const { ctx, W, H } = setupCanvas(canvas, () => draw());
+  /** Label sizes and the gaps around them: the phone layout is shown at about half size. */
+  const z = (size: number) => (tall ? size * 1.6 : size);
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
   const setRows = readout();
 
   const S = { b: 0.8, k: 15, m: 0.04, pace: 1, you: false };
-  const SCENE = { x: 24, y: 52, w: 560, h: 524 };
-  const HIST = { x: 652, y: 52, w: 324, h: 160 };
-  const HISTORY = { x: 652, y: 318, w: 324, h: 226 };
+  const SCENE = tall ? { x: 20, y: 52, w: 560, h: 400 } : { x: 24, y: 52, w: 560, h: 524 };
+  const HIST = tall ? { x: 70, y: 540, w: 490, h: 120 } : { x: 652, y: 52, w: 324, h: 160 };
+  const HISTORY = tall ? { x: 84, y: 790, w: 476, h: 130 } : { x: 652, y: 318, w: 324, h: 226 };
 
   // ---------- colour ----------
   const PALE = [238, 232, 216], DARK = [36, 33, 31];
@@ -337,8 +345,7 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
 
   // ---------- drawing ----------
   function drawScene() {
-    say(ctx, 'moths on the bark', SCENE.x, 22, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, `generation ${gen} · ${moths.filter((m) => m.fate === 'alive' || m.fate === 'young').length} moths`, SCENE.x + SCENE.w, 22, { colour: ink(0.5), size: 12, align: 'right' });
+    say(ctx, 'moths on the bark', SCENE.x, 24, { colour: ink(0.85), size: z(15), weight: 650 });
     ctx.save();
     roundRect(ctx, SCENE.x, SCENE.y, SCENE.w, SCENE.h, 10);
     ctx.clip();
@@ -387,12 +394,14 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
           : phase === 'breed'
             ? `The ${moths.filter((m) => m.fate === 'old').length} survivors breed`
             : `Generation ${gen}`;
-    ctx.font = '600 13px Inter, ui-sans-serif, system-ui, sans-serif';
-    const tw = ctx.measureText(text).width + 24, cx = SCENE.x + SCENE.w / 2, cy = SCENE.y + SCENE.h - 24;
+    // measured at the size say() will draw it, so the pill always fits the words
+    const fs = textPx(canvas, z(13), tall ? 9 : 11);
+    ctx.font = `600 ${fs}px Inter, ui-sans-serif, system-ui, sans-serif`;
+    const tw = ctx.measureText(text).width + fs * 1.8, ph = fs * 2, cx = SCENE.x + SCENE.w / 2, cy = SCENE.y + SCENE.h - ph;
     ctx.fillStyle = 'rgba(14,15,19,0.78)';
-    roundRect(ctx, cx - tw / 2, cy - 13, tw, 26, 13);
+    roundRect(ctx, cx - tw / 2, cy - ph / 2, tw, ph, ph / 2);
     ctx.fill();
-    say(ctx, text, cx, cy, { colour: phase === 'wait' || phase === 'hunt' ? '#fca5a5' : '#e8e9ec', size: 13, weight: 600, align: 'center' });
+    say(ctx, text, cx, cy, { colour: phase === 'wait' || phase === 'hunt' ? '#fca5a5' : '#e8e9ec', size: z(13), weight: 600, align: 'center' });
   }
 
   /** A strip of the shade scale, left to right or bottom to top. */
@@ -409,7 +418,7 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
 
   const BINS = 25;
   function drawHist() {
-    say(ctx, 'shades in the population', HIST.x, 22, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, 'shades in the population', tall ? SCENE.x : HIST.x, tall ? HIST.y - z(40) : 24, { colour: ink(0.85), size: z(15), weight: 650 });
     const alive = new Array(BINS).fill(0), gone = new Array(BINS).fill(0);
     const bin = (z: number) => Math.min(BINS - 1, Math.floor(z * BINS));
     for (const m of moths) {
@@ -422,7 +431,7 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
       const y = base - v * sy;
       ctx.strokeStyle = ink(0.06);
       ctx.beginPath(); ctx.moveTo(HIST.x, y); ctx.lineTo(HIST.x + HIST.w, y); ctx.stroke();
-      say(ctx, String(v), HIST.x - 8, y, { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, String(v), HIST.x - 8, y, { colour: ink(0.45), size: z(11), align: 'right' });
     }
     for (let i = 0; i < BINS; i++) {
       const x = HIST.x + i * bw + 1, h1 = alive[i] * sy, h2 = gone[i] * sy;
@@ -444,8 +453,8 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
     ctx.strokeStyle = ink(0.3);
     ctx.beginPath(); ctx.moveTo(HIST.x, base + 0.5); ctx.lineTo(HIST.x + HIST.w, base + 0.5); ctx.stroke();
     shadeStrip(HIST.x, base + 5, HIST.w, 10, false);
-    say(ctx, 'pale', HIST.x, base + 28, { colour: ink(0.5), size: 11 });
-    say(ctx, 'dark', HIST.x + HIST.w, base + 28, { colour: ink(0.5), size: 11, align: 'right' });
+    say(ctx, 'pale', HIST.x, base + 15 + z(13), { colour: ink(0.5), size: z(11) });
+    say(ctx, 'dark', HIST.x + HIST.w, base + 15 + z(13), { colour: ink(0.5), size: z(11), align: 'right' });
     // the bark's shade, and the mean of the living
     const bx = HIST.x + S.b * HIST.w;
     ctx.strokeStyle = BARK;
@@ -453,7 +462,7 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
     ctx.setLineDash([5, 4]);
     ctx.beginPath(); ctx.moveTo(bx, HIST.y - 4); ctx.lineTo(bx, base + 15); ctx.stroke();
     ctx.setLineDash([]);
-    say(ctx, 'bark', bx, HIST.y - 12, { colour: BARK, size: 12, weight: 650, align: 'center', halo: inv(0.9) });
+    say(ctx, 'bark', bx, HIST.y - z(12), { colour: BARK, size: z(12), weight: 650, align: 'center', halo: inv(0.9) });
     const zs = moths.filter((m) => m.fate === 'alive' || m.fate === 'young').map((m) => m.z);
     const { mean } = stats(zs);
     if (!isNaN(mean)) {
@@ -462,12 +471,12 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
       ctx.beginPath();
       ctx.moveTo(mx, base + 16); ctx.lineTo(mx - 6, base + 26); ctx.lineTo(mx + 6, base + 26);
       ctx.fill();
-      if (Math.abs(mx - bx) > 40) say(ctx, 'mean', mx, base + 36, { colour: MEAN, size: 11, weight: 650, align: 'center' });
+      if (Math.abs(mx - bx) > z(40)) say(ctx, 'mean', mx, base + 26 + z(10), { colour: MEAN, size: z(11), weight: 650, align: 'center' });
     }
   }
 
   function drawHistory() {
-    say(ctx, 'mean shade, generation by generation', HISTORY.x, HISTORY.y - 32, { colour: ink(0.85), size: 15, weight: 650 });
+    say(ctx, 'mean shade, generation by generation', tall ? SCENE.x : HISTORY.x, HISTORY.y - z(32), { colour: ink(0.85), size: z(15), weight: 650 });
     const span = 40, g1 = Math.max(span, gen), g0 = g1 - span;
     const gx = (g: number) => HISTORY.x + ((g - g0) / span) * HISTORY.w;
     const zy = (z: number) => HISTORY.y + HISTORY.h - z * HISTORY.h;
@@ -475,15 +484,15 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
     for (const v of [0, 0.5, 1]) {
       ctx.strokeStyle = ink(0.06);
       ctx.beginPath(); ctx.moveTo(HISTORY.x, zy(v)); ctx.lineTo(HISTORY.x + HISTORY.w, zy(v)); ctx.stroke();
-      say(ctx, v.toFixed(1), HISTORY.x - 20, zy(v), { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, v.toFixed(1), HISTORY.x - 20, zy(v), { colour: ink(0.45), size: z(11), align: 'right' });
     }
     ctx.strokeStyle = ink(0.25);
     ctx.beginPath();
     ctx.moveTo(HISTORY.x, HISTORY.y); ctx.lineTo(HISTORY.x, HISTORY.y + HISTORY.h); ctx.lineTo(HISTORY.x + HISTORY.w, HISTORY.y + HISTORY.h);
     ctx.stroke();
     for (let g = Math.ceil(g0 / 10) * 10; g <= g1; g += 10)
-      say(ctx, String(g), gx(g), HISTORY.y + HISTORY.h + 12, { colour: ink(0.45), size: 11, align: 'center' });
-    say(ctx, 'generation', HISTORY.x + HISTORY.w, HISTORY.y + HISTORY.h + 28, { colour: ink(0.45), size: 11, align: 'right' });
+      say(ctx, String(g), gx(g), HISTORY.y + HISTORY.h + z(12), { colour: ink(0.45), size: z(11), align: 'center' });
+    say(ctx, 'generation', HISTORY.x + HISTORY.w, HISTORY.y + HISTORY.h + z(28), { colour: ink(0.45), size: z(11), align: 'right' });
 
     const shown = history.filter((h) => h.gen >= g0);
     ctx.save();
@@ -599,7 +608,8 @@ const MEAN = '#a78bfa', BARK = '#d69e5c', EATEN = '#f87171';
   canvas.addEventListener('pointerdown', (e) => {
     const p = toScene(e);
     if (!S.you || phase !== 'wait' || eatenZ.length >= USER_K || !inScene(p)) return;
-    let best: Moth | null = null, bd = 16 * 16;
+    // a finger needs a bigger target than a mouse
+    let best: Moth | null = null, bd = (tall ? 26 : 16) ** 2;
     for (const m of living()) {
       const d = (m.x - p.x) ** 2 + (m.y - p.y) ** 2;
       if (d < bd) { bd = d; best = m; }

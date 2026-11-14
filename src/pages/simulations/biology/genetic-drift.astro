@@ -12,7 +12,7 @@ import Predict from '../../../components/sim/Predict.astro';
 <SimLayout
   areaSlug="biology"
   title="Genetic Drift"
-  description="In a small population a gene can win or vanish by luck alone. Follow many populations at once, shrink them and watch chance decide, then add a little selection and see when it starts to beat the dice."
+  description="In a small population a gene can win or vanish by luck alone. Watch forty populations drift, then add a little selection and see when it starts to beat the dice."
   shortcuts={['run', 'reset', 'fullscreen']}
 >
   <div class="sim">
@@ -85,9 +85,9 @@ import Predict from '../../../components/sim/Predict.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { slider, transport, result, readout, tries } from '../../../lib/panel';
   import { say, withAlpha, isLight } from '../../../lib/story';
 
@@ -101,6 +101,12 @@ import Predict from '../../../components/sim/Predict.astro';
   const REPS = 40;
 
   const canvas = document.getElementById('drift') as HTMLCanvasElement;
+  // a phone gets the two pictures stacked, so the labels can stay readable
+  const tall = isCompact(canvas);
+  if (tall) {
+    canvas.width = 600;
+    canvas.height = 790;
+  }
   const { ctx, W, H } = setupCanvas(canvas);
   const { ink } = stageInk(canvas);
   const setEq = equation();
@@ -109,9 +115,14 @@ import Predict from '../../../components/sim/Predict.astro';
   let light = isLight(canvas);
 
   // ---------- layout ----------
-  const POP = { x: 28, y: 76, w: 360, h: 468 };
-  const PLOT = { x: 470, y: 64, w: 420, h: 380 };
-  const HIST = { x: 916, w: 52 };
+  const POP = tall ? { x: 20, y: 52, w: 560, h: 250 } : { x: 28, y: 56, w: 360, h: 488 };
+  const PLOT = tall ? { x: 64, y: 384, w: 430, h: 246 } : { x: 470, y: 64, w: 420, h: 380 };
+  const HIST = tall ? { x: 524, w: 52 } : { x: 916, w: 52 };
+  /** Label sizes: a phone's stacked layout is shown at half size, so its labels start bigger. */
+  const z = (size: number) => (tall ? size * 1.6 : size);
+  /** The key under the plot, and the running score under that. */
+  const KEY_Y = PLOT.y + PLOT.h + (tall ? 66 : 30);
+  const SCORE_Y = KEY_Y + (tall ? 44 : 44);
 
   // ---------- the populations ----------
   const P = { n: 50, p0: 0.3, s: 0 };
@@ -257,8 +268,7 @@ import Predict from '../../../components/sim/Predict.astro';
   function population() {
     const n = P.n, cw = POP.w / n, rh = Math.max(3, Math.min(26, cw)), dots = n <= 50;
     const shown = Math.min(rows.length, Math.floor(POP.h / rh));
-    say(ctx, `one population of ${n}`, POP.x, 30, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, dots ? 'one row per generation, each child joined to its parent' : 'one row per generation, children next to their parents', POP.x, 52, { colour: ink(0.5), size: 12 });
+    say(ctx, `one population of ${n}`, POP.x, POP.y - 24, { colour: ink(0.85), size: z(15), weight: 650 });
     const yOf = (k: number) => POP.y + POP.h - (shown - k) * rh + rh / 2;
     const xOf = (i: number) => POP.x + (i + 0.5) * cw;
     const first = rows.length - shown;
@@ -310,11 +320,11 @@ import Predict from '../../../components/sim/Predict.astro';
       ctx.restore();
     }
     const k = count[0];
-    say(ctx, `generation ${gen}`, POP.x, POP.y + POP.h + 22, { colour: ink(0.55), size: 12.5 });
-    say(ctx, `A ${Math.round((100 * k) / n)}%`, POP.x + POP.w, POP.y + POP.h + 22, { colour: AC, size: 13, weight: 650, align: 'right' });
+    say(ctx, `generation ${gen}`, POP.x, POP.y + POP.h + 22, { colour: ink(0.55), size: z(12.5) });
+    say(ctx, `A ${Math.round((100 * k) / n)}%`, POP.x + POP.w, POP.y + POP.h + 22, { colour: AC, size: z(13), weight: 650, align: 'right' });
     if (fixedAt[0] >= 0) {
       const won = k === n;
-      say(ctx, won ? 'A took over' : 'A is gone', POP.x + POP.w / 2, POP.y + POP.h + 22, { colour: won ? AC : BC, size: 13, weight: 700, align: 'center' });
+      say(ctx, won ? 'A took over' : 'A is gone', POP.x + POP.w / 2, POP.y + POP.h + 22, { colour: won ? AC : BC, size: z(13), weight: 700, align: 'center' });
     }
   }
 
@@ -334,11 +344,11 @@ import Predict from '../../../components/sim/Predict.astro';
     ctx.beginPath();
     for (const p of [0.25, 0.5, 0.75, 1]) { ctx.moveTo(PLOT.x, Y(p)); ctx.lineTo(PLOT.x + PLOT.w, Y(p)); }
     ctx.stroke();
-    for (const p of [0, 0.5, 1]) say(ctx, `${p * 100}%`, PLOT.x - 6, Y(p), { colour: ink(0.45), size: 12, align: 'right' });
+    for (const p of [0, 0.5, 1]) say(ctx, `${p * 100}%`, PLOT.x - 6, Y(p), { colour: ink(0.45), size: z(12), align: 'right' });
     const divs = [25, 50, 500, 5000, 50000].includes(span) ? 5 : 4;
-    for (let k = 0; k <= divs; k++) say(ctx, String((span * k) / divs), X((span * k) / divs), PLOT.y + PLOT.h + 13, { colour: ink(0.45), size: 12, align: 'center' });
-    say(ctx, 'generations', PLOT.x + PLOT.w, PLOT.y + PLOT.h + 30, { colour: ink(0.45), size: 12, align: 'right' });
-    say(ctx, `share of A in ${REPS} populations`, PLOT.x, PLOT.y - 18 + 4, { colour: ink(0.55), size: 12 });
+    for (let k = 0; k <= divs; k++) say(ctx, String((span * k) / divs), X((span * k) / divs), PLOT.y + PLOT.h + 14, { colour: ink(0.45), size: z(12), align: 'center' });
+    say(ctx, 'generations', PLOT.x + PLOT.w, PLOT.y + PLOT.h + (tall ? 38 : 32), { colour: ink(0.45), size: z(12), align: 'right' });
+    say(ctx, `share of A in ${REPS} populations`, PLOT.x, PLOT.y - 24, { colour: ink(0.7), size: z(13), weight: 600 });
 
     // where it started, and where selection alone would take it
     const p0 = startCount() / P.n;
@@ -363,7 +373,7 @@ import Predict from '../../../components/sim/Predict.astro';
     }
     ctx.restore();
     // a key for the two dashed lines, under the plot
-    const ky = PLOT.y + PLOT.h + 30;
+    const ky = KEY_Y;
     const key = (x: number, c: string, lw: number, text: string) => {
       ctx.save();
       ctx.setLineDash([4, 5]);
@@ -373,10 +383,10 @@ import Predict from '../../../components/sim/Predict.astro';
       ctx.moveTo(x, ky); ctx.lineTo(x + 24, ky);
       ctx.stroke();
       ctx.restore();
-      say(ctx, text, x + 30, ky, { colour: ink(0.6), size: 12 });
+      say(ctx, text, x + 30, ky, { colour: ink(0.6), size: z(12) });
     };
     key(PLOT.x, ink(0.3), 1, 'start');
-    if (P.s > 0) key(PLOT.x + 80, ink(0.75), 1.8, 'selection alone, no chance');
+    if (P.s > 0) key(PLOT.x + (tall ? 120 : 90), ink(0.75), 1.8, 'selection alone');
 
     // the forty, coloured by how they ended; the one on the left on top
     const stride = Math.max(1, Math.floor(span / 220));
@@ -415,16 +425,15 @@ import Predict from '../../../components/sim/Predict.astro';
     ctx.fillRect(HIST.x, Y(1) - 7, Math.min(HIST.w, won * unit), 7);
     ctx.fillStyle = BC;
     ctx.fillRect(HIST.x, Y(0), Math.min(HIST.w, lost * unit), 7);
-    say(ctx, `${won} won`, HIST.x, Y(1) - 18, { colour: AC, size: 12.5, weight: 650 });
-    say(ctx, `${lost} lost`, HIST.x, Y(0) + 20, { colour: BC, size: 12.5, weight: 650 });
+    say(ctx, `${won} won`, HIST.x, Y(1) - 18, { colour: AC, size: z(12.5), weight: 650 });
+    say(ctx, `${lost} lost`, HIST.x, Y(0) + 20, { colour: BC, size: z(12.5), weight: 650 });
 
-    // the score so far against the theory
+    // the score so far, as a bar with a tick at the theory
     const done = tally.won + tally.lost, u = fixProb(startCount() / P.n);
-    const y0 = PLOT.y + PLOT.h + 70;
-    say(ctx, done ? `A took over in ${tally.won} of ${done} finished populations: ${Math.round((100 * tally.won) / done)}%` : 'no population has finished yet', PLOT.x, y0, { colour: ink(0.85), size: 14, weight: 650 });
-    say(ctx, P.s > 0 ? `theory with selection: ${Math.round(u * 100)}%   ·   chance alone would give ${Math.round((100 * startCount()) / P.n)}%` : `theory for chance alone: the starting share, ${Math.round(u * 100)}%`, PLOT.x, y0 + 24, { colour: ink(0.6), size: 13 });
-    // a bar for the score with a tick at the theory
-    const bx = PLOT.x, bw = PLOT.w, by = y0 + 44;
+    const y0 = SCORE_Y;
+    say(ctx, done ? `A won ${tally.won} of ${done}: ${Math.round((100 * tally.won) / done)}%` : 'none finished yet', PLOT.x, y0, { colour: ink(0.85), size: z(14), weight: 650 });
+    say(ctx, `theory ${Math.round(u * 100)}%`, PLOT.x + PLOT.w, y0, { colour: ink(0.6), size: z(13), align: 'right' });
+    const bx = PLOT.x, bw = PLOT.w, by = y0 + 18;
     ctx.fillStyle = withAlpha(BC, 0.35);
     ctx.fillRect(bx, by, bw, 10);
     if (done) {
@@ -448,8 +457,8 @@ import Predict from '../../../components/sim/Predict.astro';
         ['P(\\text{A wins}) \\approx \\frac{1-e^{-2Nsp_0}}{1-e^{-2Ns}}', AC],
       ],
       live: [
-        `N = ${P.n}\\quad s = ${P.s}\\quad Ns = ${ns.toFixed(ns < 1 ? 2 : 1)}\\quad p_0 = ${(startCount() / P.n).toFixed(2)}\\quad`,
-        [`P(\\text{A wins}) \\approx ${u.toFixed(2)}`, AC],
+        `Ns = ${fixed(ns, 2)}\\quad`,
+        [`P(\\text{A wins}) \\approx ${fixed(u, 2)}`, AC],
       ],
     });
     const open = fixedAt.filter((g) => g < 0).length;
@@ -459,20 +468,20 @@ import Predict from '../../../components/sim/Predict.astro';
       'r-a': `${count[0]} of ${P.n}`,
       'r-batch': `${won} / ${REPS - open - won} / ${open}`,
       'r-total': String(done),
-      'r-ns': ns.toFixed(ns < 1 ? 2 : 1),
+      'r-ns': fixed(ns, 2),
     });
-    const regime = ns < 0.5 ? 'drift rules' : ns < 3 ? 'drift and selection about even' : 'selection rules';
+    const regime = ns < 0.5 ? 'drift rules' : ns < 3 ? 'a close call' : 'selection rules';
     setResult({
       value: done ? `${Math.round((100 * tally.won) / done)}%` : '…',
-      status: `of ${done} populations · theory ${Math.round(u * 100)}% · N·s = ${ns.toFixed(ns < 1 ? 2 : 1)}, ${regime}`,
+      status: `of ${done} · theory ${Math.round(u * 100)}% · ${regime}`,
       note:
         P.s === 0
-          ? 'With no selection every individual is equally likely to be the ancestor of everyone in the end, so A wins as often as its starting share.'
+          ? 'No selection: A wins about as often as its starting share.'
           : ns < 0.5
-            ? 'The edge is real but each generation the dice move the share by more than selection does, so A wins hardly more often than chance alone.'
+            ? 'The edge is real, but chance moves the share more than selection does.'
             : ns < 3
-              ? 'Selection and chance are of similar size: A is favoured, but it still loses often.'
-              : 'Selection beats the dice: the populations follow the dashed curve and A almost always takes over, unless it starts with very few copies.',
+              ? 'Selection and chance are about even: A is favoured but still often lost.'
+              : 'Selection beats the dice: A follows the dashed curve and almost always wins.',
       colour: AC,
     });
   }

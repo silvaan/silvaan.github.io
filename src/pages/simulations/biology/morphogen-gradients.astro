@@ -87,11 +87,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact, screenScale } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
   import { stageInk } from '../../../lib/draw';
   import { slider, check, transport, result, readout, tries } from '../../../lib/panel';
-  import { say, withAlpha, isLight } from '../../../lib/story';
+  import { say as sayRaw, withAlpha, isLight } from '../../../lib/story';
   import { Gradient, Molecules, crossings, at, lambda, L, NX, DX } from '../../../lib/morphogen-gradients';
 
   // Synthesis, diffusion and degradation along a 500 µm embryo: the field is
@@ -102,6 +102,10 @@ import Try from '../../../components/sim/Try.astro';
   const AMBER = '#f59e0b', TEAL = '#14b8a6', PINK = '#ec4899', VIOLET = '#8b5cf6';
 
   const canvas = document.getElementById('mg') as HTMLCanvasElement;
+  // a phone shows the picture at a third of its size: it gets a taller frame,
+  // so the embryo and the plot have room for labels it can still read
+  const tall = isCompact(canvas);
+  if (tall) canvas.height = 840;
   const { ctx, W, H } = setupCanvas(canvas);
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
@@ -115,8 +119,19 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- layout ----------
   const EX0 = 70, EX1 = 930, SX = (EX1 - EX0) / L;
-  const ECX = (EX0 + EX1) / 2, EA = (EX1 - EX0) / 2, ECY = 128, EB = 82, EN = 2.4;
-  const PY0 = 298, PY1 = 528;
+  const ECX = (EX0 + EX1) / 2, EA = (EX1 - EX0) / 2, ECY = tall ? 165 : 128, EB = tall ? 100 : 82, EN = 2.4;
+  const PY0 = tall ? 450 : 298, PY1 = tall ? 760 : 528;
+  /** The row with the clock and the key, between the embryo and the plot. */
+  const CLOCK_Y = tall ? 375 : 262;
+  /** The labels under the embryo. */
+  const UNDER_Y = ECY + EB + (tall ? 32 : 20);
+
+  /** A size that still reads on a phone; on a desktop `say` already keeps it at 11px or more. */
+  let compact = tall, scale = screenScale(canvas);
+  const fs = (s: number) => (compact ? Math.max(s, (9.5 * Math.max(1, s / 12.5)) / scale) : s);
+  function say(c: CanvasRenderingContext2D, text: string, x: number, y: number, o: Parameters<typeof sayRaw>[4] = {}) {
+    sayRaw(c, text, x, y, { ...o, size: fs(o.size ?? 14) });
+  }
   /** Top of the plot: room for the source, eased when it changes. */
   let cmax = 1.2;
   const X = (um: number) => EX0 + um * SX;
@@ -138,7 +153,7 @@ import Try from '../../../components/sim/Try.astro';
   // the cells: a staggered sheet clipped to the embryo
   type Cell = { px: number; py: number; x: number; r: number; g: number; col: number[] };
   const cells: Cell[] = [];
-  const CW = (EX1 - EX0) / 48, RH = 19, NR = 8;
+  const CW = (EX1 - EX0) / 48, RH = tall ? 23 : 19, NR = 8;
   for (let row = 0; row < NR; row++) {
     const py = ECY + (row - (NR - 1) / 2) * RH;
     for (let px = EX0 + (row % 2 ? CW : CW / 2); px < EX1; px += CW) {
@@ -220,6 +235,8 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- drawing ----------
   function draw() {
+    compact = isCompact(canvas);
+    scale = screenScale(canvas);
     ctx.clearRect(0, 0, W, H);
     embryo();
     guides();
@@ -254,9 +271,9 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   function embryo() {
-    say(ctx, 'head end (anterior)', EX0, 22, { colour: ink(0.6), size: 12.5 });
-    say(ctx, `an embryo ${L} µm long, like a fruit fly egg`, ECX, 22, { colour: ink(0.45), size: 12, align: 'center' });
-    say(ctx, 'tail end (posterior)', EX1, 22, { colour: ink(0.6), size: 12.5, align: 'right' });
+    const ty = tall ? 34 : 22;
+    say(ctx, compact ? 'head' : 'head end (anterior)', EX0, ty, { colour: ink(0.6), size: 12.5 });
+    say(ctx, compact ? 'tail' : 'tail end (posterior)', EX1, ty, { colour: ink(0.6), size: 12.5, align: 'right' });
     shape();
     ctx.fillStyle = ink(0.04);
     ctx.fill();
@@ -311,9 +328,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.arc(gx, ECY, 13, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      say(ctx, 'graft', Math.min(EX1 - 2, gx + 18), ECY + EB + 2, { colour: MOL(), size: 12, weight: 600, align: 'right', halo: inv(0.85) });
+      if (!compact) say(ctx, 'graft', Math.min(EX1 - 2, gx + 18), ECY + EB + 2, { colour: MOL(), size: 12, weight: 600, align: 'right', halo: inv(0.85) });
     }
-    say(ctx, 'source', EX0 + 2, ECY + EB + 2, { colour: MOL(), size: 12, weight: 600, align: 'left' });
+    if (!compact) say(ctx, 'source', EX0 + 2, ECY + EB + 2, { colour: MOL(), size: 12, weight: 600, align: 'left' });
   }
 
   type Mark = { x: number; hi: boolean };
@@ -322,7 +339,8 @@ import Try from '../../../components/sim/Try.astro';
 
   /** Where the live curve crosses each threshold, carried up to the embryo. */
   function guides() {
-    let lastX = -99;
+    let lastX = -999;
+    const gap = compact ? 3.2 * fs(12.5) : 38;
     for (const m of marks(field.c)) {
       const px = X(m.x), col = m.hi ? BLUE() : RED();
       ctx.save();
@@ -334,8 +352,8 @@ import Try from '../../../components/sim/Try.astro';
       ctx.lineTo(px, ECY - EB - 2);
       ctx.stroke();
       ctx.restore();
-      const lx = Math.max(px, lastX + 38);
-      say(ctx, pct(m.x), lx, ECY + EB + 20, { colour: col, size: 12.5, weight: 650, align: 'center', halo: inv(0.9) });
+      const lx = Math.max(px, lastX + gap);
+      say(ctx, pct(m.x), lx, UNDER_Y, { colour: col, size: 12.5, weight: 650, align: 'center', halo: inv(0.9) });
       lastX = lx;
     }
   }
@@ -354,13 +372,13 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(x0, PY0 - 4); ctx.lineTo(x0, PY1); ctx.lineTo(x1, PY1);
     ctx.stroke();
     for (const c of ticks) say(ctx, c.toFixed(1), x0 - 8, Y(c), { colour: ink(0.45), size: 11.5, align: 'right' });
-    say(ctx, 'C', x0 - 8, PY0 - 14, { colour: MOL(), size: 13, weight: 700, align: 'right' });
+    say(ctx, 'C', x0 - 8, PY0 - (compact ? 26 : 14), { colour: MOL(), size: 13, weight: 700, align: 'right' });
     ctx.strokeStyle = ink(0.3);
     ctx.beginPath();
     for (let p = 0; p <= 100; p += 10) { ctx.moveTo(X((p / 100) * L), PY1); ctx.lineTo(X((p / 100) * L), PY1 + 4); }
     ctx.stroke();
-    for (let p = 0; p <= 100; p += 20) say(ctx, `${p}%`, X((p / 100) * L), PY1 + 16, { colour: ink(0.45), size: 11.5, align: 'center' });
-    say(ctx, `position along the embryo, % of its length (100% = ${L} µm)`, ECX, PY1 + 40, { colour: ink(0.5), size: 12, align: 'center' });
+    for (let p = 0; p <= 100; p += compact ? 50 : 20) say(ctx, `${p}%`, X((p / 100) * L), PY1 + (compact ? 34 : 16), { colour: ink(0.45), size: 11.5, align: p === 100 && compact ? 'right' : 'center' });
+    if (!compact) say(ctx, `position along the embryo, % of its ${L} µm length`, ECX, PY1 + 40, { colour: ink(0.5), size: 12, align: 'center' });
 
     // molecules counted in bins, to compare with the curve
     const bins = 25, bw = L / bins, cnt = new Array(bins).fill(0);
@@ -401,8 +419,8 @@ import Try from '../../../components/sim/Try.astro';
       ctx.beginPath();
       for (const d of [-3, 0, 3]) { ctx.moveTo(x1 + 9, y + d); ctx.lineTo(x1 + 21, y + d); }
       ctx.stroke();
-      const lab = hi ? `blue above ${T.toFixed(2)}` : `red below ${T.toFixed(2)}`;
-      say(ctx, lab, x1 - 4, y + (hi ? -10 : 10), { colour: col, size: 12, weight: 650, align: 'right', halo: inv(0.85) });
+      const lab = compact ? T.toFixed(2) : hi ? `blue above ${T.toFixed(2)}` : `red below ${T.toFixed(2)}`;
+      say(ctx, lab, x1 - 4, y + (hi ? -1 : 1) * (compact ? 22 : 10), { colour: col, size: 12, weight: 650, align: 'right', halo: inv(0.85) });
     }
     // the settled curve, dashed, and the curve now
     const curve = (c: ArrayLike<number>) => {
@@ -464,24 +482,23 @@ import Try from '../../../components/sim/Try.astro';
 
   /** Time since the source came on, against the lifetime 1/k. */
   function clock() {
-    const y = 262, life = 1 / field.k, span = 4 * life, bx = 260, bw = 220;
+    const y = CLOCK_Y, life = 1 / field.k, span = 4 * life, bx = compact ? 330 : 190, bw = compact ? 600 : 220;
     say(ctx, `t = ${minutes(field.time)} min`, EX0, y, { colour: ink(0.85), size: 13.5, weight: 650 });
-    say(ctx, settled() ? 'settled' : 'still building', EX0 + 98, y, { colour: settled() ? ink(0.6) : MOL(), size: 12.5, weight: 600 });
     ctx.fillStyle = ink(0.08);
     ctx.fillRect(bx, y - 4, bw, 8);
     ctx.fillStyle = withAlpha(MOL(), 0.8);
     ctx.fillRect(bx, y - 4, bw * Math.min(1, field.time / span), 8);
-    ctx.strokeStyle = PINK;
+    // a tick at each lifetime 1/k: the bands settle after a few
+    ctx.strokeStyle = ink(0.55);
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (let j = 1; j <= 3; j++) { ctx.moveTo(bx + (bw * j) / 4, y - 7); ctx.lineTo(bx + (bw * j) / 4, y + 7); }
     ctx.stroke();
-    say(ctx, '1/k', bx + bw / 4, y + 15, { colour: PINK, size: 11.5, weight: 600, align: 'center' });
-    say(ctx, '2/k', bx + bw / 2, y + 15, { colour: PINK, size: 11.5, align: 'center' });
-    say(ctx, '3/k', bx + (3 * bw) / 4, y + 15, { colour: PINK, size: 11.5, align: 'center' });
-    say(ctx, `lifetime 1/k = ${minutes(life)} min`, bx + bw + 12, y, { colour: PINK, size: 12, weight: 600 });
+    if (compact) return;
+    say(ctx, '1/k', bx + bw / 4, y + 16, { colour: ink(0.55), size: 11.5, align: 'center' });
+    say(ctx, settled() ? 'settled' : 'still building', bx + bw + 12, y, { colour: settled() ? ink(0.6) : MOL(), size: 12.5, weight: 600 });
     // key for the plot
-    let kx = 652;
+    let kx = 640;
     ctx.strokeStyle = MOL();
     ctx.lineWidth = 2.6;
     ctx.beginPath(); ctx.moveTo(kx, y); ctx.lineTo(kx + 20, y); ctx.stroke();
@@ -497,7 +514,7 @@ import Try from '../../../components/sim/Try.astro';
     kx += 80;
     ctx.fillStyle = withAlpha(MOL(), 0.3);
     ctx.fillRect(kx, y - 6, 12, 12);
-    say(ctx, 'molecules counted', kx + 18, y, { colour: ink(0.6), size: 12 });
+    say(ctx, 'molecules', kx + 18, y, { colour: ink(0.6), size: 12 });
   }
 
   // ---------- numbers ----------
@@ -590,9 +607,9 @@ import Try from '../../../components/sim/Try.astro';
     return { x: ((e.clientX - b.left) / b.width) * W, y: ((e.clientY - b.top) / b.height) * H };
   }
   function grab(p: { x: number; y: number }): '' | 'hi' | 'lo' {
-    if (p.x < EX0 - 10 || p.x > EX1 + 30) return '';
+    if (p.x < EX0 - 10 || p.x > EX1 + 40) return '';
     const dh = Math.abs(p.y - Y(P.hi)), dl = Math.abs(p.y - Y(P.lo));
-    if (Math.min(dh, dl) > 9) return '';
+    if (Math.min(dh, dl) > (compact ? 28 : 9)) return '';
     return dh <= dl ? 'hi' : 'lo';
   }
   let drag: '' | 'hi' | 'lo' = '';

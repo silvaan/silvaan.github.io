@@ -23,7 +23,7 @@ import Try from '../../../components/sim/Try.astro';
           width="1000"
           height="580"
           role="img"
-          aria-label="A reaction chamber where enzymes with a binding pocket catch substrate molecules, change them into product and let go, beside the Michaelis–Menten curve of reaction rate against substrate with the measured rate on it, a row showing which enzymes are busy, and the rate over time."
+          aria-label="A reaction chamber where enzymes with a binding pocket catch substrate molecules, change them into product and let go, beside the Michaelis–Menten curve of reaction rate against substrate with the measured rate on it and a row showing which enzymes are busy."
         ></canvas>
       </div>
       <Caption
@@ -85,9 +85,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { slider, check, result, readout, tries, transport } from '../../../lib/panel';
   import { say, withAlpha, isLight, glows, clamp01 } from '../../../lib/story';
   import { Chamber, K, K0, type Enz, type Mol } from '../../../lib/enzyme-kinetics';
@@ -96,7 +96,13 @@ import Try from '../../../components/sim/Try.astro';
   // Michaelis–Menten curve the same rates predict. The measured rate is just
   // products counted over the last ten seconds, and it lands on the curve.
   const canvas = document.getElementById('ek') as HTMLCanvasElement;
+  // On a phone the chamber and the curve stack in a tall picture instead of
+  // shrinking side by side; the chamber keeps its size, so the chemistry is the same.
+  const STACK = isCompact(canvas);
+  if (STACK) { canvas.width = 600; canvas.height = 990; }
   const { ctx, W, H } = setupCanvas(canvas);
+  /** Text size that stays readable on a phone, where only the key labels are drawn. */
+  const sz = (size: number) => (STACK ? Math.max(size * 1.4, 17) : size);
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
   const setResult = result();
@@ -111,7 +117,7 @@ import Try from '../../../components/sim/Try.astro';
   let P = pal();
 
   // ---------- the chamber ----------
-  const CH = { x: 18, y: 18, w: 560, h: 540 };
+  const CH = { x: STACK ? 20 : 18, y: 18, w: 560, h: 540 };
   const NI = 60, WINDOW = 10;
   const S = { s: 40, e: 6, inh: false };
   const ch = new Chamber(CH.w, CH.h);
@@ -119,8 +125,6 @@ import Try from '../../../components/sim/Try.astro';
   let since = 0;
   /** Settled measurements for the current enzymes and inhibitor: [S] → rate. */
   let measured = new Map<number, number>();
-  /** The rate over time, sampled twice a second. */
-  let history: { t: number; v: number }[] = [];
 
   /** The curve before the constants last changed, and the measurements that went with it, fading. */
   let ghost: { vm: number; km: number } | null = null;
@@ -130,7 +134,6 @@ import Try from '../../../components/sim/Try.astro';
     ch.reset(S.s, S.e, S.inh ? NI : 0);
     since = 0;
     measured = new Map();
-    history = [];
     ghost = null;
     fading = [];
   }
@@ -206,7 +209,7 @@ import Try from '../../../components/sim/Try.astro';
   }
 
   // ---------- the curve ----------
-  const G = { x0: 650, x1: 966, y0: 40, y1: 282 };
+  const G = STACK ? { x0: 70, x1: 570, y0: 640, y1: 820 } : { x0: 650, x1: 966, y0: 76, y1: 372 };
   const SMAX = 300;
   let ymax = 1;
   const gx = (s: number) => G.x0 + (s / SMAX) * (G.x1 - G.x0);
@@ -214,7 +217,7 @@ import Try from '../../../components/sim/Try.astro';
 
   function curve() {
     ymax = 1.25 * Math.max(vmax(), ghost?.vm ?? 0, 0.8);
-    say(ctx, 'rate against substrate', G.x0, G.y0 - 22, { colour: ink(0.85), size: 13.5, weight: 650 });
+    say(ctx, 'rate against substrate', G.x0 - (STACK ? 50 : 0), G.y0 - (STACK ? 34 : 46), { colour: ink(0.85), size: sz(13.5), weight: 650 });
     ctx.save();
     ctx.strokeStyle = ink(0.2);
     ctx.lineWidth = 1;
@@ -222,11 +225,11 @@ import Try from '../../../components/sim/Try.astro';
     ctx.moveTo(G.x0, G.y0); ctx.lineTo(G.x0, G.y1); ctx.lineTo(G.x1, G.y1);
     ctx.stroke();
     ctx.restore();
-    for (let s = 0; s <= SMAX; s += 100) say(ctx, String(s), gx(s), G.y1 + 12, { colour: ink(0.45), size: 11, align: 'center' });
-    say(ctx, '[S], free substrate molecules', G.x1, G.y1 + 28, { colour: ink(0.55), size: 11.5, align: 'right' });
+    for (let s = 0; s <= SMAX; s += 100) say(ctx, String(s), gx(s), G.y1 + (STACK ? 18 : 13), { colour: ink(0.45), size: sz(11), align: 'center' });
+    say(ctx, STACK ? '[S]' : '[S], free substrate molecules', G.x1, G.y1 + (STACK ? 42 : 30), { colour: ink(0.55), size: sz(11.5), align: 'right' });
     const step = ymax > 24 ? 8 : ymax > 10 ? 4 : ymax > 4 ? 2 : ymax > 2 ? 1 : 0.5;
-    for (let v = step; v < ymax; v += step) say(ctx, String(v), G.x0 - 6, gy(v), { colour: ink(0.45), size: 11, align: 'right' });
-    say(ctx, 'products per second', G.x0 + 6, G.y0 - 4, { colour: ink(0.55), size: 11.5 });
+    for (let v = step * (STACK ? 2 : 1); v < ymax; v += step * (STACK ? 2 : 1)) say(ctx, String(v), G.x0 - 8, gy(v), { colour: ink(0.45), size: sz(11), align: 'right' });
+    if (!STACK) say(ctx, 'products per second', G.x0, G.y0 - 24, { colour: ink(0.55), size: 11.5 });
 
     const km = kmApp(), vm = vmax();
     // Vmax and Km
@@ -241,9 +244,9 @@ import Try from '../../../components/sim/Try.astro';
       ctx.stroke();
     }
     ctx.restore();
-    say(ctx, `Vmax = ${vm.toFixed(1)}/s: every enzyme busy`, G.x1 - 4, gy(vm) - 10, { colour: ink(0.7), size: 11.5, align: 'right' });
-    if (km < SMAX) say(ctx, `Km ≈ ${km.toFixed(0)}`, Math.min(gx(km) + 6, G.x1 - 62), G.y1 - 10, { colour: ink(0.7), size: 11.5, weight: 600 });
-    say(ctx, 'half', G.x0 + 4, gy(vm / 2) - 8, { colour: ink(0.5), size: 11 });
+    say(ctx, STACK ? `Vmax ${fixed(vm, 1)}/s` : `Vmax = ${fixed(vm, 1)}/s: every enzyme busy`, G.x1 - 4, gy(vm) - (STACK ? 14 : 10), { colour: ink(0.7), size: sz(11.5), align: 'right' });
+    if (km < SMAX) say(ctx, `Km ≈ ${fixed(km, 0)}`, Math.min(gx(km) + 6, G.x1 - (STACK ? 110 : 70)), G.y1 - (STACK ? 14 : 10), { colour: ink(0.7), size: sz(11.5), weight: 600 });
+    if (!STACK) say(ctx, 'half', G.x0 + 4, gy(vm / 2) - 8, { colour: ink(0.5), size: 11 });
 
     const line = (km: number, c: string, dash: number[], w: number, vm = vmax()) => {
       ctx.save();
@@ -260,11 +263,11 @@ import Try from '../../../components/sim/Try.astro';
     };
     if (S.inh) {
       line(ch.km(), withAlpha(P.p, 0.4), [4, 4], 1.6);
-      say(ctx, 'without inhibitor', gx(70), gy(mm(70, ch.km())) - 12, { colour: withAlpha(P.p, 0.75), size: 11, align: 'center', halo: inv(0.8) });
+      if (!STACK) say(ctx, 'without inhibitor', gx(70), gy(mm(70, ch.km())) - 12, { colour: withAlpha(P.p, 0.75), size: 11, align: 'center', halo: inv(0.8) });
     }
     if (ghost) {
       line(ghost.km, ink(0.35), [2, 4], 1.6, ghost.vm);
-      say(ctx, 'before', gx(290), gy(mm(290, ghost.km, ghost.vm)) + (ghost.vm > vm ? -12 : 12), { colour: ink(0.55), size: 11, align: 'right', halo: inv(0.8) });
+      if (!STACK) say(ctx, 'before', gx(290), gy(mm(290, ghost.km, ghost.vm)) + (ghost.vm > vm ? -12 : 12), { colour: ink(0.55), size: 11, align: 'right', halo: inv(0.8) });
     }
     line(km, P.p, [], 2.4);
 
@@ -294,95 +297,75 @@ import Try from '../../../components/sim/Try.astro';
       ctx.beginPath(); ctx.arc(gx(S.s), gy(v), 9, 0, 6.283); ctx.stroke();
       ctx.restore();
       const right = gx(S.s) < G.x1 - 90;
-      say(ctx, settled ? 'measured' : `measuring… ${Math.ceil(WINDOW - (ch.t - since))} s`, gx(S.s) + (right ? 14 : -14), gy(v) - 16, {
+      if (!STACK) say(ctx, settled ? 'measured' : `measuring… ${Math.ceil(WINDOW - (ch.t - since))} s`, gx(S.s) + (right ? 14 : -14), gy(v) - 16, {
         colour: ink(0.8), size: 11.5, weight: 600, align: right ? 'left' : 'right', halo: inv(0.85),
       });
     }
   }
 
   // ---------- who is busy ----------
-  const B = { x0: 650, y: 352 };
+  const B = STACK ? { x0: 20, y: 930 } : { x0: 650, y: 482 };
   function busyRow() {
     const n = ch.enz.length, busy = ch.busy(), blocked = ch.blocked();
-    say(ctx, 'each enzyme, right now', B.x0, B.y - 30, { colour: ink(0.85), size: 13.5, weight: 650 });
+    say(ctx, 'each enzyme, right now', B.x0, B.y - (STACK ? 36 : 30), { colour: ink(0.85), size: sz(13.5), weight: 650 });
     const gap = Math.min(26, (G.x1 - B.x0) / n);
-    ch.enz.forEach((e, k) => {
-      const x = B.x0 + 11 + k * gap;
-      ctx.save();
-      ctx.strokeStyle = withAlpha(P.enz, 0.9);
-      ctx.lineWidth = 1.6;
-      ctx.fillStyle = e.m?.kind === 'S' ? P.s : e.m?.kind === 'I' ? P.i : 'transparent';
-      ctx.beginPath(); ctx.arc(x, B.y, 9, 0, 6.283); ctx.fill(); ctx.stroke();
-      ctx.restore();
-    });
-    const theory = S.s / (kmApp() + S.s);
-    say(ctx, `${busy} of ${n} working${blocked ? `, ${blocked} blocked` : ''}`, B.x0, B.y + 26, { colour: ink(0.75), size: 12.5, weight: 600 });
-    say(ctx, `on average [S] / (Km + [S]) = ${(100 * theory).toFixed(0)}% are working`, B.x0, B.y + 44, { colour: ink(0.55), size: 12 });
-  }
-
-  // ---------- the rate over time ----------
-  const T = { x0: 650, x1: 966, y0: 452, y1: 548, span: 40 };
-  function timeline() {
-    say(ctx, `rate over the last ${T.span} s`, T.x0, T.y0 - 16, { colour: ink(0.85), size: 13.5, weight: 650 });
-    const ty = (v: number) => T.y1 - (v / ymax) * (T.y1 - T.y0);
-    const tx = (t: number) => T.x1 - ((ch.t - t) / T.span) * (T.x1 - T.x0);
-    ctx.save();
-    ctx.strokeStyle = ink(0.2);
-    ctx.beginPath(); ctx.moveTo(T.x0, T.y0); ctx.lineTo(T.x0, T.y1); ctx.lineTo(T.x1, T.y1); ctx.stroke();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = ink(0.35);
-    ctx.beginPath(); ctx.moveTo(T.x0, ty(vmax())); ctx.lineTo(T.x1, ty(vmax())); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.strokeStyle = P.p;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    let first = true;
-    for (const h of history) {
-      if (h.t < ch.t - T.span) continue;
-      first ? ctx.moveTo(tx(h.t), ty(h.v)) : ctx.lineTo(tx(h.t), ty(h.v));
-      first = false;
+    if (STACK) {
+      // on a phone the count sits beside the row, and the average is left to the result under the stage
+      ch.enz.forEach((e, k) => enzymeDot(B.x0 + 11 + k * gap, e));
+      say(ctx, `${busy} of ${n} working${blocked ? `, ${blocked} blocked` : ''}`, B.x0 + 11 + n * gap + 12, B.y, { colour: ink(0.75), size: sz(12.5), weight: 600 });
+      return;
     }
-    ctx.stroke();
+    ch.enz.forEach((e, k) => enzymeDot(B.x0 + 11 + k * gap, e));
+    const theory = S.s / (kmApp() + S.s);
+    say(ctx, `${busy} of ${n} working${blocked ? `, ${blocked} blocked` : ''}`, B.x0, B.y + 28, { colour: ink(0.75), size: 12.5, weight: 600 });
+    say(ctx, `on average [S] / (Km + [S]) = ${fixed(100 * theory, 0)}%`, B.x0, B.y + 50, { colour: ink(0.55), size: 12 });
+  }
+  /** One enzyme in the row: filled with what sits in its pocket. */
+  function enzymeDot(x: number, e: Enz) {
+    ctx.save();
+    ctx.strokeStyle = withAlpha(P.enz, 0.9);
+    ctx.lineWidth = 1.6;
+    ctx.fillStyle = e.m?.kind === 'S' ? P.s : e.m?.kind === 'I' ? P.i : 'transparent';
+    ctx.beginPath(); ctx.arc(x, B.y, 9, 0, 6.283); ctx.fill(); ctx.stroke();
     ctx.restore();
-    say(ctx, 'Vmax', T.x0 + 4, ty(vmax()) - 8, { colour: ink(0.5), size: 11 });
-    say(ctx, 'now', T.x1, T.y1 + 12, { colour: ink(0.45), size: 11, align: 'right' });
-    say(ctx, 'products per second, counted over 3 s', T.x0, T.y1 + 12, { colour: ink(0.45), size: 11 });
   }
 
   // ---------- numbers ----------
-  const f1 = (v: number) => (Number.isNaN(v) ? '…' : v.toFixed(1));
+  const f1 = (v: number) => (Number.isNaN(v) ? '…' : fixed(v, 1));
+  /** A number padded with invisible digits, so the line keeps its width as it changes. */
+  const pad = (v: string, n: number) => v + (v.length < n ? `\\phantom{${'0'.repeat(n - v.length)}}` : '');
   function panelText() {
     const km = kmApp(), vm = vmax(), vt = mm(S.s), v = ch.rate(WINDOW, since), settled = ch.t - since >= WINDOW;
     const busy = ch.busy(), n = ch.enz.length;
     setEq({
       rule: [
-        ['v', P.p], ' = ', '\\dfrac{V_{max}\\,', ['[S]', P.s], '}{', S.inh ? 'K_m\\,(1 + [I]/K_i)' : 'K_m', ' + ', ['[S]', P.s], '}',
+        ['v', P.p], ' = ', '\\dfrac{V_{max}\\,', ['[S]', P.s], '}{K_m + ', ['[S]', P.s], '}',
         '\\qquad V_{max} = k_{cat}\\,[E] \\qquad K_m = \\dfrac{k_{off} + k_{cat}}{k_{on}}',
       ],
       live: [
-        [`v = ${f1(vt)}`, P.p], `= \\dfrac{${vm.toFixed(1)} \\times ${S.s}}{${km.toFixed(0)} + ${S.s}}\\text{ per s}`,
-        [`\\quad\\text{measured } ${f1(v)}\\text{ per s}`, P.p],
+        [`v = ${pad(f1(vt), 4)}`, P.p], `= \\dfrac{${fixed(vm, 1)} \\times ${S.s}}{${fixed(km, 0)} + ${S.s}}\\text{ per s}`,
+        [`\\quad\\text{measured } ${Number.isNaN(v) ? f1(v) : pad(f1(v), 4)}\\text{ per s}`, P.p],
       ],
     });
     setRows({
       'r-busy': `${busy} of ${n}`,
       'r-blocked': S.inh ? `${ch.blocked()} of ${n}` : 'no inhibitor',
       'r-meas': settled ? `${f1(v)} per s` : `${f1(v)} per s, still settling`,
-      'r-theory': `${vt.toFixed(2)} per s`,
-      'r-km': `${km.toFixed(0)} molecules`,
-      'r-vmax': `${vm.toFixed(1)} per s`,
-      'r-kon': `${ch.kon().toFixed(4)} per s`,
+      'r-theory': `${fixed(vt, 2)} per s`,
+      'r-km': `${fixed(km, 0)} molecules`,
+      'r-vmax': `${fixed(vm, 1)} per s`,
+      'r-kon': `${fixed(ch.kon(), 4)} per s`,
     });
     const frac = S.s / (km + S.s);
     setResult({
-      value: Number.isNaN(v) ? '…' : `${v.toFixed(1)} per second`,
-      status: `${(100 * frac).toFixed(0)}% of the enzymes working on average · Vmax ${vm.toFixed(1)} per s · Km ${km.toFixed(0)} molecules${S.inh ? ' with the inhibitor' : ''}`,
+      value: Number.isNaN(v) ? '…' : `${fixed(v, 1)} per second`,
+      status: `${fixed(100 * frac, 0)}% of the enzymes working on average · Vmax ${fixed(vm, 1)} per s · Km ${fixed(km, 0)} molecules${S.inh ? ' with the inhibitor' : ''}`,
       note:
         frac < 0.3
-          ? 'Most enzymes are idle, waiting for substrate to find them: the rate grows almost in proportion to [S].'
+          ? 'Most enzymes are idle, waiting for substrate: the rate grows almost in proportion to [S].'
           : frac < 0.7
-            ? 'Around [S] = Km about half the enzymes are working at once and the rate is about half its maximum.'
-            : 'Nearly every enzyme is already working, so more substrate barely helps: the rate levels off at Vmax, which only more enzymes can raise.',
+            ? 'Around [S] = Km about half the enzymes are working and the rate is about half its maximum.'
+            : 'Nearly every enzyme is working, so more substrate barely helps: the rate levels off at Vmax.',
       colour: settled ? P.p : undefined,
     });
   }
@@ -401,9 +384,6 @@ import Try from '../../../components/sim/Try.astro';
       ch.step(dt / 2);
       if (ch.t >= nextSample) {
         nextSample = ch.t + 0.5;
-        const r = ch.rate(3);
-        if (!Number.isNaN(r)) history.push({ t: ch.t, v: r });
-        while (history.length && history[0].t < ch.t - T.span - 1) history.shift();
         if (ch.t - since >= WINDOW) measured.set(S.s, ch.rate(WINDOW, since));
       }
     }
@@ -411,7 +391,6 @@ import Try from '../../../components/sim/Try.astro';
     chamber();
     curve();
     busyRow();
-    timeline();
     if (tick++ % 8 === 0) panelText();
     requestAnimationFrame(loop);
   }
@@ -433,8 +412,8 @@ import Try from '../../../components/sim/Try.astro';
     changed();
   }
   const setE = slider('e', (v) => constants(() => { S.e = v; ch.setEnzymes(v); }));
-  const setKcat = slider('kcat', (v) => constants(() => (K.kcat = v)), (v) => `${v.toFixed(1)} per s`);
-  const setKoff = slider('koff', (v) => constants(() => (K.koff = v)), (v) => `${v.toFixed(1)} per s`);
+  const setKcat = slider('kcat', (v) => constants(() => (K.kcat = v)), (v) => `${fixed(v, 1)} per s`);
+  const setKoff = slider('koff', (v) => constants(() => (K.koff = v)), (v) => `${fixed(v, 1)} per s`);
   const setStick = slider('stick', (v) => constants(() => (K.stick = v)), (v) => `${Math.round(v * 100)}%`);
   const setInh = check('inh', (on) => { S.inh = on; ch.set('I', on ? NI : 0); changed(); measured = new Map(); });
 

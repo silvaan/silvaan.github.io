@@ -113,11 +113,11 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact, screenScale, textPx } from '../../../lib/sim';
   import { equation, type Part } from '../../../lib/equation';
   import { stageInk, roundRect } from '../../../lib/draw';
   import { segmented, result, readout, tries } from '../../../lib/panel';
-  import { story, headline, say, withAlpha, mix, isLight, ease, beat, lerp, clamp01 } from '../../../lib/story';
+  import { story, headline, say as sayRaw, withAlpha, mix, isLight, ease, beat, lerp, clamp01 } from '../../../lib/story';
 
   // A gene read top to bottom, each row a translation of the one above:
   // the DNA ladder, its mRNA copy, and the chain of amino acids. Every
@@ -186,6 +186,13 @@ import Try from '../../../components/sim/Try.astro';
   const setResult = result();
   const setRows = readout();
   let light = isLight(canvas);
+  /** On a phone the 1000-wide picture shows at a third of its size: only the
+   *  labels that carry the story stay, drawn large enough to read. */
+  let compact = isCompact(canvas), scale = screenScale(canvas);
+  const fs = (s: number) => (compact ? Math.max(s, (9.5 * Math.max(1, s / 12.5)) / scale) : s);
+  function say(c: CanvasRenderingContext2D, text: string, x: number, y: number, o: Parameters<typeof sayRaw>[4] = {}) {
+    sayRaw(c, text, x, y, { ...o, size: fs(o.size ?? 14) });
+  }
   /** Property colours as text: a shade darker on white. */
   const kc = (k: Kind) => (light ? mix(KCOL[k], '#000000', 0.32) : KCOL[k]);
 
@@ -228,9 +235,10 @@ import Try from '../../../components/sim/Try.astro';
       roundRect(ctx, x - tw / 2 - 2.5, y - th / 2 - 2.5, tw + 5, th + 5, 5);
       ctx.stroke();
     }
-    if ((o.w ?? 1) > 0.6) {
+    // small tiles are too small for a readable letter on a phone: their colour says it
+    if ((o.w ?? 1) > 0.6 && (o.big || !compact)) {
       ctx.fillStyle = DARK;
-      ctx.font = `700 ${o.big ? 24 : Math.min(13, P * 0.6)}px ${MONO}`;
+      ctx.font = `700 ${o.big ? textPx(canvas, 24, compact ? 9.5 : 11) : textPx(canvas, Math.min(13, P * 0.6), 11)}px ${MONO}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(b, x, y + 1);
@@ -259,11 +267,13 @@ import Try from '../../../components/sim/Try.astro';
       ctx.ellipse(x, y, r + 3, 16, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.fillStyle = ghost ? kc(k) : DARK;
-    ctx.font = `700 ${r < 22 ? 10.5 : 12}px Inter, ui-sans-serif, system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(NAME[a], x, y + 0.5);
+    if (!compact) {
+      ctx.fillStyle = ghost ? kc(k) : DARK;
+      ctx.font = `700 ${textPx(canvas, r < 22 ? 10.5 : 12, 11)}px Inter, ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(NAME[a], x, y + 0.5);
+    }
     ctx.restore();
   }
   function stopTag(x: number, y: number, a: number) {
@@ -277,7 +287,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.fill();
     ctx.stroke();
     ctx.restore();
-    say(ctx, 'stop', x, y, { colour: ink(0.75), size: 11.5, weight: 650, align: 'center', alpha: a });
+    if (!compact) say(ctx, 'stop', x, y, { colour: ink(0.75), size: 11.5, weight: 650, align: 'center', alpha: a });
   }
   /** A chain of beads joined by bonds. */
   function chain(items: { x: number; a: string; ring?: string; alpha?: number; y?: number }[], y: number, alpha: number, P: number, ghost = false) {
@@ -340,15 +350,7 @@ import Try from '../../../components/sim/Try.astro';
       tile(L.xs[k], CODE_Y - 16 * open(k), x.b, a, L.P, { ring, w });
       tile(L.xs[k], TEMP_Y + 16 * open(k), PAIR[x.b], a, L.P, { ring, w });
     });
-    const la = a * (o.labels ?? 1);
-    if (la > 0.01) {
-      say(ctx, '5′', L.X0 - 12, CODE_Y - 14, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
-      say(ctx, '3′', L.X1 + 12, CODE_Y - 14, { colour: ink(0.5), size: 12, alpha: la });
-      say(ctx, '3′', L.X0 - 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
-      say(ctx, '5′', L.X1 + 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, alpha: la });
-      say(ctx, 'coding strand', L.X1, CODE_Y - 30, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
-      say(ctx, 'template strand', L.X1, TEMP_Y + 30, { colour: ink(0.5), size: 12, align: 'right', alpha: la });
-    }
+    dnaLabels(L, a * (o.labels ?? 1));
   }
 
   /** The mRNA as a row of tiles on a violet backbone. */
@@ -368,7 +370,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.stroke();
     ctx.restore();
     for (const it of items) tile(it.x, it.y ?? y, toRNA(it.b), a * (it.a ?? 1), P, { ring: it.ring, w: it.w });
-    if (label) {
+    if (label && !compact) {
       say(ctx, '5′', items[0].x - P / 2 - 10, (items[0].y ?? y) - 14, { colour: withAlpha(RNA, 0.9), size: 12, align: 'right', alpha: a });
       say(ctx, 'mRNA', last.x + P / 2 + 10, (last.y ?? y), { colour: RNA, size: 12.5, weight: 650, alpha: a });
     }
@@ -388,8 +390,9 @@ import Try from '../../../components/sim/Try.astro';
     ctx.restore();
   }
 
+  /** On a phone the caption under the stage is the key. */
   function propKey(a: number) {
-    if (a <= 0.01) return;
+    if (a <= 0.01 || compact) return;
     const x = 720, y = 42;
     say(ctx, 'amino acids, by property', x, y, { colour: ink(0.55), size: 12, alpha: a });
     (['hydrophobic', 'polar', 'plus', 'minus'] as Kind[]).forEach((k, i) => {
@@ -474,6 +477,8 @@ import Try from '../../../components/sim/Try.astro';
   function frame(ch: number, t: number) {
     tick++;
     light = isLight(canvas);
+    compact = isCompact(canvas);
+    scale = screenScale(canvas);
     ctx.clearRect(0, 0, W, H);
     const frozen = st.manual() || (!st.playing() && t < 0.01);
     const T = frozen ? END[ch] : t;
@@ -553,21 +558,20 @@ import Try from '../../../components/sim/Try.astro';
       };
       pair(380, 'A', 2, 'two bonds');
       pair(600, 'C', 3, 'three bonds');
-      say(ctx, 'Read one strand and you know the other.', 500, 548, { colour: ink(0.8), size: 15, weight: 600, align: 'center', alpha: beat(t, 5.4, 6.2) });
-      say(ctx, 'That is how a cell copies its DNA, and how a gene gets read.', 500, 572, { colour: ink(0.55), size: 13.5, align: 'center', alpha: beat(t, 5.8, 6.6) });
     }
     const shown = Math.min(n, Math.max(0, Math.floor((t - 0.3) / 0.06)));
     Object.assign(info, {
       value: `${GENE.length} letter pairs`,
       status: 'A pairs with T, C pairs with G',
-      note: 'These are the first nine codons of the human beta-globin gene, which makes part of hemoglobin, with a stop added to keep it short.',
+      note: 'Read one strand and you know the other. These are the first nine codons of the human beta-globin gene (part of hemoglobin), with a stop added to keep it short.',
       colour: undefined,
       live: [['\\texttt{A}', BASE.A], '\\text{ pairs with }', ['\\texttt{T}', BASE.T], '\\qquad', ['\\texttt{C}', BASE.C], '\\text{ pairs with }', ['\\texttt{G}', BASE.G]],
       cod: '·', prot: '·', chg: '·', dna: shown,
     });
   }
+  /** The strands' ends and names: detail a phone leaves out. */
   function dnaLabels(L: Lay, a: number) {
-    if (a <= 0.01) return;
+    if (a <= 0.01 || compact) return;
     say(ctx, '5′', L.X0 - 12, CODE_Y - 14, { colour: ink(0.5), size: 12, align: 'right', alpha: a });
     say(ctx, '3′', L.X1 + 12, CODE_Y - 14, { colour: ink(0.5), size: 12, alpha: a });
     say(ctx, '3′', L.X0 - 12, TEMP_Y + 14, { colour: ink(0.5), size: 12, align: 'right', alpha: a });
@@ -634,15 +638,10 @@ import Try from '../../../components/sim/Try.astro';
         say(ctx, toRNA(PAIR[d]), x + 28, 530, { colour: BASE[toRNA(PAIR[d])], size: 16, weight: 700, alpha: z * (on ? 1 : 0.45) });
       });
     }
-    const done = beat(t, 12.4, 13.4);
-    if (done > 0) {
-      say(ctx, 'The mRNA: the coding strand again, with U wherever the DNA had T.', 500, 440, { colour: ink(0.8), size: 15, weight: 600, align: 'center', alpha: done });
-      say(ctx, 'It leaves the DNA behind and carries the message to the ribosomes.', 500, 466, { colour: ink(0.55), size: 13.5, align: 'center', alpha: done });
-    }
-    // which letters are which
-    const ka = beat(t, 0.5, 1.3);
-    say(ctx, 'DNA letters', 720, 60, { colour: ink(0.55), size: 12, alpha: ka });
-    say(ctx, 'RNA letters', 720, 100, { colour: ink(0.55), size: 12, alpha: ka });
+    // which letters are which (on a phone the tiles are too small to carry letters)
+    const ka = compact ? 0 : beat(t, 0.5, 1.3);
+    if (ka > 0.01) say(ctx, 'DNA letters', 720, 60, { colour: ink(0.55), size: 12, alpha: ka });
+    if (ka > 0.01) say(ctx, 'RNA letters', 720, 100, { colour: ink(0.55), size: 12, alpha: ka });
     ['A', 'C', 'G', 'T'].forEach((b, i) => {
       tile(810 + i * 24, 60, b, ka, 23);
       tile(810 + i * 24, 100, toRNA(b), ka, 23, { ring: b === 'T' ? HI : undefined });
@@ -653,7 +652,9 @@ import Try from '../../../components/sim/Try.astro';
     Object.assign(info, {
       value: `${copied} of ${N}`,
       status: 'letters copied into mRNA',
-      note: 'Each RNA letter pairs with the template letter it sits on (A with U, C with G), so the mRNA spells out the coding strand, with U for T.',
+      note: copied >= N
+        ? 'The mRNA is the coding strand again, with U wherever the DNA had T. It leaves the DNA behind and carries the message to the ribosomes.'
+        : 'Each RNA letter pairs with the template letter it sits on (A with U, C with G), so the mRNA spells out the coding strand, with U for T.',
       colour: copied >= N ? RNA : undefined,
       live: [['\\text{template }\\texttt{' + PAIR[cur] + '}', BASE[PAIR[cur]]], '\\to', ['\\text{RNA }\\texttt{' + toRNA(cur) + '}', BASE[toRNA(cur)]]],
       dna: N, cod: '·', prot: '·', chg: '·',
@@ -688,8 +689,8 @@ import Try from '../../../components/sim/Try.astro';
       roundRect(ctx, rxp - 5 * L.P, MRNA_Y + 14, 7 * L.P, 76, 22);
       ctx.fill(); ctx.stroke();
       ctx.restore();
-      say(ctx, 'ribosome', rxp - 5 * L.P - 8, MRNA_Y + 40, { colour: ink(0.55), size: 12.5, weight: 600, align: 'right', alpha: ra });
-      if (t < 3.6) say(ctx, 'slides to the first AUG', rxp - 5 * L.P - 8, MRNA_Y + 58, { colour: ink(0.45), size: 12, align: 'right', alpha: ra * (1 - beat(t, 3, 3.6)) });
+      if (!compact) say(ctx, 'ribosome', rxp - 5 * L.P - 8, MRNA_Y + 40, { colour: ink(0.55), size: 12.5, weight: 600, align: 'right', alpha: ra });
+      if (t < 3.6 && !compact) say(ctx, 'slides to the first AUG', rxp - 5 * L.P - 8, MRNA_Y + 58, { colour: ink(0.45), size: 12, align: 'right', alpha: ra * (1 - beat(t, 3, 3.6)) });
     }
     mrna(ORIG.map((x, k) => ({ x: L.xs[k], b: x.b })), MRNA_Y, 1, L.P);
 
@@ -709,7 +710,7 @@ import Try from '../../../components/sim/Try.astro';
     chain(items, PROT_Y, 1, L.P);
     if (rel > 0) {
       stopTag(cx(n), PROT_Y, rel);
-      say(ctx, 'stop codon: no tRNA matches, so the chain is let go', cx(n) + 30, PROT_Y + 34, { colour: ink(0.7), size: 13, align: 'right', alpha: beat(t, ts + 0.6, ts + 1.2), halo: inv(0.8) });
+      say(ctx, 'no tRNA fits a stop: the chain is let go', cx(n) + 30, PROT_Y + 34, { colour: ink(0.7), size: 13, align: 'right', alpha: beat(t, ts + 0.6, ts + 1.2), halo: inv(0.8) });
     }
     if (t > tc(0)) rowLabel('protein', cx(0) - rx(L.P) - 10, PROT_Y, beat(t, tc(0) + 0.4, tc(0) + 1));
 
@@ -718,7 +719,7 @@ import Try from '../../../components/sim/Try.astro';
     if (made) {
       const text = items.slice(0, made).map((it) => NAME[it.a]).join(' · ');
       say(ctx, text + (rel > 0.5 ? ' · stop' : ''), 500, 540, { colour: ink(0.75), size: 15, weight: 600, align: 'center' });
-      say(ctx, `${made} amino acid${made > 1 ? 's' : ''} from ${3 * made} letters${rel > 0.5 ? ', then a stop' : ''}`, 500, 566, { colour: ink(0.5), size: 13, align: 'center' });
+      if (!compact) say(ctx, `${made} amino acid${made > 1 ? 's' : ''} from ${3 * made} letters${rel > 0.5 ? ', then a stop' : ''}`, 500, 566, { colour: ink(0.5), size: 13, align: 'center' });
     }
     propKey(beat(t, 3, 4));
 
@@ -748,7 +749,7 @@ import Try from '../../../components/sim/Try.astro';
     ctx.lineTo(x, y + PROT_Y - ANTI_Y - 13);
     ctx.stroke();
     ctx.restore();
-    say(ctx, 'tRNA', x, y + 32, { colour: withAlpha(RNA, 1), size: 11.5, weight: 650, align: 'center', alpha: a });
+    if (!compact) say(ctx, 'tRNA', x, y + 32, { colour: withAlpha(RNA, 1), size: 11.5, weight: 650, align: 'center', alpha: a });
     for (let k = 0; k < 3; k++) tile(x + (k - 1) * P, y, ANTI[toRNA(codon[k])], a, P);
   }
 
@@ -779,11 +780,17 @@ import Try from '../../../components/sim/Try.astro';
       { at: 15.6, text: 'Stop: 3 codons, UAA, UAG, UGA' },
       { at: 18.2, text: 'Met, Trp: only 1 codon each' },
     ];
-    lines.forEach((l, i) => {
-      const a = frozen ? 1 : beat(t, l.at, l.at + 0.6);
-      say(ctx, l.text, 690, 46 + i * 24, { colour: i === phase ? HI : ink(0.75), size: 14, weight: i === phase ? 650 : 500, alpha: a });
-    });
-    say(ctx, 'AUG means Met, and is also where reading starts', 690, 118, { colour: ink(0.5), size: 12.5, alpha: frozen ? 1 : beat(t, 19, 19.6) });
+    if (compact) {
+      // one line at a time, across the middle, on a phone
+      const l = lines[Math.max(0, phase)];
+      if (phase >= 0) say(ctx, l.text, 500, 110, { colour: HI, size: 14, weight: 650, align: 'center', alpha: beat(t, l.at, l.at + 0.6) });
+    } else {
+      lines.forEach((l, i) => {
+        const a = frozen ? 1 : beat(t, l.at, l.at + 0.6);
+        say(ctx, l.text, 690, 46 + i * 24, { colour: i === phase ? HI : ink(0.75), size: 14, weight: i === phase ? 650 : 500, alpha: a });
+      });
+      say(ctx, 'AUG means Met, and starts reading', 690, 118, { colour: ink(0.5), size: 12.5, alpha: frozen ? 1 : beat(t, 19, 19.6) });
+    }
 
     const a = hiCodon ? aaOf(hiCodon) : 'L';
     Object.assign(info, {
@@ -820,17 +827,20 @@ import Try from '../../../components/sim/Try.astro';
             ctx.lineWidth = 2;
             ctx.stroke();
           }
-          say(ctx, NAME[aa], x + CW - 14, y + h / 2, { colour: kc(k), size: 13, weight: 700, align: 'right' });
+          // a phone has room only for the names of blocks two codons tall or more
+          if (!compact || e > th) say(ctx, NAME[aa], compact ? x + CW / 2 : x + CW - 14, y + h / 2, { colour: kc(k), size: 13, weight: 700, align: compact ? 'center' : 'right' });
           th = e + 1;
         }
       }
     ctx.restore();
+    // on a phone a cell is a few pixels tall: the coloured blocks alone show the redundancy
+    if (compact) return;
     for (let f = 0; f < 4; f++)
       for (let s = 0; s < 4; s++)
         for (let th = 0; th < 4; th++) {
           const codon = L4[f] + L4[s] + L4[th], x = TX + s * CW, y = R0 + (f * 4 + th) * RH;
           for (let q = 0; q < 3; q++)
-            say(ctx, codon[q], x + 14 + q * 11, y + RH / 2, { colour: q === 1 ? BASE[codon[q]] : ink(0.75), size: 12.5, weight: q === 1 ? 700 : 500, alpha: a });
+            say(ctx, codon[q], x + 14 + q * 12.5, y + RH / 2, { colour: q === 1 ? BASE[codon[q]] : ink(0.75), size: 12.5, weight: q === 1 ? 700 : 500, alpha: a });
           if (codon.replace(/U/g, 'T') === hiCodon) {
             ctx.save();
             ctx.globalAlpha = a;
@@ -917,10 +927,10 @@ import Try from '../../../components/sim/Try.astro';
     rowLabel('before', before[0].x - rx(L.P) - 10, BEFORE_Y, 1);
     return { L, tr, pr, newProt };
   }
-  function verdict(title: string, text: string, colour: string, a: number) {
+  /** The kind of change, under the proteins; the sentence that explains it is the result note. */
+  function verdict(title: string, colour: string, a: number) {
     if (a <= 0.01) return;
     say(ctx, title, 500, VERDICT_Y, { colour, size: 19, weight: 700, align: 'center', alpha: a });
-    say(ctx, text, 500, VERDICT_Y + 28, { colour: ink(0.7), size: 14.5, align: 'center', alpha: a });
   }
   const MUT_TEXT = [
     { title: 'Silent', text: 'CTG became CTC, and both mean Leu: the DNA changed, the protein did not.', colour: KCOL.polar },
@@ -946,7 +956,7 @@ import Try from '../../../components/sim/Try.astro';
       say(ctx, M.insert ? 'one letter added here' : 'one letter changed here', L.xs[k], CODE_Y - 36, { colour: HI, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
     }
     const T = MUT_TEXT[m];
-    verdict(T.title, T.text, T.colour, frozen ? 1 : beat(u, 3.4, 4));
+    verdict(T.title, T.colour, frozen ? 1 : beat(u, 3.4, 4));
     propKey(1);
     const codonAt = (s: string, at: number) => s.slice(at, at + 3).replace(/T/g, 'U');
     const c0 = Math.floor((M.at - ORIG_T.start) / 3), at0 = ORIG_T.start + 3 * c0;
@@ -1004,7 +1014,7 @@ import Try from '../../../components/sim/Try.astro';
       say(ctx, 'click any letter', L.xs[24], CODE_Y - 36, { colour: HI, size: 13, weight: 650, align: 'center', alpha: a, halo: inv(0.85) });
     }
     const v = judge(s, pr);
-    verdict(v.title, v.text, v.colour, 1);
+    verdict(v.title, v.colour, 1);
     propKey(1);
     const changedN = diffCount(pr);
     Object.assign(info, {

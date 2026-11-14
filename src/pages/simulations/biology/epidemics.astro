@@ -57,11 +57,9 @@ import Try from '../../../components/sim/Try.astro';
 
   <Fragment slot="observe">
     <li>
-      COVID-19 as it first spread in 2020: published estimates put R<sub>0</sub> at roughly 2 to 3, so take 2.5 with
-      nobody vaccinated. Nearly nine in ten catch it, yet about one in ten never do: the outbreak runs out of people
-      to infect first. Herd immunity would take 1 − 1/2.5 = 60%. The Delta variant was estimated at about 5, which
-      raises the threshold to 80%, so 70% vaccinated still lets it spread; that is why the target kept rising.
-      These are rough estimates, and the model assumes perfect, lasting immunity and people who mix at random.
+      COVID-19 as it first spread had R<sub>0</sub> near 2.5. Nearly nine in ten catch it, yet one in ten never do:
+      the outbreak runs out of people to infect first. Herd immunity takes 1 − 1/2.5 = 60%. Delta, at about 5,
+      raises that to 80%, so 70% vaccinated still lets it spread.
       <Try id="covid" label="Original COVID-19" /> <Try id="delta" label="Delta, 70% vaccinated" />
     </li>
     <li>
@@ -81,9 +79,9 @@ import Try from '../../../components/sim/Try.astro';
 </SimLayout>
 
 <script>
-  import { setupCanvas } from '../../../lib/sim';
+  import { setupCanvas, isCompact } from '../../../lib/sim';
   import { equation } from '../../../lib/equation';
-  import { stageInk } from '../../../lib/draw';
+  import { stageInk, fixed } from '../../../lib/draw';
   import { slider, transport, result, readout, tries } from '../../../lib/panel';
   import { say, withAlpha, isLight } from '../../../lib/story';
   import { Outbreak, predict, S, I, R, V } from '../../../lib/epidemics';
@@ -97,6 +95,10 @@ import Try from '../../../components/sim/Try.astro';
   const SICK = 4, REACH = 40, N = 400, SEEDS = 5;
 
   const canvas = document.getElementById('epi') as HTMLCanvasElement;
+  // On a phone the crowd and the chart stack in a tall picture, so neither is
+  // shrunk to a third of its size; the crowd's box keeps its size either way.
+  const STACK = isCompact(canvas);
+  if (STACK) { canvas.width = 576; canvas.height = 1000; }
   const { ctx, W, H } = setupCanvas(canvas);
   const { ink, inv } = stageInk(canvas);
   const setEq = equation();
@@ -108,8 +110,13 @@ import Try from '../../../components/sim/Try.astro';
 
   // ---------- layout ----------
   const BOX = { x: 28, y: 64, w: 520, h: 480 };
-  const PANE = { x: 616, w: 352 };
-  const CH = { y: 150, h: 270 };
+  const PANE = STACK ? { x: 28, w: 520 } : { x: 616, w: 352 };
+  /** The counts row, the chart and the vaccination gauge, under or beside the crowd. */
+  const TALLY = STACK ? 600 : 44;
+  const CH = STACK ? { y: 690, h: 190 } : { y: 150, h: 270 };
+  const GAUGE = STACK ? 950 : 520;
+  /** Text size that stays readable on a phone, where only the key labels are drawn. */
+  const sz = (size: number) => (STACK ? Math.max(size * 1.35, 17) : size);
 
   // ---------- the crowd ----------
   const P = { r0: 3, vax: 0 };
@@ -168,13 +175,13 @@ import Try from '../../../components/sim/Try.astro';
   function draw() {
     light = isLight(canvas);
     ctx.clearRect(0, 0, W, H);
-    say(ctx, `${N} people`, BOX.x, 36, { colour: ink(0.85), size: 15, weight: 650 });
-    say(ctx, `day ${Math.floor(world.day)}`, BOX.x + BOX.w, 36, { colour: ink(0.55), size: 13, weight: 600, align: 'right' });
+    say(ctx, `${N} people`, BOX.x, 36, { colour: ink(0.85), size: sz(15), weight: 650 });
+    say(ctx, `day ${Math.floor(world.day)}`, BOX.x + BOX.w, 36, { colour: ink(0.55), size: sz(13), weight: 600, align: 'right' });
     people(world, BOX);
     fizzled(world, BOX);
     tally(world);
-    chart(world, PANE.x, CH.y, PANE.w, CH.h);
-    gauge(PANE.x, 520, PANE.w);
+    chart(world, PANE.x + (STACK ? 44 : 0), CH.y, PANE.w - (STACK ? 44 : 0), CH.h);
+    gauge(PANE.x, GAUGE, PANE.w);
   }
 
   const colourOf = (s: number) => (s === S ? SC : s === I ? IC : RC());
@@ -240,12 +247,12 @@ import Try from '../../../components/sim/Try.astro';
     const step = PANE.w / cols.length;
     cols.forEach(([label, v, c], k) => {
       const x = PANE.x + k * step;
-      say(ctx, String(v), x, 44, { colour: c, size: 26, weight: 700 });
+      say(ctx, String(v), x, TALLY, { colour: c, size: 26, weight: 700 });
       ctx.fillStyle = c;
       ctx.beginPath();
-      ctx.arc(x + 4, 72, 4, 0, Math.PI * 2);
+      ctx.arc(x + 4, TALLY + (STACK ? 34 : 28), 4, 0, Math.PI * 2);
       ctx.fill();
-      say(ctx, label, x + 13, 72, { colour: ink(0.6), size: 12.5 });
+      say(ctx, label, x + 13, TALLY + (STACK ? 34 : 28), { colour: ink(0.6), size: sz(12.5) });
     });
   }
 
@@ -265,10 +272,12 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     for (const f of [0.25, 0.5, 0.75, 1]) { ctx.moveTo(x, Y(f)); ctx.lineTo(x + w, Y(f)); }
     ctx.stroke();
-    for (const f of [0, 0.5, 1]) say(ctx, `${f * 100}%`, x - 6, Y(f), { colour: ink(0.45), size: 12, align: 'right' });
-    for (let d = 0; d <= days; d += tickStep) say(ctx, String(d), X(d), y + h + 13, { colour: ink(0.45), size: 12, align: 'center' });
-    say(ctx, 'days', x + w, y + h + 30, { colour: ink(0.45), size: 12, align: 'right' });
-    say(ctx, 'share of people', x, y - 18, { colour: ink(0.55), size: 12 });
+    for (const f of [0, 0.5, 1]) say(ctx, `${f * 100}%`, x - 6, Y(f), { colour: ink(0.45), size: sz(12), align: 'right' });
+    for (let d = 0; d <= days; d += tickStep * (STACK ? 2 : 1)) say(ctx, String(d), X(d), y + h + (STACK ? 18 : 13), { colour: ink(0.45), size: sz(12), align: 'center' });
+    if (!STACK) {
+      say(ctx, 'days', x + w, y + h + 30, { colour: ink(0.45), size: 12, align: 'right' });
+      say(ctx, 'share of people', x, y - 18, { colour: ink(0.55), size: 12 });
+    }
 
     // the equations, faint and dashed
     ctx.save();
@@ -301,7 +310,8 @@ import Try from '../../../components/sim/Try.astro';
     line((s) => s.s, SC, 2.2);
     line((s) => s.i, IC, 2.6);
 
-    // key for the two kinds of line
+    // key for the two kinds of line (on a phone the caption says it)
+    if (STACK) return;
     const ky = y + h + 50;
     ctx.strokeStyle = ink(0.7);
     ctx.lineWidth = 2.2;
@@ -319,8 +329,9 @@ import Try from '../../../components/sim/Try.astro';
   /** The vaccinated share against the herd immunity threshold 1 − 1/R0. */
   function gauge(x: number, y: number, w: number) {
     const need = Math.max(0, 1 - 1 / P.r0), v = P.vax, h = 12, eff = P.r0 * (1 - v), ok = eff < 1;
-    say(ctx, `vaccinated ${Math.round(v * 100)}%`, x, y - 16, { colour: VC(), size: 13, weight: 650 });
-    say(ctx, `each case infects ${eff.toFixed(2)}: ${ok ? 'fewer' : 'more'} than one`, x + w, y - 16, { colour: ok ? VC() : IC, size: 12.5, weight: 600, align: 'right' });
+    say(ctx, `vaccinated ${Math.round(v * 100)}%`, x, y - (STACK ? 20 : 16), { colour: VC(), size: sz(13), weight: 650 });
+    const each = `each case infects ${fixed(eff, 2)}`;
+    say(ctx, each, x + w, y - (STACK ? 20 : 16), { colour: ok ? VC() : IC, size: sz(12.5), weight: 600, align: 'right' });
     ctx.fillStyle = ink(0.08);
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = withAlpha(VC(), 0.85);
@@ -331,36 +342,37 @@ import Try from '../../../components/sim/Try.astro';
     ctx.beginPath();
     ctx.moveTo(tx, y - 6); ctx.lineTo(tx, y + h + 6);
     ctx.stroke();
-    const lab = P.r0 <= 1 ? 'R₀ below 1: no vaccination needed' : `herd immunity 1 − 1/R₀ = ${Math.round(need * 100)}%`;
-    say(ctx, lab, Math.min(x + w - 100, Math.max(x + 100, tx)), y + h + 18, { colour: ink(0.8), size: 12.5, weight: 600, align: 'center' });
+    const lab = P.r0 <= 1 ? 'R₀ below 1: no vaccination needed' : STACK ? `herd immunity ${Math.round(need * 100)}%` : `herd immunity 1 − 1/R₀ = ${Math.round(need * 100)}%`;
+    const half = STACK ? 150 : 100;
+    say(ctx, lab, Math.min(x + w - half, Math.max(x + half, tx)), y + h + (STACK ? 24 : 18), { colour: ink(0.8), size: sz(12.5), weight: 600, align: 'center' });
   }
 
   /** A few cases can all recover before passing it on: say so instead of leaving a quiet box. */
   function fizzled(o: Outbreak, b: { x: number; y: number; w: number; h: number }) {
     if (o.over < 0 || o.ever > 30) return;
     const chance = P.r0 * (1 - P.vax) >= 1;
-    say(ctx, chance ? `died out early, by chance, after ${o.ever} cases` : `died out after ${o.ever} cases`, b.x + b.w / 2, b.y + 26, { colour: ink(0.85), size: 15, weight: 650, align: 'center', halo: inv(0.85) });
+    say(ctx, chance ? `died out early, by chance, after ${o.ever} cases` : `died out after ${o.ever} cases`, b.x + b.w / 2, b.y + 26, { colour: ink(0.85), size: sz(15), weight: 650, align: 'center', halo: inv(0.85) });
   }
 
   // ---------- numbers ----------
   const RULE: (string | [string, string])[] = [
-    ['\\frac{dS}{dt} = -\\beta\\frac{SI}{N}', SC],
+    ['\\dot S = -\\beta SI/N', SC],
     '\\quad',
-    ['\\frac{dI}{dt} = \\beta\\frac{SI}{N} - \\gamma I', IC],
+    ['\\dot I = \\beta SI/N - \\gamma I', IC],
     '\\quad',
-    ['\\frac{dR}{dt} = \\gamma I', '#a1a1aa'],
-    '\\quad',
-    ['R_0 = \\beta / \\gamma', ACC],
+    ['\\dot R = \\gamma I', '#a1a1aa'],
   ];
+  /** A number padded with invisible digits, so the line keeps its width as it changes. */
+  const pad = (v: string, n: number) => v + (v.length < n ? `\\phantom{${'0'.repeat(n - v.length)}}` : '');
   function panelText() {
     const o = world, beta = P.r0 / SICK, need = Math.max(0, 1 - 1 / P.r0), eff = P.r0 * (1 - P.vax);
     setEq({
       rule: RULE,
       live: [
-        `\\gamma = 1/${SICK}\\text{ per day}\\quad \\beta = ${beta.toFixed(2)}\\quad`,
-        [`R_0 = ${P.r0.toFixed(1)}`, ACC],
-        `\\quad R_0(1 - v) = ${eff.toFixed(2)}`,
-        [`\\quad 1 - 1/R_0 = ${Math.round(need * 100)}\\%`, VC()],
+        `\\gamma = 1/${SICK}\\quad \\beta = ${fixed(beta, 2)}\\quad`,
+        [`R_0 = \\beta/\\gamma = ${pad(fixed(P.r0, 1), 4)}`, ACC],
+        `\\quad R_0(1 - v) = ${pad(fixed(eff, 2), 5)}`,
+        [`\\quad 1 - 1/R_0 = ${pad(`${Math.round(need * 100)}\\%`, 4)}`, VC()],
       ],
     });
     setRows({
@@ -374,13 +386,13 @@ import Try from '../../../components/sim/Try.astro';
     const share = Math.round((100 * o.ever) / N), pr = predict(P.r0, 1 - P.vax);
     setResult({
       value: `${share}%`,
-      status: `${o.over >= 0 ? 'in the end' : 'so far'} · equations predict ${Math.round(pr.attack * 100)}% · vaccinated ${Math.round(P.vax * 100)}%, herd immunity at ${Math.round(need * 100)}%`,
+      status: `${o.over >= 0 ? 'in the end' : 'so far'} · the equations predict ${Math.round(pr.attack * 100)}%`,
       note:
         eff < 1
           ? P.vax > 0
-            ? 'Past the threshold each case meets too few people it can infect to replace itself, so the outbreak dies out though many could still catch it.'
-            : 'Below 1 each generation of cases is smaller than the last: the five starting cases cause only a handful more.'
-          : `Each case infects ${eff.toFixed(1)} others at first, so it spreads until too few healthy people are left. Vaccinating more than ${Math.round(need * 100)}% would stop it.`,
+            ? 'Past the threshold each case cannot replace itself, so the outbreak dies out.'
+            : 'Below 1 each generation of cases is smaller than the last, so the outbreak dies out.'
+          : `Each case infects ${fixed(eff, 1)} others at first, so it spreads until too few healthy people are left.`,
       colour: eff < 1 ? VC() : IC,
     });
   }
